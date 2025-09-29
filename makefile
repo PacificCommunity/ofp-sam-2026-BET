@@ -6,4 +6,4 @@ run:
 	Rscript run_mfcl.R
 
 docker-run:
-	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) run_mfcl.R
+	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript run_mfcl.R
