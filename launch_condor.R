@@ -24,8 +24,11 @@ branch <- "main"                                           # Branch of git repos
 # Run the job on Condor through CondorBox
 # ---------------------------------------
 
-dir="test"
+dir="07Oct_2023_MFCL_run" 
 make="run"
+mfcl_commands="./doitall.sh"
+mfcl_dir="MFCL/2023"
+
 
 CondorBox::CondorBox(
     make_options = make,
@@ -52,7 +55,8 @@ CondorBox::CondorBox(
                     "slot1_2@suvofpcand26.corp.spc.int",
                     "slot1_3@suvofpcand26.corp.spc.int"),   ## these slots are super slow..
     custom_batch_name = "trial2",
-    condor_environment = list(dummy_var = "dummy") ) 
+    condor_environment = list(mfcl_commands=mfcl_commands,
+                              mfcl_dir=mfcl_dir) ) 
 
 
 # ----------------------------------------------------------
