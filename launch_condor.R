@@ -12,23 +12,26 @@ remote_user <- "kyuhank"                                      # Remote server us
 remote_host <- "nouofpsubmit.corp.spc.int"                     # Remote server address (e.g., "nouofpsubmit.corp.spc.int")
 github_pat <- Sys.getenv("GIT_PAT")                           # GitHub Personal Access Token (e.g., ghp_....)
 github_username <- "kyuhank"                                  # GitHub username (e.g., "kyuhank")
-github_org <- "kyuhank"                              # GitHub organisation name (e.g., "PacificCommunity")
+github_org <- "PacificCommunity"                              # GitHub organisation name (e.g., "PacificCommunity")
 github_repo <- "ofp-sam-2026-bet"                       # GitHub repository name (e.g., "ofp-sam-docker4mfcl-example")
 docker_image <- "ghcr.io/pacificcommunity/bet-2026:v1.1"     # Docker image to use (e.g., "kyuhank/skj2025:1.0.4")
-condor_memory <- "20GB"                                        # Memory request for the Condor job (e.g., "6GB")
-condor_disk <- "40GB"
-condor_cpus <- 12                                               # CPU request for the Condor job (e.g., 4)
+condor_memory <- "8GB"                                        # Memory request for the Condor job (e.g., "6GB")
+condor_disk <- "10GB"
+condor_cpus <- 2                                               # CPU request for the Condor job (e.g., 4)
 branch <- "main"                                           # Branch of git repository to use 
 
 # ---------------------------------------
 # Run the job on Condor through CondorBox
 # ---------------------------------------
 
+dir="test"
+make="run"
+
 CondorBox::CondorBox(
     make_options = make,
     remote_user = remote_user,
     remote_host = remote_host,
-    remote_dir = github_repo,
+    remote_dir = paste0(github_repo, "/",dir), 
     github_pat = github_pat,
     github_username = github_username,
     github_org = github_org,
@@ -48,10 +51,8 @@ CondorBox::CondorBox(
                     "slot1_1@suvofpcand26.corp.spc.int",
                     "slot1_2@suvofpcand26.corp.spc.int",
                     "slot1_3@suvofpcand26.corp.spc.int"),   ## these slots are super slow..
-    custom_batch_name = "trial",
+    custom_batch_name = "trial2",
     condor_environment = list(dummy_var = "dummy") ) 
-
-
 
 
 # ----------------------------------------------------------
