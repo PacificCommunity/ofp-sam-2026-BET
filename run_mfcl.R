@@ -4,9 +4,9 @@ library(FLR4MFCL)
 library(CondorBox)
 
 ## environment variables
-program_path=Sys.getenv("program_path", "../../exe/mfclo64_2023")
+program_path=Sys.getenv("program_path", "../../InputPrep/mfcl/mfclo64_2023")
 Sys.setenv("PROGRAM_PATH" = program_path)
-base_dir<-Sys.getenv("base_dir", "base/2023")
+base_dir<-Sys.getenv("base_dir", "InputPrep/inputs/2023")
 model_dir<-Sys.getenv("model_dir", "mfcl/base")
 mfcl_commands <- Sys.getenv("mfcl_commands", paste(program_path,"bet.frq 11.par 12.par"))
 
