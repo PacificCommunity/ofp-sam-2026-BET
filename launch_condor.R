@@ -24,19 +24,19 @@ branch <- "main"                                           # Branch of git repos
 # Run the job on Condor through CondorBox
 # ---------------------------------------
 
-dir="08Oct_2023_MFCL_doitall" 
+dir="08Oct_2023_MFCL_loop" 
 make="run"
-mfcl_commands="./doitall.sh"
-mfcl_dir="mfcl/base"
-input_dir="inputs/M1"
-mfcl_commands="../../exe/mfclo64_2023 bet.frq 11.par 12.par"
-program_path="../../exe/mfclo64_2023"
 
+source("model_configs.R") 
+
+for(model_name in names(models)) {
+
+## run condor job
 CondorBox::CondorBox(
     make_options = make,
     remote_user = remote_user,
     remote_host = remote_host,
-    remote_dir = paste0(github_repo, "/",dir), 
+    remote_dir = paste0(github_repo, "/",dir,"/",model_name), 
     github_pat = github_pat,
     github_username = github_username,
     github_org = github_org,
@@ -56,11 +56,11 @@ CondorBox::CondorBox(
                     "slot1_1@suvofpcand26.corp.spc.int",
                     "slot1_2@suvofpcand26.corp.spc.int",
                     "slot1_3@suvofpcand26.corp.spc.int"),   ## these slots are super slow..
-    custom_batch_name = "trial3",
-    condor_environment = list(mfcl_commands=mfcl_commands,
-                              mfcl_dir=mfcl_dir) ) 
+    custom_batch_name = paste0(model_name,"-",format(Sys.time(), "%H:%M:%S_%D")),
+    condor_environment = models[[model_name]] ) 
 
-
+  }
+  
 # ----------------------------------------------------------
 # Retrieve and synchronise the output from the remote server
 # ----------------------------------------------------------
