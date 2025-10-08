@@ -4,6 +4,9 @@ WORKDIR=/workspace
 
 run:
 	Rscript run_mfcl.R
+	
+plot: plot/plots.rmd
+	Rscript -e "rmarkdown::render('plot/plots.rmd')"
 
 docker-run:
 	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript run_mfcl.R

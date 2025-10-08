@@ -504,5 +504,7 @@ for (unit_name in names(unit_residual_plots)) {
   print(unit_residual_plots[[unit_name]])  # Print each residual plot individually
 }
 
+
+
 ```
 
