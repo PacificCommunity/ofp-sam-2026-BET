@@ -1,0 +1,508 @@
+---
+title: "MFCL outputs"
+author: "kyuhan Kim"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::downcute:
+    self_contained: yes
+    thumbnails: false
+    lightbox: true
+    gallery: false
+    highlight: tango
+    code_folding: hide
+    fig_width: 10
+    fig_height: 8
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(dev = "png",
+                      dpi = 160,
+                      echo = F,
+                      cache = F,
+                      warning = F,
+                      message = F #, 
+                      #fig.path='Figures/'
+                      )
+
+library(ggplot2)
+library(cowplot)
+library(dplyr)
+library(FLR4MFCL)
+library(tidyr)
+library(patchwork)
+library(reshape2)
+library(kableExtra)
+
+theme_set(theme_cowplot())
+
+
+#########################
+## load data and tools ##
+#########################
+
+source("../tools/plot_utils.R")
+
+results <- list.dirs(file.path(getwd(), "..", "mfcl"), full.names = TRUE, recursive = FALSE) %>%
+  purrr::map(function(folder) {
+    outputs_path <- normalizePath(folder, winslash = "/", mustWork = FALSE)
+    cat("Processing folder:", outputs_path, "\n")
+    
+    # Read ParOut and RepOut for the current folder
+    ParOut <- read.MFCLPar(finalPar(outputs_path))
+    RepOut <- read.MFCLRep(finalRep(outputs_path))
+    
+    # Return a list containing ParOut and RepOut
+    list(ParOut = ParOut, RepOut = RepOut)
+  })
+
+
+# Convert results into a named list, using folder names as keys
+names(results) <- basename(list.dirs(file.path(getwd(), "..", "mfcl"), full.names = TRUE, recursive = FALSE))
+
+# Access individual ParOut and RepOut
+ParOut_list <- purrr::map(results, "ParOut")
+RepOut_list <- purrr::map(results, "RepOut")
+
+
+minYear=1952
+maxYear=2021
+
+# opacity and line width
+alpha = 0.5
+linewidth = 1
+
+scenario_colors <- c(
+  "base" = "#1b9e77",
+  "m1" = "#d95f02",
+  "m2" = "#e6ab02"
+)
+
+# Fisheries mapping (option for renaming fisheries)
+fisheries_mapping <- c(
+  "32" = "PLR1",
+  "33" = "PLR2",
+  "34" = "PLR3",
+  "35" = "PLR4",
+  "37" = "PLR7",
+  "38" = "PLR8"
+)
+
+# Filtered fisheries
+fisheries <- names(fisheries_mapping)
+
+model_names <- names(ParOut_list)
+
+```
+
+
+## Summary of each model configuration
+```{r, echo=FALSE, message=F, fig.dim=c(10,10)}
+# Extract parameters (max_grad, obj_fun, n_pars, dimensions) from ParOut_list
+ExtractParams <- lapply(seq_along(ParOut_list), function(i) {
+  model_name <- names(ParOut_list)[i]  # Get the scenario name
+  
+  mgc_value <- tryCatch(
+    ParOut_list[[i]]@max_grad,
+    error = function(e) NA  # If an error occurs, return NA
+  )
+  
+  obj_fun_value <- tryCatch(
+    ParOut_list[[i]]@obj_fun,
+    error = function(e) NA  # If an error occurs, return NA
+  )
+  
+  n_pars_value <- tryCatch(
+    ParOut_list[[i]]@n_pars,
+    error = function(e) NA  # If an error occurs, return NA
+  )
+  
+  dimensions_value <- tryCatch(
+    as.list(ParOut_list[[i]]@dimensions),
+    error = function(e) list(agecls = NA, years = NA, seasons = NA, regions = NA, fisheries = NA, taggrps = NA)  # Default NA if error
+  )
+  
+  data.frame(Model = model_name, mgc = mgc_value, obj_fun = obj_fun_value, n_pars = n_pars_value, 
+             agecls = dimensions_value$agecls, years = dimensions_value$years, 
+             seasons = dimensions_value$seasons, regions = dimensions_value$regions, 
+             fisheries = dimensions_value$fisheries, taggrps = dimensions_value$taggrps)
+})
+
+# Combine results into a single data frame
+params_df <- bind_rows(ExtractParams)
+
+# Clean scenario names, round numeric values, and apply scenario order
+params_df <- params_df %>%
+  mutate(
+    mgc      = ifelse(!is.na(as.numeric(mgc)), round(as.numeric(mgc), 6), NA),
+    obj_fun  = ifelse(!is.na(as.numeric(obj_fun)), round(as.numeric(obj_fun), 2), NA),
+    n_pars   = ifelse(!is.na(as.numeric(n_pars)), as.numeric(n_pars), NA)  # Ensure n_pars is numeric
+  ) 
+
+# Display parameter values table with scenario-specific dimensions
+kable(params_df, caption = "Basic model info") %>%
+  kable_styling(full_width = FALSE)
+
+```
+
+## Spawning depletion
+```{r, echo=FALSE, message=F, fig.dim=c(8,6)}
+
+SBdep=GetQuantSimple(SBSBF0, RepOut_list, minYear, maxYear)
+Rec=GetQuantSimple(eq_rec, RepOut_list, minYear, maxYear, scale_factor=1/1e6)
+
+# Ensure consistent scenario ordering in SBdep and Rec
+SBdep <- SBdep %>%
+  mutate(Scenario = factor(Scenario))
+
+Rec <- Rec %>%
+  mutate(Scenario = factor(Scenario))
+
+## plot
+SBdepPlot <- ggplot(SBdep, aes(x = Year, y = Quant, group = Scenario, color = Scenario)) + 
+  geom_line(linewidth = linewidth, alpha = alpha) + 
+  scale_color_manual(values = scenario_colors) + 
+  labs(x = "Year", y = bquote(SB/SB["F=0"])) +
+  coord_cartesian(ylim = c(0, 1)) +
+  geom_hline(yintercept = 0.2, linetype = "dashed", color = "darkred") +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "darkgreen") +
+  theme(
+    legend.position = "none",  # Hide legend for individual plot
+    strip.text = element_text(size = 10)
+  )
+
+## plot
+RecPlot <- ggplot(Rec, aes(x = Year, y = Quant, group = Scenario, color = Scenario)) + 
+  geom_line(linewidth = linewidth, alpha = alpha) + 
+  coord_cartesian(ylim = c(0, NA)) +
+  scale_color_manual(values = scenario_colors) + 
+  labs(
+    x = "Year",
+    y = bquote("Spawning Potential (" * 10^3 * " MT)")
+  ) +
+  theme(
+    legend.position = "none",  # Hide legend for individual plot
+    strip.text = element_text(size = 10)
+  )
+
+# Create a shared legend plot with a dummy dataset
+legend_data <- data.frame(
+  Year = 1:length(scenario_colors),  # Dummy x values
+  Quant = 1:length(scenario_colors),  # Dummy y values
+  Scenario = factor(names(scenario_colors), levels = names(scenario_colors))  # Use all scenarios
+)
+
+shared_legend <- ggplot(legend_data, aes(x = Year, y = Quant, color = Scenario)) +
+  geom_line(linewidth = linewidth, alpha = alpha) +  # Match alpha and linewidth
+  scale_color_manual(values = scenario_colors) +
+  theme(
+    legend.position = "right",
+    legend.direction = "vertical",
+    legend.title = element_text(face = "bold"),
+    legend.key = element_blank(),
+    legend.text = element_text(size = 10),
+    axis.ticks = element_blank(),
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    panel.background = element_blank()
+  ) +
+  labs(color = "Scenario")  # Add legend title
+
+# Extract the legend
+legend <- cowplot::get_legend(shared_legend)
+
+# Combine the plots and add the shared legend
+combined_plot <- cowplot::plot_grid(
+  SBdepPlot, RecPlot,
+  ncol = 1,
+  labels = c("A", "B"),
+  label_size = 12,
+  align = "v",
+  rel_heights = c(1, 1)
+)
+
+final_plot <- cowplot::plot_grid(
+  combined_plot, legend,
+  ncol = 2,
+  rel_widths = c(4, 1)  # Adjust widths for plot and legend
+)
+
+# Print the final plot
+print(final_plot)
+
+
+```
+
+
+
+## Observed vs Fitted CPUE by scenario
+```{r, echo=FALSE, message=FALSE, fig.dim=c(8,12)}
+# Initialize a list to store plots for each scenario
+scenario_plots <- list()
+
+# Loop through each scenario in RepOut_list
+for (scenario_name in names(RepOut_list)) {
+  
+  # Remove the `skj_` prefix from the scenario name
+  cleaned_scenario_name <- sub("^skj_", "", scenario_name)
+  
+  # Ensure the cleaned scenario name exists in scenario_colors
+  if (!(cleaned_scenario_name %in% names(scenario_colors))) {
+    warning(paste("Scenario", cleaned_scenario_name, "is not in scenario_colors. Skipping."))
+    next
+  }
+  
+  # Extract the current scenario's data
+  obs <- as.data.frame(cpue_obs(RepOut_list[[scenario_name]]))
+  fit <- as.data.frame(cpue_pred(RepOut_list[[scenario_name]]))
+  
+  # Rename columns
+  names(obs)[names(obs) == "data"] <- "obs"
+  names(fit)[names(fit) == "data"] <- "fit"
+  
+  # Combine observed and fitted data
+  cpue <- merge(obs, fit)
+  cpue <- type.convert(cpue, as.is = TRUE)
+  
+  # Filter by fisheries and apply mapping
+  cpue <- cpue[cpue$unit %in% fisheries, ]
+  cpue$unit <- as.character(cpue$unit)
+  cpue$unit <- ifelse(
+    cpue$unit %in% names(fisheries_mapping),
+    fisheries_mapping[cpue$unit],  # Map to PLR names
+    paste("Unknown", cpue$unit)  # Handle unmapped units
+  )
+  
+  # Skip if no data after filtering
+  if (nrow(cpue) == 0) {
+    next
+  }
+  
+  # Add additional columns for visualization
+  cpue <- cpue %>%
+    mutate(
+      year_season = year + (season - 1) / 4,
+      scenario = factor(cleaned_scenario_name),  # Apply scenario order
+      obs = exp(obs),
+      fit = exp(fit)
+    )
+  
+  # Create the plot for the current scenario
+  scenario_plot <- ggplot(cpue, aes(x = year_season)) +
+    geom_point(aes(y = obs, color = "Observed"), size = 2, alpha = alpha, shape = 16) +  # Points for observed values
+    geom_line(aes(y = fit, color = scenario), alpha = alpha, linewidth = linewidth, linetype = "solid") +  # Lines for fitted values
+    facet_wrap(~unit, scales = "free_y", ncol = 1) +  # Facet by mapped unit names (PLR)
+    scale_color_manual(
+      values = c("Observed" = "grey", scenario_colors),  # Grey for observed, scenario colors for lines
+      labels = c("Observed" = "Observed", "Predicted" = "Predicted"),  # Legend labels
+      name = "Type"  # Legend title
+    ) +
+    labs(
+      title = paste("Observed vs Fitted CPUE:", cleaned_scenario_name),
+      x = "Year and Season Combined",
+      y = "CPUE"
+    ) +
+    theme(
+      strip.text = element_text(size = 10, face = "bold"),
+      legend.position = "none",
+      legend.title = element_text(face = "bold"),
+      legend.key = element_blank()
+    )
+  
+  # Store the plot in the list
+  scenario_plots[[scenario_name]] <- scenario_plot
+}
+
+# Display all the plots
+for (scenario_name in names(scenario_plots)) {
+  print(scenario_plots[[scenario_name]])  # Print each plot individually
+}
+
+```
+
+
+
+## Observed vs Fitted CPUE by index
+```{r, echo=FALSE, message=FALSE, fig.dim=c(8,12)}
+
+# Initialize a list to store plots for each unit
+unit_plots <- list()
+
+# Loop through each unit
+for (unit_num in fisheries) {
+  
+  # Combine data for all scenarios for the current unit
+  combined_cpue <- do.call(rbind, lapply(names(RepOut_list), function(scenario_name) {
+    
+    # Remove the `skj_` prefix from the scenario name
+    cleaned_scenario_name <- sub("^skj_", "", scenario_name)
+    
+    # Ensure the cleaned scenario name exists in scenario_colors
+    if (!(cleaned_scenario_name %in% names(scenario_colors))) {
+      warning(paste("Scenario", cleaned_scenario_name, "is not in scenario_colors. Skipping."))
+      return(NULL)
+    }
+    
+    # Extract the current scenario's data
+    obs <- as.data.frame(cpue_obs(RepOut_list[[scenario_name]]))
+    fit <- as.data.frame(cpue_pred(RepOut_list[[scenario_name]]))
+    
+    # Rename columns
+    names(obs)[names(obs) == "data"] <- "obs"
+    names(fit)[names(fit) == "data"] <- "fit"
+    
+    # Combine observed and fitted data
+    cpue <- merge(obs, fit)
+    cpue <- type.convert(cpue, as.is = TRUE)
+    
+    # Filter by the current unit and apply mapping
+    cpue <- cpue[cpue$unit == unit_num, ]
+    cpue$unit <- as.character(cpue$unit)
+    cpue$unit <- ifelse(
+      cpue$unit %in% names(fisheries_mapping),
+      fisheries_mapping[cpue$unit],  # Map unit to PLR names
+      paste("Unknown", cpue$unit)  # Handle unmapped units
+    )
+    
+    # Calculate exponential values and add scenario info
+    if (nrow(cpue) > 0) {
+      cpue <- cpue %>%
+        mutate(
+          year_season = year + (season - 1) / 4,
+          scenario = factor(cleaned_scenario_name, levels = names(scenario_colors)),
+          obs = exp(obs),
+          fit = exp(fit)
+        )
+    }
+    
+    return(cpue)
+  }))
+  
+  # Skip if no data for the current unit
+  if (is.null(combined_cpue) || nrow(combined_cpue) == 0) {
+    warning(paste("No data for unit", unit_num))
+    next
+  }
+  
+  # Create the plot for the current unit
+  unit_plot <- ggplot(combined_cpue, aes(x = year_season)) +
+    geom_point(aes(y = obs, color = "Observed"), size = 2, alpha = alpha, shape = 16) +  # Points for observed values
+    geom_line(aes(y = fit, color = scenario), alpha = alpha, linewidth = linewidth, linetype = "solid") +  # Lines for fitted values
+    facet_wrap(~scenario, scales = "free_y", ncol = 1) +  # Facet by scenario (1 column, vertical layout)
+    scale_color_manual(
+      values = c("Observed" = "grey", scenario_colors),  # Grey for observed, scenario colors for lines
+      name = "Type"  # Legend title
+    ) +
+    labs(
+      title = paste("Observed vs Fitted CPUE for", fisheries_mapping[unit_num]),
+      x = "Year and Season Combined",
+      y = "CPUE"
+    ) +
+    theme(
+      strip.text = element_text(size = 10, face = "bold"),  # Style facet labels
+      legend.position = "none",  # Remove legend
+      legend.title = element_text(face = "bold"),  # Bold legend title
+      legend.key = element_blank()  # Remove borders around legend keys
+    )
+  
+  # Store the plot for the current unit
+  unit_plots[[paste("Unit", unit_num)]] <- unit_plot
+}
+
+# Display all the plots
+for (unit_name in names(unit_plots)) {
+  print(unit_plots[[unit_name]])  # Print each plot individually
+}
+
+```
+
+
+
+## Residuals by index
+```{r, echo=FALSE, message=FALSE, fig.dim=c(8,12)}
+
+# Combine data for all units and scenarios
+all_combined_cpue <- do.call(rbind, lapply(names(RepOut_list), function(scenario_name) {
+  
+  # Remove the `skj_` prefix from the scenario name
+  cleaned_scenario_name <- sub("^skj_", "", scenario_name)
+  
+  # Ensure the cleaned scenario name exists in scenario_colors
+  if (!(cleaned_scenario_name %in% names(scenario_colors))) {
+    warning(paste("Scenario", cleaned_scenario_name, "is not in scenario_colors. Skipping."))
+    return(NULL)
+  }
+  
+  # Extract the current scenario's data
+  obs <- as.data.frame(cpue_obs(RepOut_list[[scenario_name]]))
+  fit <- as.data.frame(cpue_pred(RepOut_list[[scenario_name]]))
+  
+  # Rename columns
+  names(obs)[names(obs) == "data"] <- "obs"
+  names(fit)[names(fit) == "data"] <- "fit"
+  
+  # Combine observed and fitted data
+  cpue <- merge(obs, fit)
+  cpue <- type.convert(cpue, as.is = TRUE)
+  
+  # Filter to include only specific fisheries and apply mapping
+  cpue <- cpue[cpue$unit %in% fisheries, ]
+  cpue$unit <- as.character(cpue$unit)
+  cpue$unit <- ifelse(
+    cpue$unit %in% names(fisheries_mapping),
+    fisheries_mapping[cpue$unit],  # Map to PLR names
+    paste("Unknown", cpue$unit)  # Handle unmapped units
+  )
+  
+  # Calculate residuals and add scenario info
+  if (nrow(cpue) > 0) {
+    cpue <- cpue %>%
+      mutate(
+        year_season = year + (season - 1) / 4,
+        scenario = factor(cleaned_scenario_name, levels = names(scenario_colors)),  # Order facets
+        residual = exp(obs) - exp(fit)  # Calculate residuals
+      )
+  }
+  
+  return(cpue)
+}))
+
+# Skip if no data
+if (is.null(all_combined_cpue) || nrow(all_combined_cpue) == 0) {
+  stop("No data available for plotting.")
+}
+
+# Create residual plots for each mapped unit with consistent y-axis scaling
+unit_residual_plots <- list()
+for (unit_name in unique(all_combined_cpue$unit)) {
+  unit_data <- all_combined_cpue[all_combined_cpue$unit == unit_name, ]
+  unit_residual_plot <- ggplot(unit_data, aes(x = year_season, y = residual, color = scenario)) +
+    geom_point(alpha = 0.6) +  # Transparent points
+    geom_hline(yintercept = 0, linetype = "dashed", color = "black", linewidth = 0.8) +  # Zero line
+    facet_wrap(~scenario, scales = "fixed", ncol = 1) +  # Fixed y-axis scales across scenarios
+    scale_color_manual(
+      values = scenario_colors,  # Scenario colors
+      name = "Scenario"  # Legend title
+    ) +
+    labs(
+      title = paste("Residuals for", unit_name),
+      x = "Year and Season Combined",
+      y = "Residual (Observed - Predicted)"
+    ) +
+    theme(
+      strip.text = element_text(size = 10, face = "bold"),  # Style facet labels
+      legend.position = "none",  # Remove legend
+      legend.title = element_text(face = "bold"),  # Bold legend title
+      legend.key = element_blank()  # Remove borders around legend keys
+    )
+  unit_residual_plots[[paste("Unit", unit_name)]] <- unit_residual_plot
+}
+
+# Display all the residual plots
+for (unit_name in names(unit_residual_plots)) {
+  print(unit_residual_plots[[unit_name]])  # Print each residual plot individually
+}
+
+```
+

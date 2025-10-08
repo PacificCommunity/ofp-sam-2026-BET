@@ -65,25 +65,24 @@ CondorBox::CondorBox(
 # Retrieve and synchronise the output from the remote server
 # ----------------------------------------------------------
 
+output_dir="08Oct_2023_MFCL_loop" 
 
 setwd(here::here())
 
-for(i in 1:length(run_options)) {
+for(model_name in names(models))  {
   
-  #remote_dir <- paste0("Surplus-SBC/M_", i)
-  
-  remote_dir <- paste0(github_repo,"/",TestTopic,"/",names(run_options[i]),"_nsims_",nsims,"_adapt_",adaptDelta)
+  remote_dir <- paste0(github_repo,"/",output_dir,"/",model_name)
   
   CondorBox::BatchFileHandler(
     remote_user   = remote_user,
     remote_host   = remote_host,
     folder_name   = remote_dir,
     action        = "fetch",
-    fetch_dir     =  "results",
+    fetch_dir     =  "mfcl",
     extract_archive = TRUE,
     direct_extract = TRUE,
     archive_name    = "output_archive.tar.gz",  # Archive file to extract
-    extract_folder  = paste0("Surplus-SBC/results")
+    extract_folder  = paste0(github_repo,"/mfcl")
   )
   
 }
