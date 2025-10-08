@@ -1,33 +1,30 @@
 # Install the CondorBox package from GitHub (force reinstallation if needed)
 #remotes::install_github("PacificCommunity/ofp-sam-CondorBox", force = TRUE) ## Force reinstallation if updates are needed
 
-## Clean up the Docker resources interactively if needed
-# CondorBox::clean_docker_resources_interactive()
-
 # ---------------------------------------------------------------------------------
 # Set variables for the remote server and CondorBox job (ignore if running locally)
 # ---------------------------------------------------------------------------------
 
 remote_user <- "kyuhank"                                      # Remote server username (e.g., "kyuhank")
-remote_host <- "nouofpsubmit.corp.spc.int"                     # Remote server address (e.g., "nouofpsubmit.corp.spc.int")
+remote_host <- Sys.getenv("NOU_CONDOR")                       # Remote server address 
 github_pat <- Sys.getenv("GIT_PAT")                           # GitHub Personal Access Token (e.g., ghp_....)
 github_username <- "kyuhank"                                  # GitHub username (e.g., "kyuhank")
 github_org <- "PacificCommunity"                              # GitHub organisation name (e.g., "PacificCommunity")
-github_repo <- "ofp-sam-2026-bet"                       # GitHub repository name (e.g., "ofp-sam-docker4mfcl-example")
-docker_image <- "ghcr.io/pacificcommunity/bet-2026:v1.1"     # Docker image to use (e.g., "kyuhank/skj2025:1.0.4")
+github_repo <- "ofp-sam-2026-bet"                             # GitHub repository name (e.g., "ofp-sam-docker4mfcl-example")
+docker_image <- "ghcr.io/pacificcommunity/bet-2026:v1.1"      # Docker image to use (e.g., "kyuhank/skj2025:1.0.4")
 condor_memory <- "8GB"                                        # Memory request for the Condor job (e.g., "6GB")
 condor_disk <- "10GB"
-condor_cpus <- 2                                               # CPU request for the Condor job (e.g., 4)
-branch <- "main"                                           # Branch of git repository to use 
+condor_cpus <- 2                                              # CPU request for the Condor job ")(e.g., 4)
+branch <- "main"                                              # Branch of git repository to use 
 
 # ---------------------------------------
 # Run the job on Condor through CondorBox
 # ---------------------------------------
 
-dir="08Oct_2023_MFCL_loop" 
-make="run"
+dir="08Oct_2023_MFCL_loop2" 
+make="run plot"
 
-source("model_configs.R") 
+source("configs/test.R") 
 
 for(model_name in names(models)) {
 
