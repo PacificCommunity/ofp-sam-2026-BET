@@ -9,11 +9,11 @@ docker-run:
 	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript run_mfcl.R
 
 clean-mfcl:
-	@echo "Cleaning up MFCL/2023 folder, keeping only: doitall.sh mfcl.cfg mfclo64 bet.age_length bet.frq bet.ini bet.tag"
-	@if [ -d "MFCL/2023" ]; then \
-		cd MFCL/2023 && \
+	@echo "Cleaning up base/2023 folder, keeping only: doitall.sh mfcl.cfg mfclo64 bet.age_length bet.frq bet.ini bet.tag"
+	@if [ -d "base/2023" ]; then \
+		cd base/2023 && \
 		find . -maxdepth 1 -type f ! -name "doitall.sh" ! -name "mfcl.cfg" ! -name "mfclo64" ! -name "bet.age_length" ! -name "bet.frq" ! -name "bet.ini" ! -name "bet.tag" ! -name "11.par" -delete; \
 	else \
-		echo "MFCL/2023 directory not found"; \
+		echo "base/2023 directory not found"; \
 	fi
-	@echo "MFCL/2023 cleanup completed"
+	@echo "base/2023 cleanup completed"
