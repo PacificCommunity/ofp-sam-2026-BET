@@ -6,33 +6,53 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  pull-requests: write
+  issues: write
+
 jobs:
+  check-changes:
+    runs-on: ubuntu-22.04
+    outputs:
+      model: ${{ steps.changes.outputs.model }}
+      report: ${{ steps.changes.outputs.report }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Check for file changes
+        uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: |
+            model:
+              - '**'
+              - '!report/**'
+              - '!README.md'
+              - '!.github/**'
+            report:
+              - 'report/**'
+              - '**.qmd'
+              - '**.rmd'
+
   test-model:
     runs-on: ubuntu-22.04
-    if: ${{ !contains(github.event.head_commit.message, '[skip-model]') }}
+    needs: check-changes
+    if: ${{ needs.check-changes.outputs.model == 'true' }}
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
     
-    - name: Check for model changes
-      uses: dorny/paths-filter@v2
-      id: model-changes
-      with:
-        filters: |
-          model:
-            - '**'
-            - '!report/**'
-            - '!README.md'
-            - '!.github/**'
-    
-    - name: Test MFCL model run
-      if: steps.model-changes.outputs.model == 'true'
+    - name: Run MFCL model test
       run: make docker-run
       timeout-minutes: 60
     
     - name: Upload model outputs
-      if: steps.model-changes.outputs.model == 'true' && always()
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: mfcl-outputs-${{ github.sha }}
@@ -42,12 +62,12 @@ jobs:
           plots/
         retention-days: 30
     
-    - name: Test plotting
-      if: steps.model-changes.outputs.model == 'true' && success()
+    - name: Generate plots
+      if: success()
       run: make docker-plot
     
-    - name: Upload plots
-      if: steps.model-changes.outputs.model == 'true' && success()
+    - name: Upload generated plots
+      if: success()
       uses: actions/upload-artifact@v4
       with:
         name: mfcl-plots-${{ github.sha }}
@@ -56,51 +76,42 @@ jobs:
 
   build-pdf:
     runs-on: ubuntu-22.04
-    if: ${{ !contains(github.event.head_commit.message, '[skip-pdf]') }}
+    needs: check-changes
+    if: ${{ needs.check-changes.outputs.report == 'true' }}
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
     
-    - name: Check for report changes
-      uses: dorny/paths-filter@v2
-      id: report-changes
-      with:
-        filters: |
-          report:
-            - 'report/**'
-            - '**.qmd'
-    
     - name: Build PDF report
-      if: steps.report-changes.outputs.report == 'true'
       run: make docker-report
       timeout-minutes: 30
     
     - name: Deploy PDF to GitHub Pages
-      if: steps.report-changes.outputs.report == 'true' && success() && github.event_name == 'pull_request'
+      if: success()
       uses: peaceiris/actions-gh-pages@v3
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         publish_branch: gh-pages
         publish_dir: report
-        destination_dir: pr-${{ github.event.number }}
+        force_orphan: true
 
-    - name: Comment PDF URL on PR
-      if: steps.report-changes.outputs.report == 'true' && success() && github.event_name == 'pull_request'
+    - name: Comment PDF URL on Pull Request
+      if: success() && github.event_name == 'pull_request'
       uses: actions/github-script@v6
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
-          const pdfUrl = `https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/pr-${{ github.event.number }}/bet-2026.pdf`;
+          const pdfUrl = `https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/bet-2026.pdf`;
           github.rest.issues.createComment({
             issue_number: context.issue.number,
             owner: context.repo.owner,
             repo: context.repo.repo,
-            body: `📄 PDF 리포트가 업데이트되었습니다: [PDF 보기](${pdfUrl})`
+            body: `📄 PDF report has been generated and is available here: [View PDF](${pdfUrl})`
           });
 
     - name: Upload PDF artifact
-      if: steps.report-changes.outputs.report == 'true' && success()
+      if: success()
       uses: actions/upload-artifact@v4
       with:
         name: pdf-report-${{ github.sha }}
