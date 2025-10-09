@@ -69,7 +69,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: mfcl-plots-${{ github.sha }}
-        path: plot/
+        path: plot/plots.html
         retention-days: 90
 
   build-pdf:
@@ -98,5 +98,5 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: pdf-report-${{ github.sha }}
-        path: report/
+        path: report/bet-2026.pdf
         retention-days: 90
