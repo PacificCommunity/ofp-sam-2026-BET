@@ -25,10 +25,9 @@ jobs:
         with:
           filters: |
             model:
-              - '!report/**'
-              - '!presentation/**'
+              - '*.qmd'
             report:
-              - 'report/**'
+              - 'report/*.qmd'
       
       - name: Debug - Show what changed
         run: |
