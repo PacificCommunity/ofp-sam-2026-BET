@@ -24,7 +24,7 @@ branch <- "main"                                              # Branch of git re
 setwd(here::here())
 
 dir="10_oct_2025_test" 
-make="run plot report"
+make="run plot"
 
 source("configs/test.R") 
 
