@@ -8,10 +8,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-  pull-requests: write
-  issues: write
 
 jobs:
   check-changes:
@@ -74,14 +70,10 @@ jobs:
         path: plot/
         retention-days: 90
 
-  build-and-deploy:
+  build-pdf:
     runs-on: ubuntu-22.04
     needs: check-changes
     if: ${{ needs.check-changes.outputs.report == 'true' }}
-    
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     
     steps:
     - name: Checkout repository
@@ -98,51 +90,6 @@ jobs:
         find . -name "*.pdf" -type f
         echo "=== File sizes ==="
         du -h report/*.pdf || echo "No PDF files found"
-    
-    - name: Create index.html for GitHub Pages
-      run: |
-        cd report
-        rm -f README.md readme.md
-        echo '<!DOCTYPE html>' > index.html
-        echo '<html><head><title>MFCL PDF Report</title></head><body>' >> index.html
-        echo '<h1>MFCL Fisheries Stock Assessment Report</h1>' >> index.html
-        if [ -f "bet-2026.pdf" ]; then
-          echo '<p><a href="bet-2026.pdf" target="_blank" style="font-size: 18px; color: #0366d6;">📄 View PDF Report</a></p>' >> index.html
-        else
-          echo '<p style="color: red;">❌ PDF file not found</p>' >> index.html
-        fi
-        echo '<p><small>Generated on: '$(date)'</small></p>' >> index.html
-        echo '</body></html>' >> index.html
-        echo "=== index.html content ==="
-        cat index.html
-        ls -la
-    
-    - name: Setup Pages
-      uses: actions/configure-pages@v4
-    
-    - name: Upload artifact
-      uses: actions/upload-pages-artifact@v3
-      with:
-        path: report/
-    
-    - name: Deploy to GitHub Pages
-      id: deployment
-      uses: actions/deploy-pages@v4
-
-    - name: Comment PDF URL on Pull Request
-      if: success() && github.event_name == 'pull_request'
-      uses: actions/github-script@v7
-      with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        script: |
-          const pdfUrl = `https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/bet-2026.pdf`;
-          const indexUrl = `https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/`;
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: `📄 PDF report has been generated and deployed!\n\n- [📄 View PDF directly](${pdfUrl})\n- [🏠 Go to report page](${indexUrl})\n\n*Report will be available in a few minutes.*`
-          });
 
     - name: Upload PDF artifact
       if: success()
