@@ -23,7 +23,7 @@ branch <- "main"                                              # Branch of git re
 
 setwd(here::here())
 
-dir="10_oct_2025_test" 
+dir="10_oct_2025_sens" 
 make="run plot"
 
 source("configs/test.R") 
@@ -57,7 +57,7 @@ CondorBox::CondorBox(
 # Retrieve and synchronise the output from the remote server
 # ----------------------------------------------------------
 
-output_dir="10_oct_2025_test" 
+output_dir="10_oct_2025_sens" 
 
 setwd(here::here())
 
@@ -70,11 +70,11 @@ for(model_name in names(models))  {
     remote_host   = remote_host,
     folder_name   = remote_dir,
     action        = "fetch",
-    fetch_dir     =  "mfcl",
+    fetch_dir     =  "model",
     extract_archive = TRUE,
     direct_extract = TRUE,
     archive_name    = "output_archive.tar.gz",  # Archive file to extract
-    extract_folder  = paste0(github_repo,"/mfcl")
+    extract_folder  = paste0(github_repo,"/model")
   )
   
 }

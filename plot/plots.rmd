@@ -34,6 +34,7 @@ library(tidyr)
 library(patchwork)
 library(reshape2)
 library(kableExtra)
+library(viridis)
 
 theme_set(theme_cowplot())
 
@@ -72,25 +73,25 @@ maxYear=2021
 # opacity and line width
 alpha = 0.5
 linewidth = 1
-
-scenario_colors <- c(
-  "base" = "#1b9e77",
-  "m1" = "#d95f02",
-  "m2" = "#e6ab02"
-)
-
-# Fisheries mapping (option for renaming fisheries)
-fisheries_mapping <- c(
-  "32" = "PLR1",
-  "33" = "PLR2",
-  "34" = "PLR3",
-  "35" = "PLR4",
-  "37" = "PLR7",
-  "38" = "PLR8"
-)
-
-# Filtered fisheries
-fisheries <- names(fisheries_mapping)
+# 
+# scenario_colors <- c(
+#   "base" = "#1b9e77",
+#   "m1" = "#d95f02",
+#   "m2" = "#e6ab02"
+# )
+# 
+# # Fisheries mapping (option for renaming fisheries)
+# fisheries_mapping <- c(
+#   "32" = "PLR1",
+#   "33" = "PLR2",
+#   "34" = "PLR3",
+#   "35" = "PLR4",
+#   "37" = "PLR7",
+#   "38" = "PLR8"
+# )
+# 
+# # Filtered fisheries
+# fisheries <- names(fisheries_mapping)
 
 model_names <- names(ParOut_list)
 
@@ -149,17 +150,24 @@ kable(params_df, caption = "Basic model info") %>%
 ## Spawning depletion
 ```{r, echo=FALSE, message=F, fig.dim=c(8,6)}
 
-SBdep=GetQuantSimple(SBSBF0, RepOut_list, minYear, maxYear)
-Rec=GetQuantSimple(eq_rec, RepOut_list, minYear, maxYear, scale_factor=1/1e6)
+SBdep <- GetQuantSimple(SBSBF0, RepOut_list, minYear, maxYear)
+Rec <- GetQuantSimple(eq_rec, RepOut_list, minYear, maxYear, scale_factor = 1/1e6)
 
-# Ensure consistent scenario ordering in SBdep and Rec
-SBdep <- SBdep %>%
-  mutate(Scenario = factor(Scenario))
+# Ensure consistent scenario ordering
+SBdep <- SBdep %>% mutate(Scenario = factor(Scenario))
+Rec <- Rec %>% mutate(Scenario = factor(Scenario))
 
-Rec <- Rec %>%
-  mutate(Scenario = factor(Scenario))
+## Define generic colour palette automatically from scenarios
+scenario_levels <- sort(unique(SBdep$Scenario))
+n_colors <- length(scenario_levels)
+scenario_colors <- setNames(
+  viridis(n_colors, option = "D", direction = 1),
+  scenario_levels
+)
+SBdep$Scenario <- factor(SBdep$Scenario, levels = scenario_levels)
+Rec$Scenario <- factor(Rec$Scenario, levels = scenario_levels)
 
-## plot
+## Plot 1: SB/SBF=0
 SBdepPlot <- ggplot(SBdep, aes(x = Year, y = Quant, group = Scenario, color = Scenario)) + 
   geom_line(linewidth = linewidth, alpha = alpha) + 
   scale_color_manual(values = scenario_colors) + 
@@ -168,11 +176,11 @@ SBdepPlot <- ggplot(SBdep, aes(x = Year, y = Quant, group = Scenario, color = Sc
   geom_hline(yintercept = 0.2, linetype = "dashed", color = "darkred") +
   geom_hline(yintercept = 0.5, linetype = "dashed", color = "darkgreen") +
   theme(
-    legend.position = "none",  # Hide legend for individual plot
+    legend.position = "none",
     strip.text = element_text(size = 10)
   )
 
-## plot
+## Plot 2: Recruitment
 RecPlot <- ggplot(Rec, aes(x = Year, y = Quant, group = Scenario, color = Scenario)) + 
   geom_line(linewidth = linewidth, alpha = alpha) + 
   coord_cartesian(ylim = c(0, NA)) +
@@ -182,19 +190,19 @@ RecPlot <- ggplot(Rec, aes(x = Year, y = Quant, group = Scenario, color = Scenar
     y = bquote("Spawning Potential (" * 10^3 * " MT)")
   ) +
   theme(
-    legend.position = "none",  # Hide legend for individual plot
+    legend.position = "none",
     strip.text = element_text(size = 10)
   )
 
-# Create a shared legend plot with a dummy dataset
+# Shared legend
 legend_data <- data.frame(
-  Year = 1:length(scenario_colors),  # Dummy x values
-  Quant = 1:length(scenario_colors),  # Dummy y values
-  Scenario = factor(names(scenario_colors), levels = names(scenario_colors))  # Use all scenarios
+  Year = seq_along(scenario_colors),
+  Quant = seq_along(scenario_colors),
+  Scenario = factor(names(scenario_colors), levels = names(scenario_colors))
 )
 
 shared_legend <- ggplot(legend_data, aes(x = Year, y = Quant, color = Scenario)) +
-  geom_line(linewidth = linewidth, alpha = alpha) +  # Match alpha and linewidth
+  geom_line(linewidth = linewidth, alpha = alpha) +
   scale_color_manual(values = scenario_colors) +
   theme(
     legend.position = "right",
@@ -207,12 +215,10 @@ shared_legend <- ggplot(legend_data, aes(x = Year, y = Quant, color = Scenario))
     axis.title = element_blank(),
     panel.background = element_blank()
   ) +
-  labs(color = "Scenario")  # Add legend title
+  labs(color = "Scenario")
 
-# Extract the legend
 legend <- cowplot::get_legend(shared_legend)
 
-# Combine the plots and add the shared legend
 combined_plot <- cowplot::plot_grid(
   SBdepPlot, RecPlot,
   ncol = 1,
@@ -225,12 +231,10 @@ combined_plot <- cowplot::plot_grid(
 final_plot <- cowplot::plot_grid(
   combined_plot, legend,
   ncol = 2,
-  rel_widths = c(4, 1)  # Adjust widths for plot and legend
+  rel_widths = c(4, 1)
 )
 
-# Print the final plot
 print(final_plot)
-
 
 ```
 
