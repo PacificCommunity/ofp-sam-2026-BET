@@ -21,7 +21,7 @@ branch <- "main"                                              # Branch of git re
 # Run the job on Condor through CondorBox
 # ---------------------------------------
 
-dir="09Oct_2023_MFCL_loop2" 
+dir="09Oct_2023_MFCL_loop22" 
 make="run plot"
 
 source("configs/test.R") 
