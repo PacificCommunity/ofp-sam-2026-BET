@@ -87,6 +87,28 @@ jobs:
       run: make docker-report
       timeout-minutes: 30
     
+    - name: Debug - Check generated files
+      run: |
+        echo "=== Current directory contents ==="
+        ls -la
+        echo "=== Report directory contents ==="
+        ls -la report/
+        echo "=== Looking for PDF files ==="
+        find . -name "*.pdf" -type f
+        echo "=== File sizes ==="
+        du -h report/*.pdf || echo "No PDF files found"
+    
+    - name: Create index.html for GitHub Pages
+      run: |
+        cd report
+        echo '<!DOCTYPE html>' > index.html
+        echo '<html><head><title>MFCL PDF Report</title></head><body>' >> index.html
+        echo '<h1>MFCL Fisheries Stock Assessment Report</h1>' >> index.html
+        echo '<p><a href="bet-2026.pdf" target="_blank">📄 View PDF Report</a></p>' >> index.html
+        echo '<p><small>Generated on: $(date)</small></p>' >> index.html
+        echo '</body></html>' >> index.html
+        cat index.html
+    
     - name: Deploy PDF to GitHub Pages
       if: success()
       uses: peaceiris/actions-gh-pages@v3
@@ -103,11 +125,12 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
           const pdfUrl = `https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/bet-2026.pdf`;
+          const indexUrl = `https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/`;
           github.rest.issues.createComment({
             issue_number: context.issue.number,
             owner: context.repo.owner,
             repo: context.repo.repo,
-            body: `📄 PDF report has been generated and is available here: [View PDF](${pdfUrl})`
+            body: `📄 PDF report has been generated and deployed to GitHub Pages!\n\n- [📄 View PDF directly](${pdfUrl})\n- [🏠 Go to report page](${indexUrl})\n\n*Report will be available in a few minutes.*`
           });
 
     - name: Upload PDF artifact
