@@ -10,6 +10,7 @@ base_dir<-Sys.getenv("base_dir", "mfcl/inputs/2023")
 model_dir<-Sys.getenv("model_dir", "model/base")
 mfcl_commands <- Sys.getenv("mfcl_commands", paste(program_path,"bet.frq 11.par 12.par -switch 1 1 1 1"))
 
+
 ## create model directory and copy files
 dir.create(model_dir, recursive = TRUE, showWarnings = FALSE)
 files_to_copy <- list.files(base_dir, full.names = TRUE)
