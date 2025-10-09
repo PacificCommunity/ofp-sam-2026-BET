@@ -131,6 +131,7 @@ csl: apa.csl
 ```
 
 
+
 <!-- Tables -->
 
 ```{r Tables, child='sections/Tables.qmd'}
