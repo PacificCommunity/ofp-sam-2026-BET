@@ -19,6 +19,10 @@ docker-run:
 	
 docker-plot:
 	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript -e "rmarkdown::render('plot/plots.rmd')"
+
+docker-report:
+	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) quarto render report/bet-2026.qmd
+
 	
-.PHONY: plot run docker-run docker-plot prepaw report
+.PHONY: plot run docker-run docker-plot prepaw report docker-report
 
