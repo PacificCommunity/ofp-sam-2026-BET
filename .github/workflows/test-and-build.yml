@@ -1,0 +1,143 @@
+name: Test MFCL Model and Build PDF
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  check-changes:
+    runs-on: ubuntu-22.04
+    outputs:
+      model: ${{ steps.changes.outputs.model }}
+      report: ${{ steps.changes.outputs.report }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Check for file changes
+        uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: |
+            model:
+              - '**'
+              - '!report/**'
+              - '!README.md'
+              - '!.github/**'
+            report:
+              - 'report/**'
+              - '**.qmd'
+              - '**.rmd'
+
+  test-model:
+    runs-on: ubuntu-22.04
+    needs: check-changes
+    if: ${{ needs.check-changes.outputs.model == 'true' }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Run MFCL model test
+      run: make docker-run
+      timeout-minutes: 60
+    
+    - name: Upload model outputs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: mfcl-outputs-${{ github.sha }}
+        path: |
+          output/
+          logs/
+          plots/
+        retention-days: 30
+    
+    - name: Generate plots
+      if: success()
+      run: make docker-plot
+    
+    - name: Upload generated plots
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: mfcl-plots-${{ github.sha }}
+        path: plot/
+        retention-days: 90
+
+  build-pdf:
+    runs-on: ubuntu-22.04
+    needs: check-changes
+    if: ${{ needs.check-changes.outputs.report == 'true' }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Build PDF report
+      run: make docker-report
+      timeout-minutes: 30
+    
+    - name: Debug - Check generated files
+      run: |
+        echo "=== Current directory contents ==="
+        ls -la
+        echo "=== Report directory contents ==="
+        ls -la report/
+        echo "=== Looking for PDF files ==="
+        find . -name "*.pdf" -type f
+        echo "=== File sizes ==="
+        du -h report/*.pdf || echo "No PDF files found"
+    
+    - name: Create index.html for GitHub Pages
+      run: |
+        cd report
+        echo '<!DOCTYPE html>' > index.html
+        echo '<html><head><title>MFCL PDF Report</title></head><body>' >> index.html
+        echo '<h1>MFCL Fisheries Stock Assessment Report</h1>' >> index.html
+        echo '<p><a href="bet-2026.pdf" target="_blank">📄 View PDF Report</a></p>' >> index.html
+        echo '<p><small>Generated on: $(date)</small></p>' >> index.html
+        echo '</body></html>' >> index.html
+        cat index.html
+    
+    - name: Deploy PDF to GitHub Pages
+      if: success()
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_branch: gh-pages
+        publish_dir: report
+        force_orphan: true
+
+    - name: Comment PDF URL on Pull Request
+      if: success() && github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const pdfUrl = `https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/bet-2026.pdf`;
+          const indexUrl = `https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/`;
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `📄 PDF report has been generated and deployed to GitHub Pages!\n\n- [📄 View PDF directly](${pdfUrl})\n- [🏠 Go to report page](${indexUrl})\n\n*Report will be available in a few minutes.*`
+          });
+
+    - name: Upload PDF artifact
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: pdf-report-${{ github.sha }}
+        path: report/
+        retention-days: 90
+
