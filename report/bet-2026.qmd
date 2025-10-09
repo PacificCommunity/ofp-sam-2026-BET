@@ -130,7 +130,6 @@ csl: apa.csl
 <br>
 ```
 
-
 <!-- Tables -->
 
 ```{r Tables, child='sections/Tables.qmd'}
