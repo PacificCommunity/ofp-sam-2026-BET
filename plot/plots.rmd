@@ -236,275 +236,275 @@ print(final_plot)
 
 
 
-## Observed vs Fitted CPUE by scenario
-```{r, echo=FALSE, message=FALSE, fig.dim=c(8,12)}
-# Initialize a list to store plots for each scenario
-scenario_plots <- list()
+<!-- ## Observed vs Fitted CPUE by scenario -->
+<!-- ```{r, echo=FALSE, message=FALSE, fig.dim=c(8,12)} -->
+<!-- # Initialize a list to store plots for each scenario -->
+<!-- scenario_plots <- list() -->
 
-# Loop through each scenario in RepOut_list
-for (scenario_name in names(RepOut_list)) {
-  
-  # Remove the `skj_` prefix from the scenario name
-  cleaned_scenario_name <- sub("^skj_", "", scenario_name)
-  
-  # Ensure the cleaned scenario name exists in scenario_colors
-  if (!(cleaned_scenario_name %in% names(scenario_colors))) {
-    warning(paste("Scenario", cleaned_scenario_name, "is not in scenario_colors. Skipping."))
-    next
-  }
-  
-  # Extract the current scenario's data
-  obs <- as.data.frame(cpue_obs(RepOut_list[[scenario_name]]))
-  fit <- as.data.frame(cpue_pred(RepOut_list[[scenario_name]]))
-  
-  # Rename columns
-  names(obs)[names(obs) == "data"] <- "obs"
-  names(fit)[names(fit) == "data"] <- "fit"
-  
-  # Combine observed and fitted data
-  cpue <- merge(obs, fit)
-  cpue <- type.convert(cpue, as.is = TRUE)
-  
-  # Filter by fisheries and apply mapping
-  cpue <- cpue[cpue$unit %in% fisheries, ]
-  cpue$unit <- as.character(cpue$unit)
-  cpue$unit <- ifelse(
-    cpue$unit %in% names(fisheries_mapping),
-    fisheries_mapping[cpue$unit],  # Map to PLR names
-    paste("Unknown", cpue$unit)  # Handle unmapped units
-  )
-  
-  # Skip if no data after filtering
-  if (nrow(cpue) == 0) {
-    next
-  }
-  
-  # Add additional columns for visualization
-  cpue <- cpue %>%
-    mutate(
-      year_season = year + (season - 1) / 4,
-      scenario = factor(cleaned_scenario_name),  # Apply scenario order
-      obs = exp(obs),
-      fit = exp(fit)
-    )
-  
-  # Create the plot for the current scenario
-  scenario_plot <- ggplot(cpue, aes(x = year_season)) +
-    geom_point(aes(y = obs, color = "Observed"), size = 2, alpha = alpha, shape = 16) +  # Points for observed values
-    geom_line(aes(y = fit, color = scenario), alpha = alpha, linewidth = linewidth, linetype = "solid") +  # Lines for fitted values
-    facet_wrap(~unit, scales = "free_y", ncol = 1) +  # Facet by mapped unit names (PLR)
-    scale_color_manual(
-      values = c("Observed" = "grey", scenario_colors),  # Grey for observed, scenario colors for lines
-      labels = c("Observed" = "Observed", "Predicted" = "Predicted"),  # Legend labels
-      name = "Type"  # Legend title
-    ) +
-    labs(
-      title = paste("Observed vs Fitted CPUE:", cleaned_scenario_name),
-      x = "Year and Season Combined",
-      y = "CPUE"
-    ) +
-    theme(
-      strip.text = element_text(size = 10, face = "bold"),
-      legend.position = "none",
-      legend.title = element_text(face = "bold"),
-      legend.key = element_blank()
-    )
-  
-  # Store the plot in the list
-  scenario_plots[[scenario_name]] <- scenario_plot
-}
+<!-- # Loop through each scenario in RepOut_list -->
+<!-- for (scenario_name in names(RepOut_list)) { -->
 
-# Display all the plots
-for (scenario_name in names(scenario_plots)) {
-  print(scenario_plots[[scenario_name]])  # Print each plot individually
-}
+<!--   # Remove the `skj_` prefix from the scenario name -->
+<!--   cleaned_scenario_name <- sub("^skj_", "", scenario_name) -->
 
-```
+<!--   # Ensure the cleaned scenario name exists in scenario_colors -->
+<!--   if (!(cleaned_scenario_name %in% names(scenario_colors))) { -->
+<!--     warning(paste("Scenario", cleaned_scenario_name, "is not in scenario_colors. Skipping.")) -->
+<!--     next -->
+<!--   } -->
 
+<!--   # Extract the current scenario's data -->
+<!--   obs <- as.data.frame(cpue_obs(RepOut_list[[scenario_name]])) -->
+<!--   fit <- as.data.frame(cpue_pred(RepOut_list[[scenario_name]])) -->
 
+<!--   # Rename columns -->
+<!--   names(obs)[names(obs) == "data"] <- "obs" -->
+<!--   names(fit)[names(fit) == "data"] <- "fit" -->
 
-## Observed vs Fitted CPUE by index
-```{r, echo=FALSE, message=FALSE, fig.dim=c(8,12)}
+<!--   # Combine observed and fitted data -->
+<!--   cpue <- merge(obs, fit) -->
+<!--   cpue <- type.convert(cpue, as.is = TRUE) -->
 
-# Initialize a list to store plots for each unit
-unit_plots <- list()
+<!--   # Filter by fisheries and apply mapping -->
+<!--   cpue <- cpue[cpue$unit %in% fisheries, ] -->
+<!--   cpue$unit <- as.character(cpue$unit) -->
+<!--   cpue$unit <- ifelse( -->
+<!--     cpue$unit %in% names(fisheries_mapping), -->
+<!--     fisheries_mapping[cpue$unit],  # Map to PLR names -->
+<!--     paste("Unknown", cpue$unit)  # Handle unmapped units -->
+<!--   ) -->
 
-# Loop through each unit
-for (unit_num in fisheries) {
-  
-  # Combine data for all scenarios for the current unit
-  combined_cpue <- do.call(rbind, lapply(names(RepOut_list), function(scenario_name) {
-    
-    # Remove the `skj_` prefix from the scenario name
-    cleaned_scenario_name <- sub("^skj_", "", scenario_name)
-    
-    # Ensure the cleaned scenario name exists in scenario_colors
-    if (!(cleaned_scenario_name %in% names(scenario_colors))) {
-      warning(paste("Scenario", cleaned_scenario_name, "is not in scenario_colors. Skipping."))
-      return(NULL)
-    }
-    
-    # Extract the current scenario's data
-    obs <- as.data.frame(cpue_obs(RepOut_list[[scenario_name]]))
-    fit <- as.data.frame(cpue_pred(RepOut_list[[scenario_name]]))
-    
-    # Rename columns
-    names(obs)[names(obs) == "data"] <- "obs"
-    names(fit)[names(fit) == "data"] <- "fit"
-    
-    # Combine observed and fitted data
-    cpue <- merge(obs, fit)
-    cpue <- type.convert(cpue, as.is = TRUE)
-    
-    # Filter by the current unit and apply mapping
-    cpue <- cpue[cpue$unit == unit_num, ]
-    cpue$unit <- as.character(cpue$unit)
-    cpue$unit <- ifelse(
-      cpue$unit %in% names(fisheries_mapping),
-      fisheries_mapping[cpue$unit],  # Map unit to PLR names
-      paste("Unknown", cpue$unit)  # Handle unmapped units
-    )
-    
-    # Calculate exponential values and add scenario info
-    if (nrow(cpue) > 0) {
-      cpue <- cpue %>%
-        mutate(
-          year_season = year + (season - 1) / 4,
-          scenario = factor(cleaned_scenario_name, levels = names(scenario_colors)),
-          obs = exp(obs),
-          fit = exp(fit)
-        )
-    }
-    
-    return(cpue)
-  }))
-  
-  # Skip if no data for the current unit
-  if (is.null(combined_cpue) || nrow(combined_cpue) == 0) {
-    warning(paste("No data for unit", unit_num))
-    next
-  }
-  
-  # Create the plot for the current unit
-  unit_plot <- ggplot(combined_cpue, aes(x = year_season)) +
-    geom_point(aes(y = obs, color = "Observed"), size = 2, alpha = alpha, shape = 16) +  # Points for observed values
-    geom_line(aes(y = fit, color = scenario), alpha = alpha, linewidth = linewidth, linetype = "solid") +  # Lines for fitted values
-    facet_wrap(~scenario, scales = "free_y", ncol = 1) +  # Facet by scenario (1 column, vertical layout)
-    scale_color_manual(
-      values = c("Observed" = "grey", scenario_colors),  # Grey for observed, scenario colors for lines
-      name = "Type"  # Legend title
-    ) +
-    labs(
-      title = paste("Observed vs Fitted CPUE for", fisheries_mapping[unit_num]),
-      x = "Year and Season Combined",
-      y = "CPUE"
-    ) +
-    theme(
-      strip.text = element_text(size = 10, face = "bold"),  # Style facet labels
-      legend.position = "none",  # Remove legend
-      legend.title = element_text(face = "bold"),  # Bold legend title
-      legend.key = element_blank()  # Remove borders around legend keys
-    )
-  
-  # Store the plot for the current unit
-  unit_plots[[paste("Unit", unit_num)]] <- unit_plot
-}
+<!--   # Skip if no data after filtering -->
+<!--   if (nrow(cpue) == 0) { -->
+<!--     next -->
+<!--   } -->
 
-# Display all the plots
-for (unit_name in names(unit_plots)) {
-  print(unit_plots[[unit_name]])  # Print each plot individually
-}
+<!--   # Add additional columns for visualization -->
+<!--   cpue <- cpue %>% -->
+<!--     mutate( -->
+<!--       year_season = year + (season - 1) / 4, -->
+<!--       scenario = factor(cleaned_scenario_name),  # Apply scenario order -->
+<!--       obs = exp(obs), -->
+<!--       fit = exp(fit) -->
+<!--     ) -->
 
-```
+<!--   # Create the plot for the current scenario -->
+<!--   scenario_plot <- ggplot(cpue, aes(x = year_season)) + -->
+<!--     geom_point(aes(y = obs, color = "Observed"), size = 2, alpha = alpha, shape = 16) +  # Points for observed values -->
+<!--     geom_line(aes(y = fit, color = scenario), alpha = alpha, linewidth = linewidth, linetype = "solid") +  # Lines for fitted values -->
+<!--     facet_wrap(~unit, scales = "free_y", ncol = 1) +  # Facet by mapped unit names (PLR) -->
+<!--     scale_color_manual( -->
+<!--       values = c("Observed" = "grey", scenario_colors),  # Grey for observed, scenario colors for lines -->
+<!--       labels = c("Observed" = "Observed", "Predicted" = "Predicted"),  # Legend labels -->
+<!--       name = "Type"  # Legend title -->
+<!--     ) + -->
+<!--     labs( -->
+<!--       title = paste("Observed vs Fitted CPUE:", cleaned_scenario_name), -->
+<!--       x = "Year and Season Combined", -->
+<!--       y = "CPUE" -->
+<!--     ) + -->
+<!--     theme( -->
+<!--       strip.text = element_text(size = 10, face = "bold"), -->
+<!--       legend.position = "none", -->
+<!--       legend.title = element_text(face = "bold"), -->
+<!--       legend.key = element_blank() -->
+<!--     ) -->
+
+<!--   # Store the plot in the list -->
+<!--   scenario_plots[[scenario_name]] <- scenario_plot -->
+<!-- } -->
+
+<!-- # Display all the plots -->
+<!-- for (scenario_name in names(scenario_plots)) { -->
+<!--   print(scenario_plots[[scenario_name]])  # Print each plot individually -->
+<!-- } -->
+
+<!-- ``` -->
 
 
 
-## Residuals by index
-```{r, echo=FALSE, message=FALSE, fig.dim=c(8,12)}
+<!-- ## Observed vs Fitted CPUE by index -->
+<!-- ```{r, echo=FALSE, message=FALSE, fig.dim=c(8,12)} -->
 
-# Combine data for all units and scenarios
-all_combined_cpue <- do.call(rbind, lapply(names(RepOut_list), function(scenario_name) {
-  
-  # Remove the `skj_` prefix from the scenario name
-  cleaned_scenario_name <- sub("^skj_", "", scenario_name)
-  
-  # Ensure the cleaned scenario name exists in scenario_colors
-  if (!(cleaned_scenario_name %in% names(scenario_colors))) {
-    warning(paste("Scenario", cleaned_scenario_name, "is not in scenario_colors. Skipping."))
-    return(NULL)
-  }
-  
-  # Extract the current scenario's data
-  obs <- as.data.frame(cpue_obs(RepOut_list[[scenario_name]]))
-  fit <- as.data.frame(cpue_pred(RepOut_list[[scenario_name]]))
-  
-  # Rename columns
-  names(obs)[names(obs) == "data"] <- "obs"
-  names(fit)[names(fit) == "data"] <- "fit"
-  
-  # Combine observed and fitted data
-  cpue <- merge(obs, fit)
-  cpue <- type.convert(cpue, as.is = TRUE)
-  
-  # Filter to include only specific fisheries and apply mapping
-  cpue <- cpue[cpue$unit %in% fisheries, ]
-  cpue$unit <- as.character(cpue$unit)
-  cpue$unit <- ifelse(
-    cpue$unit %in% names(fisheries_mapping),
-    fisheries_mapping[cpue$unit],  # Map to PLR names
-    paste("Unknown", cpue$unit)  # Handle unmapped units
-  )
-  
-  # Calculate residuals and add scenario info
-  if (nrow(cpue) > 0) {
-    cpue <- cpue %>%
-      mutate(
-        year_season = year + (season - 1) / 4,
-        scenario = factor(cleaned_scenario_name, levels = names(scenario_colors)),  # Order facets
-        residual = exp(obs) - exp(fit)  # Calculate residuals
-      )
-  }
-  
-  return(cpue)
-}))
+<!-- # Initialize a list to store plots for each unit -->
+<!-- unit_plots <- list() -->
 
-# Skip if no data
-if (is.null(all_combined_cpue) || nrow(all_combined_cpue) == 0) {
-  stop("No data available for plotting.")
-}
+<!-- # Loop through each unit -->
+<!-- for (unit_num in fisheries) { -->
 
-# Create residual plots for each mapped unit with consistent y-axis scaling
-unit_residual_plots <- list()
-for (unit_name in unique(all_combined_cpue$unit)) {
-  unit_data <- all_combined_cpue[all_combined_cpue$unit == unit_name, ]
-  unit_residual_plot <- ggplot(unit_data, aes(x = year_season, y = residual, color = scenario)) +
-    geom_point(alpha = 0.6) +  # Transparent points
-    geom_hline(yintercept = 0, linetype = "dashed", color = "black", linewidth = 0.8) +  # Zero line
-    facet_wrap(~scenario, scales = "fixed", ncol = 1) +  # Fixed y-axis scales across scenarios
-    scale_color_manual(
-      values = scenario_colors,  # Scenario colors
-      name = "Scenario"  # Legend title
-    ) +
-    labs(
-      title = paste("Residuals for", unit_name),
-      x = "Year and Season Combined",
-      y = "Residual (Observed - Predicted)"
-    ) +
-    theme(
-      strip.text = element_text(size = 10, face = "bold"),  # Style facet labels
-      legend.position = "none",  # Remove legend
-      legend.title = element_text(face = "bold"),  # Bold legend title
-      legend.key = element_blank()  # Remove borders around legend keys
-    )
-  unit_residual_plots[[paste("Unit", unit_name)]] <- unit_residual_plot
-}
+<!--   # Combine data for all scenarios for the current unit -->
+<!--   combined_cpue <- do.call(rbind, lapply(names(RepOut_list), function(scenario_name) { -->
 
-# Display all the residual plots
-for (unit_name in names(unit_residual_plots)) {
-  print(unit_residual_plots[[unit_name]])  # Print each residual plot individually
-}
+<!--     # Remove the `skj_` prefix from the scenario name -->
+<!--     cleaned_scenario_name <- sub("^skj_", "", scenario_name) -->
+
+<!--     # Ensure the cleaned scenario name exists in scenario_colors -->
+<!--     if (!(cleaned_scenario_name %in% names(scenario_colors))) { -->
+<!--       warning(paste("Scenario", cleaned_scenario_name, "is not in scenario_colors. Skipping.")) -->
+<!--       return(NULL) -->
+<!--     } -->
+
+<!--     # Extract the current scenario's data -->
+<!--     obs <- as.data.frame(cpue_obs(RepOut_list[[scenario_name]])) -->
+<!--     fit <- as.data.frame(cpue_pred(RepOut_list[[scenario_name]])) -->
+
+<!--     # Rename columns -->
+<!--     names(obs)[names(obs) == "data"] <- "obs" -->
+<!--     names(fit)[names(fit) == "data"] <- "fit" -->
+
+<!--     # Combine observed and fitted data -->
+<!--     cpue <- merge(obs, fit) -->
+<!--     cpue <- type.convert(cpue, as.is = TRUE) -->
+
+<!--     # Filter by the current unit and apply mapping -->
+<!--     cpue <- cpue[cpue$unit == unit_num, ] -->
+<!--     cpue$unit <- as.character(cpue$unit) -->
+<!--     cpue$unit <- ifelse( -->
+<!--       cpue$unit %in% names(fisheries_mapping), -->
+<!--       fisheries_mapping[cpue$unit],  # Map unit to PLR names -->
+<!--       paste("Unknown", cpue$unit)  # Handle unmapped units -->
+<!--     ) -->
+
+<!--     # Calculate exponential values and add scenario info -->
+<!--     if (nrow(cpue) > 0) { -->
+<!--       cpue <- cpue %>% -->
+<!--         mutate( -->
+<!--           year_season = year + (season - 1) / 4, -->
+<!--           scenario = factor(cleaned_scenario_name, levels = names(scenario_colors)), -->
+<!--           obs = exp(obs), -->
+<!--           fit = exp(fit) -->
+<!--         ) -->
+<!--     } -->
+
+<!--     return(cpue) -->
+<!--   })) -->
+
+<!--   # Skip if no data for the current unit -->
+<!--   if (is.null(combined_cpue) || nrow(combined_cpue) == 0) { -->
+<!--     warning(paste("No data for unit", unit_num)) -->
+<!--     next -->
+<!--   } -->
+
+<!--   # Create the plot for the current unit -->
+<!--   unit_plot <- ggplot(combined_cpue, aes(x = year_season)) + -->
+<!--     geom_point(aes(y = obs, color = "Observed"), size = 2, alpha = alpha, shape = 16) +  # Points for observed values -->
+<!--     geom_line(aes(y = fit, color = scenario), alpha = alpha, linewidth = linewidth, linetype = "solid") +  # Lines for fitted values -->
+<!--     facet_wrap(~scenario, scales = "free_y", ncol = 1) +  # Facet by scenario (1 column, vertical layout) -->
+<!--     scale_color_manual( -->
+<!--       values = c("Observed" = "grey", scenario_colors),  # Grey for observed, scenario colors for lines -->
+<!--       name = "Type"  # Legend title -->
+<!--     ) + -->
+<!--     labs( -->
+<!--       title = paste("Observed vs Fitted CPUE for", fisheries_mapping[unit_num]), -->
+<!--       x = "Year and Season Combined", -->
+<!--       y = "CPUE" -->
+<!--     ) + -->
+<!--     theme( -->
+<!--       strip.text = element_text(size = 10, face = "bold"),  # Style facet labels -->
+<!--       legend.position = "none",  # Remove legend -->
+<!--       legend.title = element_text(face = "bold"),  # Bold legend title -->
+<!--       legend.key = element_blank()  # Remove borders around legend keys -->
+<!--     ) -->
+
+<!--   # Store the plot for the current unit -->
+<!--   unit_plots[[paste("Unit", unit_num)]] <- unit_plot -->
+<!-- } -->
+
+<!-- # Display all the plots -->
+<!-- for (unit_name in names(unit_plots)) { -->
+<!--   print(unit_plots[[unit_name]])  # Print each plot individually -->
+<!-- } -->
+
+<!-- ``` -->
 
 
 
-```
+<!-- ## Residuals by index -->
+<!-- ```{r, echo=FALSE, message=FALSE, fig.dim=c(8,12)} -->
+
+<!-- # Combine data for all units and scenarios -->
+<!-- all_combined_cpue <- do.call(rbind, lapply(names(RepOut_list), function(scenario_name) { -->
+
+<!--   # Remove the `skj_` prefix from the scenario name -->
+<!--   cleaned_scenario_name <- sub("^skj_", "", scenario_name) -->
+
+<!--   # Ensure the cleaned scenario name exists in scenario_colors -->
+<!--   if (!(cleaned_scenario_name %in% names(scenario_colors))) { -->
+<!--     warning(paste("Scenario", cleaned_scenario_name, "is not in scenario_colors. Skipping.")) -->
+<!--     return(NULL) -->
+<!--   } -->
+
+<!--   # Extract the current scenario's data -->
+<!--   obs <- as.data.frame(cpue_obs(RepOut_list[[scenario_name]])) -->
+<!--   fit <- as.data.frame(cpue_pred(RepOut_list[[scenario_name]])) -->
+
+<!--   # Rename columns -->
+<!--   names(obs)[names(obs) == "data"] <- "obs" -->
+<!--   names(fit)[names(fit) == "data"] <- "fit" -->
+
+<!--   # Combine observed and fitted data -->
+<!--   cpue <- merge(obs, fit) -->
+<!--   cpue <- type.convert(cpue, as.is = TRUE) -->
+
+<!--   # Filter to include only specific fisheries and apply mapping -->
+<!--   cpue <- cpue[cpue$unit %in% fisheries, ] -->
+<!--   cpue$unit <- as.character(cpue$unit) -->
+<!--   cpue$unit <- ifelse( -->
+<!--     cpue$unit %in% names(fisheries_mapping), -->
+<!--     fisheries_mapping[cpue$unit],  # Map to PLR names -->
+<!--     paste("Unknown", cpue$unit)  # Handle unmapped units -->
+<!--   ) -->
+
+<!--   # Calculate residuals and add scenario info -->
+<!--   if (nrow(cpue) > 0) { -->
+<!--     cpue <- cpue %>% -->
+<!--       mutate( -->
+<!--         year_season = year + (season - 1) / 4, -->
+<!--         scenario = factor(cleaned_scenario_name, levels = names(scenario_colors)),  # Order facets -->
+<!--         residual = exp(obs) - exp(fit)  # Calculate residuals -->
+<!--       ) -->
+<!--   } -->
+
+<!--   return(cpue) -->
+<!-- })) -->
+
+<!-- # Skip if no data -->
+<!-- if (is.null(all_combined_cpue) || nrow(all_combined_cpue) == 0) { -->
+<!--   stop("No data available for plotting.") -->
+<!-- } -->
+
+<!-- # Create residual plots for each mapped unit with consistent y-axis scaling -->
+<!-- unit_residual_plots <- list() -->
+<!-- for (unit_name in unique(all_combined_cpue$unit)) { -->
+<!--   unit_data <- all_combined_cpue[all_combined_cpue$unit == unit_name, ] -->
+<!--   unit_residual_plot <- ggplot(unit_data, aes(x = year_season, y = residual, color = scenario)) + -->
+<!--     geom_point(alpha = 0.6) +  # Transparent points -->
+<!--     geom_hline(yintercept = 0, linetype = "dashed", color = "black", linewidth = 0.8) +  # Zero line -->
+<!--     facet_wrap(~scenario, scales = "fixed", ncol = 1) +  # Fixed y-axis scales across scenarios -->
+<!--     scale_color_manual( -->
+<!--       values = scenario_colors,  # Scenario colors -->
+<!--       name = "Scenario"  # Legend title -->
+<!--     ) + -->
+<!--     labs( -->
+<!--       title = paste("Residuals for", unit_name), -->
+<!--       x = "Year and Season Combined", -->
+<!--       y = "Residual (Observed - Predicted)" -->
+<!--     ) + -->
+<!--     theme( -->
+<!--       strip.text = element_text(size = 10, face = "bold"),  # Style facet labels -->
+<!--       legend.position = "none",  # Remove legend -->
+<!--       legend.title = element_text(face = "bold"),  # Bold legend title -->
+<!--       legend.key = element_blank()  # Remove borders around legend keys -->
+<!--     ) -->
+<!--   unit_residual_plots[[paste("Unit", unit_name)]] <- unit_residual_plot -->
+<!-- } -->
+
+<!-- # Display all the residual plots -->
+<!-- for (unit_name in names(unit_residual_plots)) { -->
+<!--   print(unit_residual_plots[[unit_name]])  # Print each residual plot individually -->
+<!-- } -->
+
+
+
+<!-- ``` -->
 
