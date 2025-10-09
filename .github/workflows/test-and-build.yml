@@ -1,4 +1,4 @@
-name: Test MFCL Model and Build PDF
+name: Test MFCL Model and Generate Plots
 
 on:
   push:
@@ -7,17 +7,13 @@ on:
     branches: [ main ]
 
 permissions:
-  contents: write  # GitHub Pages 배포를 위해 write 권한 추가
-  pages: write
-  id-token: write
-  pull-requests: write
+  contents: read
 
 jobs:
   check-changes:
     runs-on: ubuntu-22.04
     outputs:
       model: ${{ steps.changes.outputs.model }}
-      report: ${{ steps.changes.outputs.report }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,17 +24,14 @@ jobs:
         with:
           filters: |
             model:
-              - '!*.qmd'
-              - 'report/*.qmd'
-            report:
-              - 'report/*.qmd'
+              - '**'
+              - '!report/**'
+              - '!README.md'
+              - '!.github/**'
       
       - name: Debug - Show what changed
         run: |
           echo "Model files changed: ${{ steps.changes.outputs.model }}"
-          echo "Report files changed: ${{ steps.changes.outputs.report }}"
-          echo "Changed files:"
-          echo "${{ steps.changes.outputs.changes }}"
 
   test-model:
     runs-on: ubuntu-22.04
@@ -59,14 +52,13 @@ jobs:
       with:
         name: mfcl-outputs-${{ github.sha }}
         path: |
-          output/
-          logs/
-          plots/
+          model/
         retention-days: 30
     
     - name: Generate plots
       if: success()
       run: make docker-plot
+      timeout-minutes: 30
     
     - name: Upload generated plots
       if: success()
@@ -75,111 +67,3 @@ jobs:
         name: mfcl-plots-${{ github.sha }}
         path: plot/plots.html
         retention-days: 90
-
-  build-pdf:
-    runs-on: ubuntu-22.04
-    needs: check-changes
-    if: ${{ needs.check-changes.outputs.report == 'true' }}
-    
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-    
-    - name: Build PDF report  
-      run: make docker-report
-      timeout-minutes: 30
-    
-    - name: Debug - Check generated files
-      run: |
-        echo "=== Report directory contents ==="
-        ls -la report/
-        find . -name "*.pdf" -type f
-        echo "=== File sizes ==="
-        du -h report/*.pdf || echo "No PDF files found"
-
-    - name: Create PDF viewer page and deploy
-      if: success()
-      run: |
-        mkdir -p pdf-site
-        cp report/bet-2026.pdf pdf-site/
-        
-        cat > pdf-site/index.html << 'EOF'
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>MFCL PDF Report</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>
-                body { margin: 0; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f6f8fa; }
-                .container { max-width: 1200px; margin: 0 auto; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-                .header { background: #0969da; color: white; padding: 20px; text-align: center; }
-                .header h1 { margin: 0; font-size: 24px; }
-                .header p { margin: 10px 0 0 0; opacity: 0.9; }
-                .buttons { padding: 20px; text-align: center; background: #f6f8fa; }
-                .btn { 
-                    display: inline-block; padding: 12px 24px; margin: 8px; 
-                    background: #0969da; color: white; text-decoration: none; 
-                    border-radius: 6px; font-weight: 500; font-size: 14px;
-                }
-                .btn:hover { background: #0550ae; }
-                .btn.secondary { background: #6e7681; }
-                .btn.secondary:hover { background: #565d66; }
-                .pdf-container { height: 80vh; }
-                .pdf-frame { width: 100%; height: 100%; border: none; }
-                @media (max-width: 768px) { 
-                    .pdf-container { height: 70vh; }
-                    .btn { display: block; margin: 8px 0; }
-                }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <h1>🐟 MFCL Stock Assessment Report</h1>
-                    <p>Generated: $(date '+%Y-%m-%d %H:%M UTC')</p>
-                </div>
-                <div class="buttons">
-                    <a href="bet-2026.pdf" class="btn" download>📥 Download PDF</a>
-                    <a href="bet-2026.pdf" class="btn secondary" target="_blank">🔗 Open in New Tab</a>
-                </div>
-                <div class="pdf-container">
-                    <iframe src="bet-2026.pdf" class="pdf-frame" title="MFCL PDF Report"></iframe>
-                </div>
-            </div>
-        </body>
-        </html>
-        EOF
-
-    - name: Deploy to GitHub Pages
-      if: success()
-      uses: peaceiris/actions-gh-pages@v4
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_branch: gh-pages  
-        publish_dir: pdf-site
-        force_orphan: true
-
-    - name: Comment PDF URL on PR
-      if: success() && github.event_name == 'pull_request'
-      uses: actions/github-script@v7
-      with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        script: |
-          const viewerUrl = `https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/`;
-          const pdfUrl = `https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/bet-2026.pdf`;
-          
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: `📄 **PDF Report Generated Successfully!**\n\n🔗 **Quick Access:**\n- [🖥️ **View in Browser**](${viewerUrl}) ← Click here to view PDF directly\n- [📥 Direct PDF Download](${pdfUrl})\n\n✨ The PDF viewer will be available in 1-2 minutes after deployment.`
-          });
-
-    - name: Upload PDF artifact (backup)
-      if: success()
-      uses: actions/upload-artifact@v4
-      with:
-        name: pdf-report-${{ github.sha }}
-        path: report/bet-2026.pdf
-        retention-days: 90
-
