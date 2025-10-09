@@ -5,12 +5,12 @@ models=list("base"=list(mfcl_commands=paste("bet.frq 11.par 12.par",
                                              sep = " ")),
             
             "fixK"=list(mfcl_commands=paste("bet.frq 11.par 12.par",
-                                           "-switch 1 1 1 20",
+                                           "-switch 2 1 1 50",
                                            "1 14 0",
                                            sep = " ")),
             
             "noAge"=list(mfcl_commands=paste("bet.frq 11.par 12.par",
-                                           "-switch 2 1 1 20",
+                                           "-switch 2 1 1 50",
                                            "1 240 0",
                                            sep = " "))
             )

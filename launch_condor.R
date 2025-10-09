@@ -21,7 +21,9 @@ branch <- "main"                                              # Branch of git re
 # Run the job on Condor through CondorBox
 # ---------------------------------------
 
-dir="09Oct_2023_MFCL_loop22" 
+setwd(here::here())
+
+dir="10_oct_2025_test" 
 make="run plot"
 
 source("configs/test.R") 
@@ -55,7 +57,7 @@ CondorBox::CondorBox(
 # Retrieve and synchronise the output from the remote server
 # ----------------------------------------------------------
 
-output_dir="08Oct_2023_MFCL_loop" 
+output_dir="10_oct_2025_test" 
 
 setwd(here::here())
 
