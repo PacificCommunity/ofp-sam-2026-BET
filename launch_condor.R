@@ -21,7 +21,7 @@ branch <- "main"                                              # Branch of git re
 # Run the job on Condor through CondorBox
 # ---------------------------------------
 
-dir="08Oct_2023_MFCL_loop2" 
+dir="09Oct_2023_MFCL_loop2" 
 make="run plot"
 
 source("configs/test.R") 
@@ -46,13 +46,6 @@ CondorBox::CondorBox(
     branch = branch, 
     rmclone_script = "no",
     ghcr_login = T,
-    exclude_slots=c("slot1@nouofpcand27",
-                    "slot1@nouofpcand28", 
-                    "slot1@nouofpcand29",
-                    "slot1@nouofpcand30",
-                    "slot1_1@suvofpcand26.corp.spc.int",
-                    "slot1_2@suvofpcand26.corp.spc.int",
-                    "slot1_3@suvofpcand26.corp.spc.int"),   ## these slots are super slow..
     custom_batch_name = paste0(model_name,"-",format(Sys.time(), "%H:%M:%S_%D")),
     condor_environment = models[[model_name]] ) 
 
