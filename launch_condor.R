@@ -23,8 +23,8 @@ branch <- "main"                                              # Branch of git re
 
 setwd(here::here())
 
-dir="10_oct_2025_sens" 
-make="run plot"
+dir="10_oct_2025_test" 
+make="run plot report"
 
 source("configs/test.R") 
 
@@ -79,4 +79,20 @@ for(model_name in names(models))  {
   
 }
 
+
+################################
+## Delete file (clone_job.sh) ##
+################################
+
+for(model_name in names(models))  {
+  
+  CondorBox::BatchFileHandler(
+    remote_user   = remote_user,
+    remote_host   = remote_host,
+    folder_name   = paste0(github_repo, "/",dir,"/",model_name),
+    file_name     = "clone_job.sh",
+    action        = "delete"
+  )
+  
+}
 

@@ -148,7 +148,7 @@ kable(params_df, caption = "Basic model info") %>%
 ```
 
 ## Spawning depletion
-```{r, echo=FALSE, message=F, fig.dim=c(8,6)}
+```{r Dep, echo=FALSE, message=F, fig.dim=c(8,6)}
 
 SBdep <- GetQuantSimple(SBSBF0, RepOut_list, minYear, maxYear)
 Rec <- GetQuantSimple(eq_rec, RepOut_list, minYear, maxYear, scale_factor = 1/1e6)
