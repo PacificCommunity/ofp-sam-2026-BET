@@ -1,0 +1,40 @@
+name: Test MFCL Model Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_type:
+        description: 'Select what to run'
+        required: true
+        default: 'model_only'
+        type: choice
+        options:
+        - model_only
+        - model_and_plot
+        - plot_only
+
+jobs:
+  test-model:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Test MFCL model run
+      if: ${{ github.event.inputs.run_type == 'model_only' || github.event.inputs.run_type == 'model_and_plot' }}
+      run: make docker-run
+      timeout-minutes: 30
+    
+    - name: Upload model outputs
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: mfcl-outputs
+        path: |
+          ./
+        retention-days: 7
+    
+    - name: Test plotting
+      if: ${{ github.event.inputs.run_type == 'plot_only' || github.event.inputs.run_type == 'model_and_plot' }}
+      run: make docker-plot
