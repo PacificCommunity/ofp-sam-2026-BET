@@ -2,3 +2,7 @@
 .Rhistory
 .RData
 .Ruserdata
+report/Figures
+*.html
+*.Rproj
+model

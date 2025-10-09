@@ -22,8 +22,8 @@ knitr::opts_chunk$set(dev = "png",
                       echo = F,
                       cache = F,
                       warning = F,
-                      message = F #, 
-                      #fig.path='Figures/'
+                      message = F, 
+                      fig.path='../report/Figures/'
                       )
 
 library(ggplot2)
@@ -44,7 +44,7 @@ theme_set(theme_cowplot())
 
 source("../tools/plot_utils.R")
 
-results <- list.dirs(file.path(getwd(), "..", "mfcl"), full.names = TRUE, recursive = FALSE) %>%
+results <- list.dirs(file.path(getwd(), "..", "model"), full.names = TRUE, recursive = FALSE) %>%
   purrr::map(function(folder) {
     outputs_path <- normalizePath(folder, winslash = "/", mustWork = FALSE)
     cat("Processing folder:", outputs_path, "\n")
@@ -59,7 +59,7 @@ results <- list.dirs(file.path(getwd(), "..", "mfcl"), full.names = TRUE, recurs
 
 
 # Convert results into a named list, using folder names as keys
-names(results) <- basename(list.dirs(file.path(getwd(), "..", "mfcl"), full.names = TRUE, recursive = FALSE))
+names(results) <- basename(list.dirs(file.path(getwd(), "..", "model"), full.names = TRUE, recursive = FALSE))
 
 # Access individual ParOut and RepOut
 ParOut_list <- purrr::map(results, "ParOut")

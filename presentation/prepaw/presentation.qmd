@@ -1,0 +1,50 @@
+---
+# Define logo paths as Quarto variables
+logo1: "static/spc-logo.png"
+
+format:
+  revealjs:
+    theme: [default, customizations/presentation-custom.scss]
+    slide-number: true
+    #footer: "WCPFC-SC21-2025/SA-IP-XX"
+    include-in-header:
+      - text: |
+          <script>
+          // Access Quarto variables in JavaScript
+          window.quartoLogos = {
+            logo1: '{{< meta logo1 >}}'
+          };
+          </script>
+          <script src="customizations/add-logos.js"></script>
+          <script src="customizations/slide-background.js"></script>
+    css: customizations/logos.css
+    self-contained: true
+resources:
+  - "static/**"  # Include all files in the static directory
+---
+
+## {.left-bg-image}
+
+<!-- Content area -->
+
+::: {.absolute top=20%}
+
+[BET 2026 assessment]{.blue-title}
+
+[Kyuhan Kim]{style="font-size:0.5em;"}  
+
+[2026 Pre-assessment workshop]{style="font-size:0.5em;"}
+
+[April xx-xx, 2026]{.blue style="font-size:0.5em;"}
+
+:::
+
+## Background {.narrow-left-bg-image}
+
+::::: {.absolute width=100% left=0% style="font-size:0.7em;"}
+
+- background info here
+
+:::::
+
+

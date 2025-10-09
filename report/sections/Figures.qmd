@@ -1,0 +1,6 @@
+
+<!-- ![Spatial distribution of Spanish longline fishing operations in the Southwest Pacific Ocean (2004-2023). Top left: Number of longline sets per 1° grid cell. Top right: Relative proportion of swordfish in total catch by grid cell. Bottom left: Average swordfish catch per grid cell in metric tonnes. Bottom right: Average blue shark catch per grid cell in metric tonnes.](Figures/set_catch_per_grid-1.png){#fig-spatial-distribution fig-align=center width=100% fig-pos="h"} -->
+
+<!-- \clearpage -->
+
+
