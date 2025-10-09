@@ -25,14 +25,10 @@ jobs:
         with:
           filters: |
             model:
-              - '**'
               - '!report/**'
-              - '!README.md'
-              - '!.github/**'
+              - '!presentation/**'
             report:
               - 'report/**'
-              - '**.qmd'
-              - '**.rmd'
       
       - name: Debug - Show what changed
         run: |
