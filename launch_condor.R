@@ -57,7 +57,7 @@ CondorBox::CondorBox(
 # Retrieve and synchronise the output from the remote server
 # ----------------------------------------------------------
 
-output_dir="10_oct_2025_sens" 
+output_dir="10_oct_2025_test" 
 
 setwd(here::here())
 
