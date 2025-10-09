@@ -33,6 +33,13 @@ jobs:
               - 'report/**'
               - '**.qmd'
               - '**.rmd'
+      
+      - name: Debug - Show what changed
+        run: |
+          echo "Model files changed: ${{ steps.changes.outputs.model }}"
+          echo "Report files changed: ${{ steps.changes.outputs.report }}"
+          echo "Changed files:"
+          echo "${{ steps.changes.outputs.changes }}"
 
   test-model:
     runs-on: ubuntu-22.04
@@ -79,7 +86,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
     
-    - name: Build PDF report
+    - name: Build PDF report  
       run: make docker-report
       timeout-minutes: 30
     
