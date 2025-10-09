@@ -23,7 +23,7 @@ branch <- "main"                                              # Branch of git re
 
 setwd(here::here())
 
-dir="10_oct_2025_test" 
+dir="10_oct_2025_meeting" 
 make="run plot"
 
 source("configs/test.R") 
@@ -57,7 +57,7 @@ CondorBox::CondorBox(
 # Retrieve and synchronise the output from the remote server
 # ----------------------------------------------------------
 
-output_dir="10_oct_2025_test" 
+output_dir="10_oct_2025_meeting" 
 
 setwd(here::here())
 
