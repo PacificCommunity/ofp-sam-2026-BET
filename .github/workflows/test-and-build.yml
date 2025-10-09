@@ -25,7 +25,8 @@ jobs:
         with:
           filters: |
             model:
-              - '*.qmd'
+              - '!*.qmd'
+              - 'report/*.qmd'
             report:
               - 'report/*.qmd'
       
