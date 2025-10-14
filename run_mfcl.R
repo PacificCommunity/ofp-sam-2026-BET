@@ -11,7 +11,10 @@ Sys.setenv("PROGRAM_PATH" = program_path)
 base_dir<-Sys.getenv("base_dir", "mfcl/inputs/2023")
 model_dir<-Sys.getenv("model_dir", "model/base")
 mfcl_commands <- Sys.getenv("mfcl_commands", paste(program_path,"bet.frq 11.par 12.par -switch 1 1 1 1"))
-run_prof<-as.integer(Sys.getenv("run_prof", 0))
+run_prof<-as.integer(Sys.getenv("run_prof", 1))
+Reps<-as.numeric(unlist(strsplit(Sys.getenv("Reps", "1 1 1 1 1 1"), "\\s+")))
+
+
 
 ## create model directory and copy files
 dir.create(model_dir, recursive = TRUE, showWarnings = FALSE)
@@ -56,7 +59,7 @@ if(run_prof==1) {
   }
   
   generate_proflike_script(Prog = program_path,
-                           Reps =c(1, 1, 1, 1, 1, 1),
+                           Reps =Reps,
                            Frq = frq_file,
                            Initp = basename(most_recent),
                            filename = paste0(model_dir,"/ProfLike.sh"))
