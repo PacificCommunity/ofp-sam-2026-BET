@@ -23,7 +23,7 @@ branch <- "main"                                              # Branch of git re
 
 setwd(here::here())
 
-dir="14_oct_2025_2" 
+dir="14_oct_2025_3" 
 make="run plot"
 
 source("configs/test.R") 

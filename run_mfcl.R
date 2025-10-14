@@ -64,9 +64,9 @@ if(run_prof==1) {
                            Initp = basename(most_recent),
                            filename = paste0(model_dir,"/ProfLike.sh"))
   
-  mfcl_prof_runs<-CondorBox::run_commands(commands="./ProfLike.sh",
-                                          work_dirs = model_dir,
-                                          save_log = F,
-                                          verbose = T)
+  run_commands(commands="./ProfLike.sh",
+               work_dirs = model_dir,
+               save_log = F,
+               verbose = T)
   
 }
