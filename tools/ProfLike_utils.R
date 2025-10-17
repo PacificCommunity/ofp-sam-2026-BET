@@ -19,8 +19,8 @@ generate_proflike_script <- function(
     Reps = c(Reps1 = 15, Reps2 = 25, Reps3 = 25, Reps4 = 1000, Reps5 = 100, Reps6 = 500),
     AgeFlags = c(Af173 = 150, Af174 = 5),
     Prog = "../../mfcl/mfclo64",
-    Frq = "skj.frq",
-    Initp = "10.par",
+    Frq = "bet.frq",
+    Initp = "11.par",
     Mults = c(90, 80, 70, 60, 50),
     QuantityType = 2,  # 1 for depletion, 2 for average biomass
     filename = "ProfLike.sh") {

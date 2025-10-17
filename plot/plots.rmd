@@ -56,14 +56,23 @@ results <- list.dirs(file.path(getwd(), "..", "model"), full.names = TRUE, recur
     
     output_files <- list.files(outputs_path, pattern = "^test_plot_output_\\d+$", full.names = TRUE)
     
-    #browser()
-    
     # Read each output file
     LikOut_list <- purrr::map(output_files, read.MFCLLikelihood)
     LikRawOut_list <- purrr::map(output_files, readLines)
     
+        
+    # Extract number only (e.g., '50' from 'test_plot_output_50')
+    scales<-output_files %>% basename() %>% stringr::str_extract("\\d+$")
+    
+    names(LikRawOut_list) <- scales
+    names(LikOut_list) <- scales
+    
     # Return a list containing ParOut and RepOut
-    list(ParOut = ParOut, RepOut = RepOut, LikOut=LikOut_list, LikRawOut=LikRawOut_list)
+    list(ParOut = ParOut, 
+         RepOut = RepOut, 
+         LikOut=LikOut_list, 
+         LikRawOut=LikRawOut_list,
+         scales=scales)
   })
 
 
@@ -251,91 +260,85 @@ print(final_plot)
 ```
 
 
-<!-- ### Likelihood profile -->
+### Likelihood profile
 
-<!-- ```{r model_profile,  eval=ProfLike, echo=FALSE, message=F, fig.dim=c(12,8)} -->
+```{r model_profile, echo=FALSE, message=F, fig.dim=c(12,8)}
 
-<!-- PenIndex="do_everything" -->
-<!-- pen_idx <- grep("do_everything", ProfLikOutRaw_list) -->
+PenIndex="do_everything"
+pen_idx <- grep("do_everything", ProfLikOutRaw_list)
 
+## make sure the scenario names are in the same order as LikOut_list
+scenarios_name<-names(ProfLikOut_list)
 
-<!-- ## make sure the scenario names are in the same order as LikOut_list -->
-<!-- scenarios_name<-names(ProfLikOut_list) -->
+Likes=list()
 
-<!-- LikeCompScalers=list() -->
-
-<!-- LikeComp100=sapply(scenarios_name, function(x) c("Indices"=sum(results[[x]]$LikOut@survey_index), -->
-<!--                                                  "LFs"=sum(ProfLikOut_list[[x]]@total_length_fish), -->
-<!--                                                  "Penalties"=as.numeric(ProfLikRawOut_list[[x]][pen_idx:(pen_idx + 1)][2]), -->
-<!--                                                  #"Weight comp"=sum(LikOut_list[[x]]@total_weight_fish), -->
-<!--                                                  "Tags"=sum(unlist(ProfLikOut_list[[x]]@tag_rel_fish, recursive = T)) ) ) -->
-
-<!-- LikeComp100=rbind(LikeComp100,  "Total"=apply(LikeComp100, 2, sum)) -->
-
-
-
-<!-- for (i in scalers) { -->
-<!--   LikeCompScalers[[as.character(i)]]=sapply(scenarios_name, function(x) c("Indices"=sum(ProfLikOut_list[[x]][[as.character(i)]]@survey_index), -->
-<!--                                                                           "LFs"=sum(ProfLikOut_list[[x]][[as.character(i)]]@total_length_fish), -->
-<!--                                                                           "Penalties"=as.numeric(ProfLikOutRaw_list[[x]][[as.character(i)]][pen_idx:(pen_idx + 1)][2]), -->
-<!--                                                                           #"Weight comp"=sum(ProfLikOut_list[[x]][[as.character(i)]]@total_weight_fish), -->
-<!--                                                                           "Tags"=sum(unlist(ProfLikOut_list[[x]][[as.character(i)]]@tag_rel_fish, recursive = T)) ) ) -->
-
-
-<!--   LikeCompScalers[[as.character(i)]]=rbind(LikeCompScalers[[as.character(i)]],  "Total"=apply(LikeCompScalers[[as.character(i)]], 2, sum) -->
-<!--   ) -->
-
-<!--   } -->
+for( j in 1:length(results)) {
+  
+  scales=results[[j]]$scales
+  
+  for (i in scales) {
+    Likes[[as.character(i)]]=sapply(scenarios_name, function(x) c("Indices"=sum(ProfLikOut_list[[x]][[as.character(i)]]@survey_index),
+                                                                            "LFs"=sum(ProfLikOut_list[[x]][[as.character(i)]]@total_length_fish),
+                                                                            "Penalties"=as.numeric(ProfLikOutRaw_list[[x]][[as.character(i)]][pen_idx:(pen_idx + 1)][2]),
+                                                                            #"Weight comp"=sum(ProfLikOut_list[[x]][[as.character(i)]]@total_weight_fish),
+                                                                            "Tags"=sum(unlist(ProfLikOut_list[[x]][[as.character(i)]]@tag_rel_fish, recursive = T)) ) )
+    
+    
+    Likes[[i]]=rbind(Likes[[i]],  "Total"=apply(Likes[[i]], 2, sum)
+    )
+    
+  }
+  
+}
 
 
 
-<!-- LikeCompAll=c(list("100"=LikeComp100), LikeCompScalers) -->
+Likes_df <- purrr::imap_dfr(Likes, function(df, indicator) {
+  as.data.frame(df) %>%
+    tibble::rownames_to_column("Likelihood") %>%
+    mutate(scaler = indicator)
+})
 
-<!-- LikeComp_df <- purrr::imap_dfr(LikeCompAll, function(df, indicator) { -->
-<!--   as.data.frame(df) %>% -->
-<!--     tibble::rownames_to_column("Likelihood") %>% -->
-<!--     mutate(scaler = indicator) -->
-<!-- }) -->
-
-<!-- LikeComp_long <- LikeComp_df %>% -->
-<!--   pivot_longer( -->
-<!--     cols = scenarios_name, -->
-<!--     names_to = "scenario", -->
-<!--     values_to = "value" -->
-<!--   ) %>% -->
-<!--   mutate(scaler = as.numeric(scaler)*0.01*unlist(sapply(scenarios_name, function(x) read.table(paste0("../analysis/scenarios/",x, "/ProfLike/avg_bio")))) -->
-<!-- ) -->
+Likes_long <- Likes_df %>%
+  pivot_longer(
+    cols = scenarios_name,
+    names_to = "scenario",
+    values_to = "value"
+  ) %>%
+  mutate(scaler = as.numeric(scaler)*0.01*unlist(sapply(scenarios_name, function(x) read.table(paste0("../model/",x, "/avg_bio"))))
+)
 
 
-<!-- LikeComp_change <- LikeComp_long %>%  -->
-<!--   group_by(Likelihood, scenario) %>% -->
-<!--   mutate( -->
-<!--     min_value = min(value, na.rm = TRUE), -->
-<!--     change = (value - min_value) -->
-<!--   ) %>% -->
-<!--   ungroup() -->
+Likes_change <- Likes_long %>%
+  group_by(Likelihood, scenario) %>%
+  mutate(
+    min_value = min(value, na.rm = TRUE),
+    change = (value - min_value)
+  ) %>%
+  ungroup()
 
-<!-- LikeComp_change %>% filter(Likelihood != "Penalties") %>% -->
-<!--   ggplot(aes(x = scaler, y = change, colour = Likelihood)) + -->
-<!--   geom_line(linewidth = 1, alpha=0.7) + -->
-<!--   #geom_point() + -->
-<!--   scale_color_manual(values=c("red", "blue", "darkgreen", "black")) + -->
-<!--   facet_wrap(~scenario, scale="free") + -->
-<!--   scale_x_continuous( -->
-<!--     labels = function(x) x / 1000, -->
-<!--     name=bquote("Average biomass ("*10^3*" MT)"), -->
-<!--   ) + -->
-<!--   labs( -->
-<!--     y = "Changes in Likelihood", -->
-<!--     colour = "Likelihood" -->
-<!--   ) + -->
-<!--   theme( -->
-<!--     legend.position = "bottom", -->
-<!--     legend.title = element_text(face = "bold"), -->
-<!--     strip.text = element_text(size = 10, face = "bold") -->
-<!--   ) -->
+Likes_change %>% 
+  #filter(Likelihood != "Penalties") %>%
+  ggplot(aes(x = scaler, y = change, colour = Likelihood)) +
+  geom_line(linewidth = 1, alpha=0.7) +
+  #geom_point() +
+  scale_color_viridis_d() +
+  facet_wrap(~scenario, scale="free") +
+  scale_x_continuous(
+    labels = function(x) x / 1000,
+    name=bquote("Average biomass ("*10^3*" MT)"),
+  ) +
+  labs(
+    y = "Changes in Likelihood",
+    colour = "Likelihood"
+  ) +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    strip.text = element_text(size = 10, face = "bold")
+  )
 
-<!-- ``` -->
+```
 
 
 

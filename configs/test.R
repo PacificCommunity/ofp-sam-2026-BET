@@ -19,8 +19,8 @@ models=list("base"=list(mfcl_commands=paste("bet.frq 11.par 12.par",
 program_path <- "../../mfcl/exe/mfclo64_2026"
 base_dir <- "mfcl/inputs/2023"
 run_prof <- "1"
-Reps <- "1 1 1 1 1 1"
-
+Reps <- "2 2 2 2 2 2"
+scalers <- "110 100 90 80 70 60 50"
 
 ### post-processing 
 
@@ -32,6 +32,7 @@ models <- Map(function(x, nm) {
   x$program_path <- program_path
   x$run_prof <-run_prof
   x$Reps <-Reps
+  x$scalers <-scalers
   x
 }, models, names(models))
 

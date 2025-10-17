@@ -13,7 +13,7 @@ model_dir<-Sys.getenv("model_dir", "model/base")
 mfcl_commands <- Sys.getenv("mfcl_commands", paste(program_path,"bet.frq 11.par 12.par -switch 1 1 1 1"))
 run_prof<-as.integer(Sys.getenv("run_prof", "1"))
 Reps<-as.numeric(unlist(strsplit(Sys.getenv("Reps", "1 1 1 1 1 1"), "\\s+")))
-
+scalers<-as.numeric(unlist(strsplit(Sys.getenv("scalers", "100 90 80 70 60 50"), "\\s+")))
 
 
 ## create model directory and copy files
@@ -61,6 +61,7 @@ if(run_prof==1) {
   generate_proflike_script(Prog = program_path,
                            Reps =Reps,
                            Frq = frq_file,
+                           Mults =scalers,
                            Initp = basename(most_recent),
                            filename = paste0(model_dir,"/ProfLike.sh"))
   
@@ -70,3 +71,13 @@ if(run_prof==1) {
                verbose = T)
   
 }
+
+save(Reps, 
+     scalers,
+     frq_file,
+     program_path,
+     mfcl_commands,
+     base_dir,
+     run_prof,
+     file = paste0(model_dir,"/",basename(model_dir),"_info.RData"))
+
