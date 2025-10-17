@@ -16,7 +16,7 @@ models=list("base"=list(mfcl_commands=paste("bet.frq 11.par 12.par",
             )
 
 
-program_path <- "../../mfcl/exe/mfclo64_2023"
+program_path <- "../../mfcl/exe/mfclo64_2026"
 base_dir <- "mfcl/inputs/2023"
 run_prof <- "1"
 Reps <- "100 100 100 100 100 100"
