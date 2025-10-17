@@ -260,7 +260,7 @@ print(final_plot)
 ```
 
 
-### Likelihood profile
+## Likelihood profile
 
 ```{r model_profile, echo=FALSE, message=F, fig.dim=c(12,8)}
 
