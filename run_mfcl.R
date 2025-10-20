@@ -72,12 +72,22 @@ if(run_prof==1) {
   
 }
 
-save(Reps, 
-     scalers,
-     frq_file,
-     program_path,
-     mfcl_commands,
-     base_dir,
-     run_prof,
-     file = paste0(model_dir,"/",basename(model_dir),"_info.RData"))
+# Combine all info objects into a single list
+info_list <- list(
+  Reps         = Reps,
+  scalers      = scalers,
+  frq_file     = frq_file,
+  program_path = program_path,
+  mfcl_commands= mfcl_commands,
+  base_dir     = base_dir,
+  run_prof     = run_prof
+)
 
+# Save as a single compressed RDS file
+saveRDS(
+  info_list,
+  file = file.path(model_dir, "info.rds"),
+  compress = "xz"
+)
+
+cat("✅ Saved info.rds for", basename(model_dir), "\n")
