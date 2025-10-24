@@ -6,7 +6,7 @@ library(CondorBox)
 source("tools/ProfLike_utils.R")
 
 ## environment variables
-program_path=Sys.getenv("program_path", "../../mfcl/exe/mfclo64_2026")
+program_path=Sys.getenv("program_path", "../../mfcl/exe/mfclo64_2023")
 Sys.setenv("PROGRAM_PATH" = program_path)
 base_dir<-Sys.getenv("base_dir", "mfcl/inputs/2023")
 model_dir<-Sys.getenv("model_dir", "model/base")

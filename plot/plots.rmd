@@ -102,17 +102,18 @@ linewidth = 1
 # )
 # 
 # # Fisheries mapping (option for renaming fisheries)
-# fisheries_mapping <- c(
-#   "32" = "PLR1",
-#   "33" = "PLR2",
-#   "34" = "PLR3",
-#   "35" = "PLR4",
-#   "37" = "PLR7",
-#   "38" = "PLR8"
-# )
+fisheries_mapping <- c(
+#  "32" = "PLR1",
+  "33" = "PLR2",
+  "34" = "PLR3",
+  "35" = "PLR4",
+  "37" = "PLR7",
+  "38" = "PLR8"
+)
+
 # 
 # # Filtered fisheries
-# fisheries <- names(fisheries_mapping)
+ fisheries <- names(fisheries_mapping)
 
 model_names <- names(ParOut_list)
 
@@ -279,7 +280,7 @@ for( j in 1:length(results)) {
   for (i in scales) {
     Likes[[as.character(i)]]=sapply(scenarios_name, function(x) c("Indices"=sum(ProfLikOut_list[[x]][[as.character(i)]]@survey_index),
                                                                             "LFs"=sum(ProfLikOut_list[[x]][[as.character(i)]]@total_length_fish),
-                                                                            "Penalties"=as.numeric(ProfLikOutRaw_list[[x]][[as.character(i)]][pen_idx:(pen_idx + 1)][2]),
+                                                                            # "Penalties"=as.numeric(ProfLikOutRaw_list[[x]][[as.character(i)]][pen_idx:(pen_idx + 1)][2]),
                                                                             #"Weight comp"=sum(ProfLikOut_list[[x]][[as.character(i)]]@total_weight_fish),
                                                                             "Tags"=sum(unlist(ProfLikOut_list[[x]][[as.character(i)]]@tag_rel_fish, recursive = T)) ) )
     
@@ -342,90 +343,32 @@ Likes_change %>%
 
 
 
-<!-- ## Observed vs Fitted CPUE by scenario -->
-<!-- ```{r, echo=FALSE, message=FALSE, fig.dim=c(8,12)} -->
-<!-- # Initialize a list to store plots for each scenario -->
-<!-- scenario_plots <- list() -->
+## Observed vs Fitted CPUE by scenario
+```{r, echo=FALSE, message=FALSE, fig.dim=c(8,12)}
+# Global configuration for easy tweaks
+config <- list(
+  alpha = 0.7,          # transparency for points/lines
+  linewidth = 1.2,      # line thickness
+  point_size = 2,       # point size
+  observed_color = "grey30",  # color for observed points
+  legend_position = "bottom", # legend position ("none","top","bottom","left","right")
+  facet_ncol = 1        # number of columns in facet wrap
+)
 
-<!-- # Loop through each scenario in RepOut_list -->
-<!-- for (scenario_name in names(RepOut_list)) { -->
+# Example run (keeps your original objects/flow)
+scenario_plots <- create_cpue_plots(
+  RepOut_list = RepOut_list,
+  fisheries = fisheries,
+  fisheries_mapping = fisheries_mapping,
+  viridis_option = "viridis"  # try "plasma", "inferno", "magma", "cividis"
+)
 
-<!--   # Remove the `skj_` prefix from the scenario name -->
-<!--   cleaned_scenario_name <- sub("^skj_", "", scenario_name) -->
+# Print all scenario plots
+for (nm in names(scenario_plots)) {
+  print(scenario_plots[[nm]])
+}
 
-<!--   # Ensure the cleaned scenario name exists in scenario_colors -->
-<!--   if (!(cleaned_scenario_name %in% names(scenario_colors))) { -->
-<!--     warning(paste("Scenario", cleaned_scenario_name, "is not in scenario_colors. Skipping.")) -->
-<!--     next -->
-<!--   } -->
-
-<!--   # Extract the current scenario's data -->
-<!--   obs <- as.data.frame(cpue_obs(RepOut_list[[scenario_name]])) -->
-<!--   fit <- as.data.frame(cpue_pred(RepOut_list[[scenario_name]])) -->
-
-<!--   # Rename columns -->
-<!--   names(obs)[names(obs) == "data"] <- "obs" -->
-<!--   names(fit)[names(fit) == "data"] <- "fit" -->
-
-<!--   # Combine observed and fitted data -->
-<!--   cpue <- merge(obs, fit) -->
-<!--   cpue <- type.convert(cpue, as.is = TRUE) -->
-
-<!--   # Filter by fisheries and apply mapping -->
-<!--   cpue <- cpue[cpue$unit %in% fisheries, ] -->
-<!--   cpue$unit <- as.character(cpue$unit) -->
-<!--   cpue$unit <- ifelse( -->
-<!--     cpue$unit %in% names(fisheries_mapping), -->
-<!--     fisheries_mapping[cpue$unit],  # Map to PLR names -->
-<!--     paste("Unknown", cpue$unit)  # Handle unmapped units -->
-<!--   ) -->
-
-<!--   # Skip if no data after filtering -->
-<!--   if (nrow(cpue) == 0) { -->
-<!--     next -->
-<!--   } -->
-
-<!--   # Add additional columns for visualization -->
-<!--   cpue <- cpue %>% -->
-<!--     mutate( -->
-<!--       year_season = year + (season - 1) / 4, -->
-<!--       scenario = factor(cleaned_scenario_name),  # Apply scenario order -->
-<!--       obs = exp(obs), -->
-<!--       fit = exp(fit) -->
-<!--     ) -->
-
-<!--   # Create the plot for the current scenario -->
-<!--   scenario_plot <- ggplot(cpue, aes(x = year_season)) + -->
-<!--     geom_point(aes(y = obs, color = "Observed"), size = 2, alpha = alpha, shape = 16) +  # Points for observed values -->
-<!--     geom_line(aes(y = fit, color = scenario), alpha = alpha, linewidth = linewidth, linetype = "solid") +  # Lines for fitted values -->
-<!--     facet_wrap(~unit, scales = "free_y", ncol = 1) +  # Facet by mapped unit names (PLR) -->
-<!--     scale_color_manual( -->
-<!--       values = c("Observed" = "grey", scenario_colors),  # Grey for observed, scenario colors for lines -->
-<!--       labels = c("Observed" = "Observed", "Predicted" = "Predicted"),  # Legend labels -->
-<!--       name = "Type"  # Legend title -->
-<!--     ) + -->
-<!--     labs( -->
-<!--       title = paste("Observed vs Fitted CPUE:", cleaned_scenario_name), -->
-<!--       x = "Year and Season Combined", -->
-<!--       y = "CPUE" -->
-<!--     ) + -->
-<!--     theme( -->
-<!--       strip.text = element_text(size = 10, face = "bold"), -->
-<!--       legend.position = "none", -->
-<!--       legend.title = element_text(face = "bold"), -->
-<!--       legend.key = element_blank() -->
-<!--     ) -->
-
-<!--   # Store the plot in the list -->
-<!--   scenario_plots[[scenario_name]] <- scenario_plot -->
-<!-- } -->
-
-<!-- # Display all the plots -->
-<!-- for (scenario_name in names(scenario_plots)) { -->
-<!--   print(scenario_plots[[scenario_name]])  # Print each plot individually -->
-<!-- } -->
-
-<!-- ``` -->
+```
 
 
 
