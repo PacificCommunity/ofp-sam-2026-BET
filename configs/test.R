@@ -19,8 +19,8 @@ models=list("base"=list(mfcl_commands=paste("bet.frq 11.par 12.par",
 program_path <- "../../mfcl/exe/mfclo64_2023"
 base_dir <- "mfcl/inputs/2023"
 run_prof <- "1"
-Reps <- "5000 5000 5000 5000 5000 5000"
-scalers <- "150 140 130 120 110 100 90 80 70 60 50"
+Reps <- "10000 10000 10000 10000 10000 10000"
+scalers <- paste0((seq(200, 10, by=-5)), collapse = " ")
 
 #scalers <- "100 90 80"
 
