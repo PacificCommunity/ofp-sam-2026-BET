@@ -1,24 +1,24 @@
 
 
 models=list("base"=list(mfcl_commands=paste("bet.frq 11.par 12.par",
-                                             "-switch 1 1 1 10000",
-                                             sep = " ")),
+                                             "-switch 1 1 1 1",
+                                             sep = " ")) #,
             
-            "fixK"=list(mfcl_commands=paste("bet.frq 11.par 12.par",
-                                           "-switch 2 1 1 10000",
-                                           "1 14 0",
-                                           sep = " ")),
+          #  "fixK"=list(mfcl_commands=paste("bet.frq 11.par 12.par",
+          #                                 "-switch 2 1 1 10000",
+          #                                 "1 14 0",
+          #                                 sep = " ")),
             
-            "noAge"=list(mfcl_commands=paste("bet.frq 11.par 12.par",
-                                           "-switch 2 1 1 10000",
-                                           "1 240 0",
-                                           sep = " "))
+          #  "noAge"=list(mfcl_commands=paste("bet.frq 11.par 12.par",
+          #                                 "-switch 2 1 1 10000",
+          #                                 "1 240 0",
+          #                                 sep = " "))
             )
 
 
-program_path <- "../../mfcl/exe/mfclo64_2023"
+program_path <- "../../mfcl/exe/mfclo64_2026"
 base_dir <- "mfcl/inputs/2023"
-run_prof <- "1"
+run_prof <- "0"
 Reps <- "10000 10000 10000 10000 10000 10000"
 scalers <- paste0((seq(200, 10, by=-5)), collapse = " ")
 
