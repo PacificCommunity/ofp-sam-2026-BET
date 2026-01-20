@@ -1,40 +1,44 @@
 
+models <- list(
+  "base2023" = list(
+    mfcl_commands = paste("bet.frq 11.par 12.par",
+                          "-switch 1 1 1 1",
+                          sep = " "),
+    program_path = "../../mfcl/exe/mfclo64_2023",  # Model-specific path
+    base_dir = "mfcl/inputs/2023"                   # Model-specific dir
+  ),
+  
+   "base2026" = list(
+     mfcl_commands = paste("bet.frq 11.par 12.par",
+                          "-switch 1 1 1 1000",
+                          sep = " "),
+     program_path = "../../mfcl/exe/mfclo64_2026",
+     base_dir = "mfcl/inputs/2023"
+   )
+)
 
-models=list("base"=list(mfcl_commands=paste("bet.frq 11.par 12.par",
-                                             "-switch 1 1 1 1",
-                                             sep = " ")) #,
-            
-          #  "fixK"=list(mfcl_commands=paste("bet.frq 11.par 12.par",
-          #                                 "-switch 2 1 1 10000",
-          #                                 "1 14 0",
-          #                                 sep = " ")),
-            
-          #  "noAge"=list(mfcl_commands=paste("bet.frq 11.par 12.par",
-          #                                 "-switch 2 1 1 10000",
-          #                                 "1 240 0",
-          #                                 sep = " "))
-            )
-
-
-program_path <- "../../mfcl/exe/mfclo64_2026"
-base_dir <- "mfcl/inputs/2023"
+# Default values
+default_program_path <- "../../mfcl/exe/mfclo64_2026"
+default_base_dir <- "mfcl/inputs/2023"
 run_prof <- "0"
 Reps <- "10000 10000 10000 10000 10000 10000"
 scalers <- paste0((seq(200, 10, by=-5)), collapse = " ")
 
-#scalers <- "100 90 80"
-
-### post-processing 
+### Post-processing with defaults
 
 ModelIDs <- names(models)
 models <- Map(function(x, nm) {
-  x$mfcl_commands <- paste(program_path, x$mfcl_commands)
-  x$model_dir <- paste0("model/",nm)
-  x$base_dir <- base_dir
-  x$program_path <- program_path
-  x$run_prof <-run_prof
-  x$Reps <-Reps
-  x$scalers <-scalers
+  # Use model-specific paths if provided, otherwise use defaults
+  prog_path <- if (!is.null(x$program_path)) x$program_path else default_program_path
+  b_dir <- if (!is.null(x$base_dir)) x$base_dir else default_base_dir
+  
+  x$mfcl_commands <- paste(prog_path, x$mfcl_commands)
+  x$model_dir <- paste0("model/", nm)
+  x$base_dir <- b_dir
+  x$program_path <- prog_path
+  x$run_prof <- run_prof
+  x$Reps <- Reps
+  x$scalers <- scalers
   x
 }, models, names(models))
 

@@ -54,6 +54,8 @@ results <- list.dirs(file.path(getwd(), "..", "model"), full.names = TRUE, recur
     ParOut <- read.MFCLPar(finalPar(outputs_path))
     RepOut <- read.MFCLRep(finalRep(outputs_path))
     
+    info <-readRDS(file.path(outputs_path, "info.rds"))
+    
     output_files <- list.files(outputs_path, pattern = "^test_plot_output_\\d+$", full.names = TRUE)
     
     # Read each output file
@@ -72,7 +74,8 @@ results <- list.dirs(file.path(getwd(), "..", "model"), full.names = TRUE, recur
          RepOut = RepOut, 
          LikOut=LikOut_list, 
          LikRawOut=LikRawOut_list,
-         scales=scales)
+         scales=scales,
+         info=info)
   })
 
 
@@ -82,6 +85,8 @@ names(results) <- basename(list.dirs(file.path(getwd(), "..", "model"), full.nam
 # Access individual ParOut and RepOut
 ParOut_list <- purrr::map(results, "ParOut")
 RepOut_list <- purrr::map(results, "RepOut")
+Info_list <- purrr::map(results, "info")
+
 
 # Access individual LikOut objects
 ProfLikOut_list <- purrr::map(results, "LikOut")
@@ -265,11 +270,18 @@ print(final_plot)
 
 ```{r model_profile, echo=FALSE, message=F, fig.dim=c(12,8)}
 
+run_prof_all <- sapply(Info_list, function(x) x$run_prof)
+
 PenIndex="do_everything"
 pen_idx <- grep("do_everything", ProfLikOutRaw_list)
 
 ## make sure the scenario names are in the same order as LikOut_list
-scenarios_name<-names(ProfLikOut_list)
+
+scenarios_prof <- names(run_prof_all)[run_prof_all == 1]
+scenarios_name <- intersect(names(ProfLikOut_list), scenarios_prof)
+
+if(length(scenarios_name) >0) {
+ 
 
 Likes=list()
 
@@ -338,6 +350,9 @@ Likes_change %>%
     legend.title = element_text(face = "bold"),
     strip.text = element_text(size = 10, face = "bold")
   )
+
+
+}
 
 ```
 
