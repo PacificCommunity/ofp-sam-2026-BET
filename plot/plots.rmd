@@ -107,18 +107,21 @@ linewidth = 1
 # )
 # 
 # # Fisheries mapping (option for renaming fisheries)
-fisheries_mapping <- c(
-#  "32" = "PLR1",
-  "33" = "PLR2",
-  "34" = "PLR3",
-  "35" = "PLR4",
-  "37" = "PLR7",
-  "38" = "PLR8"
+index_fisheries_mapping <- c(
+  "33" = "LL-ALL-1",
+  "34" = "LL-ALL-2",
+  "35" = "LL-ALL-3",
+  "36" = "LL-ALL-4",
+  "37" = "LL-ALL-5",
+  "38" = "LL-ALL-6",
+  "39" = "LL-ALL-7",
+  "40" = "LL-ALL-8",
+  "41" = "LL-ALL-9"
 )
 
 # 
 # # Filtered fisheries
- fisheries <- names(fisheries_mapping)
+ fisheries <- names(index_fisheries_mapping)
 
 model_names <- names(ParOut_list)
 
@@ -358,23 +361,27 @@ Likes_change %>%
 
 
 
-## Observed vs Fitted CPUE by scenario
-```{r, echo=FALSE, message=FALSE, fig.dim=c(8,12)}
+# CPUE plots  {.tabset}
+
+## Observed vs Fitted CPUE by scenario 
+
+```{r, echo=FALSE, message=FALSE, fig.dim=c(8,8)}
 # Global configuration for easy tweaks
 config <- list(
   alpha = 0.7,          # transparency for points/lines
-  linewidth = 1.2,      # line thickness
-  point_size = 2,       # point size
+  linewidth = 1,      # line thickness
+  point_size = 1.5,       # point size
   observed_color = "grey30",  # color for observed points
+  predicted_colors = "coral", # color for predicted lines 
   legend_position = "bottom", # legend position ("none","top","bottom","left","right")
-  facet_ncol = 1        # number of columns in facet wrap
+  facet_ncol = 3        # number of columns in facet wrap
 )
 
 # Example run (keeps your original objects/flow)
 scenario_plots <- create_cpue_plots(
   RepOut_list = RepOut_list,
   fisheries = fisheries,
-  fisheries_mapping = fisheries_mapping,
+  fisheries_mapping = index_fisheries_mapping,
   viridis_option = "viridis"  # try "plasma", "inferno", "magma", "cividis"
 )
 
@@ -383,9 +390,26 @@ for (nm in names(scenario_plots)) {
   print(scenario_plots[[nm]])
 }
 
+
 ```
 
 
+## overlay all scenarios in one plot
+
+```{r, echo=FALSE, message=FALSE, fig.dim=c(8,8)}
+
+overlay_plot <- create_overlay_cpue_plot(
+  RepOut_list = RepOut_list,
+  fisheries = fisheries,
+  fisheries_mapping = index_fisheries_mapping,
+  viridis_option = "viridis",  # try "plasma", "inferno", "magma", "cividis"
+  custom_config = list(predicted_colors=NULL)
+)
+
+print(overlay_plot)
+
+
+```
 
 <!-- ## Observed vs Fitted CPUE by index -->
 <!-- ```{r, echo=FALSE, message=FALSE, fig.dim=c(8,12)} -->

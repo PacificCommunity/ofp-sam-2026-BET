@@ -54,46 +54,53 @@ create_cpue_plots <- function(RepOut_list,
                               viridis_option = "viridis",
                               custom_config = list()) {
   
-  # merge defaults with user config
+  # Merge defaults with user config
   cfg <- modifyList(config, custom_config)
   
-  # basic validation
+  # Basic validation
   if (length(RepOut_list) == 0) stop("RepOut_list must not be empty")
   if (length(fisheries) == 0)   stop("fisheries must not be empty")
   
   plots <- list()
   scenario_names <- names(RepOut_list)
   
-  # build a fixed color mapping across scenarios for consistent legend
-  scenario_colors <- get_viridis_colors(length(scenario_names), viridis_option)
-  names(scenario_colors) <- scenario_names
+  # Build a fixed color mapping across scenarios for consistent legend
+  if (!is.null(cfg$predicted_color)) {
+    # Use single user-specified color for all predicted lines
+    scenario_colors <- rep(cfg$predicted_color, length(scenario_names))
+    names(scenario_colors) <- scenario_names
+  } else {
+    # Use viridis colors (default)
+    scenario_colors <- get_viridis_colors(length(scenario_names), viridis_option)
+    names(scenario_colors) <- scenario_names
+  }
+  
   all_colors <- c("Observed" = cfg$observed_color, scenario_colors)
   
-  # iterate scenarios
+  # Iterate scenarios
   for (i in seq_along(RepOut_list)) {
     scenario_name <- scenario_names[i]
     
-    # 1) extract observed and predicted CPUE
-    # Note: cpue_obs/cpue_pred are expected to exist in your environment
+    # Extract observed and predicted CPUE
     obs <- as.data.frame(cpue_obs(RepOut_list[[scenario_name]]))
     fit <- as.data.frame(cpue_pred(RepOut_list[[scenario_name]]))
     
-    # 2) standardize column names
+    # Standardize column names
     names(obs)[names(obs) == "data"] <- "obs"
     names(fit)[names(fit) == "data"] <- "fit"
     
-    # 3) join and coerce types
+    # Join and coerce types
     cpue <- merge(obs, fit)
     cpue <- type.convert(cpue, as.is = TRUE)
     
-    # 4) keep only selected fisheries
+    # Keep only selected fisheries
     cpue <- cpue[cpue$unit %in% fisheries, , drop = FALSE]
     if (nrow(cpue) == 0) {
       warning(paste("No data after filtering for scenario:", scenario_name))
       next
     }
     
-    # 5) optional unit renaming via mapping
+    # Optional unit renaming via mapping
     if (!is.null(fisheries_mapping)) {
       cpue$unit <- as.character(cpue$unit)
       cpue$unit <- ifelse(
@@ -103,7 +110,7 @@ create_cpue_plots <- function(RepOut_list,
       )
     }
     
-    # 6) transform for plotting (assuming log-scale inputs)
+    # Transform for plotting (assuming log-scale inputs)
     cpue <- cpue %>%
       mutate(
         year_season = year + (season - 1) / 4,  # combine year and season (quarterly)
@@ -111,7 +118,16 @@ create_cpue_plots <- function(RepOut_list,
         fit = exp(fit)
       )
     
-    # 7) build plot
+    # Determine plot title
+    if (!is.null(cfg$show_title) && cfg$show_title == FALSE) {
+      plot_title <- NULL
+    } else if (!is.null(cfg$custom_title)) {
+      plot_title <- cfg$custom_title
+    } else {
+      plot_title <- paste("Observed vs Fitted CPUE:", scenario_name)
+    }
+    
+    # Build plot
     p <- ggplot(cpue, aes(x = year_season)) +
       geom_point(aes(y = obs, color = "Observed"),
                  size = cfg$point_size, alpha = cfg$alpha, shape = 16) +
@@ -120,21 +136,150 @@ create_cpue_plots <- function(RepOut_list,
       facet_wrap(~unit, scales = "free_y", ncol = cfg$facet_ncol) +
       scale_color_manual(values = all_colors, name = "Type") +
       labs(
-        title = paste("Observed vs Fitted CPUE:", scenario_name),
+        title = plot_title,
         x = "Year + Season (Q)",
         y = "CPUE"
       ) +
+      theme_bw() +
       theme(
         legend.position = cfg$legend_position,
         strip.text = element_text(size = 10, face = "bold"),
         legend.title = element_text(face = "bold"),
-        panel.grid.minor = element_blank()
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(hjust = 0.5)
       )
     
     plots[[scenario_name]] <- p
   }
   
   return(plots)
+}
+
+
+
+
+
+# Plotting function: overlay all scenarios in one plot
+
+create_overlay_cpue_plot <- function(RepOut_list,
+                                     fisheries,
+                                     fisheries_mapping = NULL,
+                                     viridis_option = "viridis",
+                                     custom_config = list()) {
+  
+  # Merge defaults with user config
+  cfg <- modifyList(config, custom_config)
+  
+  # Basic validation
+  if (length(RepOut_list) == 0) stop("RepOut_list must not be empty")
+  if (length(fisheries) == 0)   stop("fisheries must not be empty")
+  
+  scenario_names <- names(RepOut_list)
+  all_cpue <- list()
+  
+  # Extract data from all scenarios
+  for (scenario_name in scenario_names) {
+    
+    # Extract observed and predicted CPUE
+    obs <- as.data.frame(cpue_obs(RepOut_list[[scenario_name]]))
+    fit <- as.data.frame(cpue_pred(RepOut_list[[scenario_name]]))
+    
+    # Standardize column names
+    names(obs)[names(obs) == "data"] <- "obs"
+    names(fit)[names(fit) == "data"] <- "fit"
+    
+    # Join and coerce types
+    cpue <- merge(obs, fit)
+    cpue <- type.convert(cpue, as.is = TRUE)
+    
+    # Keep only selected fisheries
+    cpue <- cpue[cpue$unit %in% fisheries, , drop = FALSE]
+    
+    # Optional unit renaming
+    if (!is.null(fisheries_mapping)) {
+      cpue$unit <- as.character(cpue$unit)
+      cpue$unit <- ifelse(
+        cpue$unit %in% names(fisheries_mapping),
+        fisheries_mapping[cpue$unit],
+        paste("Unknown", cpue$unit)
+      )
+    }
+    
+    # Transform for plotting
+    cpue <- cpue %>%
+      mutate(
+        year_season = year + (season - 1) / 4,
+        obs = exp(obs),
+        fit = exp(fit),
+        scenario = scenario_name
+      )
+    
+    all_cpue[[scenario_name]] <- cpue
+  }
+  
+  # Combine all scenarios
+  combined_cpue <- bind_rows(all_cpue)
+  
+  # Get observed data (same across scenarios, take from first)
+  obs_data <- combined_cpue %>%
+    filter(scenario == scenario_names[1]) %>%
+    select(unit, year_season, obs) %>%
+    distinct()
+  
+  # Build color palette for scenarios
+  if (!is.null(cfg$predicted_colors)) {
+    # Use user-specified colors
+    if (length(cfg$predicted_colors) < length(scenario_names)) {
+      warning("Not enough colors provided. Recycling colors.")
+      scenario_colors <- rep(cfg$predicted_colors, length.out = length(scenario_names))
+    } else {
+      scenario_colors <- cfg$predicted_colors[1:length(scenario_names)]
+    }
+    names(scenario_colors) <- scenario_names
+  } else {
+    # Use viridis colors (default)
+    scenario_colors <- get_viridis_colors(length(scenario_names), viridis_option)
+    names(scenario_colors) <- scenario_names
+  }
+  
+  all_colors <- c("Observed" = cfg$observed_color, scenario_colors)
+  
+  # Determine title
+  if (!is.null(cfg$show_title) && cfg$show_title == FALSE) {
+    plot_title <- NULL
+  } else if (!is.null(cfg$custom_title)) {
+    plot_title <- cfg$custom_title
+  } else {
+    plot_title <- "Observed vs Fitted CPUE: All Scenarios"
+  }
+  
+  # Create overlay plot
+  p <- ggplot() +
+    # Observed points
+    geom_point(data = obs_data, 
+               aes(x = year_season, y = obs, color = "Observed"),
+               size = cfg$point_size, alpha = cfg$alpha, shape = 16) +
+    # Predicted lines for each scenario
+    geom_line(data = combined_cpue,
+              aes(x = year_season, y = fit, color = scenario),
+              alpha = cfg$alpha, linewidth = cfg$linewidth) +
+    facet_wrap(~unit, scales = "free_y", ncol = cfg$facet_ncol) +
+    scale_color_manual(values = all_colors, name = "Type") +
+    labs(
+      title = plot_title,
+      x = "Year + Season (Q)",
+      y = "CPUE"
+    ) +
+    theme_bw() +
+    theme(
+      legend.position = cfg$legend_position,
+      strip.text = element_text(size = 10, face = "bold"),
+      legend.title = element_text(face = "bold"),
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(hjust = 0.5)
+    )
+  
+  return(p)
 }
 
 
