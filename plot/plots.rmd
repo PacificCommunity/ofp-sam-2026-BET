@@ -107,6 +107,52 @@ linewidth = 1
 # )
 # 
 # # Fisheries mapping (option for renaming fisheries)
+
+all_fisheries_mapping <- c(
+  "1" = "LL-ALL-1",
+  "2" = "LL-ALL-2",
+  "3" = "LL-US-2",
+  "4" = "LL-ALL-3",
+  "5" = "LL-OS-3",
+  "6" = "LL-OS-7",
+  "7" = "LL-ALL-7",
+  "8" = "LL-ALL-8",
+  "9" = "LL-ALL-4",
+  "10" = "LL-AU-5",
+  "11" = "LL-ALL-5",
+  "12" = "LL-ALL-6",
+  "13" = "PS-ASS-3",
+  "14" = "PS-UNA-3",
+  "15" = "PS-ASS-4",
+  "16" = "PS-UNA-4",
+  "17" = "MISC-PH-7",
+  "18" = "HL-PHID-7",
+  "19" = "PS-JP-1",
+  "20" = "PL-JP-1",
+  "21" = "PL-ALL-3",
+  "22" = "PL-ALL-8",
+  "23" = "MISC-ID-7",
+  "24" = "PS-PHID-7",
+  "25" = "PS-ASS-8",
+  "26" = "PS-UNA-8",
+  "27" = "LL-AU-9",
+  "28" = "PL-ALL-7",
+  "29" = "LL-ALL-9",
+  "30" = "PS-ASS-7",
+  "31" = "PS-UNA-7",
+  "32" = "MISC-VN-7",
+    "33" = "LL-ALL-1i",
+    "34" = "LL-ALL-2i",
+    "35" = "LL-ALL-3i",
+    "36" = "LL-ALL-4i",
+    "37" = "LL-ALL-5i",
+    "38" = "LL-ALL-6i",
+    "39" = "LL-ALL-7i",
+    "40" = "LL-ALL-8i",
+    "41" = "LL-ALL-9i"
+)
+
+
 index_fisheries_mapping <- c(
   "33" = "LL-ALL-1",
   "34" = "LL-ALL-2",
@@ -128,7 +174,8 @@ model_names <- names(ParOut_list)
 ```
 
 
-## Summary of each model configuration
+# Summary of each model configuration
+
 ```{r, echo=FALSE, message=F, fig.dim=c(10,10)}
 # Extract parameters (max_grad, obj_fun, n_pars, dimensions) from ParOut_list
 ExtractParams <- lapply(seq_along(ParOut_list), function(i) {
@@ -177,7 +224,8 @@ kable(params_df, caption = "Basic model info") %>%
 
 ```
 
-## Spawning depletion
+# Spawning depletion
+
 ```{r Dep, echo=FALSE, message=F, fig.dim=c(8,6)}
 
 SBdep <- GetQuantSimple(SBSBF0, RepOut_list, minYear, maxYear)
@@ -269,9 +317,11 @@ print(final_plot)
 ```
 
 
-## Likelihood profile
+# Likelihood profile {.tabset}
 
-```{r model_profile, echo=FALSE, message=F, fig.dim=c(12,8)}
+## Each component
+
+```{r model_profile, echo=FALSE, message=F, fig.dim=c(8,8)}
 
 run_prof_all <- sapply(Info_list, function(x) x$run_prof)
 
@@ -296,7 +346,7 @@ for( j in 1:length(results)) {
     Likes[[as.character(i)]]=sapply(scenarios_name, function(x) c("Indices"=sum(ProfLikOut_list[[x]][[as.character(i)]]@survey_index),
                                                                             "LFs"=sum(ProfLikOut_list[[x]][[as.character(i)]]@total_length_fish),
                                                                             # "Penalties"=as.numeric(ProfLikOutRaw_list[[x]][[as.character(i)]][pen_idx:(pen_idx + 1)][2]),
-                                                                            #"Weight comp"=sum(ProfLikOut_list[[x]][[as.character(i)]]@total_weight_fish),
+                                                                            "WFs"=sum(ProfLikOut_list[[x]][[as.character(i)]]@total_weight_fish),
                                                                             "Tags"=sum(unlist(ProfLikOut_list[[x]][[as.character(i)]]@tag_rel_fish, recursive = T)) ) )
     
     
@@ -359,6 +409,201 @@ Likes_change %>%
 
 ```
 
+## Piner (LFs)
+
+```{r piner_LFs, echo=FALSE, message=F, fig.dim=c(8,8)}
+run_prof_all <- sapply(Info_list, function(x) x$run_prof)
+
+PenIndex="do_everything"
+pen_idx <- grep("do_everything", ProfLikOutRaw_list)
+
+scenarios_prof <- names(run_prof_all)[run_prof_all == 1]
+scenarios_name <- intersect(names(ProfLikOut_list), scenarios_prof)
+
+if(length(scenarios_name) > 0) {
+  
+  Likes = list()
+  
+  for(j in 1:length(results)) {
+    
+    scales = results[[j]]$scales
+    
+    for (i in scales) {
+      
+      # Extract all elements from total_length_fish for each scenario
+      Likes[[as.character(i)]] = sapply(scenarios_name, function(x) {
+        
+        lf_vector = ProfLikOut_list[[x]][[as.character(i)]]@total_length_fish
+        
+        # Map to fishery names
+        names(lf_vector) = all_fisheries_mapping[as.character(1:length(lf_vector))]
+        
+        return(lf_vector)
+      })
+      
+      # Remove rows (components) that are 0 across all scenarios
+      Likes[[i]] = Likes[[i]][rowSums(Likes[[i]] != 0) > 0, , drop = FALSE]
+      
+      # Add Total row
+      Likes[[i]] = rbind(Likes[[i]], "Total" = apply(Likes[[i]], 2, sum))
+    }
+  }
+  
+  # Convert to dataframe
+  Likes_df <- purrr::imap_dfr(Likes, function(df, indicator) {
+    as.data.frame(df) %>%
+      tibble::rownames_to_column("Fishery") %>%
+      mutate(scaler = indicator)
+  })
+  
+  # Convert to long format
+  Likes_long <- Likes_df %>%
+    pivot_longer(
+      cols = scenarios_name,
+      names_to = "scenario",
+      values_to = "value"
+    ) %>%
+    mutate(scaler = as.numeric(scaler) * 0.01 * 
+             unlist(sapply(scenarios_name, function(x) 
+               read.table(paste0("../model/", x, "/avg_bio"))))
+    )
+  
+  # Calculate change from minimum value
+  Likes_change <- Likes_long %>%
+    group_by(Fishery, scenario) %>%
+    mutate(
+      min_value = min(value, na.rm = TRUE),
+      change = (value - min_value)
+    ) %>%
+    ungroup()
+  
+  # Visualization with LFs annotation in top-right corner
+  Likes_change %>% 
+    filter(Fishery != "Total") %>%
+    ggplot(aes(x = scaler, y = change, colour = Fishery, shape = Fishery)) +
+    geom_line(linewidth = 1, alpha = 0.7) +
+    geom_point(size = 2, alpha = 0.8) +
+    annotate("text", x = Inf, y = Inf, label = "LFs", 
+             hjust = 1.1, vjust = 1.5, size = 5, fontface = "bold") +
+    scale_color_viridis_d() +
+    scale_shape_manual(values = rep(0:24, length.out = length(unique(Likes_change$Fishery)))) +
+    facet_wrap(~scenario, scale = "free") +
+    scale_x_continuous(
+      labels = function(x) x / 1000,
+      name = bquote("Average biomass ("*10^3*" MT)")
+    ) +
+    labs(
+      y = "Changes in Likelihood",
+      colour = "Fishery",
+      shape = "Fishery"
+    ) +
+    theme(
+      legend.position = "bottom",
+      legend.title = element_text(face = "bold"),
+      strip.text = element_text(size = 10, face = "bold")
+    )
+}
+
+```
+
+
+
+## Piner (WFs)
+
+```{r piner_WFs, echo=FALSE, message=F, fig.dim=c(8,8)}
+run_prof_all <- sapply(Info_list, function(x) x$run_prof)
+
+PenIndex="do_everything"
+pen_idx <- grep("do_everything", ProfLikOutRaw_list)
+
+scenarios_prof <- names(run_prof_all)[run_prof_all == 1]
+scenarios_name <- intersect(names(ProfLikOut_list), scenarios_prof)
+
+if(length(scenarios_name) > 0) {
+  
+  Likes = list()
+  
+  for(j in 1:length(results)) {
+    
+    scales = results[[j]]$scales
+    
+    for (i in scales) {
+      
+      # Extract all elements from total_weight_fish for each scenario
+      Likes[[as.character(i)]] = sapply(scenarios_name, function(x) {
+        
+        wf_vector = ProfLikOut_list[[x]][[as.character(i)]]@total_weight_fish
+        
+        # Map to fishery names
+        names(wf_vector) = all_fisheries_mapping[as.character(1:length(wf_vector))]
+        
+        return(wf_vector)
+      })
+      
+      # Remove rows (components) that are 0 across all scenarios
+      Likes[[i]] = Likes[[i]][rowSums(Likes[[i]] != 0) > 0, , drop = FALSE]
+      
+      # Add Total row
+      Likes[[i]] = rbind(Likes[[i]], "Total" = apply(Likes[[i]], 2, sum))
+    }
+  }
+  
+  # Convert to dataframe
+  Likes_df <- purrr::imap_dfr(Likes, function(df, indicator) {
+    as.data.frame(df) %>%
+      tibble::rownames_to_column("Fishery") %>%
+      mutate(scaler = indicator)
+  })
+  
+  # Convert to long format
+  Likes_long <- Likes_df %>%
+    pivot_longer(
+      cols = scenarios_name,
+      names_to = "scenario",
+      values_to = "value"
+    ) %>%
+    mutate(scaler = as.numeric(scaler) * 0.01 * 
+             unlist(sapply(scenarios_name, function(x) 
+               read.table(paste0("../model/", x, "/avg_bio"))))
+    )
+  
+  # Calculate change from minimum value
+  Likes_change <- Likes_long %>%
+    group_by(Fishery, scenario) %>%
+    mutate(
+      min_value = min(value, na.rm = TRUE),
+      change = (value - min_value)
+    ) %>%
+    ungroup()
+  
+  # Visualization with WFs annotation in top-right corner
+  Likes_change %>% 
+    filter(Fishery != "Total") %>%
+    ggplot(aes(x = scaler, y = change, colour = Fishery, shape = Fishery)) +
+    geom_line(linewidth = 1, alpha = 0.7) +
+    geom_point(size = 2, alpha = 0.8) +
+    annotate("text", x = Inf, y = Inf, label = "WFs", 
+             hjust = 1.1, vjust = 1.5, size = 5, fontface = "bold") +
+    scale_color_viridis_d() +
+    scale_shape_manual(values = rep(0:24, length.out = length(unique(Likes_change$Fishery)))) +
+    facet_wrap(~scenario, scale = "free") +
+    scale_x_continuous(
+      labels = function(x) x / 1000,
+      name = bquote("Average biomass ("*10^3*" MT)")
+    ) +
+    labs(
+      y = "Changes in Likelihood",
+      colour = "Fishery",
+      shape = "Fishery"
+    ) +
+    theme(
+      legend.position = "bottom",
+      legend.title = element_text(face = "bold"),
+      strip.text = element_text(size = 10, face = "bold")
+    )
+}
+
+```
 
 
 # CPUE plots  {.tabset}
