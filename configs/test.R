@@ -6,23 +6,23 @@ models <- list(
                           sep = " "),
     program_path = "../../mfcl/exe/mfclo64_2023",  # Model-specific path
     base_dir = "mfcl/inputs/2023"                   # Model-specific dir
-  ),
-  
-   "base2026" = list(
-     mfcl_commands = paste("bet.frq 11.par 12.par",
-                          "-switch 1 1 1 1000",
-                          sep = " "),
-     program_path = "../../mfcl/exe/mfclo64_2026",
-     base_dir = "mfcl/inputs/2023"
-   )
+   ) #,
+  # 
+  #   "base2026" = list(
+  #     mfcl_commands = paste("bet.frq 11.par 12.par",
+  #                          "-switch 1 1 1 1000",
+  #                          sep = " "),
+  #     program_path = "../../mfcl/exe/mfclo64_2026",
+  #     base_dir = "mfcl/inputs/2023"
+  #  )
 )
 
 # Default values
-default_program_path <- "../../mfcl/exe/mfclo64_2026"
+default_program_path <- "../../mfcl/exe/mfclo64_2023"
 default_base_dir <- "mfcl/inputs/2023"
-run_prof <- "0"
-Reps <- "10000 10000 10000 10000 10000 10000"
-scalers <- paste0((seq(200, 10, by=-5)), collapse = " ")
+run_prof <- "1"
+Reps <- "1000 1000 1000 1000 1000 1000"
+scalers <- paste0((seq(200, 10, by=-20)), collapse = " ")
 
 ### Post-processing with defaults
 
