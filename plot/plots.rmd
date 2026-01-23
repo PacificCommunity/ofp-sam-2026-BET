@@ -35,6 +35,8 @@ library(patchwork)
 library(reshape2)
 library(kableExtra)
 library(viridis)
+library(stringr)
+
 
 theme_set(theme_cowplot())
 
@@ -51,6 +53,13 @@ results <- list.dirs(file.path(getwd(), "..", "model"), full.names = TRUE, recur
     cat("Processing folder:", outputs_path, "\n")
     
     # Read ParOut and RepOut for the current folder
+    
+    IndepOut <- if (file.exists(paste0(outputs_path, "/indepvar.rpt"))) {
+      readLines(paste0(outputs_path, "/indepvar.rpt"))
+    } else {
+      NULL
+    }
+    
     ParOut <- read.MFCLPar(finalPar(outputs_path))
     RepOut <- read.MFCLRep(finalRep(outputs_path))
     LengOut <- read.MFCLLenFit(paste0(outputs_path, "/length.fit"))
@@ -79,6 +88,7 @@ results <- list.dirs(file.path(getwd(), "..", "model"), full.names = TRUE, recur
          LikOut=LikOut_list, 
          LikRawOut=LikRawOut_list,
          scales=scales,
+         IndepOut=IndepOut,
          info=info)
   })
 
@@ -91,6 +101,7 @@ ParOut_list <- purrr::map(results, "ParOut")
 RepOut_list <- purrr::map(results, "RepOut")
 WeightOut_list <- purrr::map(results, "WeightOut")
 LengOut_list <- purrr::map(results, "LengOut")
+IndepOut_list <- purrr::map(results, "IndepOut")
 
 Info_list <- purrr::map(results, "info")
 
@@ -231,6 +242,192 @@ kable(params_df, caption = "Basic model info") %>%
 
 ```
 
+
+
+
+# Bound Hit Parameter Analysis {.tabset .tabset-pills}
+
+```{r bound-hit-analysis, echo=FALSE, message=FALSE, warning=FALSE, results='asis'}
+
+# Parse function
+parse_indepvar <- function(lines) {
+  data_list <- list()
+  for (i in 2:length(lines)) {
+    line <- lines[i]
+    if (nchar(trimws(line)) > 0) {
+      hit_bound <- grepl("\\*{5,}", line)
+      line_clean <- gsub("\\*+", "", line)
+      parts <- strsplit(trimws(line_clean), "\\s+")[[1]]
+      
+      if (length(parts) >= 6) {
+        data_list[[length(data_list) + 1]] <- data.frame(
+          Index = as.integer(parts[1]),
+          Var_name = parts[2],
+          Estimate = as.numeric(parts[3]),
+          L_bound = as.numeric(parts[4]),
+          U_bound = as.numeric(parts[5]),
+          Gradient = as.numeric(parts[6]),
+          Hit_Bound = hit_bound,
+          stringsAsFactors = FALSE
+        )
+      }
+    }
+  }
+  do.call(rbind, data_list)
+}
+
+# Separate NULL and valid models
+null_models <- names(IndepOut_list)[sapply(IndepOut_list, is.null)]
+valid_models <- names(IndepOut_list)[!sapply(IndepOut_list, is.null)]
+
+# Process each valid model
+model_results <- list()
+
+for (model_name in valid_models) {
+  lines <- IndepOut_list[[model_name]]
+  df <- parse_indepvar(lines)
+  
+  df$Distance_to_lower <- abs(df$Estimate - df$L_bound)
+  df$Distance_to_upper <- abs(df$Estimate - df$U_bound)
+  df$Hit_Type <- ifelse(!df$Hit_Bound, "None",
+                        ifelse(df$Distance_to_lower <= df$Distance_to_upper, "Lower", "Upper"))
+  df$Distance_to_bound <- ifelse(!df$Hit_Bound, NA,
+                                 ifelse(df$Hit_Type == "Lower", df$Distance_to_lower, df$Distance_to_upper))
+  df$Var_type <- str_extract(df$Var_name, "^[a-zA-Z_]+")
+  
+  bound_hits <- df %>%
+    filter(Hit_Bound) %>%
+    select(Index, Var_name, Var_type, Estimate, Hit_Type, 
+           L_bound, U_bound, Distance_to_bound, Gradient) %>%
+    arrange(Index)
+  
+  model_results[[model_name]] <- list(
+    total_params = nrow(df),
+    bound_hits = bound_hits
+  )
+  
+  write.csv(bound_hits, paste0("bound_hits_", model_name, ".csv"), row.names = FALSE)
+}
+
+# Overview Tab
+cat("\n## Overview\n\n")
+
+cat(sprintf("**Total Models:** %d  \n", length(IndepOut_list)))
+cat(sprintf("**Models with indepvar.rpt:** %d  \n", length(valid_models)))
+cat(sprintf("**Models without indepvar.rpt:** %d  \n\n", length(null_models)))
+
+if (length(model_results) > 0) {
+  overview <- data.frame(
+    Model = names(model_results),
+    Total_Params = sapply(model_results, function(x) x$total_params),
+    Bound_Hits = sapply(model_results, function(x) nrow(x$bound_hits)),
+    Hit_Rate = sapply(model_results, function(x) 
+      sprintf("%.2f%%", nrow(x$bound_hits) / x$total_params * 100)),
+    Lower_Hits = sapply(model_results, function(x) 
+      sum(x$bound_hits$Hit_Type == "Lower")),
+    Upper_Hits = sapply(model_results, function(x) 
+      sum(x$bound_hits$Hit_Type == "Upper"))
+  )
+  
+ print(
+    kable(overview,
+          col.names = c("Model", "Total", "Hits", "Rate", "Lower", "Upper"),
+          align = c("l", "r", "r", "r", "r", "r"),
+          row.names = FALSE) %>%
+      kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                    full_width = FALSE) %>%
+      row_spec(0, bold = TRUE, background = "#2196F3", color = "white") %>%
+      column_spec(3, bold = TRUE, color = "red")
+  )
+}
+
+if (length(null_models) > 0) {
+  cat("\n\n### Models Without indepvar.rpt\n\n")
+  cat("The following models did not generate an `indepvar.rpt` file:\n\n")
+  for (model in null_models) {
+    cat(sprintf("- **%s**: `indepvar.rpt` was not generated\n", model))
+  }
+  cat("\n")
+}
+
+# Valid Model Tabs
+for (model_name in names(model_results)) {
+  result <- model_results[[model_name]]
+  bound_hits <- result$bound_hits
+  
+  cat(sprintf("\n## %s\n\n", model_name))
+  
+  cat(sprintf("**Total Parameters:** %s  \n", format(result$total_params, big.mark = ",")))
+  cat(sprintf("**Bound Hits:** %d (%.2f%%)  \n", 
+              nrow(bound_hits), 
+              nrow(bound_hits) / result$total_params * 100))
+  cat(sprintf("**Lower Bound Hits:** %d  \n", sum(bound_hits$Hit_Type == "Lower")))
+  cat(sprintf("**Upper Bound Hits:** %d  \n\n", sum(bound_hits$Hit_Type == "Upper")))
+  
+  if (nrow(bound_hits) > 0) {
+    
+    cat("### Bound Hit Parameters\n\n")
+    
+    bound_hits_display <- bound_hits %>%
+      mutate(
+        Estimate_fmt = sprintf("%.4e", Estimate),
+        Distance_fmt = sprintf("%.2e", Distance_to_bound)
+      ) %>%
+      select(Index, Var_name, Var_type, Estimate_fmt, Hit_Type, L_bound, U_bound, Distance_fmt)
+    
+    print(
+      kable(bound_hits_display, 
+            col.names = c("Index", "Parameter", "Type", "Estimate", "Hit", 
+                          "Lower", "Upper", "Distance"),
+            align = c("r", "l", "l", "r", "c", "r", "r", "r")) %>%
+        kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                      full_width = TRUE,
+                      font_size = 11) %>%
+        row_spec(0, bold = TRUE, background = "#4CAF50", color = "white") %>%
+        column_spec(5, bold = TRUE, 
+                    color = ifelse(bound_hits$Hit_Type == "Lower", "#E74C3C", "#3498DB")) %>%
+        scroll_box(width = "100%", height = "400px")
+    )
+    
+    cat("\n\n### Summary by Variable Type\n\n")
+    
+    type_summary <- bound_hits %>%
+      count(Var_type, Hit_Type) %>%
+      pivot_wider(names_from = Hit_Type, values_from = n, values_fill = 0) %>%
+      mutate(Total = Lower + Upper) %>%
+      arrange(desc(Total))
+    
+    print(
+      kable(type_summary,
+            col.names = c("Type", "Lower", "Upper", "Total"),
+            align = c("l", "r", "r", "r")) %>%
+        kable_styling(bootstrap_options = c("striped", "hover"),
+                      full_width = FALSE) %>%
+        row_spec(0, bold = TRUE, background = "#FF9800", color = "white") %>%
+        column_spec(4, bold = TRUE)
+    )
+    
+    cat(sprintf("\n\n*Data saved to: `bound_hits_%s.csv`*\n\n", model_name))
+    
+  } else {
+    cat("\n✅ **No bound hits detected in this model**\n\n")
+  }
+}
+
+# NULL Model Tabs
+for (model_name in null_models) {
+  cat(sprintf("\n## %s\n\n", model_name))
+  cat("⚠️ **No`indepvar.rpt` file.**\n\n")
+}
+
+
+```
+
+
+
+
+# Spawning depletion
+
 # Spawning depletion
 
 ```{r Dep, echo=FALSE, message=F, fig.dim=c(8,6)}
@@ -240,27 +437,41 @@ Rec <- GetQuantSimple(eq_rec, RepOut_list, minYear, maxYear, scale_factor = 1/1e
 
 # Map numeric scenario IDs back to original scenario names
 scenario_names <- names(RepOut_list)
+
+# Check what Scenario column looks like
+cat("Original SBdep Scenario values:\n")
+print(unique(SBdep$Scenario))
+
+# Map scenarios properly
 SBdep <- SBdep %>% 
-  mutate(Scenario = scenario_names[as.numeric(Scenario)])
+  mutate(Scenario = scenario_names[as.numeric(as.character(Scenario))])
+
 Rec <- Rec %>% 
-  mutate(Scenario = scenario_names[as.numeric(Scenario)])
+  mutate(Scenario = scenario_names[as.numeric(as.character(Scenario))])
+
+# Verify mapping worked
+cat("\nMapped SBdep Scenario values:\n")
+print(unique(SBdep$Scenario))
 
 ## Define generic colour palette automatically from scenarios
-scenario_levels <- sort(unique(SBdep$Scenario))
+scenario_levels <- names(RepOut_list)  # Use original order from list
 n_colors <- length(scenario_levels)
 scenario_colors <- setNames(
   viridis(n_colors, option = "D", direction = 1),
   scenario_levels
 )
 
-# Convert to factor with explicit labels
+cat("\nScenario colors:\n")
+print(scenario_colors)
+
+# Convert to factor with original order
 SBdep$Scenario <- factor(SBdep$Scenario, levels = scenario_levels)
 Rec$Scenario <- factor(Rec$Scenario, levels = scenario_levels)
 
 ## Plot 1: SB/SBF=0
 SBdepPlot <- ggplot(SBdep, aes(x = Year, y = Quant, group = Scenario, color = Scenario)) + 
   geom_line(linewidth = linewidth, alpha = alpha) + 
-  scale_color_manual(values = scenario_colors) + 
+  scale_color_manual(values = scenario_colors, drop = FALSE) + 
   labs(x = "Year", y = bquote(SB/SB["F=0"])) +
   coord_cartesian(ylim = c(0, 1)) +
   geom_hline(yintercept = 0.2, linetype = "dashed", color = "darkred") +
@@ -274,7 +485,7 @@ SBdepPlot <- ggplot(SBdep, aes(x = Year, y = Quant, group = Scenario, color = Sc
 RecPlot <- ggplot(Rec, aes(x = Year, y = Quant, group = Scenario, color = Scenario)) + 
   geom_line(linewidth = linewidth, alpha = alpha) + 
   coord_cartesian(ylim = c(0, NA)) +
-  scale_color_manual(values = scenario_colors) + 
+  scale_color_manual(values = scenario_colors, drop = FALSE) + 
   labs(
     x = "Year",
     y = bquote("Spawning Potential (" * 10^3 * " MT)")
@@ -286,24 +497,18 @@ RecPlot <- ggplot(Rec, aes(x = Year, y = Quant, group = Scenario, color = Scenar
 
 # Shared legend
 legend_data <- data.frame(
-  Year = seq_along(scenario_colors),
-  Quant = seq_along(scenario_colors),
-  Scenario = factor(names(scenario_colors), levels = names(scenario_colors))
+  Scenario = factor(scenario_levels, levels = scenario_levels)
 )
 
-shared_legend <- ggplot(legend_data, aes(x = Year, y = Quant, color = Scenario)) +
-  geom_line(linewidth = linewidth, alpha = alpha) +
-  scale_color_manual(values = scenario_colors) +
+shared_legend <- ggplot(legend_data, aes(x = 1, y = 1, color = Scenario)) +
+  geom_point(size = 3) +
+  scale_color_manual(values = scenario_colors, drop = FALSE) +
+  theme_void() +
   theme(
     legend.position = "right",
     legend.direction = "vertical",
     legend.title = element_text(face = "bold"),
-    legend.key = element_blank(),
-    legend.text = element_text(size = 10),
-    axis.ticks = element_blank(),
-    axis.text = element_blank(),
-    axis.title = element_blank(),
-    panel.background = element_blank()
+    legend.text = element_text(size = 10)
   ) +
   labs(color = "Scenario")
 
@@ -325,9 +530,6 @@ final_plot <- cowplot::plot_grid(
 )
 
 print(final_plot)
-
-
-
 
 ```
 
@@ -623,67 +825,82 @@ if(length(scenarios_name) > 0) {
 
 # CPUE plots  {.tabset}
 
-## Observed vs Fitted CPUE by scenario 
+## Observed vs Fitted CPUE by scenario {.tabset .tabset-pills}
 
-```{r, echo=FALSE, message=FALSE, fig.dim=c(8,8)}
+```{r cpue-plots-by-scenario, echo=FALSE, message=FALSE, warning=FALSE, results='asis', fig.dim=c(8,8)}
 # Global configuration for easy tweaks
 config <- list(
-  alpha = 0.7,          # transparency for points/lines
-  linewidth = 1,      # line thickness
-  point_size = 1.5,       # point size
-  observed_color = "grey30",  # color for observed points
-  predicted_colors = "coral", # color for predicted lines 
-  legend_position = "bottom", # legend position ("none","top","bottom","left","right")
-  facet_ncol = 3        # number of columns in facet wrap
+  alpha = 0.7,
+  linewidth = 1,
+  point_size = 1.5,
+  observed_color = "grey30",
+  predicted_colors = "coral",
+  legend_position = "bottom",
+  facet_ncol = 3
 )
 
-# Example run (keeps your original objects/flow)
+# Create plots
 scenario_plots <- create_cpue_plots(
   RepOut_list = RepOut_list,
   fisheries = fisheries,
   fisheries_mapping = index_fisheries_mapping,
-  viridis_option = "viridis"  # try "plasma", "inferno", "magma", "cividis"
+  viridis_option = "viridis"
 )
 
-# Print all scenario plots
+# Print each scenario in its own tab
 for (nm in names(scenario_plots)) {
+  cat(sprintf("\n### %s\n\n", nm))
   print(scenario_plots[[nm]])
+  cat("\n\n")
 }
-
-
 ```
 
 
-## overlay all scenarios in one plot
+## overlay all scenarios in one plot (Interactive)
 
-```{r, echo=FALSE, message=FALSE, fig.dim=c(8,8)}
+```{r, echo=FALSE, message=FALSE, fig.dim=c(10,8)}
+library(plotly)
 
 overlay_plot <- create_overlay_cpue_plot(
   RepOut_list = RepOut_list,
   fisheries = fisheries,
   fisheries_mapping = index_fisheries_mapping,
-  viridis_option = "viridis",  # try "plasma", "inferno", "magma", "cividis"
+  viridis_option = "viridis",
   custom_config = list(predicted_colors=NULL)
 )
 
-print(overlay_plot)
+# Convert to interactive plotly
+interactive_plot <- ggplotly(overlay_plot, tooltip = c("x", "y", "colour")) %>%
+  layout(
+    legend = list(
+      orientation = "v",
+      x = 1.02,
+      y = 1,
+      xanchor = "left",
+      yanchor = "top"
+    )
+  )
 
-
+interactive_plot
 ```
-
 
 # LF plots  {.tabset}
 
-## Observed vs Fitted LFs by scenario 
+## overlay all scenarios in one plot {.tabset .tabset-pills}
 
-
-```{r, echo=FALSE, message=FALSE, fig.dim=c(8,8)}
-
+```{r lf-plots-setup1, echo=FALSE, message=FALSE, fig.dim=c(8,10), warning=FALSE, results='asis'}
 # Get all unique fisheries across all scenarios
 all_fisheries <- unique(unlist(lapply(LengOut_list, function(x) unique(x@lenfits$fishery))))
 
 # Loop through each fishery
 for(fish in all_fisheries) {
+  
+  # Map fishery number to name
+  fishery_name <- all_fisheries_mapping[as.character(fish)]
+  if(is.na(fishery_name)) fishery_name <- paste("Fishery", fish)
+  
+  # Create tab for this fishery
+  cat(sprintf("\n### %s\n\n", fishery_name))
   
   # Combine data from all scenarios for this fishery
   combined_data <- lapply(names(LengOut_list), function(scenario_name) {
@@ -701,7 +918,10 @@ for(fish in all_fisheries) {
     bind_rows()
   
   # Skip if no data for this fishery
-  if(nrow(combined_data) == 0) next
+  if(nrow(combined_data) == 0) {
+    cat("*No data available for this fishery*\n\n")
+    next
+  }
   
   # Aggregate by scenario, year, and length
   plot_data <- combined_data %>%
@@ -709,10 +929,6 @@ for(fish in all_fisheries) {
     summarise(obs = sum(obs), 
               pred = sum(pred),
               .groups = "drop")
-  
-  # Map fishery number to name
-  fishery_name <- all_fisheries_mapping[as.character(fish)]
-  if(is.na(fishery_name)) fishery_name <- paste("Fishery", fish)
   
   # Create plot
   p <- ggplot(plot_data, aes(x = length)) +
@@ -734,26 +950,104 @@ for(fish in all_fisheries) {
     )
   
   print(p)
+  cat("\n\n")
 }
-
 ```
 
+
+## Observed vs Fitted LFs by scenario {.tabset .tabset-pills}
+
+```{r lf-plots-setup, echo=FALSE, message=FALSE, fig.dim=c(8,10), warning=FALSE, results='asis'}
+# Get all unique fisheries across all scenarios
+all_fisheries <- unique(unlist(lapply(LengOut_list, function(x) unique(x@lenfits$fishery))))
+
+# Get all scenarios
+all_scenarios <- names(LengOut_list)
+
+# Loop through each scenario first
+for(scenario_name in all_scenarios) {
+  
+  cat(sprintf("\n### %s {.tabset}\n\n", scenario_name))
+  
+  scenario_data <- LengOut_list[[scenario_name]]
+  
+  # Loop through each fishery within this scenario
+  for(fish in all_fisheries) {
+    
+    # Map fishery number to name
+    fishery_name <- all_fisheries_mapping[as.character(fish)]
+    if(is.na(fishery_name)) fishery_name <- paste("Fishery", fish)
+    
+    # Create sub-tab for this fishery
+    cat(sprintf("\n#### %s\n\n", fishery_name))
+    
+    # Get data for this fishery in this scenario
+    if(!(fish %in% unique(scenario_data@lenfits$fishery))) {
+      cat("*No data available for this fishery in this scenario*\n\n")
+      next
+    }
+    
+    plot_data <- scenario_data@lenfits %>%
+      filter(fishery == fish)
+    
+    if(nrow(plot_data) == 0) {
+      cat("*No data available for this fishery*\n\n")
+      next
+    }
+    
+    # Aggregate by year and length
+    plot_data <- plot_data %>%
+      group_by(fishery, year, length) %>%
+      summarise(obs = sum(obs), 
+                pred = sum(pred),
+                .groups = "drop")
+    
+    # Create plot
+    p <- ggplot(plot_data, aes(x = length)) +
+      geom_col(aes(y = obs, fill = "Observed"), 
+               alpha = 0.7, width = 2) +
+      geom_line(aes(y = pred, color = "Predicted"), 
+                linewidth = 1) +
+      facet_wrap(~ year, scales = "free_y", ncol = 4) +
+      scale_fill_manual(name = "", values = c("Observed" = "#E69F00")) +
+      scale_color_manual(name = "", values = c("Predicted" = "#56B4E9")) +
+      labs(title = paste(scenario_name, "-", fishery_name, "- Length Frequency Fits"),
+           x = "Length (cm)", 
+           y = "Frequency") +
+      theme_bw() +
+      theme(
+        legend.position = "top",
+        legend.box = "horizontal",
+        strip.text = element_text(size = 8)
+      )
+    
+    print(p)
+    cat("\n\n")
+  }
+}
+```
 
 
 
 
 # WF plots  {.tabset}
 
-## Observed vs Fitted LFs by scenario 
 
+## overlay all scenarios in one plot {.tabset .tabset-pills}
 
-```{r, echo=FALSE, message=FALSE, fig.dim=c(8,12)}
-
+```{r wf-plots-setup1, echo=FALSE, message=FALSE, fig.dim=c(8,12), warning=FALSE, results='asis'}
 # Get all unique fisheries across all scenarios
 all_fisheries <- unique(unlist(lapply(WeightOut_list, function(x) unique(x@wgtfits$fishery))))
 
 # Loop through each fishery
 for(fish in all_fisheries) {
+  
+  # Map fishery number to name
+  fishery_name <- all_fisheries_mapping[as.character(fish)]
+  if(is.na(fishery_name)) fishery_name <- paste("Fishery", fish)
+  
+  # Create tab for this fishery
+  cat(sprintf("\n### %s\n\n", fishery_name))
   
   # Combine data from all scenarios for this fishery
   combined_data <- lapply(names(WeightOut_list), function(scenario_name) {
@@ -771,7 +1065,10 @@ for(fish in all_fisheries) {
     bind_rows()
   
   # Skip if no data for this fishery
-  if(nrow(combined_data) == 0) next
+  if(nrow(combined_data) == 0) {
+    cat("*No data available for this fishery*\n\n")
+    next
+  }
   
   # Aggregate by scenario, year, and weight
   plot_data <- combined_data %>%
@@ -779,10 +1076,6 @@ for(fish in all_fisheries) {
     summarise(obs = sum(obs), 
               pred = sum(pred),
               .groups = "drop")
-  
-  # Map fishery number to name
-  fishery_name <- all_fisheries_mapping[as.character(fish)]
-  if(is.na(fishery_name)) fishery_name <- paste("Fishery", fish)
   
   # Create plot
   p <- ggplot(plot_data, aes(x = weight)) +
@@ -804,201 +1097,80 @@ for(fish in all_fisheries) {
     )
   
   print(p)
+  cat("\n\n")
 }
-
-
 ```
 
 
 
+## Observed vs Fitted WFs by scenario {.tabset .tabset-pills}
 
+```{r wf-plots-setup, echo=FALSE, message=FALSE, fig.dim=c(8,12), warning=FALSE, results='asis'}
+# Get all unique fisheries across all scenarios
+all_fisheries <- unique(unlist(lapply(WeightOut_list, function(x) unique(x@wgtfits$fishery))))
 
+# Get all scenarios
+all_scenarios <- names(WeightOut_list)
 
-
-
-
-<!-- ## Observed vs Fitted CPUE by index -->
-<!-- ```{r, echo=FALSE, message=FALSE, fig.dim=c(8,12)} -->
-
-<!-- # Initialize a list to store plots for each unit -->
-<!-- unit_plots <- list() -->
-
-<!-- # Loop through each unit -->
-<!-- for (unit_num in fisheries) { -->
-
-<!--   # Combine data for all scenarios for the current unit -->
-<!--   combined_cpue <- do.call(rbind, lapply(names(RepOut_list), function(scenario_name) { -->
-
-<!--     # Remove the `skj_` prefix from the scenario name -->
-<!--     cleaned_scenario_name <- sub("^skj_", "", scenario_name) -->
-
-<!--     # Ensure the cleaned scenario name exists in scenario_colors -->
-<!--     if (!(cleaned_scenario_name %in% names(scenario_colors))) { -->
-<!--       warning(paste("Scenario", cleaned_scenario_name, "is not in scenario_colors. Skipping.")) -->
-<!--       return(NULL) -->
-<!--     } -->
-
-<!--     # Extract the current scenario's data -->
-<!--     obs <- as.data.frame(cpue_obs(RepOut_list[[scenario_name]])) -->
-<!--     fit <- as.data.frame(cpue_pred(RepOut_list[[scenario_name]])) -->
-
-<!--     # Rename columns -->
-<!--     names(obs)[names(obs) == "data"] <- "obs" -->
-<!--     names(fit)[names(fit) == "data"] <- "fit" -->
-
-<!--     # Combine observed and fitted data -->
-<!--     cpue <- merge(obs, fit) -->
-<!--     cpue <- type.convert(cpue, as.is = TRUE) -->
-
-<!--     # Filter by the current unit and apply mapping -->
-<!--     cpue <- cpue[cpue$unit == unit_num, ] -->
-<!--     cpue$unit <- as.character(cpue$unit) -->
-<!--     cpue$unit <- ifelse( -->
-<!--       cpue$unit %in% names(fisheries_mapping), -->
-<!--       fisheries_mapping[cpue$unit],  # Map unit to PLR names -->
-<!--       paste("Unknown", cpue$unit)  # Handle unmapped units -->
-<!--     ) -->
-
-<!--     # Calculate exponential values and add scenario info -->
-<!--     if (nrow(cpue) > 0) { -->
-<!--       cpue <- cpue %>% -->
-<!--         mutate( -->
-<!--           year_season = year + (season - 1) / 4, -->
-<!--           scenario = factor(cleaned_scenario_name, levels = names(scenario_colors)), -->
-<!--           obs = exp(obs), -->
-<!--           fit = exp(fit) -->
-<!--         ) -->
-<!--     } -->
-
-<!--     return(cpue) -->
-<!--   })) -->
-
-<!--   # Skip if no data for the current unit -->
-<!--   if (is.null(combined_cpue) || nrow(combined_cpue) == 0) { -->
-<!--     warning(paste("No data for unit", unit_num)) -->
-<!--     next -->
-<!--   } -->
-
-<!--   # Create the plot for the current unit -->
-<!--   unit_plot <- ggplot(combined_cpue, aes(x = year_season)) + -->
-<!--     geom_point(aes(y = obs, color = "Observed"), size = 2, alpha = alpha, shape = 16) +  # Points for observed values -->
-<!--     geom_line(aes(y = fit, color = scenario), alpha = alpha, linewidth = linewidth, linetype = "solid") +  # Lines for fitted values -->
-<!--     facet_wrap(~scenario, scales = "free_y", ncol = 1) +  # Facet by scenario (1 column, vertical layout) -->
-<!--     scale_color_manual( -->
-<!--       values = c("Observed" = "grey", scenario_colors),  # Grey for observed, scenario colors for lines -->
-<!--       name = "Type"  # Legend title -->
-<!--     ) + -->
-<!--     labs( -->
-<!--       title = paste("Observed vs Fitted CPUE for", fisheries_mapping[unit_num]), -->
-<!--       x = "Year and Season Combined", -->
-<!--       y = "CPUE" -->
-<!--     ) + -->
-<!--     theme( -->
-<!--       strip.text = element_text(size = 10, face = "bold"),  # Style facet labels -->
-<!--       legend.position = "none",  # Remove legend -->
-<!--       legend.title = element_text(face = "bold"),  # Bold legend title -->
-<!--       legend.key = element_blank()  # Remove borders around legend keys -->
-<!--     ) -->
-
-<!--   # Store the plot for the current unit -->
-<!--   unit_plots[[paste("Unit", unit_num)]] <- unit_plot -->
-<!-- } -->
-
-<!-- # Display all the plots -->
-<!-- for (unit_name in names(unit_plots)) { -->
-<!--   print(unit_plots[[unit_name]])  # Print each plot individually -->
-<!-- } -->
-
-<!-- ``` -->
-
-
-
-<!-- ## Residuals by index -->
-<!-- ```{r, echo=FALSE, message=FALSE, fig.dim=c(8,12)} -->
-
-<!-- # Combine data for all units and scenarios -->
-<!-- all_combined_cpue <- do.call(rbind, lapply(names(RepOut_list), function(scenario_name) { -->
-
-<!--   # Remove the `skj_` prefix from the scenario name -->
-<!--   cleaned_scenario_name <- sub("^skj_", "", scenario_name) -->
-
-<!--   # Ensure the cleaned scenario name exists in scenario_colors -->
-<!--   if (!(cleaned_scenario_name %in% names(scenario_colors))) { -->
-<!--     warning(paste("Scenario", cleaned_scenario_name, "is not in scenario_colors. Skipping.")) -->
-<!--     return(NULL) -->
-<!--   } -->
-
-<!--   # Extract the current scenario's data -->
-<!--   obs <- as.data.frame(cpue_obs(RepOut_list[[scenario_name]])) -->
-<!--   fit <- as.data.frame(cpue_pred(RepOut_list[[scenario_name]])) -->
-
-<!--   # Rename columns -->
-<!--   names(obs)[names(obs) == "data"] <- "obs" -->
-<!--   names(fit)[names(fit) == "data"] <- "fit" -->
-
-<!--   # Combine observed and fitted data -->
-<!--   cpue <- merge(obs, fit) -->
-<!--   cpue <- type.convert(cpue, as.is = TRUE) -->
-
-<!--   # Filter to include only specific fisheries and apply mapping -->
-<!--   cpue <- cpue[cpue$unit %in% fisheries, ] -->
-<!--   cpue$unit <- as.character(cpue$unit) -->
-<!--   cpue$unit <- ifelse( -->
-<!--     cpue$unit %in% names(fisheries_mapping), -->
-<!--     fisheries_mapping[cpue$unit],  # Map to PLR names -->
-<!--     paste("Unknown", cpue$unit)  # Handle unmapped units -->
-<!--   ) -->
-
-<!--   # Calculate residuals and add scenario info -->
-<!--   if (nrow(cpue) > 0) { -->
-<!--     cpue <- cpue %>% -->
-<!--       mutate( -->
-<!--         year_season = year + (season - 1) / 4, -->
-<!--         scenario = factor(cleaned_scenario_name, levels = names(scenario_colors)),  # Order facets -->
-<!--         residual = exp(obs) - exp(fit)  # Calculate residuals -->
-<!--       ) -->
-<!--   } -->
-
-<!--   return(cpue) -->
-<!-- })) -->
-
-<!-- # Skip if no data -->
-<!-- if (is.null(all_combined_cpue) || nrow(all_combined_cpue) == 0) { -->
-<!--   stop("No data available for plotting.") -->
-<!-- } -->
-
-<!-- # Create residual plots for each mapped unit with consistent y-axis scaling -->
-<!-- unit_residual_plots <- list() -->
-<!-- for (unit_name in unique(all_combined_cpue$unit)) { -->
-<!--   unit_data <- all_combined_cpue[all_combined_cpue$unit == unit_name, ] -->
-<!--   unit_residual_plot <- ggplot(unit_data, aes(x = year_season, y = residual, color = scenario)) + -->
-<!--     geom_point(alpha = 0.6) +  # Transparent points -->
-<!--     geom_hline(yintercept = 0, linetype = "dashed", color = "black", linewidth = 0.8) +  # Zero line -->
-<!--     facet_wrap(~scenario, scales = "fixed", ncol = 1) +  # Fixed y-axis scales across scenarios -->
-<!--     scale_color_manual( -->
-<!--       values = scenario_colors,  # Scenario colors -->
-<!--       name = "Scenario"  # Legend title -->
-<!--     ) + -->
-<!--     labs( -->
-<!--       title = paste("Residuals for", unit_name), -->
-<!--       x = "Year and Season Combined", -->
-<!--       y = "Residual (Observed - Predicted)" -->
-<!--     ) + -->
-<!--     theme( -->
-<!--       strip.text = element_text(size = 10, face = "bold"),  # Style facet labels -->
-<!--       legend.position = "none",  # Remove legend -->
-<!--       legend.title = element_text(face = "bold"),  # Bold legend title -->
-<!--       legend.key = element_blank()  # Remove borders around legend keys -->
-<!--     ) -->
-<!--   unit_residual_plots[[paste("Unit", unit_name)]] <- unit_residual_plot -->
-<!-- } -->
-
-<!-- # Display all the residual plots -->
-<!-- for (unit_name in names(unit_residual_plots)) { -->
-<!--   print(unit_residual_plots[[unit_name]])  # Print each residual plot individually -->
-<!-- } -->
-
-
-
-<!-- ``` -->
+# Loop through each scenario first
+for(scenario_name in all_scenarios) {
+  
+  cat(sprintf("\n### %s {.tabset}\n\n", scenario_name))
+  
+  scenario_data <- WeightOut_list[[scenario_name]]
+  
+  # Loop through each fishery within this scenario
+  for(fish in all_fisheries) {
+    
+    # Map fishery number to name
+    fishery_name <- all_fisheries_mapping[as.character(fish)]
+    if(is.na(fishery_name)) fishery_name <- paste("Fishery", fish)
+    
+    # Create sub-tab for this fishery
+    cat(sprintf("\n#### %s\n\n", fishery_name))
+    
+    # Get data for this fishery in this scenario
+    if(!(fish %in% unique(scenario_data@wgtfits$fishery))) {
+      cat("*No data available for this fishery in this scenario*\n\n")
+      next
+    }
+    
+    plot_data <- scenario_data@wgtfits %>%
+      filter(fishery == fish)
+    
+    if(nrow(plot_data) == 0) {
+      cat("*No data available for this fishery*\n\n")
+      next
+    }
+    
+    # Aggregate by year and weight
+    plot_data <- plot_data %>%
+      group_by(fishery, year, weight) %>%
+      summarise(obs = sum(obs), 
+                pred = sum(pred),
+                .groups = "drop")
+    
+    # Create plot
+    p <- ggplot(plot_data, aes(x = weight)) +
+      geom_col(aes(y = obs, fill = "Observed"), 
+               alpha = 0.7, width = 2) +
+      geom_line(aes(y = pred, color = "Predicted"), 
+                linewidth = 1) +
+      facet_wrap(~ year, scales = "free_y", ncol = 4) +
+      scale_fill_manual(name = "", values = c("Observed" = "#E69F00")) +
+      scale_color_manual(name = "", values = c("Predicted" = "#56B4E9")) +
+      labs(title = paste(scenario_name, "-", fishery_name, "- Weight Frequency Fits"),
+           x = "Weight (kg)", 
+           y = "Frequency") +
+      theme_bw() +
+      theme(
+        legend.position = "top",
+        legend.box = "horizontal",
+        strip.text = element_text(size = 8)
+      )
+    
+    print(p)
+    cat("\n\n")
+  }
+}
 

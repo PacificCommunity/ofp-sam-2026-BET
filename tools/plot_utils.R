@@ -113,9 +113,10 @@ create_cpue_plots <- function(RepOut_list,
     # Transform for plotting (assuming log-scale inputs)
     cpue <- cpue %>%
       mutate(
-        year_season = year + (season - 1) / 4,  # combine year and season (quarterly)
+        year_season = year + (season - 1) / 4,
         obs = exp(obs),
-        fit = exp(fit)
+        fit = exp(fit),
+        Scenario = scenario_name
       )
     
     # Determine plot title
@@ -131,7 +132,7 @@ create_cpue_plots <- function(RepOut_list,
     p <- ggplot(cpue, aes(x = year_season)) +
       geom_point(aes(y = obs, color = "Observed"),
                  size = cfg$point_size, alpha = cfg$alpha, shape = 16) +
-      geom_line(aes(y = fit, color = scenario_name),
+      geom_line(aes(y = fit, color = Scenario),  # ✅ CHANGED: use Scenario column instead
                 alpha = cfg$alpha, linewidth = cfg$linewidth) +
       facet_wrap(~unit, scales = "free_y", ncol = cfg$facet_ncol) +
       scale_color_manual(values = all_colors, name = "Type") +
