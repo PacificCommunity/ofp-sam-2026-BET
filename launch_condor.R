@@ -15,7 +15,7 @@ docker_image <- "ghcr.io/pacificcommunity/bet-2026:v1.2"      # Docker image to 
 condor_memory <- "12GB"                                        # Memory request for the Condor job (e.g., "6GB")
 condor_disk <- "10GB"
 condor_cpus <- 2                                              # CPU request for the Condor job ")(e.g., 4)
-branch <- "main"                                              # Branch of git repository to use 
+branch <- "develop"                                              # Branch of git repository to use 
 
 # ---------------------------------------
 # Run the job on Condor through CondorBox
@@ -23,7 +23,9 @@ branch <- "main"                                              # Branch of git re
 
 setwd(here::here())
 
-dir="sens/27_oct_2025_mfcl2026_profLikemore" 
+#dir="develop/likelihood_test6" 
+dir="develop/Jan_23_mfcl_test"
+
 make="run plot"
 
 source("configs/test.R") 
@@ -64,7 +66,7 @@ CondorBox::CondorBox(
 # Retrieve and synchronise the output from the remote server
 # ----------------------------------------------------------
 
-output_dir="sens/24_oct_2025_mfcl2023_profLikemore" 
+output_dir=dir
 
 setwd(here::here())
 
