@@ -432,92 +432,58 @@ for (model_name in null_models) {
 SBdep <- GetQuantSimple(SBSBF0, RepOut_list, minYear, maxYear)
 Rec <- GetQuantSimple(eq_rec, RepOut_list, minYear, maxYear, scale_factor = 1/1e6)
 
-# Map numeric scenario IDs back to original scenario names
-scenario_names <- names(RepOut_list)
-
-# Check what Scenario column looks like
-cat("Original SBdep Scenario values:\n")
-print(unique(SBdep$Scenario))
-
-# Map scenarios properly
-SBdep <- SBdep %>% 
-  mutate(Scenario = scenario_names[as.numeric(as.character(Scenario))])
-
-Rec <- Rec %>% 
-  mutate(Scenario = scenario_names[as.numeric(as.character(Scenario))])
-
-# Verify mapping worked
-cat("\nMapped SBdep Scenario values:\n")
-print(unique(SBdep$Scenario))
-
-## Define generic colour palette automatically from scenarios
-scenario_levels <- names(RepOut_list)  # Use original order from list
+## Define colour palette
+scenario_levels <- unique(SBdep$Scenario)
 n_colors <- length(scenario_levels)
 scenario_colors <- setNames(
   viridis(n_colors, option = "D", direction = 1),
   scenario_levels
 )
 
-cat("\nScenario colors:\n")
-print(scenario_colors)
-
-# Convert to factor with original order
+# Convert to factor
 SBdep$Scenario <- factor(SBdep$Scenario, levels = scenario_levels)
 Rec$Scenario <- factor(Rec$Scenario, levels = scenario_levels)
 
 ## Plot 1: SB/SBF=0
-SBdepPlot <- ggplot(SBdep, aes(x = Year, y = Quant, group = Scenario, color = Scenario)) + 
-  geom_line(linewidth = linewidth, alpha = alpha) + 
-  scale_color_manual(values = scenario_colors, drop = FALSE) + 
+SBdepPlot <- ggplot(SBdep, aes(x = Year, y = Quant, color = Scenario, group = Scenario)) + 
+  geom_line(linewidth = 1.2) + 
+  scale_color_manual(values = scenario_colors) + 
   labs(x = "Year", y = bquote(SB/SB["F=0"])) +
   coord_cartesian(ylim = c(0, 1)) +
   geom_hline(yintercept = 0.2, linetype = "dashed", color = "darkred") +
   geom_hline(yintercept = 0.5, linetype = "dashed", color = "darkgreen") +
-  theme(
-    legend.position = "none",
-    strip.text = element_text(size = 10)
-  )
+  theme_bw() +
+  theme(legend.position = "none")
 
 ## Plot 2: Recruitment
-RecPlot <- ggplot(Rec, aes(x = Year, y = Quant, group = Scenario, color = Scenario)) + 
-  geom_line(linewidth = linewidth, alpha = alpha) + 
+RecPlot <- ggplot(Rec, aes(x = Year, y = Quant, color = Scenario, group = Scenario)) + 
+  geom_line(linewidth = 1.2) + 
   coord_cartesian(ylim = c(0, NA)) +
-  scale_color_manual(values = scenario_colors, drop = FALSE) + 
-  labs(
-    x = "Year",
-    y = bquote("Spawning Potential (" * 10^3 * " MT)")
-  ) +
-  theme(
-    legend.position = "none",
-    strip.text = element_text(size = 10)
-  )
+  scale_color_manual(values = scenario_colors) + 
+  labs(x = "Year", y = bquote("Spawning Potential (" * 10^3 * " MT)")) +
+  theme_bw() +
+  theme(legend.position = "none")
 
-# Shared legend
-legend_data <- data.frame(
-  Scenario = factor(scenario_levels, levels = scenario_levels)
-)
-
-shared_legend <- ggplot(legend_data, aes(x = 1, y = 1, color = Scenario)) +
-  geom_point(size = 3) +
-  scale_color_manual(values = scenario_colors, drop = FALSE) +
-  theme_void() +
+# Extract legend
+temp_plot <- ggplot(SBdep, aes(x = Year, y = Quant, color = Scenario)) +
+  geom_line(linewidth = 2) +
+  scale_color_manual(values = scenario_colors) +
+  theme_bw() +
   theme(
     legend.position = "right",
-    legend.direction = "vertical",
     legend.title = element_text(face = "bold"),
-    legend.text = element_text(size = 10)
+    legend.key.width = unit(1.5, "cm")
   ) +
   labs(color = "Scenario")
 
-legend <- cowplot::get_legend(shared_legend)
+legend <- cowplot::get_legend(temp_plot)
 
 combined_plot <- cowplot::plot_grid(
   SBdepPlot, RecPlot,
   ncol = 1,
   labels = c("A", "B"),
   label_size = 12,
-  align = "v",
-  rel_heights = c(1, 1)
+  align = "v"
 )
 
 final_plot <- cowplot::plot_grid(
@@ -527,7 +493,6 @@ final_plot <- cowplot::plot_grid(
 )
 
 print(final_plot)
-
 ```
 
 
@@ -1170,4 +1135,4 @@ for(scenario_name in all_scenarios) {
     cat("\n\n")
   }
 }
-
+```
