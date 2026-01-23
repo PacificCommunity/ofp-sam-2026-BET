@@ -425,9 +425,6 @@ for (model_name in null_models) {
 
 
 
-
-# Spawning depletion
-
 # Spawning depletion
 
 ```{r Dep, echo=FALSE, message=F, fig.dim=c(8,6)}
