@@ -34,7 +34,7 @@ models <- list(
 default_program_path <- "../../mfcl/exe/mfclo64_2023"
 default_base_dir <- "mfcl/inputs/2023"
 run_prof <- "1"
-Reps <- "100 100 1000 1000 5000 5000"
+Reps <- "3 3 3 3 5 5"
 scalers <- paste0((seq(150, 50, by=-5)), collapse = " ")
 
 ### Post-processing with defaults
