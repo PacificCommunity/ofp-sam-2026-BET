@@ -50,7 +50,7 @@ models <- Map(function(x, nm) {
   prog_path <- if (!is.null(x$program_path)) x$program_path else default_program_path
   b_dir <- if (!is.null(x$base_dir)) x$base_dir else default_base_dir
   
-  if(x$mfcl_commands == "./doitall") {
+  if(x$mfcl_commands == "./doitall.sh") {
     x$mfcl_commands <- x$mfcl_commands
   } else {
   x$mfcl_commands <- paste(prog_path, x$mfcl_commands)
