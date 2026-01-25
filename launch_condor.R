@@ -26,7 +26,7 @@ setwd(here::here())
 #dir="develop/likelihood_test6" 
 dir="develop/Jan_25_mfcltest"
 
-make="run plot"
+make="run"
 
 source("configs/test.R") 
 
