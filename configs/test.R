@@ -21,14 +21,14 @@ models <- list(
   
   
   "doitall_mfcl2023" = list(
-    mfcl_commands = "./doitall",
+    mfcl_commands = "./doitall.sh",
     program_path = "../../mfcl/exe/mfclo64_2023",  # Model-specific path
     base_dir = "mfcl/inputs/2023"                   # Model-specific dir
   ),
   
   
   "doitall_mfcl2026" = list(
-    mfcl_commands = "./doitall",
+    mfcl_commands = "./doitall.sh",
     program_path = "../../mfcl/exe/mfclo64_2026_01_22_vsn2278",  # Model-specific path
     base_dir = "mfcl/inputs/2023"                   # Model-specific dir
   )
