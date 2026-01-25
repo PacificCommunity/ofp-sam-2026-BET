@@ -6,11 +6,13 @@ library(CondorBox)
 source("tools/ProfLike_utils.R")
 
 ## environment variables
-program_path=Sys.getenv("program_path", "../../mfcl/exe/mfclo64_2023")
+program_path=Sys.getenv("program_path", "../../mfcl/exe/mfclo64_2026_01_22_vsn2278")
 Sys.setenv("PROGRAM_PATH" = program_path)
 base_dir<-Sys.getenv("base_dir", "mfcl/inputs/2023")
 model_dir<-Sys.getenv("model_dir", "model/base")
 mfcl_commands <- Sys.getenv("mfcl_commands", paste(program_path,"bet.frq 11.par 12.par -switch 1 1 1 1"))
+#mfcl_commands <- Sys.getenv("mfcl_commands", "./doitall.sh")
+
 run_prof<-as.integer(Sys.getenv("run_prof", "0"))
 Reps<-as.integer(unlist(strsplit(Sys.getenv("Reps", "1 1 1 1 1 1"), "\\s+"))); names(Reps) <-paste0("Reps", 1:length(Reps))
 scalers<-as.numeric(unlist(strsplit(Sys.getenv("scalers", "100 90 80 70 60 50"), "\\s+")))
