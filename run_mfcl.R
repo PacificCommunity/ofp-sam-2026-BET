@@ -11,7 +11,7 @@ Sys.setenv("PROGRAM_PATH" = program_path)
 base_dir<-Sys.getenv("base_dir", "mfcl/inputs/2023")
 model_dir<-Sys.getenv("model_dir", "model/base")
 defaultswitch<- paste("-switch 12",
-                      "1 1 100", 
+                      "1 1 1000", 
                       "1 246 1",
                       ## the multiplier changed from 10 to 100
                       "2 128 100",
