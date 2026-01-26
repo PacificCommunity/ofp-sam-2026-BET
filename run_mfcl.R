@@ -10,7 +10,22 @@ program_path=Sys.getenv("program_path", "../../mfcl/exe/mfclo64_2026_01_22_vsn22
 Sys.setenv("PROGRAM_PATH" = program_path)
 base_dir<-Sys.getenv("base_dir", "mfcl/inputs/2023")
 model_dir<-Sys.getenv("model_dir", "model/base")
-mfcl_commands <- Sys.getenv("mfcl_commands", paste(program_path,"bet.frq 11.par 12.par -switch 1 1 1 1"))
+defaultswitch<- paste("-switch 11",
+                      "1 1 100", 
+                      "1 246 1",  
+                      ## round(sqrt(5/penalty)*100)
+                      "-33 92 24",
+                      "-34 92 31",
+                      "-35 92 20",
+                      "-36 92 21",
+                      "-37 92 26",
+                      "-38 92 23",
+                      "-39 92 20",
+                      "-40 92 25",
+                      "-41 92 47",
+                      sep=" ")
+
+mfcl_commands <- Sys.getenv("mfcl_commands", paste(program_path,"bet.frq 11.par 12.par", defaultswitch))
 #mfcl_commands <- Sys.getenv("mfcl_commands", "./doitall.sh")
 
 run_prof<-as.integer(Sys.getenv("run_prof", "0"))

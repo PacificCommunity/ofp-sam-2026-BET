@@ -1,39 +1,87 @@
+# 
+# models <- list(
+#   "par_mfcl2023" = list(
+#     mfcl_commands = paste("bet.frq 11.par 12.par",
+#                           "-switch 2 1 1 5000",
+#                           "1 246 1",
+#                           sep = " "),
+#     program_path = "../../mfcl/exe/mfclo64_2023",  # Model-specific path
+#     base_dir = "mfcl/inputs/2023"                   # Model-specific dir
+#    ),
+#   
+#   
+#   "par_mfcl2026" = list(
+#     mfcl_commands = paste("bet.frq 11.par 12.par",
+#                           "-switch 2 1 1 5000",
+#                           "1 246 1",
+#                           sep = " "),
+#     program_path = "../../mfcl/exe/mfclo64_2026_01_22_vsn2278",  # Model-specific path
+#     base_dir = "mfcl/inputs/2023"                   # Model-specific dir
+#   ),
+#   
+#   
+#   "doitall_mfcl2023" = list(
+#     mfcl_commands = "./doitall.sh",
+#     program_path = "../../mfcl/exe/mfclo64_2023",  # Model-specific path
+#     base_dir = "mfcl/inputs/2023"                   # Model-specific dir
+#   ),
+#   
+#   
+#   "doitall_mfcl2026" = list(
+#     mfcl_commands = "./doitall.sh",
+#     program_path = "../../mfcl/exe/mfclo64_2026_01_22_vsn2278",  # Model-specific path
+#     base_dir = "mfcl/inputs/2023"                   # Model-specific dir
+#   )
+#   
+# )
+# 
+
+
+
 
 models <- list(
-  "par_mfcl2023" = list(
+  "par2026" = list(
     mfcl_commands = paste("bet.frq 11.par 12.par",
-                          "-switch 2 1 1 5000",
-                          "1 246 1",
-                          sep = " "),
-    program_path = "../../mfcl/exe/mfclo64_2023",  # Model-specific path
-    base_dir = "mfcl/inputs/2023"                   # Model-specific dir
-   ),
-  
-  
-  "par_mfcl2026" = list(
-    mfcl_commands = paste("bet.frq 11.par 12.par",
-                          "-switch 2 1 1 5000",
-                          "1 246 1",
+                          "-switch 11",
+                          "1 1 1000", 
+                          "1 246 1",  
+                          ## round(sqrt(5/penalty)*100)
+                          "-33 92 24",
+                          "-34 92 31",
+                          "-35 92 20",
+                          "-36 92 21",
+                          "-37 92 26",
+                          "-38 92 23",
+                          "-39 92 20",
+                          "-40 92 25",
+                          "-41 92 47",
                           sep = " "),
     program_path = "../../mfcl/exe/mfclo64_2026_01_22_vsn2278",  # Model-specific path
     base_dir = "mfcl/inputs/2023"                   # Model-specific dir
-  ),
-  
-  
-  "doitall_mfcl2023" = list(
-    mfcl_commands = "./doitall.sh",
-    program_path = "../../mfcl/exe/mfclo64_2023",  # Model-specific path
-    base_dir = "mfcl/inputs/2023"                   # Model-specific dir
-  ),
-  
-  
-  "doitall_mfcl2026" = list(
-    mfcl_commands = "./doitall.sh",
-    program_path = "../../mfcl/exe/mfclo64_2026_01_22_vsn2278",  # Model-specific path
-    base_dir = "mfcl/inputs/2023"                   # Model-specific dir
-  )
-  
-)
+   ))
+
+
+# 
+# defaultswitch<- paste("-switch 11",
+#                       "1 1 100", 
+#                       "1 246 1",  
+#                       ## round(sqrt(5/penalty)*100)
+#                       "-33 92 24",
+#                       "-34 92 31",
+#                       "-35 92 20",
+#                       "-36 92 21",
+#                       "-37 92 26",
+#                       "-38 92 23",
+#                       "-39 92 20",
+#                       "-40 92 25",
+#                       "-41 92 47",
+#                       sep=" ")
+# 
+# 
+# 
+
+
+
 
 # Default values
 default_program_path <- "../../mfcl/exe/mfclo64_2023"

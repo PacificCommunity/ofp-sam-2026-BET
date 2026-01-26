@@ -24,7 +24,7 @@ branch <- "develop"                                              # Branch of git
 setwd(here::here())
 
 #dir="develop/likelihood_test6" 
-dir="develop/Jan_25_doitallsh_par"
+dir="develop/Jan_26_mfcl2026"
 
 make="run"
 
