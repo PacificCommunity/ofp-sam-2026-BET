@@ -10,9 +10,11 @@ program_path=Sys.getenv("program_path", "../../mfcl/exe/mfclo64_2026_01_22_vsn22
 Sys.setenv("PROGRAM_PATH" = program_path)
 base_dir<-Sys.getenv("base_dir", "mfcl/inputs/2023")
 model_dir<-Sys.getenv("model_dir", "model/base")
-defaultswitch<- paste("-switch 11",
+defaultswitch<- paste("-switch 12",
                       "1 1 100", 
-                      "1 246 1",  
+                      "1 246 1",
+                      ## the multiplier changed from 10 to 100
+                      "2 128 100",
                       ## round(sqrt(5/penalty)*100)
                       "-33 92 24",
                       "-34 92 31",

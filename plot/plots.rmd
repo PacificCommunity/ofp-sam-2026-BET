@@ -820,7 +820,7 @@ for (nm in names(scenario_plots)) {
 
 ## overlay all scenarios in one plot (Interactive)
 
-```{r, echo=FALSE, message=FALSE, fig.dim=c(10,8)}
+```{r, echo=FALSE, message=FALSE, fig.dim=c(10,8), eval=F}
 library(plotly)
 
 overlay_plot <- create_overlay_cpue_plot(
@@ -850,7 +850,7 @@ interactive_plot
 
 ## overlay all scenarios in one plot {.tabset .tabset-pills}
 
-```{r lf-plots-setup1, echo=FALSE, message=FALSE, fig.dim=c(8,10), warning=FALSE, results='asis'}
+```{r lf-plots-setup1, eval=F, echo=FALSE, message=FALSE, fig.dim=c(8,10), warning=FALSE, results='asis'}
 # Get all unique fisheries across all scenarios
 all_fisheries <- unique(unlist(lapply(LengOut_list, function(x) unique(x@lenfits$fishery))))
 
@@ -919,7 +919,7 @@ for(fish in all_fisheries) {
 
 ## Observed vs Fitted LFs by scenario {.tabset .tabset-pills}
 
-```{r lf-plots-setup, echo=FALSE, message=FALSE, fig.dim=c(8,10), warning=FALSE, results='asis'}
+```{r lf-plots-setup, echo=FALSE, eval=F, message=FALSE, fig.dim=c(8,10), warning=FALSE, results='asis'}
 # Get all unique fisheries across all scenarios
 all_fisheries <- unique(unlist(lapply(LengOut_list, function(x) unique(x@lenfits$fishery))))
 
@@ -997,7 +997,7 @@ for(scenario_name in all_scenarios) {
 
 ## overlay all scenarios in one plot {.tabset .tabset-pills}
 
-```{r wf-plots-setup1, echo=FALSE, message=FALSE, fig.dim=c(8,12), warning=FALSE, results='asis'}
+```{r wf-plots-setup1, echo=FALSE, eval=F, message=FALSE, fig.dim=c(8,12), warning=FALSE, results='asis'}
 # Get all unique fisheries across all scenarios
 all_fisheries <- unique(unlist(lapply(WeightOut_list, function(x) unique(x@wgtfits$fishery))))
 
@@ -1067,7 +1067,7 @@ for(fish in all_fisheries) {
 
 ## Observed vs Fitted WFs by scenario {.tabset .tabset-pills}
 
-```{r wf-plots-setup, echo=FALSE, message=FALSE, fig.dim=c(8,12), warning=FALSE, results='asis'}
+```{r wf-plots-setup, echo=FALSE, eval=F, message=FALSE, fig.dim=c(8,12), warning=FALSE, results='asis'}
 # Get all unique fisheries across all scenarios
 all_fisheries <- unique(unlist(lapply(WeightOut_list, function(x) unique(x@wgtfits$fishery))))
 
