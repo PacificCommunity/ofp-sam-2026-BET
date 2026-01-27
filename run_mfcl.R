@@ -8,29 +8,29 @@ source("tools/ProfLike_utils.R")
 ## environment variables
 program_path=Sys.getenv("program_path", "../../mfcl/exe/mfclo64_2026_01_22_vsn2278")
 Sys.setenv("PROGRAM_PATH" = program_path)
-base_dir<-Sys.getenv("base_dir", "mfcl/inputs/2023")
+base_dir<-Sys.getenv("base_dir", "mfcl/inputs/2026")
 model_dir<-Sys.getenv("model_dir", "model/base")
-defaultswitch<- paste("-switch 12",
-                      "1 1 1000", 
-                      "1 246 1",
+defaultswitch<- paste("-switch 1",
+                      "1 1 1", 
+                    #  "1 246 1",
                       ## the multiplier changed from 10 to 100
-                      "2 128 100",
+                    #  "2 128 100",
                       ## round(sqrt(5/penalty)*100)
-                      "-33 92 24",
-                      "-34 92 31",
-                      "-35 92 20",
-                      "-36 92 21",
-                      "-37 92 26",
-                      "-38 92 23",
-                      "-39 92 20",
-                      "-40 92 25",
-                      "-41 92 47",
+                    #  "-33 92 24",
+                    #  "-34 92 31",
+                    #  "-35 92 20",
+                    #  "-36 92 21",
+                    #  "-37 92 26",
+                    #  "-38 92 23",
+                    #  "-39 92 20",
+                    #  "-40 92 25",
+                    #  "-41 92 47",
                       sep=" ")
 
 mfcl_commands <- Sys.getenv("mfcl_commands", paste(program_path,"bet.frq 11.par 12.par", defaultswitch))
 #mfcl_commands <- Sys.getenv("mfcl_commands", "./doitall.sh")
 
-run_prof<-as.integer(Sys.getenv("run_prof", "0"))
+run_prof<-as.integer(Sys.getenv("run_prof", "1"))
 Reps<-as.integer(unlist(strsplit(Sys.getenv("Reps", "1 1 1 1 1 1"), "\\s+"))); names(Reps) <-paste0("Reps", 1:length(Reps))
 scalers<-as.numeric(unlist(strsplit(Sys.getenv("scalers", "100 90 80 70 60 50"), "\\s+")))
 

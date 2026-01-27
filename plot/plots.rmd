@@ -524,7 +524,7 @@ for( j in 1:length(results)) {
   for (i in scales) {
     Likes[[as.character(i)]]=sapply(scenarios_name, function(x) c("Indices"=sum(ProfLikOut_list[[x]][[as.character(i)]]@survey_index),
                                                                             "LFs"=sum(ProfLikOut_list[[x]][[as.character(i)]]@total_length_fish),
-                                                                            # "Penalties"=as.numeric(ProfLikOutRaw_list[[x]][[as.character(i)]][pen_idx:(pen_idx + 1)][2]),
+                                                                             "Penalties"=as.numeric(ProfLikOutRaw_list[[x]][[as.character(i)]][pen_idx:(pen_idx + 1)][2]),
                                                                             "WFs"=sum(ProfLikOut_list[[x]][[as.character(i)]]@total_weight_fish),
                                                                             "Tags"=sum(unlist(ProfLikOut_list[[x]][[as.character(i)]]@tag_rel_fish, recursive = T)) ) )
     
