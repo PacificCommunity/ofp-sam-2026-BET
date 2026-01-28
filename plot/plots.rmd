@@ -36,6 +36,7 @@ library(reshape2)
 library(kableExtra)
 library(viridis)
 library(stringr)
+library(purrr)
 
 
 theme_set(theme_cowplot())
@@ -64,6 +65,7 @@ results <- list.dirs(file.path(getwd(), "..", "model"), full.names = TRUE, recur
     RepOut <- read.MFCLRep(finalRep(outputs_path))
     LengOut <- read.MFCLLenFit(paste0(outputs_path, "/length.fit"))
     WeightOut <- read.MFCLWgtFit(paste0(outputs_path, "/weight.fit"))
+    TagOut<-read.MFCLTag(list.files(outputs_path, "\\.tag$", full.names=TRUE))
     
     info <-readRDS(file.path(outputs_path, "info.rds"))
     
@@ -85,6 +87,7 @@ results <- list.dirs(file.path(getwd(), "..", "model"), full.names = TRUE, recur
          RepOut = RepOut, 
          LengOut = LengOut,
          WeightOut = WeightOut,
+         TagOut = TagOut,
          LikOut=LikOut_list, 
          LikRawOut=LikRawOut_list,
          scales=scales,
@@ -102,7 +105,7 @@ RepOut_list <- purrr::map(results, "RepOut")
 WeightOut_list <- purrr::map(results, "WeightOut")
 LengOut_list <- purrr::map(results, "LengOut")
 IndepOut_list <- purrr::map(results, "IndepOut")
-
+TagOut_list <- purrr::map(results, "TagOut")
 Info_list <- purrr::map(results, "info")
 
 
@@ -188,6 +191,13 @@ index_fisheries_mapping <- c(
  fisheries <- names(index_fisheries_mapping)
 
 model_names <- names(ParOut_list)
+
+
+tag_program_maps <- map(TagOut_list, ~ .x@releases) %>%  # releases만 먼저
+              map(~ .x %>% distinct(rel.group, program) %>% 
+                     rename(program_name = program))
+names(tag_program_maps) <- names(TagOut_list)
+
 
 ```
 
@@ -720,10 +730,10 @@ if(length(scenarios_name) > 0) {
       })
       
       # Remove rows (components) that are 0 across all scenarios
-      Likes[[i]] = Likes[[i]][rowSums(Likes[[i]] != 0) > 0, , drop = FALSE]
+    #  Likes[[i]] = Likes[[i]][rowSums(Likes[[i]] != 0) > 0, , drop = FALSE]
       
       # Add Total row
-      Likes[[i]] = rbind(Likes[[i]], "Total" = apply(Likes[[i]], 2, sum))
+    #  Likes[[i]] = rbind(Likes[[i]], "Total" = apply(Likes[[i]], 2, sum))
     }
   }
   
@@ -783,6 +793,102 @@ if(length(scenarios_name) > 0) {
 }
 
 ```
+
+
+
+## Piner (Tagging)
+
+```{r piner_tag, echo=FALSE, message=F, fig.dim=c(8,8)}
+run_prof_all <- sapply(Info_list, function(x) x$run_prof)
+
+PenIndex="do_everything"
+pen_idx <- grep("do_everything", ProfLikOutRaw_list)
+
+scenarios_prof <- names(run_prof_all)[run_prof_all == 1]
+scenarios_name <- intersect(names(ProfLikOut_list), scenarios_prof)
+
+if(length(scenarios_name) > 0) {
+  
+Likes = list()
+
+for(j in 1:length(results)) {
+  scales = results[[j]]$scales
+  
+  for (i in scales) {
+    # sapply + simplify=FALSE로 list 반환
+    Likes[[as.character(i)]] = sapply(scenarios_name, function(x) {
+      tag_rel_fish <- ProfLikOut_list[[x]][[as.character(i)]]@tag_rel_fish
+      sums_vector <- sapply(tag_rel_fish, function(group) sum(unlist(group)))
+      names(sums_vector) <- tag_program_maps[[x]]$program_name[1:length(sums_vector)]
+      return(sums_vector)
+    }, simplify = FALSE)  # 핵심 수정 [code_file:10]
+  }
+}  
+  
+
+  Likes <- bind_rows(lapply(names(Likes), function(scaler) {  # 60,70,80=컬럼
+  model_data <- Likes[[scaler]]
+  
+  bind_rows(lapply(names(model_data), function(model) {  # base=행
+    vec <- model_data[[model]]
+    data.frame(
+      scenario = model,
+      scaler = scaler,
+      program = names(vec),
+      value = as.numeric(vec)
+    )
+  }))
+}))
+
+
+  
+  
+  # Convert to long format
+  Likes_long <- Likes %>%
+    mutate(scaler = as.numeric(scaler) * 0.01 * 
+             unlist(sapply(scenarios_name, function(x) 
+               read.table(paste0("../model/", x, "/avg_bio"))))
+    ) %>% 
+    group_by(program, scaler, scenario) %>% summarise(value = sum(value))
+  
+  # Calculate change from minimum value
+  Likes_change <- Likes_long %>%
+    group_by(program, scenario) %>%
+    mutate(
+      min_value = min(value, na.rm = TRUE),
+      change = (value - min_value)
+    ) %>%
+    ungroup()
+  
+  # Visualization with WFs annotation in top-right corner
+  Likes_change %>% 
+    ggplot(aes(x = scaler, y = change, colour = program, shape = program)) +
+    geom_line(linewidth = 1, alpha = 0.7) +
+    geom_point(size = 2, alpha = 0.8) +
+    annotate("text", x = Inf, y = Inf, label = "Tagging program", 
+             hjust = 1.1, vjust = 1.5, size = 5, fontface = "bold") +
+    scale_color_viridis_d() +
+    scale_shape_manual(values = rep(0:24, length.out = length(unique(Likes_change$program)))) +
+    facet_wrap(~scenario, scale = "free") +
+    scale_x_continuous(
+      labels = function(x) x / 1000,
+      name = bquote("Average biomass ("*10^3*" MT)")
+    ) +
+    labs(
+      y = "Changes in Likelihood",
+      colour = "program",
+      shape = "program"
+    ) +
+    theme(
+      legend.position = "bottom",
+      legend.title = element_text(face = "bold"),
+      strip.text = element_text(size = 10, face = "bold")
+    )
+}
+
+```
+
+
 
 
 # CPUE plots  {.tabset}
