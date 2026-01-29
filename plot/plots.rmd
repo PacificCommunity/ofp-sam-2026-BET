@@ -574,25 +574,34 @@ Likes_change <- Likes_long %>%
 
 Likes_change %>% 
   #filter(Likelihood != "Penalties") %>%
-  ggplot(aes(x = scaler, y = change, colour = Likelihood)) +
-  geom_line(linewidth = 1, alpha=0.7) +
-  #geom_point() +
-  scale_color_viridis_d() +
-  facet_wrap(~scenario, scale="free") +
+  ggplot(aes(x = scaler, y = change, colour = Likelihood, shape = Likelihood)) +
+  geom_line(aes(linewidth = Likelihood == "Total"), alpha = 0.7) +
+  geom_point(aes(size = Likelihood == "Total"), alpha = 0.8) +
+  scale_color_manual(values = c(
+    "Total" = "black",
+    "Indices" = viridis::viridis(5)[1],
+    "LFs" = viridis::viridis(5)[2],
+    "Penalties" = viridis::viridis(5)[3],
+    "WFs" = viridis::viridis(5)[4],
+    "Tags" = viridis::viridis(5)[5]
+  )) +
+  scale_linewidth_manual(values = c("TRUE" = 1.5, "FALSE" = 0.7), guide = "none") +
+  scale_size_manual(values = c("TRUE" = 3.5, "FALSE" = 2), guide = "none") +
+  facet_wrap(~scenario, scale = "free") +
   scale_x_continuous(
     labels = function(x) x / 1000,
-    name=bquote("Average biomass ("*10^3*" MT)"),
+    name = bquote("Average biomass ("*10^3*" MT)"),
   ) +
   labs(
     y = "Changes in Likelihood",
-    colour = "Likelihood"
+    colour = "Likelihood",
+    shape = "Likelihood"
   ) +
   theme(
     legend.position = "bottom",
     legend.title = element_text(face = "bold"),
     strip.text = element_text(size = 10, face = "bold")
   )
-
 
 }
 
@@ -666,15 +675,22 @@ if(length(scenarios_name) > 0) {
     ) %>%
     ungroup()
   
-  # Visualization with LFs annotation in top-right corner
+ # Visualization with Total in black, thicker line
   Likes_change %>% 
-    filter(Fishery != "Total") %>%
     ggplot(aes(x = scaler, y = change, colour = Fishery, shape = Fishery)) +
-    geom_line(linewidth = 1, alpha = 0.7) +
-    geom_point(size = 2, alpha = 0.8) +
+    geom_line(aes(linewidth = Fishery == "Total"), alpha = 0.7) +
+    geom_point(aes(size = Fishery == "Total"), alpha = 0.8) +
     annotate("text", x = Inf, y = Inf, label = "LFs", 
              hjust = 1.1, vjust = 1.5, size = 5, fontface = "bold") +
-    scale_color_viridis_d() +
+    scale_color_manual(
+      values = c(
+        "Total" = "black",
+        setNames(viridis::viridis(length(unique(Likes_change$Fishery)) - 1),
+                 setdiff(unique(Likes_change$Fishery), "Total"))
+      )
+    ) +
+    scale_linewidth_manual(values = c("TRUE" = 1.5, "FALSE" = 0.7), guide = "none") +
+    scale_size_manual(values = c("TRUE" = 3.5, "FALSE" = 2), guide = "none") +
     scale_shape_manual(values = rep(0:24, length.out = length(unique(Likes_change$Fishery)))) +
     facet_wrap(~scenario, scale = "free") +
     scale_x_continuous(
@@ -730,10 +746,10 @@ if(length(scenarios_name) > 0) {
       })
       
       # Remove rows (components) that are 0 across all scenarios
-    #  Likes[[i]] = Likes[[i]][rowSums(Likes[[i]] != 0) > 0, , drop = FALSE]
+      Likes[[i]] = Likes[[i]][rowSums(Likes[[i]] != 0) > 0, , drop = FALSE]
       
       # Add Total row
-    #  Likes[[i]] = rbind(Likes[[i]], "Total" = apply(Likes[[i]], 2, sum))
+      Likes[[i]] = rbind(Likes[[i]], "Total" = apply(Likes[[i]], 2, sum))
     }
   }
   
@@ -765,15 +781,22 @@ if(length(scenarios_name) > 0) {
     ) %>%
     ungroup()
   
-  # Visualization with WFs annotation in top-right corner
+ # Visualization with Total in black, thicker line
   Likes_change %>% 
-    filter(Fishery != "Total") %>%
     ggplot(aes(x = scaler, y = change, colour = Fishery, shape = Fishery)) +
-    geom_line(linewidth = 1, alpha = 0.7) +
-    geom_point(size = 2, alpha = 0.8) +
+    geom_line(aes(linewidth = Fishery == "Total"), alpha = 0.7) +
+    geom_point(aes(size = Fishery == "Total"), alpha = 0.8) +
     annotate("text", x = Inf, y = Inf, label = "WFs", 
              hjust = 1.1, vjust = 1.5, size = 5, fontface = "bold") +
-    scale_color_viridis_d() +
+    scale_color_manual(
+      values = c(
+        "Total" = "black",
+        setNames(viridis::viridis(length(unique(Likes_change$Fishery)) - 1),
+                 setdiff(unique(Likes_change$Fishery), "Total"))
+      )
+    ) +
+    scale_linewidth_manual(values = c("TRUE" = 1.5, "FALSE" = 0.7), guide = "none") +
+    scale_size_manual(values = c("TRUE" = 3.5, "FALSE" = 2), guide = "none") +
     scale_shape_manual(values = rep(0:24, length.out = length(unique(Likes_change$Fishery)))) +
     facet_wrap(~scenario, scale = "free") +
     scale_x_continuous(
@@ -791,7 +814,6 @@ if(length(scenarios_name) > 0) {
       strip.text = element_text(size = 10, face = "bold")
     )
 }
-
 ```
 
 
@@ -809,38 +831,36 @@ scenarios_name <- intersect(names(ProfLikOut_list), scenarios_prof)
 
 if(length(scenarios_name) > 0) {
   
-Likes = list()
-
-for(j in 1:length(results)) {
-  scales = results[[j]]$scales
+  Likes = list()
   
-  for (i in scales) {
-    # sapply + simplify=FALSE로 list 반환
-    Likes[[as.character(i)]] = sapply(scenarios_name, function(x) {
-      tag_rel_fish <- ProfLikOut_list[[x]][[as.character(i)]]@tag_rel_fish
-      sums_vector <- sapply(tag_rel_fish, function(group) sum(unlist(group)))
-      names(sums_vector) <- tag_program_maps[[x]]$program_name[1:length(sums_vector)]
-      return(sums_vector)
-    }, simplify = FALSE)  # 핵심 수정 [code_file:10]
-  }
-}  
+  for(j in 1:length(results)) {
+    scales = results[[j]]$scales
+    
+    for (i in scales) {
+      Likes[[as.character(i)]] = sapply(scenarios_name, function(x) {
+        tag_rel_fish <- ProfLikOut_list[[x]][[as.character(i)]]@tag_rel_fish
+        sums_vector <- sapply(tag_rel_fish, function(group) sum(unlist(group)))
+        names(sums_vector) <- tag_program_maps[[x]]$program_name[1:length(sums_vector)]
+        return(sums_vector)
+      }, simplify = FALSE) 
+    }
+  }  
   
-
-  Likes <- bind_rows(lapply(names(Likes), function(scaler) {  # 60,70,80=컬럼
-  model_data <- Likes[[scaler]]
   
-  bind_rows(lapply(names(model_data), function(model) {  # base=행
-    vec <- model_data[[model]]
-    data.frame(
-      scenario = model,
-      scaler = scaler,
-      program = names(vec),
-      value = as.numeric(vec)
-    )
+  Likes <- bind_rows(lapply(names(Likes), function(scaler) {
+    model_data <- Likes[[scaler]]
+    
+    bind_rows(lapply(names(model_data), function(model) {
+      vec <- model_data[[model]]
+      data.frame(
+        scenario = model,
+        scaler = scaler,
+        program = names(vec),
+        value = as.numeric(vec)
+      )
+    }))
   }))
-}))
-
-
+  
   
   
   # Convert to long format
@@ -849,7 +869,17 @@ for(j in 1:length(results)) {
              unlist(sapply(scenarios_name, function(x) 
                read.table(paste0("../model/", x, "/avg_bio"))))
     ) %>% 
-    group_by(program, scaler, scenario) %>% summarise(value = sum(value))
+    group_by(program, scaler, scenario) %>% 
+    summarise(value = sum(value), .groups = "drop")
+  
+  # Create Total by summing all programs
+  Likes_total <- Likes_long %>%
+    group_by(scaler, scenario) %>%
+    summarise(value = sum(value), .groups = "drop") %>%
+    mutate(program = "Total")
+  
+  # Combine with original data
+  Likes_long <- bind_rows(Likes_long, Likes_total)
   
   # Calculate change from minimum value
   Likes_change <- Likes_long %>%
@@ -860,14 +890,22 @@ for(j in 1:length(results)) {
     ) %>%
     ungroup()
   
-  # Visualization with WFs annotation in top-right corner
+  # Visualization with Total in black, thicker line
   Likes_change %>% 
     ggplot(aes(x = scaler, y = change, colour = program, shape = program)) +
-    geom_line(linewidth = 1, alpha = 0.7) +
-    geom_point(size = 2, alpha = 0.8) +
+    geom_line(aes(linewidth = program == "Total"), alpha = 0.7) +
+    geom_point(aes(size = program == "Total"), alpha = 0.8) +
     annotate("text", x = Inf, y = Inf, label = "Tagging program", 
              hjust = 1.1, vjust = 1.5, size = 5, fontface = "bold") +
-    scale_color_viridis_d() +
+    scale_color_manual(
+      values = c(
+        "Total" = "black",
+        setNames(viridis::viridis(length(unique(Likes_change$program)) - 1),
+                 setdiff(unique(Likes_change$program), "Total"))
+      )
+    ) +
+    scale_linewidth_manual(values = c("TRUE" = 1.5, "FALSE" = 0.7), guide = "none") +
+    scale_size_manual(values = c("TRUE" = 3.5, "FALSE" = 2), guide = "none") +
     scale_shape_manual(values = rep(0:24, length.out = length(unique(Likes_change$program)))) +
     facet_wrap(~scenario, scale = "free") +
     scale_x_continuous(
