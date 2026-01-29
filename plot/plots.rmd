@@ -66,6 +66,7 @@ results <- list.dirs(file.path(getwd(), "..", "model"), full.names = TRUE, recur
     LengOut <- read.MFCLLenFit(paste0(outputs_path, "/length.fit"))
     WeightOut <- read.MFCLWgtFit(paste0(outputs_path, "/weight.fit"))
     TagOut<-read.MFCLTag(list.files(outputs_path, "\\.tag$", full.names=TRUE))
+    AgeOut<-read.MFCLALK(list.files(outputs_path, "\\.age_length$", full.names=TRUE))
     
     info <-readRDS(file.path(outputs_path, "info.rds"))
     
@@ -88,6 +89,7 @@ results <- list.dirs(file.path(getwd(), "..", "model"), full.names = TRUE, recur
          LengOut = LengOut,
          WeightOut = WeightOut,
          TagOut = TagOut,
+         AgeOut = AgeOut,
          LikOut=LikOut_list, 
          LikRawOut=LikRawOut_list,
          scales=scales,
@@ -106,6 +108,7 @@ WeightOut_list <- purrr::map(results, "WeightOut")
 LengOut_list <- purrr::map(results, "LengOut")
 IndepOut_list <- purrr::map(results, "IndepOut")
 TagOut_list <- purrr::map(results, "TagOut")
+AgeOut_list <- purrr::map(results, "AgeOut")
 Info_list <- purrr::map(results, "info")
 
 
@@ -114,8 +117,8 @@ ProfLikOut_list <- purrr::map(results, "LikOut")
 ProfLikOutRaw_list <- purrr::map(results, "LikRawOut")
 
 
-minYear=1952
-maxYear=2021
+minYear=ParOut_list[[1]]@range["minyear"]
+maxYear=ParOut_list[[1]]@range["maxyear"]
 
 # opacity and line width
 alpha = 0.5
@@ -192,8 +195,7 @@ index_fisheries_mapping <- c(
 
 model_names <- names(ParOut_list)
 
-
-tag_program_maps <- map(TagOut_list, ~ .x@releases) %>%  # releases만 먼저
+tag_program_maps <- map(TagOut_list, ~ .x@releases) %>% 
               map(~ .x %>% distinct(rel.group, program) %>% 
                      rename(program_name = program))
 names(tag_program_maps) <- names(TagOut_list)
@@ -514,8 +516,6 @@ print(final_plot)
 
 run_prof_all <- sapply(Info_list, function(x) x$run_prof)
 
-PenIndex="do_everything"
-pen_idx <- grep("do_everything", ProfLikOutRaw_list)
 
 ## make sure the scenario names are in the same order as LikOut_list
 
@@ -534,8 +534,9 @@ for( j in 1:length(results)) {
   for (i in scales) {
     Likes[[as.character(i)]]=sapply(scenarios_name, function(x) c("Indices"=sum(ProfLikOut_list[[x]][[as.character(i)]]@survey_index),
                                                                             "LFs"=sum(ProfLikOut_list[[x]][[as.character(i)]]@total_length_fish),
-                                                                             "Penalties"=as.numeric(ProfLikOutRaw_list[[x]][[as.character(i)]][pen_idx:(pen_idx + 1)][2]),
+                                                                             "Penalties"=as.numeric(ProfLikOutRaw_list[[x]][[as.character(i)]][6]),
                                                                             "WFs"=sum(ProfLikOut_list[[x]][[as.character(i)]]@total_weight_fish),
+                                                                                                      "Age"=sum(ProfLikOut_list[[x]][[as.character(i)]]@age_length),
                                                                             "Tags"=sum(unlist(ProfLikOut_list[[x]][[as.character(i)]]@tag_rel_fish, recursive = T)) ) )
     
     
@@ -577,14 +578,18 @@ Likes_change %>%
   ggplot(aes(x = scaler, y = change, colour = Likelihood, shape = Likelihood)) +
   geom_line(aes(linewidth = Likelihood == "Total"), alpha = 0.7) +
   geom_point(aes(size = Likelihood == "Total"), alpha = 0.8) +
-  scale_color_manual(values = c(
-    "Total" = "black",
-    "Indices" = viridis::viridis(5)[1],
-    "LFs" = viridis::viridis(5)[2],
-    "Penalties" = viridis::viridis(5)[3],
-    "WFs" = viridis::viridis(5)[4],
-    "Tags" = viridis::viridis(5)[5]
-  )) +
+  scale_color_manual(
+    values = c(
+      "Total" = "black",
+      setNames(
+        viridis::viridis(length(setdiff(unique(Likes_change$Likelihood), "Total"))),
+        setdiff(unique(Likes_change$Likelihood), "Total")
+      )
+    )
+  ) +
+  scale_shape_manual(
+    values = rep(0:25, length.out = length(unique(Likes_change$Likelihood)))
+  ) +
   scale_linewidth_manual(values = c("TRUE" = 1.5, "FALSE" = 0.7), guide = "none") +
   scale_size_manual(values = c("TRUE" = 3.5, "FALSE" = 2), guide = "none") +
   facet_wrap(~scenario, scale = "free") +
@@ -610,10 +615,8 @@ Likes_change %>%
 ## Piner (LFs)
 
 ```{r piner_LFs, echo=FALSE, message=F, fig.dim=c(8,8)}
-run_prof_all <- sapply(Info_list, function(x) x$run_prof)
 
-PenIndex="do_everything"
-pen_idx <- grep("do_everything", ProfLikOutRaw_list)
+run_prof_all <- sapply(Info_list, function(x) x$run_prof)
 
 scenarios_prof <- names(run_prof_all)[run_prof_all == 1]
 scenarios_name <- intersect(names(ProfLikOut_list), scenarios_prof)
@@ -718,9 +721,6 @@ if(length(scenarios_name) > 0) {
 ```{r piner_WFs, echo=FALSE, message=F, fig.dim=c(8,8)}
 run_prof_all <- sapply(Info_list, function(x) x$run_prof)
 
-PenIndex="do_everything"
-pen_idx <- grep("do_everything", ProfLikOutRaw_list)
-
 scenarios_prof <- names(run_prof_all)[run_prof_all == 1]
 scenarios_name <- intersect(names(ProfLikOut_list), scenarios_prof)
 
@@ -823,9 +823,6 @@ if(length(scenarios_name) > 0) {
 ```{r piner_tag, echo=FALSE, message=F, fig.dim=c(8,8)}
 run_prof_all <- sapply(Info_list, function(x) x$run_prof)
 
-PenIndex="do_everything"
-pen_idx <- grep("do_everything", ProfLikOutRaw_list)
-
 scenarios_prof <- names(run_prof_all)[run_prof_all == 1]
 scenarios_name <- intersect(names(ProfLikOut_list), scenarios_prof)
 
@@ -925,6 +922,226 @@ if(length(scenarios_name) > 0) {
 }
 
 ```
+
+
+
+## Piner (CAL by fishery)
+
+```{r piner_cal_fishery, echo=FALSE, message=F, fig.dim=c(8,8)}
+
+# Get scenario names
+scenarios_name <- names(ProfLikOut_list)
+
+# Read average biomass for each scenario
+avg_bio_values <- sapply(scenarios_name, function(x) {
+  as.numeric(read.table(paste0("../model/", x, "/avg_bio")))
+})
+names(avg_bio_values) <- scenarios_name
+
+# Extract age composition likelihood data for all scenarios
+age_lik_data <- map_dfr(scenarios_name, function(scenario_name) {
+  
+  # Get unique year-month-fishery combinations
+  alk_summary <- as.data.frame(AgeOut_list[[scenario_name]]@ALK) %>%
+    mutate(order = row_number()) %>%
+    group_by(year, month, fishery) %>%
+    summarise(first_order = min(order), .groups = "drop") %>%
+    arrange(first_order) %>%
+    select(-first_order)
+  
+  # Get scalers and biomass
+  scalers <- names(ProfLikOut_list[[scenario_name]])
+  avg_bio <- avg_bio_values[scenario_name]
+  
+  # Add likelihood values for each scaler
+  map_dfr(scalers, function(scl) {
+    lik_vec <- ProfLikOut_list[[scenario_name]][[scl]]@age_length
+    
+    alk_summary %>%
+      mutate(
+        scenario = scenario_name,
+        scaler = as.numeric(scl) * 0.01 * avg_bio,
+        Lik = lik_vec[1:nrow(alk_summary)]
+      )
+  })
+})
+
+# Map fishery numbers to names
+age_lik_data <- age_lik_data %>%
+  mutate(fishery = all_fisheries_mapping[as.character(fishery)])
+
+# Sum likelihood by fishery and scaler
+lik_by_fishery <- age_lik_data %>%
+  group_by(fishery, scaler, scenario) %>%
+  summarise(Lik = sum(Lik, na.rm = TRUE), .groups = "drop")
+
+# Create total across all fisheries
+lik_total <- lik_by_fishery %>%
+  group_by(scaler, scenario) %>%
+  summarise(Lik = sum(Lik), .groups = "drop") %>%
+  mutate(fishery = "Total")
+
+# Combine fishery-level and total
+lik_combined <- bind_rows(lik_by_fishery, lik_total)
+
+# Calculate change from minimum likelihood
+lik_change <- lik_combined %>%
+  group_by(fishery, scenario) %>%
+  mutate(change = Lik - min(Lik, na.rm = TRUE)) %>%
+  ungroup()
+
+# Plot: Total in black with thicker lines
+ggplot(lik_change, aes(x = scaler, y = change, colour = fishery, shape = fishery)) +
+  geom_line(aes(linewidth = fishery == "Total"), alpha = 0.7) +
+  geom_point(aes(size = fishery == "Total"), alpha = 0.8) +
+  annotate("text", x = Inf, y = Inf, label = "CAL", 
+           hjust = 1.1, vjust = 1.5, size = 5, fontface = "bold") +
+  scale_color_manual(
+    values = c(
+      "Total" = "black",
+      setNames(
+        viridis::viridis(length(unique(lik_change$fishery)) - 1),
+        setdiff(unique(lik_change$fishery), "Total")
+      )
+    )
+  ) +
+  scale_linewidth_manual(values = c("TRUE" = 1.5, "FALSE" = 0.7), guide = "none") +
+  scale_size_manual(values = c("TRUE" = 3.5, "FALSE" = 2), guide = "none") +
+  scale_shape_manual(
+    values = rep(0:24, length.out = length(unique(lik_change$fishery)))
+  ) +
+  facet_wrap(~scenario, scales = "free") +
+  scale_x_continuous(
+    labels = function(x) x / 1000,
+    name = bquote("Average biomass (" * 10^3 * " MT)")
+  ) +
+  labs(
+    y = "Changes in Likelihood",
+    colour = "Fishery",
+    shape = "Fishery"
+  ) +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    strip.text = element_text(size = 10, face = "bold")
+  )
+
+
+
+
+```
+
+
+
+
+
+## Piner (CAL by year)
+
+```{r piner_cal_year, echo=FALSE, message=F, fig.dim=c(8,8)}
+
+
+
+
+# Get scenario names
+scenarios_name <- names(ProfLikOut_list)
+
+# Read average biomass for each scenario
+avg_bio_values <- sapply(scenarios_name, function(x) {
+  as.numeric(read.table(paste0("../model/", x, "/avg_bio")))
+})
+names(avg_bio_values) <- scenarios_name
+
+# Extract age composition likelihood data for all scenarios
+age_lik_data <- map_dfr(scenarios_name, function(scenario_name) {
+  
+  # Get unique year-month-fishery combinations
+  alk_summary <- as.data.frame(AgeOut_list[[scenario_name]]@ALK) %>%
+    mutate(order = row_number()) %>%
+    group_by(year, month, fishery) %>%
+    summarise(first_order = min(order), .groups = "drop") %>%
+    arrange(first_order) %>%
+    select(-first_order)
+  
+  # Get scalers and biomass
+  scalers <- names(ProfLikOut_list[[scenario_name]])
+  avg_bio <- avg_bio_values[scenario_name]
+  
+  # Add likelihood values for each scaler
+  map_dfr(scalers, function(scl) {
+    lik_vec <- ProfLikOut_list[[scenario_name]][[scl]]@age_length
+    
+    alk_summary %>%
+      mutate(
+        scenario = scenario_name,
+        scaler = as.numeric(scl) * 0.01 * avg_bio,
+        Lik = lik_vec[1:nrow(alk_summary)]
+      )
+  })
+})
+
+# Sum likelihood by year and scaler
+lik_by_year <- age_lik_data %>%
+  group_by(year, scaler, scenario) %>%
+  summarise(Lik = sum(Lik, na.rm = TRUE), .groups = "drop")
+
+# Create total across all years
+lik_total <- lik_by_year %>%
+  group_by(scaler, scenario) %>%
+  summarise(Lik = sum(Lik), .groups = "drop") %>%
+  mutate(year = "Total")
+
+# Combine year-level and total
+lik_combined <- bind_rows(
+  lik_by_year %>% mutate(year = as.character(year)),
+  lik_total
+)
+
+# Calculate change from minimum likelihood
+lik_change <- lik_combined %>%
+  group_by(year, scenario) %>%
+  mutate(change = Lik - min(Lik, na.rm = TRUE)) %>%
+  ungroup()
+
+# Plot: Total in black with thicker lines
+ggplot(lik_change, aes(x = scaler, y = change, colour = year, shape = year)) +
+  geom_line(aes(linewidth = year == "Total"), alpha = 0.7) +
+  geom_point(aes(size = year == "Total"), alpha = 0.8) +
+  annotate("text", x = Inf, y = Inf, label = "CAL", 
+           hjust = 1.1, vjust = 1.5, size = 5, fontface = "bold") +
+  scale_color_manual(
+    values = c(
+      "Total" = "black",
+      setNames(
+        viridis::viridis(length(unique(lik_change$year)) - 1),
+        setdiff(unique(lik_change$year), "Total")
+      )
+    )
+  ) +
+  scale_linewidth_manual(values = c("TRUE" = 1.5, "FALSE" = 0.7), guide = "none") +
+  scale_size_manual(values = c("TRUE" = 3.5, "FALSE" = 2), guide = "none") +
+  scale_shape_manual(
+    values = rep(0:24, length.out = length(unique(lik_change$year)))
+  ) +
+  facet_wrap(~scenario, scales = "free") +
+  scale_x_continuous(
+    labels = function(x) x / 1000,
+    name = bquote("Average biomass (" * 10^3 * " MT)")
+  ) +
+  labs(
+    y = "Changes in Likelihood",
+    colour = "Year",
+    shape = "Year"
+  ) +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    strip.text = element_text(size = 10, face = "bold")
+  )
+
+
+```
+
+
 
 
 
