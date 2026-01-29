@@ -1,64 +1,23 @@
-# 
-# models <- list(
-#   "par_mfcl2023" = list(
-#     mfcl_commands = paste("bet.frq 11.par 12.par",
-#                           "-switch 2 1 1 5000",
-#                           "1 246 1",
-#                           sep = " "),
-#     program_path = "../../mfcl/exe/mfclo64_2023",  # Model-specific path
-#     base_dir = "mfcl/inputs/2023"                   # Model-specific dir
-#    ),
-#   
-#   
-#   "par_mfcl2026" = list(
-#     mfcl_commands = paste("bet.frq 11.par 12.par",
-#                           "-switch 2 1 1 5000",
-#                           "1 246 1",
-#                           sep = " "),
-#     program_path = "../../mfcl/exe/mfclo64_2026_01_22_vsn2278",  # Model-specific path
-#     base_dir = "mfcl/inputs/2023"                   # Model-specific dir
-#   ),
-#   
-#   
-#   "doitall_mfcl2023" = list(
-#     mfcl_commands = "./doitall.sh",
-#     program_path = "../../mfcl/exe/mfclo64_2023",  # Model-specific path
-#     base_dir = "mfcl/inputs/2023"                   # Model-specific dir
-#   ),
-#   
-#   
-#   "doitall_mfcl2026" = list(
-#     mfcl_commands = "./doitall.sh",
-#     program_path = "../../mfcl/exe/mfclo64_2026_01_22_vsn2278",  # Model-specific path
-#     base_dir = "mfcl/inputs/2023"                   # Model-specific dir
-#   )
-#   
-# )
-# 
-
-
-
-
 models <- list(
-  "par2026" = list(
+  
+  "base" = list(
     mfcl_commands = paste("bet.frq 11.par 12.par",
-                          "-switch 11",
-                          "1 1 1000", 
-                          "1 246 1",  
-                          ## round(sqrt(5/penalty)*100)
-                          "-33 92 24",
-                          "-34 92 31",
-                          "-35 92 20",
-                          "-36 92 21",
-                          "-37 92 26",
-                          "-38 92 23",
-                          "-39 92 20",
-                          "-40 92 25",
-                          "-41 92 47",
+                          "-switch 1",
+                          "1 1 10000", 
                           sep = " "),
     program_path = "../../mfcl/exe/mfclo64_2026_01_22_vsn2278",  # Model-specific path
-    base_dir = "mfcl/inputs/2023"                   # Model-specific dir
-   ))
+    base_dir = "mfcl/inputs/2026"                   # Model-specific dir
+   ),
+  
+  "mixP1" = list(
+    mfcl_commands = paste("bet.frq 11.par 12.par",
+                          "-switch 2",
+                          "1 1 10000", 
+                          "-9999 1 1",
+                          sep = " "),
+    program_path = "../../mfcl/exe/mfclo64_2026_01_22_vsn2278",  # Model-specific path
+    base_dir = "mfcl/inputs/2026"                   # Model-specific dir
+  ))
 
 
 # 
@@ -86,9 +45,9 @@ models <- list(
 # Default values
 default_program_path <- "../../mfcl/exe/mfclo64_2023"
 default_base_dir <- "mfcl/inputs/2023"
-run_prof <- "0"
-Reps <- "3 3 3 3 5 5"
-scalers <- paste0((seq(150, 50, by=-5)), collapse = " ")
+run_prof <- "1"
+Reps <- "10 20 20 20 100 1000"
+scalers <- paste0((seq(140, 60, by=-5)), collapse = " ")
 
 ### Post-processing with defaults
 
