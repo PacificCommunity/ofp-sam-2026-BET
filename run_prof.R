@@ -21,12 +21,14 @@ scaler <- as.numeric(Sys.getenv("scaler", "100"))
 Reps <- as.integer(unlist(strsplit(Sys.getenv("Reps", "1 1 5 5 1 1"), "\\s+")))
 names(Reps) <- paste0("Reps", 1:length(Reps))
 
-## Create scaler-specific directory
-scaler_dir <- file.path(model_dir, paste0("scaler_", scaler))
+## Create scaler-specific directory inside prof folder
+prof_dir <- file.path(model_dir, "prof")
+scaler_dir <- file.path(prof_dir, paste0("scaler_", scaler))
 
 cat("Running Profile Likelihood\n")
 cat("Base directory:", base_dir_abs, "\n")
 cat("Model directory:", model_dir, "\n")
+cat("Prof directory:", prof_dir, "\n")
 cat("Scaler directory:", scaler_dir, "\n")
 cat("Scaler:", scaler, "\n")
 cat("Reps:", Reps, "\n")

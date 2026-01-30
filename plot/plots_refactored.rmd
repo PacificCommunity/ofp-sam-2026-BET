@@ -159,8 +159,9 @@ get_prof_scenarios <- function(info_list, prof_lik_list) {
 #' @param model_dir Base model directory
 get_avg_bio <- function(scenarios, model_dir = MODEL_DIR) {
   sapply(scenarios, function(x) {
-    # Look for avg_bio in scaler_* folders
-    scaler_dirs <- list.dirs(file.path(model_dir, x), full.names = TRUE, recursive = FALSE)
+    # Look for avg_bio in prof/scaler_* folders
+    prof_dir <- file.path(model_dir, x, "prof")
+    scaler_dirs <- list.dirs(prof_dir, full.names = TRUE, recursive = FALSE)
     scaler_dirs <- grep("scaler_\\d+$", scaler_dirs, value = TRUE)
     
     if (length(scaler_dirs) > 0) {
@@ -317,8 +318,9 @@ results <- setNames(lapply(model_folders, function(folder) {
   indep_out <- safe_read(file.path(folder, "indepvar.rpt"))
   info <- readRDS(file.path(folder, "model_info.rds"))
   
-  # Read likelihood profile outputs from scaler_* subdirectories
-  all_dirs <- list.dirs(folder, full.names = TRUE, recursive = FALSE)
+  # Read likelihood profile outputs from prof/scaler_* subdirectories
+  prof_dir <- file.path(folder, "prof")
+  all_dirs <- list.dirs(prof_dir, full.names = TRUE, recursive = FALSE)
   scaler_dirs <- grep("scaler_\\d+$", all_dirs, value = TRUE)
   
   if (length(scaler_dirs) > 0) {
