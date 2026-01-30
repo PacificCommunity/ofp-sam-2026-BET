@@ -33,17 +33,26 @@ run_commands(commands=mfcl_commands,
              verbose = T, 
              log_file = paste0(model_dir,"/mfcl_log.txt"))
 
-# Save model run info
+# Save model run info (compatible with plot code)
+scalers <- Sys.getenv("scalers", "120 110 100 90 80 70")
+Reps <- as.integer(unlist(strsplit(Sys.getenv("Reps", "1 1 5 5 1 1"), "\\s+")))
+names(Reps) <- paste0("Reps", 1:length(Reps))
+frq_file <- list.files(model_dir, pattern = "\\.frq$", full.names = FALSE)
+run_prof <- as.integer(Sys.getenv("run_prof", "0"))
+
 info_list <- list(
+  Reps          = Reps,
+  scalers       = as.numeric(unlist(strsplit(scalers, "\\s+"))),
+  frq_file      = frq_file,
   program_path  = program_path,
   mfcl_commands = mfcl_commands,
   base_dir      = base_dir,
-  model_dir     = model_dir
+  run_prof      = run_prof
 )
 
 saveRDS(
   info_list,
-  file = file.path(model_dir, "model_info.rds"),
+  file = file.path(model_dir, "info.rds"),
   compress = "xz"
 )
 
