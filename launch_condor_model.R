@@ -15,7 +15,7 @@ docker_image <- "ghcr.io/pacificcommunity/bet-2026:v1.2"      # Docker image to 
 condor_memory <- "12GB"                                        # Memory request for the Condor job (e.g., "6GB")
 condor_disk <- "10GB"
 condor_cpus <- 2                                              # CPU request for the Condor job ")(e.g., 4)
-branch <- "develop"                                              # Branch of git repository to use 
+branch <- "develop_lik"                                              # Branch of git repository to use 
 
 # ---------------------------------------
 # Run the job on Condor through CondorBox

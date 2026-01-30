@@ -16,7 +16,7 @@ models <- list(
                           "1 1 1", 
                        #   "-9999 1 2",
                           sep = " "),
-    program_path = "../../mfcl/exe/mfclo64_2026_01_22_vsn2278",  # Model-specific path
+    program_path = "mfcl/exe/mfclo64_2026_01_22_vsn2278",  # Model-specific path
     base_dir = "mfcl/inputs/2026"                   # Model-specific dir
   ))
 
@@ -54,7 +54,7 @@ models <- list(
 
 
 # Default values
-default_program_path <- "../../mfcl/exe/mfclo64_2023"
+default_program_path <- "mfcl/exe/mfclo64_2023"
 default_base_dir <- "mfcl/inputs/2023"
 run_prof <- "1"
 Reps <- "1 1 1 1 1 1"
