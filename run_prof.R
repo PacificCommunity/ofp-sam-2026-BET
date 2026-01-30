@@ -10,8 +10,8 @@ Sys.setenv("PROGRAM_PATH" = program_path)
 base_dir <- Sys.getenv("base_dir", "mfcl/inputs/2026")
 model_dir <- Sys.getenv("model_dir", "model/base")
 
-## Convert to absolute paths from project root
-project_root <- here::here()
+## Convert to absolute paths using getwd() (assumes script runs from project root)
+project_root <- getwd()
 program_path_abs <- file.path(project_root, program_path)
 base_dir_abs <- file.path(project_root, base_dir)
 
