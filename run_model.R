@@ -3,7 +3,7 @@ library(FLR4MFCL)
 library(CondorBox)
 
 ## environment variables
-program_path <- Sys.getenv("program_path", "../../mfcl/exe/mfclo64_2026_01_22_vsn2278")
+program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_01_22_vsn2278")
 Sys.setenv("PROGRAM_PATH" = program_path)
 base_dir <- Sys.getenv("base_dir", "mfcl/inputs/2026")
 model_dir <- Sys.getenv("model_dir", "model/base")
@@ -17,7 +17,8 @@ defaultswitch <- paste("-switch 1",
                        sep=" ")
 
 ## mfcl_commands contains only arguments (frq, par, switches), NOT program path
-mfcl_commands <- Sys.getenv("mfcl_commands", paste(program_path, "bet.frq 11.par 12.par", defaultswitch))
+mfcl_commands <- Sys.getenv("mfcl_commands", paste(program_path, "bet.frq 11.par 12.par", defaultswitch)); mfcl_commands <- paste0("../../", mfcl_commands)
+
 
 ## create model directory and copy files
 dir.create(model_dir, recursive = TRUE, showWarnings = FALSE)
