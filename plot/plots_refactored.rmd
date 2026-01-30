@@ -159,7 +159,25 @@ get_prof_scenarios <- function(info_list, prof_lik_list) {
 #' @param model_dir Base model directory
 get_avg_bio <- function(scenarios, model_dir = MODEL_DIR) {
   sapply(scenarios, function(x) {
-    as.numeric(read.table(file.path(model_dir, x, "avg_bio")))
+    # Look for avg_bio in scaler_* folders
+    scaler_dirs <- list.dirs(file.path(model_dir, x), full.names = TRUE, recursive = FALSE)
+    scaler_dirs <- grep("scaler_\\d+$", scaler_dirs, value = TRUE)
+    
+    if (length(scaler_dirs) > 0) {
+      # Read from first scaler folder (value should be same across all)
+      avg_bio_file <- file.path(scaler_dirs[1], "avg_bio")
+      if (file.exists(avg_bio_file)) {
+        return(as.numeric(read.table(avg_bio_file)))
+      }
+    }
+    
+    # Fallback: try main folder
+    avg_bio_file <- file.path(model_dir, x, "avg_bio")
+    if (file.exists(avg_bio_file)) {
+      return(as.numeric(read.table(avg_bio_file)))
+    }
+    
+    NA_real_
   })
 }
 
