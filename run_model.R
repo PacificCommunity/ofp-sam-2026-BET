@@ -3,14 +3,13 @@ library(FLR4MFCL)
 library(CondorBox)
 
 ## environment variables
-program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_01_22_vsn2278")
+program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_01_22_vsn2278"); program_path <- paste0("../../",program_path)
 Sys.setenv("PROGRAM_PATH" = program_path)
 base_dir <- Sys.getenv("base_dir", "mfcl/inputs/2026")
 model_dir <- Sys.getenv("model_dir", "model/base")
 
 ## Convert to absolute paths using getwd() (assumes script runs from project root)
 project_root <- getwd()
-program_path_abs <- file.path(project_root, program_path)
 base_dir_abs <- file.path(project_root, base_dir)
 
 defaultswitch <- paste("-switch 1",
@@ -21,7 +20,7 @@ defaultswitch <- paste("-switch 1",
 mfcl_commands <- Sys.getenv("mfcl_commands", paste("bet.frq 11.par 12.par", defaultswitch))
 
 ## Prepend absolute program path to commands
-mfcl_commands <- paste(program_path_abs, mfcl_commands)
+mfcl_commands <- paste(program_path, mfcl_commands)
 
 ## create model directory and copy files
 dir.create(model_dir, recursive = TRUE, showWarnings = FALSE)
