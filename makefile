@@ -2,14 +2,11 @@
 DOCKER_IMAGE=ghcr.io/pacificcommunity/bet-2026:v1.2
 WORKDIR=/workspace
 
-# Default scaler for profile likelihood (can be overridden: make prof scaler=80)
-scaler ?= 100
-
 model:
 	Rscript run_model.R
 
 prof:
-	scaler=$(scaler) Rscript run_prof.R
+	Rscript run_prof.R
 
 run: model prof
 	
@@ -26,7 +23,7 @@ docker-model:
 	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript run_model.R
 
 docker-prof:
-	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) bash -c "scaler=$(scaler) Rscript run_prof.R"
+	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) -e scaler=$(scaler) $(DOCKER_IMAGE) Rscript run_prof.R
 
 docker-run: docker-model docker-prof
 	
