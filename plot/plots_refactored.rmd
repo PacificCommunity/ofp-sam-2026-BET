@@ -135,10 +135,23 @@ safe_read <- function(path, reader = readLines) {
 }
 
 #' Get scenario names that have profiling enabled
+#' If run_prof is not in info_list, check if prof_lik_list has data
 get_prof_scenarios <- function(info_list, prof_lik_list) {
-  run_prof <- sapply(info_list, function(x) x$run_prof)
-  scenarios_with_prof <- names(run_prof)[run_prof == 1]
-  intersect(names(prof_lik_list), scenarios_with_prof)
+  # If info_list has run_prof field, use it
+  has_run_prof <- sapply(info_list, function(x) !is.null(x$run_prof))
+  
+  if(any(has_run_prof)) {
+    run_prof <- sapply(info_list, function(x) {
+      val <- x$run_prof
+      if(is.null(val)) return(0)
+      as.numeric(val)
+    })
+    scenarios_with_prof <- names(run_prof)[run_prof == 1]
+    return(intersect(names(prof_lik_list), scenarios_with_prof))
+  } else {
+    # If no run_prof field, just use scenarios that have prof_lik data
+    return(names(prof_lik_list))
+  }
 }
 
 #' Read average biomass values for scenarios
@@ -265,11 +278,6 @@ get_scenario_colors <- function(scenarios, option = "D") {
 # Read all model outputs into organized lists
 # -----------------------------------------------------------------------------
 
-# -----------------------------------------------------------------------------
-# 5. LOAD MODEL DATA
-# Read all model outputs into organized lists
-# -----------------------------------------------------------------------------
-
 # Get all model folders
 model_folders <- list.dirs(MODEL_DIR, full.names = TRUE, recursive = FALSE)
 model_names <- basename(model_folders)
@@ -286,20 +294,21 @@ results <- setNames(lapply(model_folders, function(folder) {
   tag_out <- read.MFCLTag(list.files(folder, "\\.tag$", full.names = TRUE))
   age_out <- read.MFCLALK(list.files(folder, "\\.age_length$", full.names = TRUE))
   
+  
   # Read optional files
   indep_out <- safe_read(file.path(folder, "indepvar.rpt"))
-  info <- readRDS(file.path(folder, "info.rds"))
+  info <- readRDS(file.path(folder, "model_info.rds"))
   
-  # Read likelihood profile outputs from scalar_* subdirectories
+  # Read likelihood profile outputs from scaler_* subdirectories
   all_dirs <- list.dirs(folder, full.names = TRUE, recursive = FALSE)
-  scalar_dirs <- grep("scalar_\\d+$", all_dirs, value = TRUE)
+  scaler_dirs <- grep("scaler_\\d+$", all_dirs, value = TRUE)
   
-  if (length(scalar_dirs) > 0) {
-    # Extract scalar values from directory names
-    scales <- basename(scalar_dirs) %>% str_extract("\\d+$")
+  if (length(scaler_dirs) > 0) {
+    # Extract scaler values from directory names
+    scales <- basename(scaler_dirs) %>% str_extract("\\d+$")
     
-    # Read test_plot_output from each scalar directory
-    output_files <- file.path(scalar_dirs, "test_plot_output")
+    # Read test_plot_output from each scaler directory
+    output_files <- file.path(scaler_dirs, "test_plot_output")
     
     # Filter only existing files
     existing_files <- output_files[file.exists(output_files)]
