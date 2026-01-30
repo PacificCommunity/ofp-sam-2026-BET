@@ -265,6 +265,11 @@ get_scenario_colors <- function(scenarios, option = "D") {
 # Read all model outputs into organized lists
 # -----------------------------------------------------------------------------
 
+# -----------------------------------------------------------------------------
+# 5. LOAD MODEL DATA
+# Read all model outputs into organized lists
+# -----------------------------------------------------------------------------
+
 # Get all model folders
 model_folders <- list.dirs(MODEL_DIR, full.names = TRUE, recursive = FALSE)
 model_names <- basename(model_folders)
@@ -285,20 +290,51 @@ results <- setNames(lapply(model_folders, function(folder) {
   indep_out <- safe_read(file.path(folder, "indepvar.rpt"))
   info <- readRDS(file.path(folder, "info.rds"))
   
-  # Read likelihood profile outputs
-  output_files <- list.files(folder, pattern = "^test_plot_output_\\d+$", full.names = TRUE)
-  scales <- basename(output_files) %>% str_extract("\\d+$")
+  # Read likelihood profile outputs from scalar_* subdirectories
+  all_dirs <- list.dirs(folder, full.names = TRUE, recursive = FALSE)
+  scalar_dirs <- grep("scalar_\\d+$", all_dirs, value = TRUE)
   
-  lik_out <- setNames(map(output_files, read.MFCLLikelihood), scales)
-  lik_raw <- setNames(map(output_files, readLines), scales)
+  if (length(scalar_dirs) > 0) {
+    # Extract scalar values from directory names
+    scales <- basename(scalar_dirs) %>% str_extract("\\d+$")
+    
+    # Read test_plot_output from each scalar directory
+    output_files <- file.path(scalar_dirs, "test_plot_output")
+    
+    # Filter only existing files
+    existing_files <- output_files[file.exists(output_files)]
+    existing_scales <- scales[file.exists(output_files)]
+    
+    if (length(existing_files) > 0) {
+      lik_out <- setNames(map(existing_files, read.MFCLLikelihood), existing_scales)
+      lik_raw <- setNames(map(existing_files, readLines), existing_scales)
+    } else {
+      lik_out <- list()
+      lik_raw <- list()
+      existing_scales <- character(0)
+    }
+  } else {
+    # Fallback: try old format (test_plot_output_XX files in main folder)
+    output_files <- list.files(folder, pattern = "^test_plot_output_\\d+$", full.names = TRUE)
+    
+    if (length(output_files) > 0) {
+      scales <- basename(output_files) %>% str_extract("\\d+$")
+      lik_out <- setNames(map(output_files, read.MFCLLikelihood), scales)
+      lik_raw <- setNames(map(output_files, readLines), scales)
+      existing_scales <- scales
+    } else {
+      lik_out <- list()
+      lik_raw <- list()
+      existing_scales <- character(0)
+    }
+  }
   
   list(
     ParOut = par_out, RepOut = rep_out, LengOut = len_out, WeightOut = wgt_out,
     TagOut = tag_out, AgeOut = age_out, LikOut = lik_out, LikRawOut = lik_raw,
-    scales = scales, IndepOut = indep_out, info = info
+    scales = existing_scales, IndepOut = indep_out, info = info
   )
 }), model_names)
-
 # -----------------------------------------------------------------------------
 # 6. EXTRACT DATA INTO NAMED LISTS FOR EASY ACCESS
 # Each list is named by model/scenario name
