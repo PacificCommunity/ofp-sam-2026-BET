@@ -17,11 +17,10 @@ defaultswitch <- paste("-switch 1",
                        "1 1 1", 
                        sep=" ")
 
-## Get mfcl_args (everything after program path) or use default
-mfcl_args <- Sys.getenv("mfcl_args", paste("bet.frq 11.par 12.par", defaultswitch))
+mfcl_commands <- Sys.getenv("mfcl_commands", paste(program_path, "bet.frq 11.par 12.par", defaultswitch))
 
-## Always construct command with absolute program path
-mfcl_commands <- paste(program_path_abs, mfcl_args)
+## Replace relative program_path with absolute path in mfcl_commands
+mfcl_commands <- sub(program_path, program_path_abs, mfcl_commands, fixed = TRUE)
 
 ## create model directory and copy files
 dir.create(model_dir, recursive = TRUE, showWarnings = FALSE)

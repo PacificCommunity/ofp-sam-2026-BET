@@ -11,7 +11,7 @@ models <- list(
   # ),
   
   "mixP2" = list(
-    mfcl_args = paste("bet.frq 11.par 12.par",
+    mfcl_commands = paste("mfcl/exe/mfclo64_2026_01_22_vsn2278", "bet.frq 11.par 12.par",
                           "-switch 1",
                           "1 1 1", 
                        #   "-9999 1 2",
