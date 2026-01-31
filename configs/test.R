@@ -10,14 +10,14 @@ models <- list(
   #   base_dir = "mfcl/inputs/2026"                   # Model-specific dir
   # ),
   
-  "mixP2" = list(
+  "base" = list(
     mfcl_commands = paste("bet.frq 11.par 12.par",
                           "-switch 1",
                           "1 1 1", 
                        #   "-9999 1 2",
                           sep = " "),
     program_path = "mfcl/exe/mfclo64_2026_01_22_vsn2278",  # Model-specific path
-    base_dir = "mfcl/inputs/2026"                   # Model-specific dir
+    base_dir = "mfcl/inputs/2023_rep"                   # Model-specific dir
   ))
 
   # "mixP3" = list(
@@ -55,11 +55,11 @@ models <- list(
 
 # Default values
 default_program_path <- "mfcl/exe/mfclo64_2023"
-default_base_dir <- "mfcl/inputs/2023"
+default_base_dir <- "mfcl/inputs/2023_rep"
 run_prof <- "1"
-Reps <- "15 25 25 1000 100 500"
+Reps <- "15 25 25 1000 2000 2000"
 #scalers <- paste0((seq(120, 70, by=-10)), collapse = " ")
-scalers <- paste0((seq(140, 60, by=-5)), collapse = " ")
+scalers <- paste0((seq(200, 80, by=-5)), collapse = " ")
 
 
 
