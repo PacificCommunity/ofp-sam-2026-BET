@@ -302,7 +302,7 @@
 generate_proflike_script <- function(
     Penalties = c(Pen1 = 100000, Pen2 = 1000000, Pen3 = 10000000),
     Reps = c(Reps1 = 15, Reps2 = 25, Reps3 = 25, Reps4 = 1000, Reps5 = 100, Reps6 = 500),
-    AgeFlags = c(Af173 = 150, Af174 = 5),
+    AgeFlags = c(Af173 = 0, Af174 = 0),
     Prog = "../../mfcl/exe/mfclo64_2026_01_22_vsn2278",
     Frq = "bet.frq",
     Initp = "12.par",
