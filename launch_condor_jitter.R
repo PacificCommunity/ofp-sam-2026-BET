@@ -22,7 +22,7 @@ branch <- "develop_lik"                                              # Branch of
 # ---------------------------------------
 
 jitter_seeds <- 1:10                # Seeds to run (e.g., 1:10 for 10 jitter runs)
-jitter_amount <- 0.2                # Jitter amount
+jitter_cv <- 0.1                    # CV: coefficient of variation (0.1 = 10% variation)
 
 # ---------------------------------------
 # Run the job on Condor through CondorBox
@@ -40,11 +40,11 @@ for(model_name in names(models)) {
     ## Create environment for this specific jitter seed
     jitter_env <- models[[model_name]]
     jitter_env$jitter_seed <- as.character(seed)
-    jitter_env$jitter_amount <- as.character(jitter_amount)
+    jitter_env$jitter_cv <- as.character(jitter_cv)
     
     ## run condor job
     CondorBox::CondorBox(
-      make_options = paste0("jitter jitter_seed=", seed, " jitter_amount=", jitter_amount),
+      make_options = paste0("jitter jitter_seed=", seed, " jitter_cv=", jitter_cv),
       remote_user = remote_user,
       remote_host = remote_host,
       remote_dir = paste0(github_repo, "/", dir, "/", model_name, "_seed", seed), 

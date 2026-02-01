@@ -29,7 +29,7 @@ docker-prof:
 	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) -e scaler=$(scaler) $(DOCKER_IMAGE) Rscript run_prof.R
 
 docker-jitter:
-	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) -e jitter_seed=$(jitter_seed) -e jitter_amount=$(jitter_amount) $(DOCKER_IMAGE) Rscript run_jitter.R
+	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) -e jitter_seed=$(jitter_seed) -e jitter_cv=$(jitter_cv) $(DOCKER_IMAGE) Rscript run_jitter.R
 
 docker-run: docker-model docker-prof
 	
