@@ -57,9 +57,10 @@ models <- list(
 default_program_path <- "mfcl/exe/mfclo64_2023"
 default_base_dir <- "mfcl/inputs/2023_rep"
 run_prof <- "1"
-Reps <- "15 25 25 1000 2000 2000"
+Reps <- "15 25 25 1000 100 500"
+#Reps <- "15 25 25 100 10 50"
 #scalers <- paste0((seq(120, 70, by=-10)), collapse = " ")
-scalers <- paste0((seq(200, 80, by=-5)), collapse = " ")
+scalers <- paste0((seq(200, 50, by=-5)), collapse = " ")
 
 
 

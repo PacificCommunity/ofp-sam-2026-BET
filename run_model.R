@@ -12,9 +12,8 @@ model_dir <- Sys.getenv("model_dir", "model/base")
 project_root <- getwd()
 base_dir_abs <- file.path(project_root, base_dir)
 
-defaultswitch <- paste("-switch 2",
-                       "1 1 10000",
-                       "1 50 -3",
+defaultswitch <- paste("-switch 1",
+                       "1 1 1000",
                        sep=" ")
 
 ## mfcl_commands contains only arguments (frq, par, switches), NOT program path
