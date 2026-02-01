@@ -8,6 +8,9 @@ model:
 prof:
 	Rscript run_prof.R
 
+jitter:
+	Rscript run_jitter.R
+
 run: model prof
 	
 plot:
@@ -25,6 +28,9 @@ docker-model:
 docker-prof:
 	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) -e scaler=$(scaler) $(DOCKER_IMAGE) Rscript run_prof.R
 
+docker-jitter:
+	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) -e jitter_seed=$(jitter_seed) -e jitter_amount=$(jitter_amount) $(DOCKER_IMAGE) Rscript run_jitter.R
+
 docker-run: docker-model docker-prof
 	
 docker-plot:
@@ -34,5 +40,5 @@ docker-report:
 	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) quarto render report/bet-2026.qmd
 
 	
-.PHONY: plot run model prof docker-run docker-model docker-prof docker-plot prepaw report docker-report
+.PHONY: plot run model prof jitter docker-run docker-model docker-prof docker-jitter docker-plot prepaw report docker-report
 

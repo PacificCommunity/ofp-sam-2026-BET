@@ -64,6 +64,7 @@ RUN_CHUNKS <- list(
   model_summary      = TRUE,   # Model summary table
   bound_hit          = TRUE,   # Bound hit parameter analysis
   spawning_depletion = TRUE,   # SB/SBF0 and recruitment plots
+  jitter_analysis    = TRUE,   # Jitter analysis plots
   lik_profile        = TRUE,   # Likelihood profile by component
   piner_lfs          = TRUE,   # Piner plot: Length frequencies
 
@@ -358,10 +359,43 @@ results <- setNames(lapply(model_folders, function(folder) {
     }
   }
   
+  # Read jitter outputs from jitter/jitter_seed_* subdirectories
+  jitter_dir <- file.path(folder, "jitter")
+  jitter_seed_dirs <- list.dirs(jitter_dir, full.names = TRUE, recursive = FALSE)
+  jitter_seed_dirs <- grep("jitter_seed_\\d+$", jitter_seed_dirs, value = TRUE)
+  
+  if (length(jitter_seed_dirs) > 0) {
+    seeds <- basename(jitter_seed_dirs) %>% str_extract("\\d+$")
+    
+    # Read par files from each jitter seed directory
+    jitter_pars <- setNames(map(jitter_seed_dirs, function(d) {
+      par_file <- list.files(d, pattern = "jittered_out_\\d+\\.par$", full.names = TRUE)
+      if (length(par_file) > 0) {
+        tryCatch(read.MFCLPar(par_file[1]), error = function(e) NULL)
+      } else {
+        NULL
+      }
+    }), seeds)
+    
+    # Read jitter info
+    jitter_infos <- setNames(map(jitter_seed_dirs, function(d) {
+      info_file <- file.path(d, "jitter_info.rds")
+      if (file.exists(info_file)) readRDS(info_file) else NULL
+    }), seeds)
+    
+    # Filter out NULLs
+    jitter_pars <- Filter(Negate(is.null), jitter_pars)
+    jitter_infos <- Filter(Negate(is.null), jitter_infos)
+  } else {
+    jitter_pars <- list()
+    jitter_infos <- list()
+  }
+  
   list(
     ParOut = par_out, RepOut = rep_out, LengOut = len_out, WeightOut = wgt_out,
     TagOut = tag_out, AgeOut = age_out, LikOut = lik_out, LikRawOut = lik_raw,
-    scales = existing_scales, IndepOut = indep_out, info = info
+    scales = existing_scales, IndepOut = indep_out, info = info,
+    JitterPars = jitter_pars, JitterInfos = jitter_infos
   )
 }), model_names)
 # -----------------------------------------------------------------------------
@@ -379,6 +413,8 @@ IndepOut_list <- map(results, "IndepOut")
 Info_list <- map(results, "info")
 ProfLikOut_list <- map(results, "LikOut")
 ProfLikOutRaw_list <- map(results, "LikRawOut")
+JitterPars_list <- map(results, "JitterPars")
+JitterInfos_list <- map(results, "JitterInfos")
 
 # Extract year range from first model
 minYear <- ParOut_list[[1]]@range["minyear"]
@@ -667,6 +703,112 @@ final_plot <- cowplot::plot_grid(
 )
 
 print(final_plot)
+```
+
+
+# Jitter Analysis {.tabset}
+
+```{r jitter-analysis, echo=FALSE, message=FALSE, warning=FALSE, results='asis', fig.dim=c(10,8), eval=RUN_CHUNKS$jitter_analysis}
+# =============================================================================
+# JITTER ANALYSIS
+# Compares model fits from different starting values (jittered parameters)
+# =============================================================================
+
+# Get scenarios with jitter runs
+scenarios_with_jitter <- names(JitterPars_list)[sapply(JitterPars_list, function(x) length(x) > 0)]
+
+if (length(scenarios_with_jitter) > 0) {
+  
+  for (scenario in scenarios_with_jitter) {
+    cat(sprintf("\n## %s\n\n", scenario))
+    
+    jitter_pars <- JitterPars_list[[scenario]]
+    base_par <- ParOut_list[[scenario]]
+    seeds <- names(jitter_pars)
+    
+    if (length(seeds) == 0) {
+      cat("*No jitter results available*\n\n")
+      next
+    }
+    
+    # Extract objective function values
+    obj_fun_df <- data.frame(
+      seed = c("Base", seeds),
+      obj_fun = c(
+        as.numeric(base_par@obj_fun),
+        sapply(jitter_pars, function(p) as.numeric(p@obj_fun))
+      ),
+      max_grad = c(
+        as.numeric(base_par@max_grad),
+        sapply(jitter_pars, function(p) as.numeric(p@max_grad))
+      )
+    )
+    
+    # Identify best (lowest obj_fun)
+    obj_fun_df$is_best <- obj_fun_df$obj_fun == min(obj_fun_df$obj_fun)
+    obj_fun_df$diff_from_base <- obj_fun_df$obj_fun - obj_fun_df$obj_fun[1]
+    
+    # Summary table
+    cat("### Summary Table\n\n")
+    
+    display_df <- obj_fun_df %>%
+      mutate(
+        obj_fun_fmt = sprintf("%.2f", obj_fun),
+        max_grad_fmt = sprintf("%.2e", max_grad),
+        diff_fmt = sprintf("%+.2f", diff_from_base)
+      ) %>%
+      select(seed, obj_fun_fmt, diff_fmt, max_grad_fmt, is_best)
+    
+    print(
+      kable(display_df,
+            col.names = c("Seed", "Obj. Function", "Diff from Base", "Max Gradient", "Best"),
+            align = c("l", "r", "r", "r", "c")) %>%
+        kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                      full_width = FALSE) %>%
+        row_spec(0, bold = TRUE, background = "#673AB7", color = "white") %>%
+        row_spec(which(obj_fun_df$is_best), bold = TRUE, background = "#E8F5E9")
+    )
+    
+    cat("\n\n### Objective Function Comparison\n\n")
+    
+    # Plot objective function
+    p1 <- ggplot(obj_fun_df, aes(x = seed, y = obj_fun, fill = is_best)) +
+      geom_col(alpha = 0.8) +
+      geom_hline(yintercept = obj_fun_df$obj_fun[1], linetype = "dashed", color = "red", linewidth = 1) +
+      scale_fill_manual(values = c("FALSE" = "steelblue", "TRUE" = "forestgreen"), guide = "none") +
+      labs(x = "Seed", y = "Objective Function", 
+           title = paste(scenario, "- Jitter Analysis"),
+           subtitle = "Red dashed line = Base model") +
+      theme_bw() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    
+    print(p1)
+    
+    cat("\n\n### Difference from Base Model\n\n")
+    
+    # Plot difference from base
+    p2 <- ggplot(obj_fun_df %>% filter(seed != "Base"), 
+                 aes(x = seed, y = diff_from_base, fill = diff_from_base < 0)) +
+      geom_col(alpha = 0.8) +
+      geom_hline(yintercept = 0, linetype = "solid", color = "black") +
+      scale_fill_manual(values = c("FALSE" = "coral", "TRUE" = "forestgreen"), 
+                        labels = c("Worse", "Better"), name = "") +
+      labs(x = "Seed", y = "Difference in Obj. Function from Base",
+           title = "Jitter Results vs Base Model",
+           subtitle = "Negative = better fit than base") +
+      theme_bw() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1),
+            legend.position = "bottom")
+    
+    print(p2)
+    
+    cat("\n\n")
+  }
+  
+} else {
+  cat("\n## No Jitter Results\n\n")
+  cat("*No jitter analysis results found in any model folder.*\n\n")
+}
 ```
 
 
