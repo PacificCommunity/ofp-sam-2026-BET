@@ -18,7 +18,7 @@ base_dir_abs <- file.path(project_root, base_dir)
 ## Jitter settings
 ## Single seed value for parallel execution via condor
 jitter_seed <- as.integer(Sys.getenv("jitter_seed", "1"))
-jitter_amount <- as.numeric(Sys.getenv("jitter_amount", "0.2"))
+jitter_amount <- as.numeric(Sys.getenv("jitter_amount", "0.1"))
 
 ## Create jitter-specific directory inside jitter folder
 jitter_dir <- file.path(model_dir, "jitter")
@@ -69,8 +69,7 @@ if(length(par_files) > 0) {
 par_orig <- read.MFCLPar(most_recent)
 par_jittered <- jitter_par(par_orig, as.numeric(jitter_amount), as.numeric(jitter_seed))
 
-# 500개 jitter 생성 & 분석 & 플롯
-results <- plot_all_jitter_comprehensive(par_orig, n_jitters = 1000, jitter_bound = jitter_amount)
+#results <- plot_all_jitter_comprehensive(par_orig, n_jitters = 1000, jitter_bound = jitter_amount)
 
 ## Write jittered par file
 jittered_par_name <- paste0("jittered_", jitter_seed, ".par")
