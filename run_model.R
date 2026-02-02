@@ -5,15 +5,18 @@ library(CondorBox)
 ## environment variables
 program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_01_22_vsn2278")
 Sys.setenv("PROGRAM_PATH" = paste0("../../", program_path))
-base_dir <- Sys.getenv("base_dir", "mfcl/inputs/2023_rep")
+base_dir <- Sys.getenv("base_dir", "mfcl/inputs/2023_nick")
 model_dir <- Sys.getenv("model_dir", "model/base")
 
 ## Convert to absolute paths using getwd() (assumes script runs from project root)
 project_root <- getwd()
 base_dir_abs <- file.path(project_root, base_dir)
 
-defaultswitch <- paste("-switch 1",
-                       "1 1 1000",
+defaultswitch <- paste("-switch 3",
+                       #"1 1 1000",
+                       "1 145 1",
+                       "1 223 1",
+                       "1 224 1",
                        sep=" ")
 
 ## mfcl_commands contains only arguments (frq, par, switches), NOT program path

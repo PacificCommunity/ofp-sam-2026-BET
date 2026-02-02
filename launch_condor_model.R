@@ -23,7 +23,7 @@ branch <- "develop_lik"                                              # Branch of
 
 setwd(here::here())
 
-dir="develop/Feb_1_model"
+dir="develop/Feb_1_model_longrun"
 
 source("configs/test.R") 
 
