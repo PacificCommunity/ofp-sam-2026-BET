@@ -11,6 +11,7 @@ if (grepl("model/base/jitter/seed_\\d+$", getwd())) {
 
 ## Load configuration
 source("config.R")
+source("tools/jitter_save.R")
 library(FLR4MFCL)
 library(CondorBox)
 
@@ -78,9 +79,9 @@ par_obj <- read.MFCLPar(par_path)
 ## Set random seed
 set.seed(jitter_seed)
 
-## Apply jitter (example - modify as needed)
-## This is a placeholder - actual jittering depends on FLR4MFCL functionality
+## Apply jitter
 cat("  Applying CV =", jitter_cv, "to estimated parameters\n")
+par_obj <- jitter_par(par_obj, cv = jitter_cv, seed = jitter_seed)
 
 ## Write jittered par file
 jitter_par_file <- paste0("jitter_", jitter_seed, ".par")
