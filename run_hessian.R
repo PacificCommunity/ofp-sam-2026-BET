@@ -14,8 +14,8 @@ base_dir_abs <- file.path(project_root, base_dir)
 
 ## Hessian calculation settings
 ## Single part number for parallel execution via condor
-hessian_part <- as.integer(Sys.getenv("hessian_part", "2"))
-nsplit <- as.integer(Sys.getenv("nsplit", "3067"))
+hessian_part <- as.integer(Sys.getenv("hessian_part", "100"))
+nsplit <- as.integer(Sys.getenv("nsplit", "100"))
 
 ## Create hessian-specific directory inside hessian folder
 hessian_dir <- file.path(model_dir, "hessian")
@@ -31,22 +31,14 @@ cat("Hessian part:", hessian_part, "of", nsplit, "\n")
 ## Create part directory and copy all files from base_dir (inputs)
 dir.create(part_dir, recursive = TRUE, showWarnings = FALSE)
 files_to_copy <- list.files(base_dir_abs, full.names = TRUE)
-copy_result <- file.copy(files_to_copy, to = part_dir, overwrite = TRUE, recursive = TRUE)
-cat("Copied", sum(copy_result), "files from base directory\n")
+file.copy(files_to_copy, to = part_dir, overwrite = TRUE, recursive = TRUE)
 
-## Also copy par file from model_dir (converged model) - REQUIRED for Hessian
+## Also copy par file from model_dir (converged model)
 model_dir_abs <- file.path(project_root, model_dir)
-if(dir.exists(model_dir_abs)) {
-  par_in_model <- list.files(model_dir_abs, pattern = "\\.par$", full.names = TRUE)
-  if(length(par_in_model) > 0) {
-    file.copy(par_in_model, to = part_dir, overwrite = TRUE)
-    cat("Copied", length(par_in_model), "par file(s) from model directory\n")
-  } else {
-    cat("Warning: No par files found in model directory:", model_dir_abs, "\n")
-  }
-} else {
-  cat("Warning: Model directory does not exist:", model_dir_abs, "\n")
-  cat("Run 'make model' first to generate a converged par file\n")
+par_in_model <- list.files(model_dir_abs, pattern = "\\.par$", full.names = TRUE)
+if(length(par_in_model) > 0) {
+  file.copy(par_in_model, to = part_dir, overwrite = TRUE)
+  cat("Copied par files from model directory\n")
 }
 
 ###############################
@@ -55,19 +47,6 @@ if(dir.exists(model_dir_abs)) {
 
 par_files <- list.files(part_dir, pattern = "\\.par$", full.names = TRUE)
 frq_file <- list.files(part_dir, pattern = "\\.frq$", full.names = FALSE)
-
-cat("\nLooking for par files in:", part_dir, "\n")
-cat("Found", length(par_files), "par file(s)\n")
-
-if(length(par_files) == 0) {
-  cat("\n❌ ERROR: No .par files found in directory:", part_dir, "\n")
-  cat("\nTroubleshooting:\n")
-  cat("1. Check if base directory has par files:", base_dir_abs, "\n")
-  cat("2. Check if model directory has par files:", model_dir_abs, "\n")
-  cat("3. Run 'make model' first to generate a converged par file\n")
-  cat("4. Or copy a par file manually to the model directory\n\n")
-  stop("No .par files found in directory: ", part_dir)
-}
 
 if(length(par_files) > 0) {
   # Get file information
@@ -92,17 +71,29 @@ if(length(npars_line) > 0) {
   stop("Could not find number of parameters in par file")
 }
 
-## Calculate parameter range for this part
-arg2 <- (1:nsplit) * ceiling(npars / nsplit)
-arg1 <- arg2
-arg1[2:nsplit] <- arg2[1:(nsplit-1)] + 1
-arg2[nsplit] <- npars
-arg1[1] <- 1
+## Calculate parameter range for this part using balanced distribution
+## This ensures all parts are used without skipping
+base_size <- floor(npars / nsplit)
+remainder <- npars %% nsplit
 
-start_par <- arg1[hessian_part]
-end_par <- arg2[hessian_part]
+cat("Base chunk size:", base_size, "\n")
+cat("Parts with +1 extra:", remainder, "\n")
 
-cat("Calculating Hessian for parameters", start_par, "to", end_par, "\n")
+## First 'remainder' parts get (base_size + 1) parameters
+## Remaining parts get base_size parameters
+if(hessian_part <= remainder) {
+  ## Larger chunks for first 'remainder' parts
+  start_par <- (hessian_part - 1) * (base_size + 1) + 1
+  end_par <- hessian_part * (base_size + 1)
+} else {
+  ## Smaller chunks for remaining parts
+  offset <- remainder * (base_size + 1)
+  start_par <- offset + (hessian_part - remainder - 1) * base_size + 1
+  end_par <- offset + (hessian_part - remainder) * base_size
+}
+
+cat("Calculating Hessian for parameters", start_par, "to", end_par, 
+    "(", end_par - start_par + 1, "parameters )\n")
 
 ##############
 ## run MFCL ##

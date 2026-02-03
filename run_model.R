@@ -5,22 +5,22 @@ library(CondorBox)
 ## environment variables
 program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_01_22_vsn2278")
 Sys.setenv("PROGRAM_PATH" = paste0("../../", program_path))
-base_dir <- Sys.getenv("base_dir", "mfcl/inputs/2023_nick")
-model_dir <- Sys.getenv("model_dir", "model/base")
+base_dir <- Sys.getenv("base_dir", "mfcl/inputs/2023_rep")
+model_dir <- Sys.getenv("model_dir", "model/base/hessian")
 
 ## Convert to absolute paths using getwd() (assumes script runs from project root)
 project_root <- getwd()
 base_dir_abs <- file.path(project_root, base_dir)
 
-defaultswitch <- paste("-switch 3",
-                       #"1 1 1000",
-                       "1 145 1",
-                       "1 223 1",
-                       "1 224 1",
+defaultswitch <- paste("-switch 1",
+                       #"1 1 10",
+                       "1 145 5",
+                       #"1 223 3039",
+                       #"1 224 3067",
                        sep=" ")
 
 ## mfcl_commands contains only arguments (frq, par, switches), NOT program path
-mfcl_commands <- Sys.getenv("mfcl_commands", paste(program_path, "bet.frq 11.par 12.par", defaultswitch)); mfcl_commands <- paste0("../../", mfcl_commands)
+mfcl_commands <- Sys.getenv("mfcl_commands", paste(program_path, "bet.frq 11.par ttt", defaultswitch)); mfcl_commands <- paste0("../../", mfcl_commands)
 
 
 ## create model directory and copy files
@@ -37,6 +37,7 @@ cat("Model directory:", model_dir, "\n")
 ##############
 
 run_commands(commands=mfcl_commands,
+             #commands="./doitall.sh",
              work_dirs=model_dir, 
              save_log = T, 
              parallel = F, 

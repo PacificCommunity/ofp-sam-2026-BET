@@ -22,7 +22,7 @@ branch <- "develop_lik"                                              # Branch of
 # Hessian calculation settings
 # ---------------------------------------
 
-nsplit <- 20                        # Number of parts to split Hessian calculation into
+nsplit <- 30                        # Number of parts to split Hessian calculation into
 
 # ---------------------------------------
 # Run the job on Condor through CondorBox
@@ -30,7 +30,7 @@ nsplit <- 20                        # Number of parts to split Hessian calculati
 
 setwd(here::here())
 
-dir="develop/Feb_2_hessian"
+dir="develop/Feb_2_hessian2"
 
 source("configs/test.R") 
 
@@ -63,8 +63,86 @@ for(model_name in names(models)) {
       exclude_slots = c("slot1@nouofpcand27",
                         "slot1@nouofpcand28", 
                         "slot1@nouofpcand29",
-                        "slot1@nouofpcand30"),
-      env_list = hessian_env
+                        "slot1@nouofpcand30",
+                        "slot1_1@suvofpcand26.corp.spc.int",
+                        "slot1_2@suvofpcand26.corp.spc.int",
+                        "slot1_3@suvofpcand26.corp.spc.int"),   ## these slots are super slow..
+      custom_batch_name = paste0(model_name, "-hess", part, "-", format(Sys.time(), "%H:%M:%S_%D")),
+      condor_environment = hessian_env
     )
   }
 }
+  
+# ----------------------------------------------------------
+# Retrieve and synchronise the output from the remote server
+# ----------------------------------------------------------
+
+output_dir=dir
+
+setwd(here::here())
+
+for(model_name in names(models)) {
+  for(part in 1:nsplit) {
+    
+    remote_dir <- paste0(github_repo, "/", output_dir, "/", model_name, "_part", part)
+    
+    CondorBox::BatchFileHandler(
+      remote_user   = remote_user,
+      remote_host   = remote_host,
+      folder_name   = remote_dir,
+      action        = "fetch",
+      fetch_dir     = "model",
+      extract_archive = TRUE,
+      direct_extract = TRUE,
+      archive_name    = "output_archive.tar.gz",  # Archive file to extract
+      extract_folder  = paste0(github_repo, "/model")
+    )
+  }
+}
+
+
+################################
+## Delete file (clone_job.sh) ##
+################################
+
+for(model_name in names(models)) {
+  for(part in 1:nsplit) {
+    
+    CondorBox::BatchFileHandler(
+      remote_user   = remote_user,
+      remote_host   = remote_host,
+      folder_name   = paste0(github_repo, "/", dir, "/", model_name, "_part", part),
+      file_name     = "clone_job.sh",
+      action        = "delete"
+    )
+  }
+}
+
+
+# ----------------------------------------------------------
+# Stitch Hessian components using MFCL
+# ----------------------------------------------------------
+
+cat("\n==============================================\n")
+cat("Stitching Hessian components...\n")
+cat("==============================================\n\n")
+
+for(model_name in names(models)) {
+  
+  model_dir <- models[[model_name]]$model_dir
+  
+  cat("Stitching Hessian for model:", model_name, "\n")
+  cat("Model directory:", model_dir, "\n")
+  
+  ## Run MFCL stitching
+  tryCatch({
+    source("collate_hessian_mfcl.R")
+    cat("✅ Hessian stitching completed for", model_name, "\n\n")
+  }, error = function(e) {
+    cat("❌ Error stitching Hessian for", model_name, ":", e$message, "\n\n")
+  })
+}
+
+cat("\n==============================================\n")
+cat("✅ All Hessian calculations complete!\n")
+cat("==============================================\n")

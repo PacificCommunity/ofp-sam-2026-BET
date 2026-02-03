@@ -291,16 +291,17 @@ cat("==============================================\n")
 cat("Step 5: Verifying result\n")
 cat("==============================================\n")
 
-parallel_hess_file <- file.path(hessian_dir, "parallel_hess")
+## MFCL creates file named {root_name}.hes (e.g., bet.hes)
+stitched_hess_file <- file.path(hessian_dir, paste0(root_name, ".hes"))
 
-if(file.exists(parallel_hess_file)) {
-  file_size_mb <- file.size(parallel_hess_file) / 1024 / 1024
-  cat("✅ SUCCESS: parallel_hess file created\n")
-  cat("   File:", parallel_hess_file, "\n")
+if(file.exists(stitched_hess_file)) {
+  file_size_mb <- file.size(stitched_hess_file) / 1024 / 1024
+  cat("✅ SUCCESS: Stitched Hessian file created\n")
+  cat("   File:", stitched_hess_file, "\n")
   cat("   Size:", round(file_size_mb, 2), "MB\n\n")
   
   ## Read and verify the file
-  con <- file(parallel_hess_file, open = "rb")
+  con <- file(stitched_hess_file, open = "rb")
   header <- readBin(con, "integer", n = 3)
   close(con)
   
@@ -314,7 +315,7 @@ if(file.exists(parallel_hess_file)) {
       npars = npars,
       n_parts = n_parts,
       start_positions = start_positions,
-      parallel_hess_file = parallel_hess_file,
+      stitched_hess_file = stitched_hess_file,
       stitch_time = Sys.time(),
       is_complete = TRUE,
       file_size_mb = file_size_mb
@@ -327,7 +328,8 @@ if(file.exists(parallel_hess_file)) {
   }
   
 } else {
-  cat("❌ ERROR: parallel_hess file not created\n")
+  cat("❌ ERROR: Stitched Hessian file not created\n")
+  cat("   Expected file:", stitched_hess_file, "\n")
   cat("   Check log file:", file.path(hessian_dir, log_file), "\n\n")
   quit(status = 1)
 }
@@ -350,9 +352,9 @@ if(length(hes_components) > 0) {
 cat("==============================================\n")
 cat("✅ Hessian stitching complete!\n")
 cat("==============================================\n")
-cat("Output file:", parallel_hess_file, "\n")
+cat("Output file:", stitched_hess_file, "\n")
 cat("Size:", round(file_size_mb, 2), "MB\n")
-cat("\nThe parallel_hess file can now be used for:\n")
+cat("\nThe stitched Hessian file can now be used for:\n")
 cat("  - Parameter uncertainty estimation\n")
 cat("  - Variance-covariance matrix calculation\n")
 cat("  - Model diagnostics\n\n")
