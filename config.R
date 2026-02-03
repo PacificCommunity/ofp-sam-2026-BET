@@ -18,7 +18,7 @@ MODELS <- list(
   base = list(
     name = "base",
     description = "Base case model",
-    inputs_dir = "mfcl/inputs/2026",  # Input files directory
+    inputs_dir = "mfcl/inputs/2023_rep",  # Input files directory
     exec_mode = "par",  # "par" or "doitall"
     mfcl_version = "2026_01_22_vsn2278",  # MFCL executable version
     # Par mode settings (used when exec_mode = "par")
