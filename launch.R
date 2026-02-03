@@ -70,12 +70,12 @@ if(job_type_arg == "all") {
 job_type <- if(length(job_types) > 1) "all" else job_types[1]
 
 ## Parse options
-run_local <- "--local" %in% args
+run_local <- if("--local" %in% args) TRUE else LAUNCH_LOCAL
 remote_dir <- NULL
 nsplit <- HESSIAN_NSPLIT
 scalers_vec <- PROF_SCALERS
 njitter <- JITTER_NRUNS
-model_names <- names(MODELS)  # Default: all models
+model_names <- if(!is.null(ACTIVE_MODELS)) ACTIVE_MODELS else names(MODELS)
 
 for(arg in args[-1]) {
   if(grepl("^--dir=", arg)) {
@@ -84,6 +84,8 @@ for(arg in args[-1]) {
     model_str <- sub("^--model=", "", arg)
     if(model_str == "all") {
       model_names <- names(MODELS)  # All models explicitly
+    } else if(model_str == "active") {
+      model_names <- if(!is.null(ACTIVE_MODELS)) ACTIVE_MODELS else names(MODELS)
     } else {
       model_names <- strsplit(model_str, ",")[[1]]  # Specific models
       # Validate model names

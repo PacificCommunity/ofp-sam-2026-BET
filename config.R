@@ -9,6 +9,18 @@ SPECIES <- "bet"
 ASSESSMENT_YEAR <- 2026
 
 ## =============================================================================
+## EXECUTION CONTROL
+## =============================================================================
+
+## Valid models to loop over (can be a subset of available models)
+## If NULL, all MODELS will be run.
+## Can differ between job types if needed, but here we set global defaults.
+ACTIVE_MODELS <- c("base")  # e.g., c("base", "M1") for sensitivity runs
+
+## Launch Settings
+LAUNCH_LOCAL <- FALSE  # Set TRUE to prevent Condor submission by default (for testing)
+
+## =============================================================================
 ## MODEL DEFINITIONS
 ## =============================================================================
 

@@ -15,7 +15,7 @@ model_names <- "base"           # Single model
 scalers <- c(100, 90, 80, 70, 60, 50)  # Biomass scalers (% of MLE)
 
 ## Remote directory (optional - auto-generated if NULL)
-remote_dir <- NULL
+remote_dir <- "test/prof"
 # remote_dir <- "develop/test_prof"
 
 ## Local test mode?
