@@ -19,19 +19,19 @@ WORKDIR=/workspace
 launch_args = $(if $(local),--local,)
 
 model:
-Rscript launch.R model $(launch_args)
+	Rscript launch.R model $(launch_args)
 
 hessian:
-Rscript launch.R hessian $(launch_args)
+	Rscript launch.R hessian $(launch_args)
 
 prof:
-Rscript launch.R prof $(launch_args)
+	Rscript launch.R prof $(launch_args)
 
 jitter:
-Rscript launch.R jitter $(launch_args)
+	Rscript launch.R jitter $(launch_args)
 
 all-jobs:
-Rscript launch.R all $(launch_args)
+	Rscript launch.R all $(launch_args)
 
 # -----------------------------------------------------------------------
 # Results Management
@@ -40,30 +40,30 @@ Rscript launch.R all $(launch_args)
 # Fetch results from Condor (requires remote_dir argument)
 # Usage: make fetch remote_dir=develop/Feb_03_2026_model
 fetch:
-@if [ -z "$(remote_dir)" ]; then \
-echo "Error: remote_dir not specified"; \
-echo "Usage: make fetch remote_dir=develop/Feb_03_2026_model"; \
-exit 1; \
-fi
-Rscript scripts/fetch_results.R $(remote_dir)
+	@if [ -z "$(remote_dir)" ]; then \
+		echo "Error: remote_dir not specified"; \
+		echo "Usage: make fetch remote_dir=develop/Feb_03_2026_model"; \
+		exit 1; \
+	fi
+	Rscript scripts/fetch_results.R $(remote_dir)
 
 # Collate Hessian results (runs locally after fetch)
 collate-hessian:
-Rscript scripts/collate_hessian.R
-Rscript scripts/collate_hessian_mfcl.R
+	Rscript scripts/collate_hessian.R
+	Rscript scripts/collate_hessian_mfcl.R
 
 # -----------------------------------------------------------------------
 # Reporting & Visualization
 # -----------------------------------------------------------------------
 
 plot:
-Rscript -e "rmarkdown::render('plot/plots.rmd')"
+	Rscript -e "rmarkdown::render('plot/plots.rmd')"
 
 report:
-quarto render report/bet-2026.qmd
+	quarto render report/bet-2026.qmd
 
 presentation:
-quarto render presentation/prepaw/presentation.qmd
+	quarto render presentation/prepaw/presentation.qmd
 
 # -----------------------------------------------------------------------
 # Docker Helpers
@@ -71,6 +71,6 @@ quarto render presentation/prepaw/presentation.qmd
 # Run R scripts inside the docker container locally
 
 docker-run:
-docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript scripts/run_model.R
+	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript scripts/run_model.R
 
 .PHONY: model hessian prof jitter all-jobs fetch collate-hessian plot report presentation docker-run
