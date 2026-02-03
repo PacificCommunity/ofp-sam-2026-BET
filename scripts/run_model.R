@@ -59,10 +59,35 @@ if(!grepl("^/", base_dir)) {
 
 cat("  Base directory:", base_dir, "\n")
 
+## Check if directory exists
+if(!dir.exists(base_dir)) {
+  stop("Input directory does not exist: ", base_dir, 
+       "\nCheck inputs_dir in config.R for model: ", model_name)
+}
+
 ## Copy all files from base_dir
 files_to_copy <- list.files(base_dir, full.names = TRUE)
-file.copy(files_to_copy, to = MODEL_DIR, overwrite = TRUE, recursive = TRUE)
-cat("  ✓ Copied", length(files_to_copy), "files\n\n")
+if(length(files_to_copy) == 0) {
+  stop("Input directory is empty: ", base_dir,
+       "\nCheck inputs_dir in config.R for model: ", model_name)
+}
+
+cat("  Files to copy:", length(files_to_copy), "\n")
+copied <- file.copy(files_to_copy, to = MODEL_DIR, overwrite = TRUE, recursive = TRUE)
+cat("  ✓ Copied", sum(copied), "files\n")
+
+## Verify PAR file was copied (for par mode)
+if(model_config$exec_mode == "par") {
+  par_file <- file.path(MODEL_DIR, model_config$par_input)
+  if(!file.exists(par_file)) {
+    stop("PAR file not found after copy: ", model_config$par_input,
+         "\nExpected in: ", base_dir,
+         "\nMake sure ", model_config$par_input, " exists in inputs directory")
+  }
+  cat("  ✓ PAR file verified:", model_config$par_input, "\n")
+}
+
+cat("\n")
 
 ## Get execution mode from model config
 exec_mode <- model_config$exec_mode
