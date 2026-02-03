@@ -123,11 +123,11 @@ if(exec_mode == "doitall") {
   program_path <- file.path("mfcl/exe", mfcl_exe)
   mfcl_exe_relative <- file.path("../..", program_path)
   
-  ## Get switc"bet.frq"  # Use basename directlyonfig
+  ## Get switches from environment or config
   switches <- Sys.getenv("MFCL_SWITCHES", MFCL_SWITCHES)
   
   ## Build command (like archive: ../../mfcl/exe/... frq par out switches)
-  frq_file <- basename(input_files$frq)
+  frq_file <- "bet.frq"  # Use basename directly
   mfcl_command <- paste(
     mfcl_exe_relative,
     frq_file,
