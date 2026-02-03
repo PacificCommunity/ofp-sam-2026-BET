@@ -75,8 +75,8 @@ cat("  ✓ PAR file verified:", par_file, "\n\n")
 
 ## Get MFCL executable (relative from work directory)
 mfcl_exe_name <- paste0("mfclo64_", model_config$mfcl_version)
-## From model/base/prof/ to mfcl/exe/
-mfcl_exe_relative <- paste0("../../../mfcl/exe/", mfcl_exe_name)
+## From model/base/prof/scaler_X/ to mfcl/exe/ (4 levels up)
+mfcl_exe_relative <- paste0("../../../../mfcl/exe/", mfcl_exe_name)
 
 frq_file <- "bet.frq"
 
