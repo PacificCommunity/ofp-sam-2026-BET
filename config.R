@@ -163,7 +163,18 @@ JITTER_CPUS <- 2
 
 CONDOR_USER <- "kyuhank"
 CONDOR_HOST <- Sys.getenv("NOU_CONDOR")
+
+## Fallback for CONDOR_HOST if not set
+if (CONDOR_HOST == "" || is.na(CONDOR_HOST)) {
+  warning("NOU_CONDOR environment variable not set. Defaulting to 'nouofpsubmit.corp.spc.int'")
+  CONDOR_HOST <- "nouofpsubmit.corp.spc.int"
+}
+
 GITHUB_PAT <- Sys.getenv("GIT_PAT")
+if (GITHUB_PAT == "") {
+  warning("GIT_PAT environment variable not set. Condor submission may fail.")
+}
+
 GITHUB_USERNAME <- "kyuhank"
 GITHUB_ORG <- "PacificCommunity"
 GITHUB_REPO <- "ofp-sam-2026-bet"
