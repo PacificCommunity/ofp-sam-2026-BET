@@ -23,9 +23,10 @@ branch <- "develop_lik"                                              # Branch of
 
 setwd(here::here())
 
-dir="develop/Feb_1_model_longrun"
+dir="quick/Feb_3_model"
 
-source("configs/test.R") 
+source("configs/model.R") 
+source("configs/default.R")
 
 for(model_name in names(models)) {
 

@@ -23,14 +23,16 @@ branch <- "develop_lik"                                              # Branch of
 
 setwd(here::here())
 
-dir="develop/Feb_2_prof"
+dir="develop/Feb_3_prof"
 
-source("configs/test.R") 
+source("configs/model.R") 
 
-## Parse scalers from config
-scalers_vec <- as.numeric(unlist(strsplit(scalers, "\\s+")))
+all_scalers <- lapply(models, function(x) x$scalers)
 
 for(model_name in names(models)) {
+  
+  scalers_vec <- as.numeric(unlist(strsplit(all_scalers[[model_name]], "\\s+")))
+  
   for(sc in scalers_vec) {
     
     ## Create environment for this specific scaler
@@ -39,7 +41,7 @@ for(model_name in names(models)) {
     
     ## run condor job
     CondorBox::CondorBox(
-      make_options = paste0("prof scaler=", sc),
+      make_options = "prof",
       remote_user = remote_user,
       remote_host = remote_host,
       remote_dir = paste0(github_repo, "/", dir, "/", model_name, "_sc", sc), 
