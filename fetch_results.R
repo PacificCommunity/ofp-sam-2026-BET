@@ -92,7 +92,10 @@ for(model_name in model_names) {
       folder_name = remote_model_dir,
       action = "fetch",
       fetch_dir = local_dir,
-      extract_archive = extract_archive
+      extract_archive = extract_archive,
+      direct_extract = TRUE,
+      archive_name = "output_archive.tar.gz",
+      extract_folder = paste0(GITHUB_REPO, "/", local_dir)
     )
     cat("✓ Successfully fetched:", model_name, "\n")
   }, error = function(e) {
