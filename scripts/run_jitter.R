@@ -2,45 +2,73 @@
 ## Jitter analysis - test model convergence
 ## Uses centralized config.R for all settings
 
+## Working directory detection (if in Condor)
+if (grepl("model/base/jitter/seed_\\d+$", getwd())) {
+  cat("* Detected Condor working directory, navigating to repo root...\n")
+  setwd("../../../..")
+  cat("  New working directory:", getwd(), "\n\n")
+}
+
 ## Load configuration
 source("config.R")
 library(FLR4MFCL)
 library(CondorBox)
 
-## Get jitter settings from environment
-jitter_seed <- as.integer(Sys.getenv("jitter_seed", "1"))
-jitter_cv <- as.numeric(Sys.getenv("jitter_cv", JITTER_CV))
+## Get environment variables
+model_name <- Sys.getenv("MODEL_NAME")
+if (model_name == "") {
+  stop("MODEL_NAME environment variable not set")
+}
+
+## Get model configuration
+model_config <- MODELS[[model_name]]
+if (is.null(model_config)) {
+  stop("Model '", model_name, "' not found in config.R")
+}
 
 cat("==============================================\n")
 cat("Jitter Analysis\n")
 cat("==============================================\n")
+cat("Model:", model_name, "\n")
+
+## Get jitter settings from environment
+jitter_seed <- as.integer(Sys.getenv("jitter_seed", "1"))
+jitter_cv <- as.numeric(Sys.getenv("jitter_cv", JITTER_CV))
+
 cat("Seed:", jitter_seed, "\n")
 cat("CV:", jitter_cv, "\n\n")
 
 ## Setup directories
-jitter_dir <- file.path(JITTER_DIR, paste0("seed_", jitter_seed))
+model_dir <- file.path("model", model_name)
+jitter_dir <- file.path(model_dir, "jitter", paste0("seed_", jitter_seed))
 dir.create(jitter_dir, recursive = TRUE, showWarnings = FALSE)
 
-## Copy input files
-cat("* Copying input files ...\n")
-input_files <- get_input_files()
-for(file in input_files) {
-  if(file.exists(file)) {
-    file.copy(file, jitter_dir, overwrite = TRUE)
-  }
+## Copy input files from inputs directory
+cat("* Copying input files from:", model_config$inputs_dir, "\n")
+
+if (!dir.exists(model_config$inputs_dir)) {
+  stop("Inputs directory not found: ", model_config$inputs_dir)
 }
 
-## Copy converged par file
-par_files <- list.files(MODEL_DIR, pattern = "\\d+\\.par$", full.names = TRUE)
-if(length(par_files) > 0) {
-  file_info <- file.info(par_files)
-  most_recent <- par_files[which.max(file_info$mtime)]
-  file.copy(most_recent, jitter_dir, overwrite = TRUE)
-  par_file <- basename(most_recent)
-  cat("  ✓ Copied:", par_file, "\n\n")
-} else {
-  stop("No .par file found in model directory: ", MODEL_DIR)
+input_files <- list.files(model_config$inputs_dir, full.names = TRUE, recursive = FALSE)
+if (length(input_files) == 0) {
+  stop("No files found in inputs directory: ", model_config$inputs_dir)
 }
+
+for(file in input_files) {
+  if (file.info(file)$isdir) next
+  file.copy(file, jitter_dir, overwrite = TRUE)
+}
+cat("  ✓ Copied", length(input_files), "files\n")
+
+## Find .par file in inputs directory
+par_files <- list.files(model_config$inputs_dir, pattern = "\\d+\\.par$", full.names = TRUE)
+if (length(par_files) == 0) {
+  stop("No .par file found in inputs directory: ", model_config$inputs_dir)
+}
+
+par_file <- basename(par_files[1])
+cat("  ✓ Using PAR file:", par_file, "\n\n")
 
 ## Jitter parameters in par file
 cat("* Jittering parameters ...\n")
@@ -58,20 +86,13 @@ cat("  Applying CV =", jitter_cv, "to estimated parameters\n")
 jitter_par_file <- paste0("jitter_", jitter_seed, ".par")
 write(par_obj, file.path(jitter_dir, jitter_par_file))
 
-## Get MFCL executable (archive method: relative from work directory)
-if(MFCL_VERSION == "2026") {
-  mfcl_exe <- "mfclo64_2026_01_22_vsn2278"
-} else if(MFCL_VERSION == "2023") {
-  mfcl_exe <- "mfclo64_2023"
-} else {
-  mfcl_exe <- paste0("mfclo64_", MFCL_VERSION)
-}
-program_path <- file.path("mfcl/exe", mfcl_exe)
+## Get MFCL executable (relative from work directory)
+mfcl_exe_name <- paste0("mfclo64_", model_config$mfcl_version)
 ## From model/base/jitter/ to mfcl/exe/
-mfcl_exe_relative <- file.path("../../..", program_path)
+mfcl_exe_relative <- file.path("../../..", "mfcl", "exe", mfcl_exe_name)
 
 ## Build MFCL command
-frq_file <- basename(input_files$frq)
+frq_file <- "bet.frq"
 output_par <- paste0("out_", jitter_seed, ".par")
 
 ## Get switches from environment or use defaults
@@ -101,7 +122,7 @@ info_list <- list(
   species = SPECIES,
   jitter_seed = jitter_seed,
   jitter_cv = jitter_cv,
-  mfcl_version = sub("mfclo64_", "", basename(mfcl_exe)),
+  mfcl_version = model_config$mfcl_version,
   timestamp = Sys.time()
 )
 

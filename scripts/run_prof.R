@@ -2,11 +2,23 @@
 ## Profile likelihood using average biomass penalty
 ## Uses ProfLike_utils.R to generate and execute profile script
 
+## Detect if running in Condor and navigate to repo root
+current_dir <- getwd()
+if(basename(dirname(dirname(current_dir))) == "model") {
+  ## In Condor: working dir is model/base/prof/
+  setwd("../../..")
+  cat("Detected Condor environment, changed to:", getwd(), "\n")
+}
+
 ## Load configuration
 source("config.R")
 source("tools/ProfLike_utils.R")
 library(FLR4MFCL)
 library(CondorBox)
+
+## Get model name from environment
+model_name <- Sys.getenv("MODEL_NAME", DEFAULT_MODEL)
+model_config <- MODELS[[model_name]]
 
 ## Get profile settings from environment
 scaler <- as.integer(Sys.getenv("scaler", "100"))
@@ -16,47 +28,56 @@ end_year <- as.integer(Sys.getenv("PROF_END_YEAR", PROF_END_YEAR))
 cat("==============================================\n")
 cat("Profile Likelihood - Average Biomass\n")
 cat("==============================================\n")
+cat("Model:", model_name, "\n")
 cat("Scaler:", scaler, "% of MLE\n")
 cat("Period:", if(start_year == 0 && end_year == 0) "Entire period" else paste(start_year, "-", end_year), "\n\n")
 
 ## Setup directories
-prof_dir <- file.path(PROF_DIR, paste0("scaler_", scaler))
+prof_dir <- file.path(get_prof_dir(model_name), paste0("scaler_", scaler))
 dir.create(prof_dir, recursive = TRUE, showWarnings = FALSE)
 
 ## Copy input files from inputs directory
-cat("* Copying input files ...\n")
-input_files <- get_input_files()
-for(file in input_files) {
-  if(file.exists(file)) {
-    file.copy(file, prof_dir, overwrite = TRUE)
-  }
+cat("* Copying input files from inputs directory ...\n")
+
+## Get base_dir (inputs directory)
+base_dir <- Sys.getenv("base_dir", model_config$inputs_dir)
+if(!grepl("^/", base_dir)) {
+  base_dir <- file.path(getwd(), base_dir)
 }
 
-## Copy converged par file from model directory
-par_files <- list.files(MODEL_DIR, pattern = "\\.par$", full.names = TRUE)
-if(length(par_files) > 0) {
-  file_info <- file.info(par_files)
-  most_recent <- par_files[which.max(file_info$mtime)]
-  file.copy(most_recent, prof_dir, overwrite = TRUE)
-  cat("  ✓ Copied:", basename(most_recent), "\n")
-  cat("  Modified time:", as.character(file_info[most_recent, "mtime"]), "\n\n")
-} else {
-  stop("No .par file found in model directory: ", MODEL_DIR)
+cat("  Inputs directory:", base_dir, "\n")
+
+## Check if directory exists
+if(!dir.exists(base_dir)) {
+  stop("Input directory does not exist: ", base_dir,
+       "\nCheck inputs_dir in config.R for model: ", model_name)
 }
+
+## Copy all files from base_dir
+files_to_copy <- list.files(base_dir, full.names = TRUE)
+if(length(files_to_copy) == 0) {
+  stop("Input directory is empty: ", base_dir)
+}
+
+cat("  Files to copy:", length(files_to_copy), "\n")
+copied <- file.copy(files_to_copy, to = prof_dir, overwrite = TRUE, recursive = TRUE)
+cat("  ✓ Copied", sum(copied), "files\n")
+
+## Verify PAR file exists
+par_file <- file.path(prof_dir, model_config$par_input)
+if(!file.exists(par_file)) {
+  stop("PAR file not found: ", model_config$par_input,
+       "\nExpected in inputs directory: ", base_dir,
+       "\nMake sure the PAR file exists in your inputs directory.")
+}
+cat("  ✓ PAR file verified:", model_config$par_input, "\n\n")
 
 ## Get MFCL executable (archive method: relative from work directory)
-if(MFCL_VERSION == "2026") {
-  mfcl_exe <- "mfclo64_2026_01_22_vsn2278"
-} else if(MFCL_VERSION == "2023") {
-  mfcl_exe <- "mfclo64_2023"
-} else {
-  mfcl_exe <- paste0("mfclo64_", MFCL_VERSION)
-}
-program_path <- file.path("mfcl/exe", mfcl_exe)
+mfcl_exe_name <- paste0("mfclo64_", model_config$mfcl_version)
 ## From model/base/prof/ to mfcl/exe/
-mfcl_exe_relative <- file.path("../../..", program_path)
+mfcl_exe_relative <- paste0("../../../mfcl/exe/", mfcl_exe_name)
 
-frq_file <- basename(input_files$frq)
+frq_file <- "bet.frq"
 
 ## Get Reps from environment if provided, otherwise use config
 reps_env <- Sys.getenv("PROF_REPS_OVERRIDE", "")
