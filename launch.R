@@ -511,11 +511,11 @@ cat("To check job status:\n")
 cat("  ssh ", CONDOR_USER, "@", CONDOR_HOST, " 'condor_q'\n\n", sep="")
 
 cat("To download results after completion:\n")
-cat("  Rscript fetch_results.R ", remote_dir, "\n\n", sep="")
+cat("  Rscript scripts/fetch_results.R ", remote_dir, "\n\n", sep="")
 
 cat("Or fetch specific models:\n")
-cat("  Rscript fetch_results.R ", remote_dir, " --model=base\n", sep="")
-cat("  Rscript fetch_results.R ", remote_dir, " --model=base,M1 --local-dir=results/run01\n\n", sep="")
+cat("  Rscript scripts/fetch_results.R ", remote_dir, " --model=base\n", sep="")
+cat("  Rscript scripts/fetch_results.R ", remote_dir, " --model=base,M1 --local-dir=results/run01\n\n", sep="")
 
 cat("Manual download with R:\n")
 cat("  library(CondorBox)\n")

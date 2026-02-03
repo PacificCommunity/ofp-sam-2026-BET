@@ -182,10 +182,10 @@ CONDOR_CPUS <- 2
 ## =============================================================================
 
 ## Load helper functions from separate file
-if(file.exists("helpers.R")) {
-  source("helpers.R")
-} else if(file.exists(file.path(BASE_DIR, "helpers.R"))) {
-  source(file.path(BASE_DIR, "helpers.R"))
+if(file.exists("tools/helpers.R")) {
+  source("tools/helpers.R")
+} else if(file.exists(file.path(BASE_DIR, "tools/helpers.R"))) {
+  source(file.path(BASE_DIR, "tools/helpers.R"))
 }
 
 ## =============================================================================

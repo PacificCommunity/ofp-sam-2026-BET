@@ -1,0 +1,22 @@
+
+Universe   = docker
+DockerImage = ghcr.io/pacificcommunity/bet-2026:v1.2
+Executable = /bin/bash
+Arguments  = run_job.sh
+ShouldTransferFiles = YES
+TransferInputFiles = clone_job.sh, run_job.sh, job_env.txt
+TransferOutputFiles = output_archive.tar.gz
+Output     = condor_job.out
+Error      = condor_job.err
+Log        = condor_job.log
+stream_error = TRUE
+getenv = True
+batch_name = base-hess7-21:05:30_0203
+Requirements = Name != "slot1@nouofpcand27" && Name != "slot1@nouofpcand28" && Name != "slot1@nouofpcand29" && Name != "slot1@nouofpcand30" && Name != "slot1_1@suvofpcand26.corp.spc.int" && Name != "slot1_2@suvofpcand26.corp.spc.int" && Name != "slot1_3@suvofpcand26.corp.spc.int"
+environment = MODEL_NAME=base hessian_part=7 nsplit=200
+request_cpus = 2
+request_memory = 12GB
+request_disk = 10GB
+
+Queue
+
