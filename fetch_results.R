@@ -84,7 +84,6 @@ for(model_name in model_names) {
   cat("\n--- Fetching model:", model_name, "---\n")
   
   remote_model_dir <- paste0(GITHUB_REPO, "/", remote_dir, "/", model_name)
-  local_model_dir <- file.path(local_dir, model_name)
   
   tryCatch({
     BatchFileHandler(
@@ -92,7 +91,7 @@ for(model_name in model_names) {
       remote_host = CONDOR_HOST,
       folder_name = remote_model_dir,
       action = "fetch",
-      fetch_dir = local_model_dir,
+      fetch_dir = local_dir,
       extract_archive = extract_archive
     )
     cat("✓ Successfully fetched:", model_name, "\n")
