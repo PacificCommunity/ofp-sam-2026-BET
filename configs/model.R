@@ -7,7 +7,7 @@ models <- list(
                           "-9999 1 1",
                           sep = " "),
     program_path = "mfcl/exe/mfclo64_2026_01_22_vsn2278",  # Model-specific path
-    base_dir = "mfcl/inputs/2026",                   # Model-specific dir
+    base_dir = "mfcl/inputs/2023_rep",                   # Model-specific dir
     
     ## configuration for profiling
     Reps = "1 1 1 1 1 1",
@@ -37,3 +37,16 @@ models <- list(
   #   program_path = "../../mfcl/exe/mfclo64_2026_01_22_vsn2278",  # Model-specific path
   #   base_dir = "mfcl/inputs/2026"                   # Model-specific dir
   # ))
+
+
+
+
+
+
+
+
+
+
+
+
+
