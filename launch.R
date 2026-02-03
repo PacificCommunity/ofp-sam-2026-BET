@@ -377,7 +377,9 @@ if("prof" %in% job_types) {
         MODEL_NAME = model_name,
         scaler = as.character(sc),
         PROF_START_YEAR = as.character(PROF_START_YEAR),
-        PROF_END_YEAR = as.character(PROF_END_YEAR)
+        PROF_END_YEAR = as.character(PROF_END_YEAR),
+        PROF_REPS_OVERRIDE = paste(PROF_REPS, collapse = " "),
+        PROF_PENALTIES_OVERRIDE = paste(PROF_PENALTIES, collapse = " ")
       )
       
       ## Save job metadata for tracking
