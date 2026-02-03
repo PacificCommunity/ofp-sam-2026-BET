@@ -2,17 +2,54 @@
 DOCKER_IMAGE=ghcr.io/pacificcommunity/bet-2026:v1.2
 WORKDIR=/workspace
 
+# Quick local tests using test_local.R
+test-model:
+	Rscript test_local.R model
+
+test-hessian:
+	Rscript test_local.R hessian
+
+test-prof:
+	Rscript test_local.R prof 100
+
+test-jitter:
+	Rscript test_local.R jitter
+
+# Local runs using launch.R --local flag
+local-model:
+	Rscript launch.R model --local
+
+local-hessian:
+	Rscript launch.R hessian --local
+
+local-prof:
+	Rscript launch.R prof --local
+
+local-jitter:
+	Rscript launch.R jitter --local
+
+# Fetch results from Condor (requires remote_dir argument)
+# Usage: make fetch remote_dir=develop/Feb_03_2026_model
+fetch:
+	@if [ -z "$(remote_dir)" ]; then \
+		echo "Error: remote_dir not specified"; \
+		echo "Usage: make fetch remote_dir=develop/Feb_03_2026_model"; \
+		exit 1; \
+	fi
+	Rscript fetch_results.R $(remote_dir)
+
+# Regular targets
 model:
-	Rscript run_model.R
+	Rscript scripts/run_model.R
 
 prof:
-	Rscript run_prof.R
+	Rscript scripts/run_prof.R
 
 jitter:
-	Rscript run_jitter.R
+	Rscript scripts/run_jitter.R
 
 hessian:
-	Rscript run_hessian.R
+	Rscript scripts/run_hessian.R
 
 collate-hessian:
 	Rscript collate_hessian.R

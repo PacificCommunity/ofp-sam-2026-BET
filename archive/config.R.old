@@ -1,0 +1,235 @@
+#!/usr/bin/env Rscript
+## Central configuration for MFCL assessment
+## This file contains all species-specific settings and paths
+## Eliminates hardcoded values like "bet.frq", "bet.tag", etc.
+
+## =============================================================================
+## Species and Assessment Information
+## =============================================================================
+
+SPECIES <- "bet"  # Species code (bet, yft, skj, alb, etc.)
+ASSESSMENT_YEAR <- 2026
+
+## =============================================================================
+## Directory Structure
+## =============================================================================
+
+## Base directories
+BASE_DIR <- here::here()
+MODEL_DIR <- file.path(BASE_DIR, "model/base")
+INPUTS_DIR <- file.path(BASE_DIR, "mfcl/inputs/2026")
+
+## Output directories
+HESSIAN_DIR <- file.path(MODEL_DIR, "hessian")
+PROF_DIR <- file.path(MODEL_DIR, "prof")
+JITTER_DIR <- file.path(MODEL_DIR, "jitter")
+
+## Executable directory
+MFCL_EXE_DIR <- file.path(BASE_DIR, "mfcl/exe")
+
+## =============================================================================
+## MFCL Files (species-specific naming)
+## =============================================================================
+
+## Function to get input file names
+get_input_files <- function(species = SPECIES, dir = INPUTS_DIR) {
+  list(
+    frq = file.path(dir, paste0(species, ".frq")),
+    age_length = file.path(dir, paste0(species, ".age_length")),
+    tag = file.path(dir, paste0(species, ".tag")),
+    ini = file.path(dir, paste0(species, ".ini")),
+    cfg = file.path(dir, paste0(species, ".cfg"))
+  )
+}
+
+## Parameter files
+get_par_files <- function(dir = MODEL_DIR) {
+  list(
+    input = file.path(dir, "11.par"),
+    output = file.path(dir, "12.par")
+  )
+}
+
+## =============================================================================
+## MFCL Executable
+## =============================================================================
+
+## Get MFCL executable path (with version selection)
+get_mfcl_exe <- function(version = "2026", exe_dir = MFCL_EXE_DIR) {
+  if(version == "2026") {
+    exe_name <- "mfclo64_2026_01_22_vsn2278"
+  } else if(version == "2023") {
+    exe_name <- "mfclo64_2023"
+  } else {
+    exe_name <- paste0("mfclo64_", version)
+  }
+  
+  exe_path <- file.path(exe_dir, exe_name)
+  
+  if(!file.exists(exe_path)) {
+    stop("MFCL executable not found: ", exe_path)
+  }
+  
+  return(normalizePath(exe_path))
+}
+
+## =============================================================================
+## Condor/Docker Settings
+## =============================================================================
+
+CONDOR <- list(
+  ## Remote server
+  user = "kyuhank",
+  host = Sys.getenv("NOU_CONDOR"),
+  
+  ## GitHub
+  github_pat = Sys.getenv("GIT_PAT"),
+  github_username = "kyuhank",
+  github_org = "PacificCommunity",
+  github_repo = "ofp-sam-2026-bet",
+  branch = "develop_lik",
+  
+  ## Docker
+  docker_image = "ghcr.io/pacificcommunity/bet-2026:v1.2",
+  
+  ## Resource requests
+  memory = "12GB",
+  disk = "10GB",
+  cpus = 2
+)
+
+## =============================================================================
+## Analysis Settings
+## =============================================================================
+
+## Hessian calculation
+HESSIAN <- list(
+  nsplit = 100,  # Number of parallel parts
+  memory = "12GB",
+  cpus = 2
+)
+
+## Profile likelihood
+PROF <- list(
+  ## Parameter to profile (only one at a time)
+  ## Common options: "logM", "steepness", "q_cpue"
+  parameter = "logM",
+  
+  ## Switch flag number for profiling this parameter
+  ## logM: 172, steepness: 173, etc.
+  switch_flag = 172,
+  
+  ## Scalers (relative to base value)
+  scalers = seq(0.7, 1.3, by = 0.1),
+  
+  memory = "10GB",
+  cpus = 2
+)
+
+## Jitter analysis
+JITTER <- list(
+  nruns = 50,  # Number of jitter runs
+  cv = 0.1,    # Coefficient of variation for jittering
+  seeds = 1:50,  # Random seeds
+  
+  memory = "10GB",
+  cpus = 2
+)
+
+## =============================================================================
+## Model Configurations
+## =============================================================================
+
+## Define different model scenarios
+## Used by launch_condor.R for batch runs
+MODELS <- list(
+  base = list(
+    name = "base",
+    description = "Base model",
+    input_par = "11.par",
+    output_par = "12.par",
+    switches = "-switch 4 1 1 1 5 1 124 1"
+  ),
+  
+  m2_s20 = list(
+    name = "m2_s20",
+    description = "M=2, steepness=0.80",
+    input_par = "11.par",
+    output_par = "12.par",
+    switches = "-switch 4 1 1 1 5 1 124 1"
+  )
+  
+  ## Add more models as needed
+  ## model_name = list(
+  ##   name = "model_name",
+  ##   description = "Description",
+  ##   input_par = "11.par",
+  ##   output_par = "12.par",
+  ##   switches = "..."
+  ## )
+)
+
+## =============================================================================
+## Helper Functions
+## =============================================================================
+
+## Get full MFCL command
+get_mfcl_command <- function(frq, par_in, par_out, switches = "", mfcl_version = "2026") {
+  exe <- get_mfcl_exe(mfcl_version)
+  paste(exe, frq, par_in, par_out, switches)
+}
+
+## Check if all required input files exist
+check_input_files <- function() {
+  files <- get_input_files()
+  missing <- c()
+  
+  for(name in names(files)) {
+    if(!file.exists(files[[name]])) {
+      missing <- c(missing, files[[name]])
+    }
+  }
+  
+  if(length(missing) > 0) {
+    stop("Missing input files:\n  ", paste(missing, collapse = "\n  "))
+  }
+  
+  return(invisible(TRUE))
+}
+
+## Create directory structure
+create_dirs <- function() {
+  dirs <- c(MODEL_DIR, HESSIAN_DIR, PROF_DIR, JITTER_DIR)
+  for(d in dirs) {
+    if(!dir.exists(d)) {
+      dir.create(d, recursive = TRUE)
+      cat("Created directory:", d, "\n")
+    }
+  }
+  return(invisible(TRUE))
+}
+
+## =============================================================================
+## Export configuration
+## =============================================================================
+
+## When sourced, print summary
+if(interactive() || !exists(".config_loaded")) {
+  cat("MFCL Assessment Configuration\n")
+  cat("==============================================\n")
+  cat("Species:", SPECIES, "\n")
+  cat("Assessment year:", ASSESSMENT_YEAR, "\n")
+  cat("Region:", REGION, "\n")
+  cat("\nBase directory:", BASE_DIR, "\n")
+  cat("Model directory:", MODEL_DIR, "\n")
+  cat("\nMFCL executable:", get_mfcl_exe(), "\n")
+  cat("\nInput files:\n")
+  files <- get_input_files()
+  for(name in names(files)) {
+    exists_str <- if(file.exists(files[[name]])) "✓" else "✗"
+    cat("  ", exists_str, " ", name, ": ", basename(files[[name]]), "\n", sep="")
+  }
+  cat("==============================================\n\n")
+  
+  .config_loaded <- TRUE
+}

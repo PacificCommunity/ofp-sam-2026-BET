@@ -1,0 +1,173 @@
+# Makefile for MFCL Assessment
+# Uses centralized config.R and new scripts/ directory
+
+## Docker settings
+DOCKER_IMAGE := ghcr.io/pacificcommunity/bet-2026:v1.2
+WORKDIR := /workspace
+
+## =============================================================================
+## Local Execution
+## =============================================================================
+
+## Model run
+model:
+	@Rscript scripts/run_model.R
+
+## Hessian (single part for local testing)
+hessian:
+	@Rscript scripts/run_hessian.R
+
+## Profile likelihood
+prof:
+	@Rscript scripts/run_prof.R
+
+## Jitter analysis
+jitter:
+	@Rscript scripts/run_jitter.R
+
+## =============================================================================
+## Analysis Tools
+## =============================================================================
+
+## Collate Hessian (R-based method)
+collate-hessian:
+	@Rscript tools/collate_hessian.R
+
+## Stitch Hessian (MFCL stitching method)
+stitch-hessian:
+	@Rscript tools/collate_hessian_mfcl.R
+
+## Verify Hessian quality
+verify-hessian:
+	@Rscript tools/verify_hessian.R
+
+## Read and inspect Hessian
+read-hessian:
+	@Rscript tools/read_hessian.R model/base/hessian/$(SPECIES).hes
+
+## =============================================================================
+## Plotting and Reports
+## =============================================================================
+
+## Generate plots
+plot:
+	@Rscript -e "rmarkdown::render('plot/plots.rmd')"
+
+## Render presentation
+presentation:
+	@quarto render presentation/prepaw/presentation.qmd
+
+## Render report
+report:
+	@quarto render report/bet-2026.qmd
+
+## =============================================================================
+## Docker Execution
+## =============================================================================
+
+docker-model:
+	@docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) \
+		$(DOCKER_IMAGE) Rscript scripts/run_model.R
+
+docker-hessian:
+	@docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) \
+		-e hessian_part=$(part) -e nsplit=$(nsplit) \
+		$(DOCKER_IMAGE) Rscript scripts/run_hessian.R
+
+docker-prof:
+	@docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) \
+		-e scaler=$(scaler) \
+		$(DOCKER_IMAGE) Rscript scripts/run_prof.R
+
+docker-jitter:
+	@docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) \
+		-e jitter_seed=$(seed) -e jitter_cv=$(cv) \
+		$(DOCKER_IMAGE) Rscript scripts/run_jitter.R
+
+docker-stitch-hessian:
+	@docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) \
+		$(DOCKER_IMAGE) Rscript tools/collate_hessian_mfcl.R
+
+## =============================================================================
+## Condor Submission (via launch.R)
+## =============================================================================
+
+## Submit model to Condor
+condor-model:
+	@Rscript launch.R model
+
+## Submit Hessian jobs to Condor
+condor-hessian:
+	@Rscript launch.R hessian
+
+## Submit profile jobs to Condor
+condor-prof:
+	@Rscript launch.R prof
+
+## Submit jitter jobs to Condor
+condor-jitter:
+	@Rscript launch.R jitter
+
+## Submit all jobs to Condor
+condor-all:
+	@Rscript launch.R all
+
+## =============================================================================
+## Utility Targets
+## =============================================================================
+
+## Show configuration
+config:
+	@Rscript -e "source('config.R')"
+
+## Check input files
+check:
+	@Rscript -e "source('config.R'); check_input_files()"
+
+## Create directory structure
+setup:
+	@Rscript -e "source('config.R'); create_dirs()"
+
+## Clean model outputs
+clean:
+	@rm -rf model/*/
+	@echo "Cleaned model outputs"
+
+## Help message
+help:
+	@echo "MFCL Assessment Makefile"
+	@echo ""
+	@echo "Local execution:"
+	@echo "  make model              - Run MFCL model"
+	@echo "  make hessian            - Calculate Hessian (single part)"
+	@echo "  make prof               - Profile likelihood"
+	@echo "  make jitter             - Jitter analysis"
+	@echo ""
+	@echo "Analysis tools:"
+	@echo "  make stitch-hessian     - Stitch Hessian parts (MFCL method)"
+	@echo "  make verify-hessian     - Verify Hessian quality"
+	@echo "  make plot               - Generate plots"
+	@echo ""
+	@echo "Condor submission:"
+	@echo "  make condor-model       - Submit model to Condor"
+	@echo "  make condor-hessian     - Submit Hessian jobs"
+	@echo "  make condor-prof        - Submit profile jobs"
+	@echo "  make condor-all         - Submit all jobs"
+	@echo ""
+	@echo "Or use launch.R directly:"
+	@echo "  Rscript launch.R model"
+	@echo "  Rscript launch.R hessian --nsplit=100"
+	@echo "  Rscript launch.R prof --scalers=0.8,0.9,1.0,1.1,1.2"
+	@echo ""
+	@echo "Utilities:"
+	@echo "  make config             - Show configuration"
+	@echo "  make check              - Check input files"
+	@echo "  make setup              - Create directories"
+	@echo "  make clean              - Clean outputs"
+
+.PHONY: model hessian prof jitter collate-hessian stitch-hessian verify-hessian \
+        read-hessian plot presentation report docker-model docker-hessian \
+        docker-prof docker-jitter docker-stitch-hessian condor-model condor-hessian \
+        condor-prof condor-jitter condor-all config check setup clean help
+
+.DEFAULT_GOAL := help
