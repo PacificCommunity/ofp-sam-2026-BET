@@ -3,22 +3,22 @@ DOCKER_IMAGE=ghcr.io/pacificcommunity/bet-2026:v1.2
 WORKDIR=/workspace
 
 model:
-	Rscript run_model.R
+	Rscript runners/run_model.R
 
 prof:
-	Rscript run_prof.R
+	Rscript runners/run_prof.R
 
 jitter:
-	Rscript run_jitter.R
+	Rscript runners/run_jitter.R
 
 hessian:
-	Rscript run_hessian.R
+	Rscript runners/run_hessian.R
 
 collate-hessian:
-	Rscript collate_hessian.R
+	Rscript tools/collate_hessian.R
 
 stitch-hessian:
-	Rscript collate_hessian_mfcl.R
+	Rscript tools/collate_hessian_mfcl.R
 
 run: model prof
 	
