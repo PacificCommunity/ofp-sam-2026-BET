@@ -17,15 +17,38 @@ ASSESSMENT_YEAR <- 2026
 MODELS <- list(
   base = list(
     name = "base",
-    description = "Base case model"
+    description = "Base case model",
+    inputs_dir = "mfcl/inputs/2026",  # Input files directory
+    exec_mode = "par",  # "par" or "doitall"
+    mfcl_version = "2026_01_22_vsn2278",  # MFCL executable version
+    # Par mode settings (used when exec_mode = "par")
+    par_input = "11.par",
+    par_output = "12.par",
+    mfcl_switches = "-switch 1 1 1 1",
+    # Doitall mode settings (used when exec_mode = "doitall")
+    doitall_script = "doitall.sh"
   ),
   M1 = list(
     name = "M1", 
-    description = "Sensitivity M1"
+    description = "Sensitivity M1 - MFCL 2023",
+    inputs_dir = "mfcl/inputs/2023",
+    exec_mode = "doitall",
+    mfcl_version = "2023",
+    par_input = "11.par",
+    par_output = "12.par",
+    mfcl_switches = "-switch 1 1 1 1",
+    doitall_script = "doitall.sh"
   ),
   M2 = list(
     name = "M2",
-    description = "Sensitivity M2"
+    description = "Sensitivity M2 - 6 regions",
+    inputs_dir = "mfcl/inputs/2023_6region",
+    exec_mode = "par",
+    mfcl_version = "2023",
+    par_input = "10.par",
+    par_output = "11.par",
+    mfcl_switches = "-switch 1 1 1 1",
+    doitall_script = "doitall.sh"
   )
   # Add more models here as needed
 )
@@ -39,6 +62,8 @@ if(interactive()) {
   cat("Available models:\n")
   for(m in names(MODELS)) {
     cat("  -", m, ":", MODELS[[m]]$description, "\n")
+    cat("     inputs:", MODELS[[m]]$inputs_dir, "\n")
+    cat("     mode:", MODELS[[m]]$exec_mode, "\n")
   }
   cat("\n")
   cat("To run all models: Rscript launch.R <job_type>\n")

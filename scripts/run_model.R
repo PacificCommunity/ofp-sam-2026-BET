@@ -14,13 +14,24 @@ cat("==============================================\n")
 ## Get model name from environment (for multi-model support)
 model_name <- Sys.getenv("MODEL_NAME", DEFAULT_MODEL)
 
+## Get model configuration
+if(!(model_name %in% names(MODELS))) {
+  stop("Unknown model: ", model_name, 
+       "\nAvailable models: ", paste(names(MODELS), collapse = ", "))
+}
+model_config <- MODELS[[model_name]]
+
 ## Get model directory from environment variable (archive method)
 ## This allows makefile to override the directory
 model_dir <- Sys.getenv("model_dir", paste0("model/", model_name))
 MODEL_DIR <- model_dir
 
 cat("Model name:", model_name, "\n")
-cat("Model directory:", MODEL_DIR, "\n\n")
+cat("Description:", model_config$description, "\n")
+cat("Model directory:", MODEL_DIR, "\n")
+cat("Inputs:", model_config$inputs_dir, "\n")
+cat("Execution mode:", model_config$exec_mode, "\n")
+cat("MFCL version:", model_config$mfcl_version, "\n\n")
 
 ## Create model directory
 dir.create(MODEL_DIR, recursive = TRUE, showWarnings = FALSE)
@@ -28,8 +39,8 @@ dir.create(MODEL_DIR, recursive = TRUE, showWarnings = FALSE)
 ## Copy input files
 cat("* Copying input files ...\n")
 
-## Get base_dir from environment or use config (archive method)
-base_dir <- Sys.getenv("base_dir", INPUTS_DIR)
+## Get base_dir from environment or use model config
+base_dir <- Sys.getenv("base_dir", model_config$inputs_dir)
 ## Convert to absolute path
 if(!grepl("^/", base_dir)) {
   base_dir <- file.path(getwd(), base_dir)
@@ -42,23 +53,12 @@ files_to_copy <- list.files(base_dir, full.names = TRUE)
 file.copy(files_to_copy, to = MODEL_DIR, overwrite = TRUE, recursive = TRUE)
 cat("  ✓ Copied", length(files_to_copy), "files\n\n")
 
-## Get execution mode from config
-exec_mode <- Sys.getenv("EXEC_MODE", EXEC_MODE)
+## Get execution mode from model config
+exec_mode <- model_config$exec_mode
 
-## Copy PAR file if in par mode
-if(exec_mode == "par") {
-  ## Try to find par file in base_dir or use PAR_INPUT from config
-  par_source <- file.path(base_dir, PAR_INPUT)
-  if(!file.exists(par_source)) {
-    par_source <- file.path(INPUTS_DIR, PAR_INPUT)
-  }
-  if(file.exists(par_source)) {
-    file.copy(par_source, MODEL_DIR, overwrite = TRUE)
-    cat("  ✓", PAR_INPUT, "\n")
-  } else {
-    cat("  Note: PAR file not found, may already be copied\n")
-  }
-}
+## Get MFCL executable path (relative from model directory)
+mfcl_exe_name <- paste0("mfclo64_", model_config$mfcl_version)
+mfcl_exe_relative <- paste0("../../mfcl/exe/", mfcl_exe_name)
 
 if(exec_mode == "doitall") {
   ## =========================================================================
@@ -67,24 +67,25 @@ if(exec_mode == "doitall") {
   
   cat("\n* Running in DOITALL mode ...\n")
   
-  ## Copy doitall script
-  doitall_source <- file.path(INPUTS_DIR, DOITALL_SCRIPT)
-  if(!file.exists(doitall_source)) {
-    stop("Doitall script not found: ", doitall_source)
-  }
+  ## Doitall script should already be copied from base_dir
+  doitall_path <- file.path(MODEL_DIR, model_config$doitall_script)
   
-  file.copy(doitall_source, MODEL_DIR, overwrite = TRUE)
-  doitall_path <- file.path(MODEL_DIR, DOITALL_SCRIPT)
+  if(!file.exists(doitall_path)) {
+    stop("Doitall script not found: ", doitall_path)
+  }
   
   ## Make executable
   Sys.chmod(doitall_path, mode = "0755")
   
-  cat("  Script:", DOITALL_SCRIPT, "\n")
+  cat("  Script:", model_config$doitall_script, "\n")
   cat("  Working directory:", MODEL_DIR, "\n\n")
+  
+  ## Set PROGRAM_PATH environment variable for doitall script
+  Sys.setenv(PROGRAM_PATH = mfcl_exe_relative)
   
   ## Run doitall.sh
   run_commands(
-    commands = paste0("./", DOITALL_SCRIPT),
+    commands = paste0("./", model_config$doitall_script),
     work_dirs = MODEL_DIR,
     save_log = TRUE,
     parallel = FALSE,
@@ -95,8 +96,12 @@ if(exec_mode == "doitall") {
   ## Save run info
   info_list <- list(
     species = SPECIES,
+    model_name = model_name,
+    description = model_config$description,
     exec_mode = "doitall",
-    script = DOITALL_SCRIPT,
+    script = model_config$doitall_script,
+    mfcl_version = model_config$mfcl_version,
+    inputs_dir = model_config$inputs_dir,
     timestamp = Sys.time(),
     host = Sys.info()["nodename"]
   )
@@ -108,35 +113,23 @@ if(exec_mode == "doitall") {
   
   cat("\n* Running in PAR mode ...\n")
   
-  ## Get MFCL executable path
-  ## In Condor: work_dir is model/base/, so use ../../mfcl/exe/...
-  ## Archive method: always use relative path from model directory
-  if(MFCL_VERSION == "2026") {
-    mfcl_exe <- "mfclo64_2026_01_22_vsn2278"
-  } else if(MFCL_VERSION == "2023") {
-    mfcl_exe <- "mfclo64_2023"
-  } else {
-    mfcl_exe <- paste0("mfclo64_", MFCL_VERSION)
-  }
-  
-  ## Path relative to model directory (model/base/)
-  program_path <- file.path("mfcl/exe", mfcl_exe)
-  mfcl_exe_relative <- file.path("../..", program_path)
-  
-  ## Get switches from environment or config
-  switches <- Sys.getenv("MFCL_SWITCHES", MFCL_SWITCHES)
+  ## Get switches from model config
+  switches <- model_config$mfcl_switches
   
   ## Build command (like archive: ../../mfcl/exe/... frq par out switches)
   frq_file <- "bet.frq"  # Use basename directly
   mfcl_command <- paste(
     mfcl_exe_relative,
     frq_file,
-    PAR_INPUT,
-    PAR_OUTPUT,
+    model_config$par_input,
+    model_config$par_output,
     switches
   )
   
   cat("  Executable:", mfcl_exe_relative, "\n")
+  cat("  Input PAR:", model_config$par_input, "\n")
+  cat("  Output PAR:", model_config$par_output, "\n")
+  cat("  Switches:", switches, "\n")
   cat("  Command:", mfcl_command, "\n")
   cat("  Working directory:", MODEL_DIR, "\n\n")
   
@@ -153,8 +146,14 @@ if(exec_mode == "doitall") {
   ## Save run info
   info_list <- list(
     species = SPECIES,
+    model_name = model_name,
+    description = model_config$description,
     exec_mode = "par",
-    mfcl_version = sub("mfclo64_", "", basename(mfcl_exe)),
+    mfcl_version = model_config$mfcl_version,
+    inputs_dir = model_config$inputs_dir,
+    par_input = model_config$par_input,
+    par_output = model_config$par_output,
+    switches = switches,
     command = mfcl_command,
     timestamp = Sys.time(),
     host = Sys.info()["nodename"]
