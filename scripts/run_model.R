@@ -2,6 +2,16 @@
 ## Run MFCL model
 ## Uses centralized config.R for all settings
 
+## Detect if running in Condor (working directory is model/xxx/)
+## If so, navigate to repo root
+current_dir <- getwd()
+if(basename(dirname(current_dir)) == "model") {
+  ## In Condor: working dir is model/base/ or similar
+  ## Navigate to repo root (two levels up)
+  setwd("../..")
+  cat("Detected Condor environment, changed to:", getwd(), "\n")
+}
+
 ## Load configuration
 source("config.R")
 library(FLR4MFCL)
@@ -31,7 +41,8 @@ cat("Description:", model_config$description, "\n")
 cat("Model directory:", MODEL_DIR, "\n")
 cat("Inputs:", model_config$inputs_dir, "\n")
 cat("Execution mode:", model_config$exec_mode, "\n")
-cat("MFCL version:", model_config$mfcl_version, "\n\n")
+cat("MFCL version:", model_config$mfcl_version, "\n")
+cat("Working directory:", getwd(), "\n\n")
 
 ## Create model directory
 dir.create(MODEL_DIR, recursive = TRUE, showWarnings = FALSE)
@@ -41,7 +52,7 @@ cat("* Copying input files ...\n")
 
 ## Get base_dir from environment or use model config
 base_dir <- Sys.getenv("base_dir", model_config$inputs_dir)
-## Convert to absolute path
+## Convert to absolute path if relative
 if(!grepl("^/", base_dir)) {
   base_dir <- file.path(getwd(), base_dir)
 }
