@@ -230,10 +230,14 @@ if("model" %in% job_types) {
     
     cat("  - Submitting model:", model_name, "\n")
     
+    ## Get model configuration
+    model_config <- MODELS[[model_name]]
+    
     ## Environment variables for this model
     model_env <- list(
       MODEL_NAME = model_name,
-      EXEC_MODE = EXEC_MODE
+      base_dir = model_config$inputs_dir,
+      model_dir = paste0("model/", model_name)
     )
     
     ## Save job metadata for tracking
@@ -250,7 +254,8 @@ if("model" %in% job_types) {
     cat("Remote Dir:", paste0(GITHUB_REPO, "/", remote_dir, "/", model_name), "\n", file = job_info_file, append = TRUE)
     cat("\nEnvironment Variables:\n", file = job_info_file, append = TRUE)
     cat("  MODEL_NAME=", model_name, "\n", sep = "", file = job_info_file, append = TRUE)
-    cat("  EXEC_MODE=", EXEC_MODE, "\n", sep = "", file = job_info_file, append = TRUE)
+    cat("  base_dir=", model_config$inputs_dir, "\n", sep = "", file = job_info_file, append = TRUE)
+    cat("  model_dir=model/", model_name, "\n", sep = "", file = job_info_file, append = TRUE)
     cat("==============================================\n", file = job_info_file, append = TRUE)
     
     CondorBox::CondorBox(
