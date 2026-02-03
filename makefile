@@ -38,18 +38,18 @@ fetch:
 	fi
 	Rscript fetch_results.R $(remote_dir)
 
-# Regular targets
+# Regular targets (deprecated - use run_*_condor.R scripts instead)
 model:
-	Rscript scripts/run_model.R
+	MODEL_NAME=base Rscript scripts/run_model.R
 
 prof:
-	Rscript scripts/run_prof.R
+	MODEL_NAME=base scaler=100 Rscript scripts/run_prof.R
 
 jitter:
-	Rscript scripts/run_jitter.R
+	MODEL_NAME=base jitter_seed=1 Rscript scripts/run_jitter.R
 
 hessian:
-	Rscript scripts/run_hessian.R
+	MODEL_NAME=base hessian_part=1 nsplit=200 Rscript scripts/run_hessian.R
 
 collate-hessian:
 	Rscript collate_hessian.R
