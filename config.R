@@ -50,7 +50,7 @@ if(interactive()) {
 ## PATHS
 ## =============================================================================
 
-BASE_DIR <- here::here()
+BASE_DIR <- getwd()
 INPUTS_DIR <- file.path(BASE_DIR, "mfcl/inputs/2023_rep")
 MFCL_EXE_DIR <- file.path(BASE_DIR, "mfcl/exe")
 
