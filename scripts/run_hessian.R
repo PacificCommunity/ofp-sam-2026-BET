@@ -21,7 +21,7 @@ model_config <- MODELS[[model_name]]
 
 ## Get Hessian calculation settings
 hessian_part <- as.integer(Sys.getenv("hessian_part", "1"))
-nsplit <- as.integer(Sys.getenv("nsplit", HESSIAN$nsplit))
+nsplit <- as.integer(Sys.getenv("nsplit", HESSIAN_NSPLIT))
 
 cat("==============================================\n")
 cat("Hessian Calculation - Part", hessian_part, "of", nsplit, "\n")
