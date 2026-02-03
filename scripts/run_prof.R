@@ -64,15 +64,16 @@ copied <- file.copy(files_to_copy, to = prof_dir, overwrite = TRUE, recursive = 
 cat("  ✓ Copied", sum(copied), "files\n")
 
 ## Verify PAR file exists
-par_file <- file.path(prof_dir, model_config$par_input)
-if(!file.exists(par_file)) {
-  stop("PAR file not found: ", model_config$par_input,
+par_file <- model_config$par_input
+par_file_path <- file.path(prof_dir, par_file)
+if(!file.exists(par_file_path)) {
+  stop("PAR file not found: ", par_file,
        "\nExpected in inputs directory: ", base_dir,
        "\nMake sure the PAR file exists in your inputs directory.")
 }
-cat("  ✓ PAR file verified:", model_config$par_input, "\n\n")
+cat("  ✓ PAR file verified:", par_file, "\n\n")
 
-## Get MFCL executable (archive method: relative from work directory)
+## Get MFCL executable (relative from work directory)
 mfcl_exe_name <- paste0("mfclo64_", model_config$mfcl_version)
 ## From model/base/prof/ to mfcl/exe/
 mfcl_exe_relative <- paste0("../../../mfcl/exe/", mfcl_exe_name)
@@ -124,7 +125,7 @@ generate_proflike_script(
   AgeFlags = age_flags,
   Prog = mfcl_exe_relative,
   Frq = frq_file,
-  Initp = basename(most_recent),
+  Initp = par_file,
   Mults = scaler,
   QuantityType = PROF_QUANTITY_TYPE,
   filename = file.path(prof_dir, "ProfLike.sh")
@@ -135,92 +136,20 @@ cat("  ✓ ProfLike.sh generated\n\n")
 ## Execute ProfLike.sh
 cat("* Running ProfLike.sh ...\n")
 
+old_dir <- getwd()
 setwd(prof_dir)
 system2("bash", "ProfLike.sh", stdout = TRUE, stderr = TRUE)
-setwd(BASE_DIR)
+setwd(old_dir)
 
 ## Save run info
 info_list <- list(
   species = SPECIES,
+  model_name = model_name,
   quantity_type = "average_biomass",
   scaler = scaler,
   start_year = start_year,
   end_year = end_year,
-  mfcl_version = sub("mfclo64_", "", basename(mfcl_exe)),
-  timestamp = Sys.time()
-)
-
-saveRDS(info_list, file = file.path(prof_dir, "prof_info.rds"))
-
-cat("\n✓ Profile run complete\n")
-cat("  Scaler:", scaler, "%\n")
-cat("  Output directory:", prof_dir, "\n")
-
-## Setup directories
-prof_dir <- file.path(PROF_DIR, paste0("avg_bio_", scaler))
-dir.create(prof_dir, recursive = TRUE, showWarnings = FALSE)
-
-## Copy input files
-cat("* Copying input files ...\n")
-input_files <- get_input_files()
-for(file in input_files) {
-  if(file.exists(file)) {
-    file.copy(file, prof_dir, overwrite = TRUE)
-  }
-}
-
-## Copy converged par file
-par_files <- list.files(MODEL_DIR, pattern = "\\d+\\.par$", full.names = TRUE)
-if(length(par_files) > 0) {
-  file_info <- file.info(par_files)
-  most_recent <- par_files[which.max(file_info$mtime)]
-  file.copy(most_recent, prof_dir, overwrite = TRUE)
-  par_file <- basename(most_recent)
-  cat("  ✓ Copied:", par_file, "\n\n")
-} else {
-  stop("No .par file found in model directory: ", MODEL_DIR)
-}
-
-## Build MFCL command for profile
-mfcl_exe <- get_mfcl_exe()
-frq_file <- basename(input_files$frq)
-
-## Build MFCL command for average biomass profiling
-## Using ProfLike methodology with penalties
-output_par <- paste0("avg_bio_", scaler, ".par")
-
-## Get switches from environment or use defaults
-switches <- Sys.getenv("PROF_SWITCHES", 
-  sprintf("-switch 10 2 32 1 1 187 0 1 188 0 -999 55 0 1 1 %d 1 346 %d 1 347 %d 1 348 %d 2 173 %d 2 174 %d",
-    PROF_REPS["Reps1"], PROF_QUANTITY_TYPE, scaler, PROF_PENALTIES["Pen1"], start_year, end_year))
-
-mfcl_command <- paste(
-  mfcl_exe,
-  frq_file, par_file, output_par,
-  switches
-)
-
-cat("* Running MFCL profile ...\n")
-cat("  Command:", mfcl_command, "\n\n")
-
-## Run MFCL
-run_commands(
-  commands = mfcl_command,
-  work_dirs = prof_dir,
-  save_log = TRUE,
-  parallel = FALSE,
-  verbose = TRUE,
-  log_file = file.path(prof_dir, "mfcl_log.txt")
-)
-
-## Save run info
-info_list <- list(
-  species = SPECIES,
-  quantity_type = "average_biomass",
-  scaler = scaler,
-  start_year = start_year,
-  end_year = end_year,
-  mfcl_version = sub("mfclo64_", "", basename(mfcl_exe)),
+  mfcl_version = model_config$mfcl_version,
   timestamp = Sys.time()
 )
 
