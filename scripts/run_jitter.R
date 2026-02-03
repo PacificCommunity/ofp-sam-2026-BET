@@ -89,7 +89,7 @@ write(par_obj, file.path(jitter_dir, jitter_par_file))
 ## Get MFCL executable (relative from work directory)
 mfcl_exe_name <- paste0("mfclo64_", model_config$mfcl_version)
 ## From model/base/jitter/ to mfcl/exe/
-mfcl_exe_relative <- file.path("../../..", "mfcl", "exe", mfcl_exe_name)
+mfcl_exe_relative <- file.path("../../../../", "mfcl", "exe", mfcl_exe_name)
 
 ## Build MFCL command
 frq_file <- "bet.frq"
