@@ -19,12 +19,6 @@ condor_cpus <- 2                                              # CPU request for 
 branch <- "develop_lik"                                              # Branch of git repository to use 
 
 # ---------------------------------------
-# Hessian calculation settings
-# ---------------------------------------
-
-nsplit <- 30                        # Number of parts to split Hessian calculation into
-
-# ---------------------------------------
 # Run the job on Condor through CondorBox
 # ---------------------------------------
 
