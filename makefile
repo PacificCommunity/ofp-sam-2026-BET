@@ -14,6 +14,9 @@ jitter:
 hessian:
 	Rscript runners/run_hessian.R
 
+retro:
+	Rscript runners/run_retro.R
+
 collate-hessian:
 	Rscript tools/collate_hessian.R
 
@@ -43,6 +46,9 @@ docker-jitter:
 docker-hessian:
 	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) -e hessian_part=$(hessian_part) -e nsplit=$(nsplit) $(DOCKER_IMAGE) Rscript run_hessian.R
 
+docker-retro:
+	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) -e retro_peel=$(retro_peel) $(DOCKER_IMAGE) Rscript runners/run_retro.R
+
 docker-collate-hessian:
 	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript collate_hessian.R
 
@@ -58,5 +64,5 @@ docker-report:
 	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(stitch-hessian docker-run docker-model docker-prof docker-jitter docker-hessian docker-collate-hessian docker-stitch
 
 	
-.PHONY: plot run model prof jitter hessian collate-hessian docker-run docker-model docker-prof docker-jitter docker-hessian docker-collate-hessian docker-plot prepaw report docker-report
+.PHONY: plot run model prof jitter hessian retro collate-hessian docker-run docker-model docker-prof docker-jitter docker-hessian docker-retro docker-collate-hessian docker-plot prepaw report docker-report
 

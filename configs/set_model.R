@@ -13,7 +13,17 @@ models <- list(
     
     ## configuration for profiling
     Reps = "5 5 5 5 5 5",
-    scalers = paste0((seq(120, 80, by=-10)), collapse = " ")
+    scalers = paste0((seq(120, 80, by=-10)), collapse = " "),
+    
+    ## retrospective configuration
+    retro_peels = "1 2",
+    
+    ## Jitter settings
+    jitter_seeds = paste0(1:5, collapse = " "),
+    jitter_amount = "0.05",
+    
+    ## hessian parallel settings
+    nsplit="10"
   ),
   
   "base" = list(
@@ -27,25 +37,18 @@ models <- list(
     
     ## configuration for profiling
     Reps = "5 5 5 5 5 5",
-    scalers = paste0((seq(120, 80, by=-10)), collapse = " ")
+    scalers = paste0((seq(120, 80, by=-10)), collapse = " "),
+    
+    ## retrospective configuration
+    retro_peels = "1 2 3",
+    
+    ## Jitter settings
+    jitter_seeds = paste0(1:2, collapse = " "),
+    jitter_amount = "0.0001",
+    
+    ## hessian parallel settings
+    nsplit="2"
   ))
-
-# "mixP3" = list(
-#   mfcl_commands = paste("bet.frq 11.par 12.par",
-#                         "-switch 2",
-#                         "1 1 10000", 
-#                         "-9999 1 3",
-#                         sep = " "),
-#   program_path = "../../mfcl/exe/mfclo64_2026_01_22_vsn2278",  # Model-specific path
-#   base_dir = "mfcl/inputs/2026"                   # Model-specific dir
-# ))
-
-
-
-
-
-
-
 
 
 
@@ -56,6 +59,10 @@ default_program_path <- "mfcl/exe/mfclo64_2023"
 default_base_dir <- "mfcl/inputs/2023_rep"
 Reps <- "15 25 25 1000 500 500"
 scalers <- paste0((seq(140, 50, by=-5)), collapse = " ")
+retro_peels <- "1 2 3 4 5"  # Default retrospective peels (years to remove)
+jitter_seeds <- 1:10
+jitter_amount <- 0.01
+nsplit <- 5
 
 ### Post-processing with defaults
 
@@ -65,6 +72,11 @@ models <- Map(function(x, nm) {
   prog_path <- if (!is.null(x$program_path)) x$program_path else default_program_path
   b_dir <- if (!is.null(x$base_dir)) x$base_dir else default_base_dir
   scalers <- if (!is.null(x$scalers)) x$scalers else scalers
+  retro_peels <- if (!is.null(x$retro_peels)) x$retro_peels else retro_peels
+  Reps <- if (!is.null(x$Reps)) x$Reps else Reps
+  jitter_seeds <- if (!is.null(x$jitter_seeds)) x$jitter_seeds else jitter_seeds
+  jitter_amount <- if (!is.null(x$jitter_amount)) x$jitter_amount else jitter
+  nsplit <- if (!is.null(x$nsplit)) x$nsplit else nsplit
   
   if(x$mfcl_commands == "./doitall.sh") {
     x$mfcl_commands <- x$mfcl_commands
@@ -76,6 +88,10 @@ models <- Map(function(x, nm) {
   x$program_path <- prog_path
   x$Reps <- Reps
   x$scalers <- scalers
+  x$retro_peels <- retro_peels
+  x$jitter_seeds <- jitter_seeds
+  x$jitter_amount <- jitter_amount
+  x$nsplit <- nsplit
   x
 }, models, names(models))
 

@@ -34,13 +34,17 @@ dir="develop/Feb_4_hessian"
 
 source("configs/set_model.R") 
 
+all_split <- lapply(models, function(x) x$nsplit)
+
 for(model_name in names(models)) {
-  for(part in 1:nsplit) {
+  
+  splits <- as.numeric(unlist(strsplit(all_jitter[[model_name]], "\\s+")))
+  
+  for(part in 1:splits) {
     
     ## Create environment for this specific hessian part
     hessian_env <- models[[model_name]]
     hessian_env$hessian_part <- as.character(part)
-    hessian_env$nsplit <- as.character(nsplit)
     
     ## run condor job
     CondorBox::CondorBox(

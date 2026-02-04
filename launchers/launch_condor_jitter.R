@@ -34,13 +34,17 @@ dir="develop/Feb_4_jitter"
 
 source("configs/set_model.R") 
 
+all_jitter <- lapply(models, function(x) x$jitter_seeds)
+
 for(model_name in names(models)) {
+  
+  jitter_seeds <- as.numeric(unlist(strsplit(all_jitter[[model_name]], "\\s+")))
+  
   for(seed in jitter_seeds) {
     
     ## Create environment for this specific jitter seed
     jitter_env <- models[[model_name]]
     jitter_env$jitter_seed <- as.character(seed)
-    jitter_env$jitter_amount <- as.character(jitter_amount)
     
     ## run condor job
     CondorBox::CondorBox(
