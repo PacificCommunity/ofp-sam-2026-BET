@@ -23,9 +23,9 @@ branch <- "develop_lik"                                              # Branch of
 
 setwd(here::here())
 
-dir="develop/Feb_3_prof"
+dir="develop/Feb_4_prof"
 
-source("configs/model.R") 
+source("configs/set_model.R") 
 
 all_scalers <- lapply(models, function(x) x$scalers)
 

@@ -1,3 +1,5 @@
+
+
 models <- list(
   
   "mixP1" = list(
@@ -10,8 +12,8 @@ models <- list(
     base_dir = "mfcl/inputs/2023_rep",                   # Model-specific dir
     
     ## configuration for profiling
-    Reps = "1 1 1 1 1 1",
-    scalers = paste0((seq(110, 80, by=-10)), collapse = " ")
+    Reps = "5 5 5 5 5 5",
+    scalers = paste0((seq(120, 80, by=-10)), collapse = " ")
   ),
   
   "base" = list(
@@ -24,8 +26,8 @@ models <- list(
     base_dir = "mfcl/inputs/2023_rep",                   # Model-specific dir
     
     ## configuration for profiling
-    Reps = "1 1 1 1 1 1",
-    scalers = paste0((seq(110, 80, by=-10)), collapse = " ")
+    Reps = "5 5 5 5 5 5",
+    scalers = paste0((seq(120, 80, by=-10)), collapse = " ")
   ))
 
 # "mixP3" = list(
@@ -53,11 +55,7 @@ models <- list(
 default_program_path <- "mfcl/exe/mfclo64_2023"
 default_base_dir <- "mfcl/inputs/2023_rep"
 Reps <- "15 25 25 1000 500 500"
-#Reps <- "15 25 25 100 10 50"
-#scalers <- paste0((seq(120, 70, by=-10)), collapse = " ")
 scalers <- paste0((seq(140, 50, by=-5)), collapse = " ")
-
-
 
 ### Post-processing with defaults
 

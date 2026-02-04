@@ -30,9 +30,9 @@ jitter_amount <- 0.0001                # jitter amount
 
 setwd(here::here())
 
-dir="develop/Feb_2_jitter_quick"
+dir="develop/Feb_4_jitter"
 
-source("configs/test.R") 
+source("configs/set_model.R") 
 
 for(model_name in names(models)) {
   for(seed in jitter_seeds) {
@@ -44,7 +44,7 @@ for(model_name in names(models)) {
     
     ## run condor job
     CondorBox::CondorBox(
-      make_options = paste0("jitter jitter_seed=", seed, " jitter_amount=", jitter_amount),
+      make_options = "jitter",
       remote_user = remote_user,
       remote_host = remote_host,
       remote_dir = paste0(github_repo, "/", dir, "/", model_name, "_seed", seed), 

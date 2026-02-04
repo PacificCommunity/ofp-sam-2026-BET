@@ -30,9 +30,9 @@ nsplit <- 30                        # Number of parts to split Hessian calculati
 
 setwd(here::here())
 
-dir="develop/Feb_2_hessian2"
+dir="develop/Feb_4_hessian"
 
-source("configs/test.R") 
+source("configs/set_model.R") 
 
 for(model_name in names(models)) {
   for(part in 1:nsplit) {
@@ -44,7 +44,7 @@ for(model_name in names(models)) {
     
     ## run condor job
     CondorBox::CondorBox(
-      make_options = paste0("hessian hessian_part=", part, " nsplit=", nsplit),
+      make_options = "hessian",
       remote_user = remote_user,
       remote_host = remote_host,
       remote_dir = paste0(github_repo, "/", dir, "/", model_name, "_part", part), 
