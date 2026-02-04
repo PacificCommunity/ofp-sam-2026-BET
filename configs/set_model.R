@@ -64,6 +64,7 @@ models <- Map(function(x, nm) {
   # Use model-specific paths if provided, otherwise use defaults
   prog_path <- if (!is.null(x$program_path)) x$program_path else default_program_path
   b_dir <- if (!is.null(x$base_dir)) x$base_dir else default_base_dir
+  scalers <- if (!is.null(x$scalers)) x$scalers else scalers
   
   if(x$mfcl_commands == "./doitall.sh") {
     x$mfcl_commands <- x$mfcl_commands
