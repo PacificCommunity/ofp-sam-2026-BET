@@ -18,7 +18,7 @@ base_dir_abs <- file.path(project_root, base_dir)
 ## Retrospective analysis settings
 ## Single peel value for parallel execution via condor
 ## peel = number of years to remove from the end of the time series
-retro_peel <- as.integer(Sys.getenv("retro_peel", "7"))
+retro_peel <- as.integer(Sys.getenv("retro_peel", "1"))
 
 ## Create retro-specific directory inside retro folder
 retro_dir <- file.path(model_dir, "retro")

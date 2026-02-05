@@ -18,19 +18,12 @@ condor_cpus <- 2                                              # CPU request for 
 branch <- "develop_lik"                                              # Branch of git repository to use 
 
 # ---------------------------------------
-# Jitter settings
-# ---------------------------------------
-
-jitter_seeds <- 1:10                # Seeds to run (e.g., 1:10 for 10 jitter runs)
-jitter_amount <- 0.0001                # jitter amount
-
-# ---------------------------------------
 # Run the job on Condor through CondorBox
 # ---------------------------------------
 
 setwd(here::here())
 
-dir="develop/Feb_4_jitter"
+dir="develop/Feb_5_jitter"
 
 source("configs/set_model.R") 
 
