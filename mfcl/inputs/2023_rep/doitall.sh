@@ -44,15 +44,15 @@ $program_path bet.frq 00.par 01.par -file - <<PHASE1
   -999 13 0
 # Survey fisheries defined
 # CPUE variation Index wt    Time varying CV
-  -33 94 1       -33 92 88   -33 66 0
-  -34 94 1       -34 92 53   -34 66 0
-  -35 94 1       -35 92 130  -35 66 0
-  -36 94 1       -36 92 109  -36 66 0
-  -37 94 1       -37 92 76   -37 66 0
-  -38 94 1       -38 92 93   -38 66 0
-  -39 94 1       -39 92 121  -39 66 0
-  -40 94 1       -40 92 77   -40 66 0
-  -41 94 1       -41 92 23   -41 66 0
+  -33 94 1       -33 92 24   -33 66 0
+  -34 94 1       -34 92 31   -34 66 0
+  -35 94 1       -35 92 20   -35 66 0
+  -36 94 1       -36 92 21   -36 66 0
+  -37 94 1       -37 92 26   -37 66 0
+  -38 94 1       -38 92 23   -38 66 0
+  -39 94 1       -39 92 20   -39 66 0
+  -40 94 1       -40 92 25   -40 66 0
+  -41 94 1       -41 92 47   -41 66 0
 # Grouping flags for survey CPUE
    -1 99 1
    -2 99 2
@@ -104,7 +104,7 @@ $program_path bet.frq 00.par 01.par -file - <<PHASE1
   2 32 1           # and estimate totpop parameter
   2 93 4           # set no. of recruitments per year to 4
   2 57 4           # set no. of recruitments per year to 4
-  2 94 1 2 128 10  # initial Z = 1.0*M, i.e. initial F = 0
+  2 94 1 2 128 100  # initial Z = 1.0*M, i.e. initial F = 0
 # Likelihood component settings
   1 111 4     # set likelihood function for tags to negative binomial
   1 141 3     # set likelihood function for LF data to normal
