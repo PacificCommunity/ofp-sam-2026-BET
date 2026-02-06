@@ -48,8 +48,43 @@ if(length(par_in_model) > 0) {
 ## Generate retrospective inputs  ##
 ####################################
 
-## Get max_year from original data
+## Automatically detect file names by extension
 frq_file <- list.files(peel_dir, pattern = "\\.frq$", full.names = FALSE)
+tag_file <- list.files(peel_dir, pattern = "\\.tag$", full.names = FALSE)
+age_file <- list.files(peel_dir, pattern = "\\.age_length$", full.names = FALSE)
+ini_file <- list.files(peel_dir, pattern = "\\.ini$", full.names = FALSE)
+
+## Check if files exist
+if(length(frq_file) == 0) stop("No .frq file found in directory")
+if(length(tag_file) == 0) stop("No .tag file found in directory")
+if(length(age_file) == 0) stop("No .age_length file found in directory")
+if(length(ini_file) == 0) stop("No .ini file found in directory")
+
+## Use first file if multiple files found
+if(length(frq_file) > 1) {
+  warning("Multiple .frq files found, using: ", frq_file[1])
+  frq_file <- frq_file[1]
+}
+if(length(tag_file) > 1) {
+  warning("Multiple .tag files found, using: ", tag_file[1])
+  tag_file <- tag_file[1]
+}
+if(length(age_file) > 1) {
+  warning("Multiple .age_length files found, using: ", age_file[1])
+  age_file <- age_file[1]
+}
+if(length(ini_file) > 1) {
+  warning("Multiple .ini files found, using: ", ini_file[1])
+  ini_file <- ini_file[1]
+}
+
+cat("Detected files:\n")
+cat("  FRQ:", frq_file, "\n")
+cat("  TAG:", tag_file, "\n")
+cat("  AGE:", age_file, "\n")
+cat("  INI:", ini_file, "\n")
+
+## Get max_year from original data
 frq_path <- file.path(peel_dir, frq_file)
 frq_orig <- read.MFCLFrq(frq_path)
 
@@ -62,9 +97,9 @@ cat("Terminal year:", terminal_year, "\n")
 cat("New max year:", new_max_year, "\n")
 
 ## Read all input files from peel directory
-tag_data <- read.MFCLTag(file.path(peel_dir, "bet.tag"))
-age_data <- read.MFCLALK(file.path(peel_dir, "bet.age_length"))
-ini_data <- read.MFCLIni(file.path(peel_dir, "bet.ini"))
+tag_data <- read.MFCLTag(file.path(peel_dir, tag_file))
+age_data <- read.MFCLALK(file.path(peel_dir, age_file))
+ini_data <- read.MFCLIni(file.path(peel_dir, ini_file))
 
 ## Apply retrospective modifications
 retro_tag <- retro.tag(tag_data, new_max_year)
@@ -73,10 +108,10 @@ retro_age <- retro.age(age_data, new_max_year)
 retro_ini <- retro.ini(ini_data, tag.obj = tag_data, max_year = new_max_year)
 
 ## Write modified input files
-FLR4MFCL::write(retro_ini$ini, file = file.path(peel_dir, "bet.ini"))
-FLR4MFCL::write(retro_tag, file = file.path(peel_dir, "bet.tag"))
-FLR4MFCL::write(retro_frq, file = file.path(peel_dir, "bet.frq"))
-FLR4MFCL::write(retro_age, file = file.path(peel_dir, "bet.age_length"))
+FLR4MFCL::write(retro_ini$ini, file = file.path(peel_dir, ini_file))
+FLR4MFCL::write(retro_tag, file = file.path(peel_dir, tag_file))
+FLR4MFCL::write(retro_frq, file = file.path(peel_dir, frq_file))
+FLR4MFCL::write(retro_age, file = file.path(peel_dir, age_file))
 
 cat("Retrospective input files written\n")
 
@@ -101,6 +136,9 @@ info_list <- list(
   new_max_year  = new_max_year,
   terminal_year = terminal_year,
   frq_file      = frq_file,
+  tag_file      = tag_file,
+  age_file      = age_file,
+  ini_file      = ini_file,
   program_path  = program_path,
   model_dir     = model_dir,
   peel_dir      = peel_dir
@@ -113,5 +151,4 @@ saveRDS(
 )
 
 cat("✅ Retrospective run completed for peel", retro_peel, "\n")
-
 
