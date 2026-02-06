@@ -12,18 +12,18 @@ models <- list(
     base_dir = "mfcl/inputs/2023_rep",                   # Model-specific dir
     
     ## configuration for profiling
-    Reps = "5 5 5 5 5 5",
-    scalers = paste0((seq(120, 80, by=-10)), collapse = " "),
+    Reps = "2 2 2 2 2 2",
+    scalers = paste0((seq(110, 90, by=-10)), collapse = " "),
     
     ## retrospective configuration
     retro_peels = "1 2",
     
     ## Jitter settings
-    jitter_seeds = paste0(1:5, collapse = " "),
+    jitter_seeds = paste0(1:3, collapse = " "),
     jitter_amount = "0.05",
     
     ## hessian parallel settings
-    nsplit="10"
+    nsplit="5"
   ),
   
   "base" = list(
@@ -36,8 +36,8 @@ models <- list(
     base_dir = "mfcl/inputs/2023_rep",                   # Model-specific dir
     
     ## configuration for profiling
-    Reps = "5 5 5 5 5 5",
-    scalers = paste0((seq(120, 80, by=-10)), collapse = " "),
+    Reps = "2 2 2 2 2 2",
+    scalers = paste0((seq(110, 90, by=-10)), collapse = " "),
     
     ## retrospective configuration
     retro_peels = "1 2 3",
@@ -47,7 +47,7 @@ models <- list(
     jitter_amount = "0.0001",
     
     ## hessian parallel settings
-    nsplit="2"
+    nsplit="5"
   ))
 
 

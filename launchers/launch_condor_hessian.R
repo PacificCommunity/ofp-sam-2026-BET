@@ -24,7 +24,7 @@ branch <- "develop_lik"                                              # Branch of
 
 setwd(here::here())
 
-dir="develop/Feb_5_hessian"
+dir="develop/Feb_6_hessian"
 
 source("configs/set_model.R") 
 
