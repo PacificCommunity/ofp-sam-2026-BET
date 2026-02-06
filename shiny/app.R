@@ -17,6 +17,7 @@ library(viridis)            # Color palettes
 library(stringr)            # String manipulation
 library(purrr)              # Functional programming
 library(DT)                 # Interactive tables
+library(parallel)           # Parallel processing
 
 # Fix namespace conflicts
 hr <- shiny::hr              # Restore shiny's hr() function
@@ -60,18 +61,23 @@ ui <- dashboardPage(
     h4("📁 Load Model Data", style = "padding-left: 15px; color: #3c8dbc;"),
     
     # Model directory path input
-    textInput("model_dir", "Model Directory:",
-              value = normalizePath(file.path("..", "model"), mustWork = FALSE),
-              placeholder = "/path/to/model"),
+    div(
+      style = "margin: 0 15px;",
+      textInput("model_dir", "Model Directory:",
+                value = normalizePath(file.path("..", "model"), mustWork = FALSE),
+                placeholder = "/path/to/model")
+    ),
     
     # Browse button (Windows only)
-    actionButton("browse_dir", "Browse...", 
-                 icon = icon("folder-open"),
-                 class = "btn-info btn-sm",
-                 style = "margin-left: 15px; margin-bottom: 10px;"),
+    div(
+      style = "margin: 0 15px 10px 15px;",
+      actionButton("browse_dir", "Browse...", 
+                   icon = icon("folder-open"),
+                   class = "btn-info btn-sm")
+    ),
     
     helpText("Folder containing scenario subfolders", 
-             style = "padding-left: 15px; font-size: 11px; color: #777;"),
+             style = "margin: 0 15px 10px 15px; font-size: 11px; color: #777;"),
     
     # Display detected models before loading with dropdown selection
     conditionalPanel(
@@ -114,13 +120,13 @@ ui <- dashboardPage(
       )
     ),
     
-    # Load data button (fixed width)
+    # Load data button (aligned with other elements)
     div(
-      style = "padding: 0 15px;",
+      style = "margin: 0 50px 10px 15px;",
       actionButton("load_data", "Load Data", 
                    icon = icon("upload"),
                    class = "btn-primary",
-                   style = "width: 100%; margin-bottom: 15px;")
+                   style = "width: 100%;")
     ),
     
     hr(),
@@ -164,43 +170,6 @@ ui <- dashboardPage(
           font-size: 13px;
           line-height: 1.5;
         }
-        
-        /* Fix checkbox text color and styling */
-        #stock_scenarios label,
-        #cpue_scenarios label,
-        #cpue_fisheries label,
-        #lf_scenarios label,
-        #wf_scenarios label {
-          color: #333 !important;
-          font-size: 13px !important;
-          font-weight: normal !important;
-          margin-bottom: 6px;
-          padding: 4px 8px;
-          border-radius: 3px;
-          transition: background-color 0.2s;
-        }
-        
-        /* Hover effect */
-        #stock_scenarios label:hover,
-        #cpue_scenarios label:hover,
-        #cpue_fisheries label:hover,
-        #lf_scenarios label:hover,
-        #wf_scenarios label:hover {
-          background-color: #f5f5f5;
-        }
-        
-        /* Checked state - make text bold */
-        #stock_scenarios input[type='checkbox']:checked + span,
-        #cpue_scenarios input[type='checkbox']:checked + span,
-        #cpue_fisheries input[type='checkbox']:checked + span,
-        #lf_scenarios input[type='checkbox']:checked + span,
-        #wf_scenarios input[type='checkbox']:checked + span {
-          font-weight: 600;
-          color: #3c8dbc !important;
-        }
-        
-        /* Checkbox container spacing */
-        .checkbox { margin-top: 5px; margin-bottom: 5px; }
       "))
     ),
     
@@ -293,7 +262,26 @@ ui <- dashboardPage(
             width = 3,
             solidHeader = TRUE,
             status = "success",
-            checkboxGroupInput("stock_scenarios", "Scenarios:", choices = NULL),
+            
+            # Scenarios selector with dropdown
+            pickerInput(
+              "stock_scenarios",
+              "Scenarios:",
+              choices = NULL,
+              selected = NULL,
+              multiple = TRUE,
+              options = pickerOptions(
+                actionsBox = TRUE,
+                selectAllText = "Select All",
+                deselectAllText = "Deselect All",
+                selectedTextFormat = "count > 2",
+                countSelectedText = "{0} scenarios selected",
+                liveSearch = TRUE,
+                liveSearchPlaceholder = "Search scenarios...",
+                size = 10
+              )
+            ),
+            
             hr(),
             h5("Download Plot", style = "font-weight: bold;"),
             downloadButton("download_stock_png", "PNG", class = "btn-info btn-sm", 
@@ -328,8 +316,45 @@ ui <- dashboardPage(
             width = 3,
             solidHeader = TRUE,
             status = "info",
-            checkboxGroupInput("cpue_scenarios", "Scenarios:", choices = NULL),
-            checkboxGroupInput("cpue_fisheries", "Fisheries:", choices = NULL),
+            
+            # Scenarios selector with dropdown
+            pickerInput(
+              "cpue_scenarios",
+              "Scenarios:",
+              choices = NULL,
+              selected = NULL,
+              multiple = TRUE,
+              options = pickerOptions(
+                actionsBox = TRUE,
+                selectAllText = "Select All",
+                deselectAllText = "Deselect All",
+                selectedTextFormat = "count > 2",
+                countSelectedText = "{0} scenarios selected",
+                liveSearch = TRUE,
+                liveSearchPlaceholder = "Search scenarios...",
+                size = 10
+              )
+            ),
+            
+            # Fisheries selector with dropdown
+            pickerInput(
+              "cpue_fisheries",
+              "Fisheries:",
+              choices = NULL,
+              selected = NULL,
+              multiple = TRUE,
+              options = pickerOptions(
+                actionsBox = TRUE,
+                selectAllText = "Select All",
+                deselectAllText = "Deselect All",
+                selectedTextFormat = "count > 2",
+                countSelectedText = "{0} fisheries selected",
+                liveSearch = TRUE,
+                liveSearchPlaceholder = "Search fisheries...",
+                size = 10
+              )
+            ),
+            
             hr(),
             h5("Download Plot", style = "font-weight: bold;"),
             downloadButton("download_cpue_png", "PNG", class = "btn-info btn-sm", 
@@ -364,8 +389,45 @@ ui <- dashboardPage(
             width = 3,
             solidHeader = TRUE,
             status = "primary",
-            selectInput("lf_fishery", "Fishery:", choices = NULL),
-            checkboxGroupInput("lf_scenarios", "Scenarios:", choices = NULL),
+            
+            # Fishery selector with navigation buttons
+            div(
+              style = "margin-bottom: 15px;",
+              tags$label("Fishery:", style = "font-weight: bold; margin-bottom: 5px; display: block;"),
+              div(
+                style = "display: flex; align-items: center; gap: 5px;",
+                actionButton("lf_prev", "", icon = icon("chevron-left"), 
+                             class = "btn-sm btn-default",
+                             style = "padding: 5px 10px;"),
+                div(
+                  style = "flex: 1;",
+                  selectInput("lf_fishery", NULL, choices = NULL)
+                ),
+                actionButton("lf_next", "", icon = icon("chevron-right"), 
+                             class = "btn-sm btn-default",
+                             style = "padding: 5px 10px;")
+              )
+            ),
+            
+            # Scenarios selector with dropdown
+            pickerInput(
+              "lf_scenarios",
+              "Scenarios:",
+              choices = NULL,
+              selected = NULL,
+              multiple = TRUE,
+              options = pickerOptions(
+                actionsBox = TRUE,
+                selectAllText = "Select All",
+                deselectAllText = "Deselect All",
+                selectedTextFormat = "count > 2",
+                countSelectedText = "{0} scenarios selected",
+                liveSearch = TRUE,
+                liveSearchPlaceholder = "Search scenarios...",
+                size = 10
+              )
+            ),
+            
             hr(),
             h5("Download Plot", style = "font-weight: bold;"),
             downloadButton("download_lf_png", "PNG", class = "btn-info btn-sm", 
@@ -400,8 +462,45 @@ ui <- dashboardPage(
             width = 3,
             solidHeader = TRUE,
             status = "primary",
-            selectInput("wf_fishery", "Fishery:", choices = NULL),
-            checkboxGroupInput("wf_scenarios", "Scenarios:", choices = NULL),
+            
+            # Fishery selector with navigation buttons
+            div(
+              style = "margin-bottom: 15px;",
+              tags$label("Fishery:", style = "font-weight: bold; margin-bottom: 5px; display: block;"),
+              div(
+                style = "display: flex; align-items: center; gap: 5px;",
+                actionButton("wf_prev", "", icon = icon("chevron-left"), 
+                             class = "btn-sm btn-default",
+                             style = "padding: 5px 10px;"),
+                div(
+                  style = "flex: 1;",
+                  selectInput("wf_fishery", NULL, choices = NULL)
+                ),
+                actionButton("wf_next", "", icon = icon("chevron-right"), 
+                             class = "btn-sm btn-default",
+                             style = "padding: 5px 10px;")
+              )
+            ),
+            
+            # Scenarios selector with dropdown
+            pickerInput(
+              "wf_scenarios",
+              "Scenarios:",
+              choices = NULL,
+              selected = NULL,
+              multiple = TRUE,
+              options = pickerOptions(
+                actionsBox = TRUE,
+                selectAllText = "Select All",
+                deselectAllText = "Deselect All",
+                selectedTextFormat = "count > 2",
+                countSelectedText = "{0} scenarios selected",
+                liveSearch = TRUE,
+                liveSearchPlaceholder = "Search scenarios...",
+                size = 10
+              )
+            ),
+            
             hr(),
             h5("Download Plot", style = "font-weight: bold;"),
             downloadButton("download_wf_png", "PNG", class = "btn-info btn-sm", 
@@ -556,7 +655,7 @@ server <- function(input, output, session) {
   })
   
   # ---------------------------------------------------------------------------
-  # DATA LOADING
+  # DATA LOADING (PARALLELIZED)
   # ---------------------------------------------------------------------------
   
   observeEvent(input$load_data, {
@@ -607,87 +706,154 @@ server <- function(input, output, session) {
       
       incProgress(0.1, detail = paste("Loading", length(model_folders), "scenarios"))
       
-      # Load each scenario
-      results <- setNames(lapply(seq_along(model_folders), function(i) {
-        folder <- model_folders[i]
-        scenario_name <- model_names[i]
-        
-        incProgress(0.6 / length(model_folders), 
-                    detail = paste("Loading", scenario_name, "..."))
-        
-        tryCatch({
-          
-          # Check if required files exist
-          par_file <- finalPar(folder)
-          rep_file <- finalRep(folder)
-          
-          # Validate .par file
-          if (!file.exists(par_file)) {
-            showNotification(
-              paste("Missing .par file in", scenario_name), 
-              type = "warning",
-              duration = 3
-            )
-            return(NULL)
-          }
-          
-          # Validate plot.rep file
-          if (!file.exists(rep_file)) {
-            showNotification(
-              paste("Missing plot.rep file in", scenario_name), 
-              type = "warning",
-              duration = 3
-            )
-            return(NULL)
-          }
-          
-          # Read model output files
-          list(
-            ParOut = read.MFCLPar(par_file),
-            RepOut = read.MFCLRep(rep_file),
-            LengOut = tryCatch({
-              lf_file <- file.path(folder, "length.fit")
-              if (file.exists(lf_file)) read.MFCLLenFit(lf_file) else NULL
-            }, error = function(e) NULL),
-            WeightOut = tryCatch({
-              wf_file <- file.path(folder, "weight.fit")
-              if (file.exists(wf_file)) read.MFCLWgtFit(wf_file) else NULL
-            }, error = function(e) NULL),
-            IndepOut = safe_read(file.path(folder, "indepvar.rpt"))
-          )
-        }, error = function(e) {
-          showNotification(
-            paste("Error loading", scenario_name, ":", e$message), 
-            type = "error",
-            duration = 5
-          )
-          NULL
-        })
-      }), model_names)
+      # =======================================================================
+      # PARALLEL LOADING
+      # =======================================================================
       
-      # Remove failed loads
-      results <- Filter(Negate(is.null), results)
+      # Determine optimal number of cores (total cores - 2, minimum 1)
+      n_cores <- parallel::detectCores()
+      n_cores <- max(1, min(n_cores - 2, length(model_folders)))
+      
+      # Show parallel info
+      showNotification(
+        paste0("🚀 Using ", n_cores, " parallel worker", 
+               if(n_cores > 1) "s" else "", " for faster loading"),
+        type = "message",
+        duration = 3
+      )
+      
+      incProgress(0.15, detail = paste("Initializing", n_cores, "parallel workers..."))
+      
+      # Create cluster
+      cl <- makeCluster(n_cores)
+      
+      # Ensure cluster cleanup on exit
+      on.exit({
+        tryCatch(stopCluster(cl), error = function(e) NULL)
+      }, add = TRUE)
+      
+      # Export necessary packages to workers
+      clusterEvalQ(cl, {
+        library(FLR4MFCL)
+        library(purrr)
+      })
+      
+      # Export helper functions and variables
+      clusterExport(cl, 
+                    c("finalPar", "finalRep", "safe_read", 
+                      "model_folders", "model_names"), 
+                    envir = environment())
+      
+      # Load scenarios in parallel
+      results <- tryCatch({
+        parLapply(cl, seq_along(model_folders), function(i) {
+          folder <- model_folders[i]
+          scenario_name <- model_names[i]
+          
+          tryCatch({
+            # Check if required files exist
+            par_file <- finalPar(folder)
+            rep_file <- finalRep(folder)
+            
+            # Validate .par file
+            if (!file.exists(par_file)) {
+              return(list(
+                name = scenario_name,
+                error = paste("Missing .par file in", scenario_name),
+                data = NULL
+              ))
+            }
+            
+            # Validate plot.rep file
+            if (!file.exists(rep_file)) {
+              return(list(
+                name = scenario_name,
+                error = paste("Missing plot.rep file in", scenario_name),
+                data = NULL
+              ))
+            }
+            
+            # Read model output files
+            data <- list(
+              ParOut = read.MFCLPar(par_file),
+              RepOut = read.MFCLRep(rep_file),
+              LengOut = tryCatch({
+                lf_file <- file.path(folder, "length.fit")
+                if (file.exists(lf_file)) read.MFCLLenFit(lf_file) else NULL
+              }, error = function(e) NULL),
+              WeightOut = tryCatch({
+                wf_file <- file.path(folder, "weight.fit")
+                if (file.exists(wf_file)) read.MFCLWgtFit(wf_file) else NULL
+              }, error = function(e) NULL),
+              IndepOut = safe_read(file.path(folder, "indepvar.rpt"))
+            )
+            
+            list(name = scenario_name, error = NULL, data = data)
+            
+          }, error = function(e) {
+            list(
+              name = scenario_name,
+              error = paste("Error loading", scenario_name, ":", e$message),
+              data = NULL
+            )
+          })
+        })
+      }, error = function(e) {
+        showNotification(
+          paste("Parallel loading error:", e$message),
+          type = "error",
+          duration = 5
+        )
+        return(NULL)
+      })
+      
+      # Stop cluster
+      stopCluster(cl)
+      
+      # Check if loading succeeded
+      if (is.null(results)) {
+        return(NULL)
+      }
+      
+      incProgress(0.7, detail = "Processing loaded data...")
+      
+      # Process results
+      errors <- Filter(function(x) !is.null(x$error), results)
+      successes <- Filter(function(x) is.null(x$error), results)
+      
+      # Show errors if any
+      if (length(errors) > 0) {
+        for (err in errors) {
+          showNotification(err$error, type = "warning", duration = 3)
+        }
+      }
       
       # Check if any scenarios loaded successfully
-      if (length(results) == 0) {
+      if (length(successes) == 0) {
         showNotification("Failed to load any scenarios!", type = "error", duration = 5)
         return(NULL)
       }
       
+      # Convert to named list
+      results_named <- setNames(
+        lapply(successes, function(x) x$data),
+        sapply(successes, function(x) x$name)
+      )
+      
       incProgress(0.8, detail = "Creating fishery mappings...")
       
       # Extract data into separate lists
-      rv$ParOut_list <- map(results, "ParOut")
-      rv$RepOut_list <- map(results, "RepOut")
-      rv$LengOut_list <- map(results, "LengOut")
-      rv$WeightOut_list <- map(results, "WeightOut")
-      rv$IndepOut_list <- map(results, "IndepOut")
+      rv$ParOut_list <- map(results_named, "ParOut")
+      rv$RepOut_list <- map(results_named, "RepOut")
+      rv$LengOut_list <- map(results_named, "LengOut")
+      rv$WeightOut_list <- map(results_named, "WeightOut")
+      rv$IndepOut_list <- map(results_named, "IndepOut")
       
       # Create fishery name mappings for each scenario
-      rv$FISHERY_MAPS <- lapply(names(results), function(sc) {
+      rv$FISHERY_MAPS <- lapply(names(results_named), function(sc) {
         create_fishery_map(rv$ParOut_list[[sc]], GLOBAL_FISHERY_NAMES)
       })
-      names(rv$FISHERY_MAPS) <- names(results)
+      names(rv$FISHERY_MAPS) <- names(results_named)
       
       # Detect index fisheries (fisheries ending with 'i' or containing 'index')
       rv$INDEX_FISHERIES_MAPS <- lapply(rv$FISHERY_MAPS, detect_index_fisheries)
@@ -704,37 +870,38 @@ server <- function(input, output, session) {
       
       # Update UI components with loaded data
       updatePickerInput(session, "scenarios", 
-                        choices = names(results),
-                        selected = names(results))
+                        choices = names(results_named),
+                        selected = names(results_named))
       
-      updateSelectInput(session, "bound_model", choices = names(results))
+      updateSelectInput(session, "bound_model", choices = names(results_named))
       
-      # Update scenario checkboxes for all tabs
-      updateCheckboxGroupInput(session, "stock_scenarios", 
-                               choices = names(results), 
-                               selected = names(results)[1])
-      updateCheckboxGroupInput(session, "cpue_scenarios", 
-                               choices = names(results), 
-                               selected = names(results)[1])
-      updateCheckboxGroupInput(session, "lf_scenarios", 
-                               choices = names(results), 
-                               selected = names(results)[1])
-      updateCheckboxGroupInput(session, "wf_scenarios", 
-                               choices = names(results), 
-                               selected = names(results)[1])
+      # Update scenario pickers for all tabs (select all by default)
+      updatePickerInput(session, "stock_scenarios", 
+                        choices = names(results_named), 
+                        selected = names(results_named))
+      updatePickerInput(session, "cpue_scenarios", 
+                        choices = names(results_named), 
+                        selected = names(results_named))
+      updatePickerInput(session, "lf_scenarios", 
+                        choices = names(results_named), 
+                        selected = names(results_named))
+      updatePickerInput(session, "wf_scenarios", 
+                        choices = names(results_named), 
+                        selected = names(results_named))
       
       incProgress(1)
       
-      # Display success message
+      # Display success message with timing info
       showNotification(
         HTML(paste0(
-          "<strong>✓ Successfully loaded!</strong><br/>",
+          "<strong>✓ Successfully loaded (parallel mode)!</strong><br/>",
           "Directory: ", basename(MODEL_DIR), "<br/>",
-          "Scenarios: ", length(results), "<br/>",
-          "Names: ", paste(names(results), collapse = ", ")
+          "Scenarios: ", length(results_named), "<br/>",
+          "Workers: ", n_cores, " parallel core", if(n_cores > 1) "s" else "", "<br/>",
+          "Names: ", paste(names(results_named), collapse = ", ")
         )), 
         type = "message", 
-        duration = 8
+        duration = 10
       )
     })
   })
@@ -1137,12 +1304,12 @@ server <- function(input, output, session) {
   # TAB 4: CPUE FITS
   # ===========================================================================
   
-  # Update fishery choices when scenarios change
-  observe({
-    req(rv$data_loaded, input$cpue_scenarios)
+  # Update fishery choices when scenarios change (preserve selection)
+  observeEvent(input$cpue_scenarios, {
+    req(rv$data_loaded)
     
     if (length(input$cpue_scenarios) == 0) {
-      updateCheckboxGroupInput(session, "cpue_fisheries", choices = character(0))
+      updatePickerInput(session, "cpue_fisheries", choices = character(0))
       return()
     }
     
@@ -1151,7 +1318,7 @@ server <- function(input, output, session) {
     
     # Check if index fisheries exist
     if (length(all_index_fish) == 0) {
-      updateCheckboxGroupInput(session, "cpue_fisheries", choices = character(0))
+      updatePickerInput(session, "cpue_fisheries", choices = character(0))
       showNotification("No index fisheries detected in selected scenarios", 
                        type = "warning", duration = 3)
       return()
@@ -1162,10 +1329,27 @@ server <- function(input, output, session) {
     choices <- setNames(all_index_fish, 
                         sapply(all_index_fish, function(x) get_fishery_name(x, fishery_map)))
     
-    updateCheckboxGroupInput(session, "cpue_fisheries", 
-                             choices = choices,
-                             selected = all_index_fish[1])
-  })
+    # Preserve current selection if it exists in new choices (use isolate!)
+    current_selection <- isolate(input$cpue_fisheries)
+    
+    # Determine new selection
+    if (is.null(current_selection) || length(current_selection) == 0) {
+      # First time: select all
+      new_selection <- all_index_fish
+    } else {
+      # Keep valid selections that are still available
+      new_selection <- intersect(current_selection, all_index_fish)
+      
+      # If nothing left selected, select all
+      if (length(new_selection) == 0) {
+        new_selection <- all_index_fish
+      }
+    }
+    
+    updatePickerInput(session, "cpue_fisheries", 
+                      choices = choices,
+                      selected = new_selection)
+  }, ignoreInit = FALSE)
   
   # Reactive: generate CPUE plot
   cpue_plot_reactive <- reactive({
@@ -1292,7 +1476,7 @@ server <- function(input, output, session) {
   # TAB 5: LENGTH FREQUENCY
   # ===========================================================================
   
-  # Update fishery choices when data loaded
+  # Update fishery choices when data loaded (preserve selection)
   observe({
     req(rv$data_loaded, rv$LengOut_list)
     
@@ -1310,7 +1494,16 @@ server <- function(input, output, session) {
     fishery_map <- rv$FISHERY_MAPS[[1]]
     choices <- setNames(fisheries, 
                         sapply(fisheries, function(x) get_fishery_name(x, fishery_map)))
-    updateSelectInput(session, "lf_fishery", choices = choices)
+    
+    # Preserve current selection if valid
+    current_selection <- input$lf_fishery
+    if (!is.null(current_selection) && current_selection %in% fisheries) {
+      selected <- current_selection
+    } else {
+      selected <- fisheries[1]
+    }
+    
+    updateSelectInput(session, "lf_fishery", choices = choices, selected = selected)
   })
   
   # Reactive: generate length frequency plot
@@ -1434,7 +1627,7 @@ server <- function(input, output, session) {
   # TAB 6: WEIGHT FREQUENCY
   # ===========================================================================
   
-  # Update fishery choices when data loaded
+  # Update fishery choices when data loaded (preserve selection)
   observe({
     req(rv$data_loaded, rv$WeightOut_list)
     
@@ -1452,7 +1645,16 @@ server <- function(input, output, session) {
     fishery_map <- rv$FISHERY_MAPS[[1]]
     choices <- setNames(fisheries, 
                         sapply(fisheries, function(x) get_fishery_name(x, fishery_map)))
-    updateSelectInput(session, "wf_fishery", choices = choices)
+    
+    # Preserve current selection if valid
+    current_selection <- input$wf_fishery
+    if (!is.null(current_selection) && current_selection %in% fisheries) {
+      selected <- current_selection
+    } else {
+      selected <- fisheries[1]
+    }
+    
+    updateSelectInput(session, "wf_fishery", choices = choices, selected = selected)
   })
   
   # Reactive: generate weight frequency plot
@@ -1571,6 +1773,106 @@ server <- function(input, output, session) {
       ggsave(file, plot = wf_plot_reactive(), width = 12, height = 9, device = "pdf")
     }
   )
+  
+  # ===========================================================================
+  # FISHERY NAVIGATION BUTTONS
+  # ===========================================================================
+  
+  # Length Frequency: Previous fishery
+  observeEvent(input$lf_prev, {
+    req(rv$data_loaded, input$lf_fishery)
+    
+    # Get all fishery choices
+    fisheries <- unique(unlist(lapply(rv$LengOut_list[!sapply(rv$LengOut_list, is.null)], 
+                                      function(x) unique(x@lenfits$fishery))))
+    
+    if (length(fisheries) == 0) return()
+    
+    # Find current index
+    current_idx <- which(fisheries == input$lf_fishery)
+    
+    if (length(current_idx) == 0) {
+      new_selection <- fisheries[1]
+    } else {
+      # Go to previous (wrap around)
+      new_idx <- ifelse(current_idx == 1, length(fisheries), current_idx - 1)
+      new_selection <- fisheries[new_idx]
+    }
+    
+    updateSelectInput(session, "lf_fishery", selected = new_selection)
+  })
+  
+  # Length Frequency: Next fishery
+  observeEvent(input$lf_next, {
+    req(rv$data_loaded, input$lf_fishery)
+    
+    # Get all fishery choices
+    fisheries <- unique(unlist(lapply(rv$LengOut_list[!sapply(rv$LengOut_list, is.null)], 
+                                      function(x) unique(x@lenfits$fishery))))
+    
+    if (length(fisheries) == 0) return()
+    
+    # Find current index
+    current_idx <- which(fisheries == input$lf_fishery)
+    
+    if (length(current_idx) == 0) {
+      new_selection <- fisheries[1]
+    } else {
+      # Go to next (wrap around)
+      new_idx <- ifelse(current_idx == length(fisheries), 1, current_idx + 1)
+      new_selection <- fisheries[new_idx]
+    }
+    
+    updateSelectInput(session, "lf_fishery", selected = new_selection)
+  })
+  
+  # Weight Frequency: Previous fishery
+  observeEvent(input$wf_prev, {
+    req(rv$data_loaded, input$wf_fishery)
+    
+    # Get all fishery choices
+    fisheries <- unique(unlist(lapply(rv$WeightOut_list[!sapply(rv$WeightOut_list, is.null)], 
+                                      function(x) unique(x@wgtfits$fishery))))
+    
+    if (length(fisheries) == 0) return()
+    
+    # Find current index
+    current_idx <- which(fisheries == input$wf_fishery)
+    
+    if (length(current_idx) == 0) {
+      new_selection <- fisheries[1]
+    } else {
+      # Go to previous (wrap around)
+      new_idx <- ifelse(current_idx == 1, length(fisheries), current_idx - 1)
+      new_selection <- fisheries[new_idx]
+    }
+    
+    updateSelectInput(session, "wf_fishery", selected = new_selection)
+  })
+  
+  # Weight Frequency: Next fishery
+  observeEvent(input$wf_next, {
+    req(rv$data_loaded, input$wf_fishery)
+    
+    # Get all fishery choices
+    fisheries <- unique(unlist(lapply(rv$WeightOut_list[!sapply(rv$WeightOut_list, is.null)], 
+                                      function(x) unique(x@wgtfits$fishery))))
+    
+    if (length(fisheries) == 0) return()
+    
+    # Find current index
+    current_idx <- which(fisheries == input$wf_fishery)
+    
+    if (length(current_idx) == 0) {
+      new_selection <- fisheries[1]
+    } else {
+      # Go to next (wrap around)
+      new_idx <- ifelse(current_idx == length(fisheries), 1, current_idx + 1)
+      new_selection <- fisheries[new_idx]
+    }
+    
+    updateSelectInput(session, "wf_fishery", selected = new_selection)
+  })
 }
 
 # =============================================================================
