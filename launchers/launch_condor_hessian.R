@@ -32,7 +32,7 @@ all_split <- lapply(models, function(x) x$nsplit)
 
 for(model_name in names(models)) {
   
-  splits <- as.numeric(unlist(strsplit(all_jitter[[model_name]], "\\s+")))
+  splits <- as.numeric(unlist(strsplit(all_split[[model_name]], "\\s+")))
   
   for(part in 1:splits) {
     
