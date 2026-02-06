@@ -18,6 +18,11 @@ library(stringr)            # String manipulation
 library(purrr)              # Functional programming
 library(DT)                 # Interactive tables
 
+# Fix namespace conflicts
+hr <- shiny::hr              # Restore shiny's hr() function
+renderDataTable <- DT::renderDataTable  # Use DT's renderDataTable
+dataTableOutput <- DT::dataTableOutput  # Use DT's dataTableOutput
+
 # Load helper functions
 source("helpers.R")
 
@@ -68,26 +73,55 @@ ui <- dashboardPage(
     helpText("Folder containing scenario subfolders", 
              style = "padding-left: 15px; font-size: 11px; color: #777;"),
     
-    # Display detected models before loading
+    # Display detected models before loading with dropdown selection
     conditionalPanel(
       condition = "output.scenarios_detected == true",
       wellPanel(
         style = "background-color: #f5f5f5; margin: 10px 15px; padding: 12px;",
         h5("📦 Detected Models:", style = "margin-top: 0; color: #3c8dbc; font-weight: bold;"),
+        
+        # Summary info
         div(
-          textOutput("detected_scenarios"),
-          style = "color: #333; font-size: 13px; padding: 8px; background-color: #fff; 
-                   border-radius: 4px; margin: 8px 0; border: 1px solid #ddd;"
+          style = "background: white; padding: 10px; border-radius: 4px; margin-bottom: 10px;",
+          textOutput("detected_models_summary")
         ),
-        tags$small("Click Load Data to proceed", style = "color: #666; font-style: italic;")
+        
+        # Searchable dropdown for model selection
+        pickerInput(
+          "models_to_load",
+          label = "Select models to load:",
+          choices = NULL,
+          selected = NULL,
+          multiple = TRUE,
+          options = pickerOptions(
+            actionsBox = TRUE,
+            selectAllText = "Select All",
+            deselectAllText = "Deselect All",
+            selectedTextFormat = "count > 3",
+            countSelectedText = "{0} models selected",
+            liveSearch = TRUE,
+            liveSearchPlaceholder = "Search models...",
+            size = 10,
+            dropupAuto = FALSE,
+            style = "btn-default"
+          )
+        ),
+        
+        tags$small(
+          "💡 Tip: Use search box to find specific models",
+          style = "color: #666; font-style: italic; display: block; margin-top: 5px;"
+        )
       )
     ),
     
-    # Load data button
-    actionButton("load_data", "Load Data", 
-                 icon = icon("upload"),
-                 class = "btn-primary btn-block",
-                 style = "margin: 15px;"),
+    # Load data button (fixed width)
+    div(
+      style = "padding: 0 15px;",
+      actionButton("load_data", "Load Data", 
+                   icon = icon("upload"),
+                   class = "btn-primary",
+                   style = "width: 100%; margin-bottom: 15px;")
+    ),
     
     hr(),
     
@@ -123,6 +157,50 @@ ui <- dashboardPage(
         .btn-primary { background-color: #3c8dbc; border-color: #367fa9; }
         .btn-primary:hover { background-color: #367fa9; }
         .well { padding: 10px; margin-bottom: 10px; }
+        
+        /* Fix detected models summary text color */
+        #detected_models_summary {
+          color: #333 !important;
+          font-size: 13px;
+          line-height: 1.5;
+        }
+        
+        /* Fix checkbox text color and styling */
+        #stock_scenarios label,
+        #cpue_scenarios label,
+        #cpue_fisheries label,
+        #lf_scenarios label,
+        #wf_scenarios label {
+          color: #333 !important;
+          font-size: 13px !important;
+          font-weight: normal !important;
+          margin-bottom: 6px;
+          padding: 4px 8px;
+          border-radius: 3px;
+          transition: background-color 0.2s;
+        }
+        
+        /* Hover effect */
+        #stock_scenarios label:hover,
+        #cpue_scenarios label:hover,
+        #cpue_fisheries label:hover,
+        #lf_scenarios label:hover,
+        #wf_scenarios label:hover {
+          background-color: #f5f5f5;
+        }
+        
+        /* Checked state - make text bold */
+        #stock_scenarios input[type='checkbox']:checked + span,
+        #cpue_scenarios input[type='checkbox']:checked + span,
+        #cpue_fisheries input[type='checkbox']:checked + span,
+        #lf_scenarios input[type='checkbox']:checked + span,
+        #wf_scenarios input[type='checkbox']:checked + span {
+          font-weight: 600;
+          color: #3c8dbc !important;
+        }
+        
+        /* Checkbox container spacing */
+        .checkbox { margin-top: 5px; margin-bottom: 5px; }
       "))
     ),
     
@@ -394,13 +472,23 @@ server <- function(input, output, session) {
       if (length(scenario_folders) > 0) {
         rv$scenarios_detected <- TRUE
         rv$detected_scenario_names <- scenario_folders
+        
+        # Update picker choices
+        updatePickerInput(
+          session, 
+          "models_to_load",
+          choices = scenario_folders,
+          selected = scenario_folders  # All selected by default
+        )
       } else {
         rv$scenarios_detected <- FALSE
         rv$detected_scenario_names <- NULL
+        updatePickerInput(session, "models_to_load", choices = NULL)
       }
     } else {
       rv$scenarios_detected <- FALSE
       rv$detected_scenario_names <- NULL
+      updatePickerInput(session, "models_to_load", choices = NULL)
     }
   })
   
@@ -408,10 +496,24 @@ server <- function(input, output, session) {
   output$scenarios_detected <- reactive({ rv$scenarios_detected })
   outputOptions(output, "scenarios_detected", suspendWhenHidden = FALSE)
   
-  # Output: display detected scenario names
-  output$detected_scenarios <- renderText({
+  # Display detected models summary
+  output$detected_models_summary <- renderText({
     req(rv$detected_scenario_names)
-    paste(rv$detected_scenario_names, collapse = ", ")
+    n_detected <- length(rv$detected_scenario_names)
+    
+    # Show first few model names as preview
+    if (n_detected <= 5) {
+      preview <- paste(rv$detected_scenario_names, collapse = ", ")
+    } else {
+      preview <- paste(
+        paste(head(rv$detected_scenario_names, 3), collapse = ", "),
+        "... and",
+        n_detected - 3,
+        "more"
+      )
+    }
+    
+    paste0("✓ Found ", n_detected, " model(s): ", preview)
   })
   
   # ---------------------------------------------------------------------------
@@ -459,7 +561,14 @@ server <- function(input, output, session) {
   
   observeEvent(input$load_data, {
     
-    req(input$model_dir)
+    req(input$model_dir, input$models_to_load)
+    
+    # Check if any models selected
+    if (length(input$models_to_load) == 0) {
+      showNotification("Please select at least one model to load!", 
+                       type = "warning", duration = 5)
+      return(NULL)
+    }
     
     MODEL_DIR <- input$model_dir
     
@@ -472,23 +581,31 @@ server <- function(input, output, session) {
     # Show progress bar
     withProgress(message = "Loading model data...", value = 0, {
       
-      # Get all scenario folders
-      model_folders <- list.dirs(MODEL_DIR, full.names = TRUE, recursive = FALSE)
-      model_names <- basename(model_folders)
+      # Get only selected scenario folders
+      model_names <- input$models_to_load
+      model_folders <- file.path(MODEL_DIR, model_names)
       
-      # Filter out hidden folders and excluded directories
-      keep_idx <- !grepl("^\\.|^__", model_names) & 
-        !model_names %in% c("archive", "old", "backup", "test")
-      model_folders <- model_folders[keep_idx]
-      model_names <- model_names[keep_idx]
+      # Validate all selected folders exist
+      existing_idx <- dir.exists(model_folders)
+      if (!all(existing_idx)) {
+        missing <- model_names[!existing_idx]
+        showNotification(
+          paste("Some selected models not found:", paste(missing, collapse = ", ")),
+          type = "warning", duration = 5
+        )
+      }
+      
+      # Keep only existing folders
+      model_folders <- model_folders[existing_idx]
+      model_names <- model_names[existing_idx]
       
       # Check if any scenarios found
       if (length(model_folders) == 0) {
-        showNotification("No scenario folders found!", type = "error", duration = 5)
+        showNotification("No valid scenario folders found!", type = "error", duration = 5)
         return(NULL)
       }
       
-      incProgress(0.1, detail = paste("Found", length(model_folders), "scenarios"))
+      incProgress(0.1, detail = paste("Loading", length(model_folders), "scenarios"))
       
       # Load each scenario
       results <- setNames(lapply(seq_along(model_folders), function(i) {
@@ -1461,5 +1578,4 @@ server <- function(input, output, session) {
 # =============================================================================
 
 shinyApp(ui, server)
-
 

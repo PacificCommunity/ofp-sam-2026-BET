@@ -66,3 +66,28 @@ docker-report:
 	
 .PHONY: plot run model prof jitter hessian retro collate-hessian docker-run docker-model docker-prof docker-jitter docker-hessian docker-retro docker-collate-hessian docker-plot prepaw report docker-report
 
+
+
+# =============================================================================
+# SHINY APP TARGETS
+# =============================================================================
+
+# Launch Shiny app locally
+app:
+	Rscript -e "shiny::runApp('shiny', launch.browser=TRUE)"
+
+# Launch Shiny app in Docker
+docker-app:
+	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) -p 3838:3838 $(DOCKER_IMAGE) \
+	Rscript -e "shiny::runApp('shiny', host='0.0.0.0', port=3838)"
+
+# Launch Shiny app in background (detached)
+app-bg:
+	Rscript -e "shiny::runApp('shiny', launch.browser=TRUE)" &
+
+# Stop background Shiny app
+app-stop:
+	pkill -f "shiny::runApp"
+
+.PHONY: app docker-app app-bg app-stop
+
