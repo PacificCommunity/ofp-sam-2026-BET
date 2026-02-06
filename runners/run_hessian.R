@@ -14,8 +14,8 @@ base_dir_abs <- file.path(project_root, base_dir)
 
 ## Hessian calculation settings
 ## Single part number for parallel execution via condor
-hessian_part <- as.integer(Sys.getenv("hessian_part", "100"))
-nsplit <- as.integer(Sys.getenv("nsplit", "100"))
+hessian_part <- as.integer(Sys.getenv("hessian_part", "1"))
+nsplit <- as.integer(Sys.getenv("nsplit", "5"))
 
 ## Create hessian-specific directory inside hessian folder
 hessian_dir <- file.path(model_dir, "hessian")
