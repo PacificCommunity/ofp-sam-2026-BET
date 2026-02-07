@@ -575,7 +575,24 @@ ui <- dashboardPage(
           box(
             title = "Job Status", status = "primary", solidHeader = TRUE, width = 12,
             
-            actionButton("refresh_jobs", "Refresh", icon = icon("sync")),
+            fluidRow(
+              column(2,
+                     actionButton("refresh_jobs", "Refresh", 
+                                  icon = icon("sync"),
+                                  class = "btn-default btn-block")
+              ),
+              column(2,
+                     actionButton("remove_selected_jobs", "Remove Selected", 
+                                  icon = icon("trash"),
+                                  class = "btn-danger btn-block")
+              ),
+              column(8,
+                     div(id = "job_selection_info",
+                         style = "padding: 8px; color: #666; font-size: 13px;",
+                         textOutput("selected_jobs_info", inline = TRUE))
+              )
+            ),
+            
             hr(),
             DTOutput("jobs_table")
           )
@@ -1469,6 +1486,186 @@ server <- function(input, output, session) {
       showNotification(paste("Error:", e$message), type = "error")
     })
   })
+  # Delete entire remote output directory
+  observeEvent(input$delete_remote_dir, {
+    remote_dir <- input$scan_output_dir
+    
+    if (is.null(remote_dir) || remote_dir == "") {
+      showNotification("Please specify a remote directory", type = "warning")
+      return()
+    }
+    
+    full_path <- paste0(input$github_repo, "/", remote_dir)
+    
+    showModal(modalDialog(
+      title = "⚠️ DANGER: Delete Entire Remote Directory",
+      size = "m",
+      div(
+        div(
+          style = "background: #f8d7da; border: 3px solid #dc3545; border-radius: 6px; padding: 20px; margin: 15px 0;",
+          h4(icon("exclamation-triangle"), " CRITICAL WARNING", 
+             style = "color: #721c24; margin-top: 0;"),
+          p("You are about to permanently delete the ENTIRE remote directory:", 
+            style = "color: #721c24; font-size: 14px; margin: 10px 0;"),
+          div(
+            style = "background: white; padding: 12px; border-radius: 4px; font-family: monospace; font-size: 13px; margin: 10px 0;",
+            strong(full_path)
+          ),
+          p(strong("This will delete ALL subfolders and files inside this directory!"), 
+            style = "color: #dc3545; font-size: 15px; font-weight: bold; margin: 10px 0;"),
+          p("This action is IRREVERSIBLE and CANNOT be undone!", 
+            style = "color: #721c24; font-weight: bold; margin: 5px 0;")
+        ),
+        hr(),
+        div(
+          style = "background: #fff3cd; padding: 15px; border-radius: 4px;",
+          p(icon("info-circle"), strong(" What will be deleted:"),
+            style = "margin: 0 0 10px 0; font-size: 14px;"),
+          tags$ul(
+            style = "margin: 5px 0; padding-left: 25px;",
+            tags$li("All model run folders"),
+            tags$li("All tar.gz archive files"),
+            tags$li("All subdirectories and their contents"),
+            tags$li("Everything under ", code(full_path))
+          )
+        ),
+        br(),
+        p("Type 'DELETE' below to confirm:", style = "font-weight: bold; margin-bottom: 5px;"),
+        textInput("confirm_delete_text", NULL, 
+                  placeholder = "Type DELETE to confirm",
+                  width = "100%")
+      ),
+      footer = tagList(
+        modalButton("Cancel", icon = icon("times")),
+        actionButton("confirm_delete_remote_dir", "Delete Entire Directory", 
+                     class = "btn-danger", icon = icon("trash-alt"))
+      )
+    ))
+  })
+  
+  # Execute directory deletion after confirmation
+  observeEvent(input$confirm_delete_remote_dir, {
+    if (is.null(input$confirm_delete_text) || 
+        toupper(trimws(input$confirm_delete_text)) != "DELETE") {
+      showNotification("Please type 'DELETE' to confirm", type = "error")
+      return()
+    }
+    
+    removeModal()
+    
+    remote_dir <- input$scan_output_dir
+    full_path <- paste0(input$github_repo, "/", remote_dir)
+    
+    rv$retrieval_log <- paste0(
+      "\n", strrep("=", 70), "\n",
+      Sys.time(), " - DELETING ENTIRE REMOTE DIRECTORY\n",
+      strrep("=", 70), "\n",
+      "Target: ", full_path, "\n",
+      "Remote: ", input$remote_user, "@", input$remote_host, "\n\n"
+    )
+    
+    showNotification(
+      paste("Deleting directory:", remote_dir),
+      type = "warning",
+      duration = NULL,
+      id = "delete_dir_progress"
+    )
+    
+    tryCatch({
+      # First, list what will be deleted
+      rv$retrieval_log <- paste0(rv$retrieval_log, 
+                                 "Checking directory contents...\n")
+      
+      check_cmd <- sprintf("ssh %s@%s 'ls -la %s 2>/dev/null | wc -l'", 
+                           input$remote_user, 
+                           input$remote_host, 
+                           full_path)
+      
+      file_count <- as.numeric(system(check_cmd, intern = TRUE))
+      
+      rv$retrieval_log <- paste0(rv$retrieval_log, 
+                                 "Found ", file_count, " items in directory\n\n")
+      
+      # Execute deletion
+      rv$retrieval_log <- paste0(rv$retrieval_log, 
+                                 "Executing deletion command...\n")
+      
+      delete_cmd <- sprintf("ssh %s@%s 'rm -rf %s'", 
+                            input$remote_user, 
+                            input$remote_host, 
+                            full_path)
+      
+      result <- system(delete_cmd, intern = FALSE)
+      
+      if (result == 0) {
+        # Verify deletion
+        verify_cmd <- sprintf("ssh %s@%s '[ ! -d %s ] && echo DELETED || echo STILL_EXISTS'", 
+                              input$remote_user, 
+                              input$remote_host, 
+                              full_path)
+        
+        verify_result <- system(verify_cmd, intern = TRUE)
+        
+        if (length(verify_result) > 0 && verify_result[1] == "DELETED") {
+          rv$retrieval_log <- paste0(rv$retrieval_log,
+                                     "✓ Successfully deleted directory\n",
+                                     "✓ Verified: directory no longer exists\n\n",
+                                     strrep("=", 70), "\n",
+                                     "DELETION COMPLETED\n",
+                                     strrep("=", 70), "\n\n")
+          
+          # Clear folders data since directory is gone
+          rv$folders_data <- data.frame()
+          rv$selected_folders <- c()
+          
+          removeNotification("delete_dir_progress")
+          
+          showNotification(
+            paste0("✓ Successfully deleted: ", remote_dir),
+            type = "message",
+            duration = 5
+          )
+        } else {
+          rv$retrieval_log <- paste0(rv$retrieval_log,
+                                     "⚠ Deletion command executed but verification failed\n",
+                                     "Directory may still exist\n\n")
+          
+          removeNotification("delete_dir_progress")
+          
+          showNotification(
+            "Deletion may not be complete - please verify manually",
+            type = "warning",
+            duration = 10
+          )
+        }
+      } else {
+        rv$retrieval_log <- paste0(rv$retrieval_log,
+                                   "✗ Deletion command failed (exit code: ", result, ")\n\n")
+        
+        removeNotification("delete_dir_progress")
+        
+        showNotification(
+          "Failed to delete directory",
+          type = "error",
+          duration = 10
+        )
+      }
+      
+    }, error = function(e) {
+      rv$retrieval_log <- paste0(rv$retrieval_log, 
+                                 "\n❌ ERROR: ", e$message, "\n",
+                                 strrep("=", 70), "\n\n")
+      
+      removeNotification("delete_dir_progress")
+      
+      showNotification(
+        paste("Error during deletion:", e$message), 
+        type = "error", 
+        duration = 10
+      )
+    })
+  })
+  
   
   observeEvent(input$refresh_folders, {
     if (nrow(rv$folders_data) > 0) {
@@ -1830,6 +2027,7 @@ server <- function(input, output, session) {
   })
   
   # ========== MODEL EDITING HANDLERS ==========
+  
   # Browse program path - only show mfcl/exe directory
   observeEvent(input$browse_program, {
     tryCatch({
@@ -1985,7 +2183,6 @@ server <- function(input, output, session) {
     }
     removeModal()
   })
-  
   
   output$model_editor_ui <- renderUI({
     req(input$edit_model_select)
@@ -2566,12 +2763,140 @@ server <- function(input, output, session) {
   })
   
   output$jobs_table <- renderDT({
-    datatable(rv$jobs_status, options = list(pageLength = 20))
+    datatable(
+      rv$jobs_status, 
+      selection = 'multiple',
+      options = list(
+        pageLength = 20,
+        columnDefs = list(
+          list(className = 'dt-center', targets = '_all')
+        )
+      ),
+      class = 'cell-border stripe'
+    )
+  })
+  
+  output$selected_jobs_info <- renderText({
+    selected_rows <- input$jobs_table_rows_selected
+    if (length(selected_rows) > 0) {
+      paste(length(selected_rows), "job(s) selected")
+    } else {
+      "No jobs selected"
+    }
+  })
+  
+  observeEvent(input$remove_selected_jobs, {
+    selected_rows <- input$jobs_table_rows_selected
+    
+    if (length(selected_rows) == 0) {
+      showNotification("No jobs selected", type = "warning")
+      return()
+    }
+    
+    selected_jobs <- rv$jobs_status[selected_rows, ]
+    
+    # Extract job IDs
+    job_ids <- selected_jobs$JobIDs
+    
+    showModal(modalDialog(
+      title = "Confirm Job Removal",
+      size = "m",
+      p(strong(paste("Remove", length(selected_rows), "job(s)?")), style = "margin-bottom: 15px;"),
+      div(
+        style = "max-height: 300px; overflow-y: auto; background: #f9f9f9; padding: 10px; border: 1px solid #ddd; border-radius: 4px;",
+        tags$table(
+          style = "width: 100%; font-size: 12px;",
+          tags$thead(
+            tags$tr(
+              tags$th("Batch Name", style = "text-align: left; padding: 5px;"),
+              tags$th("Job ID", style = "text-align: left; padding: 5px;"),
+              tags$th("Status", style = "text-align: center; padding: 5px;")
+            )
+          ),
+          tags$tbody(
+            lapply(1:nrow(selected_jobs), function(i) {
+              tags$tr(
+                tags$td(selected_jobs$BatchName[i], style = "padding: 5px;"),
+                tags$td(selected_jobs$JobIDs[i], style = "padding: 5px;"),
+                tags$td(paste0("Run: ", selected_jobs$Run[i], " | Idle: ", selected_jobs$Idle[i]), 
+                        style = "padding: 5px; text-align: center;")
+              )
+            })
+          )
+        )
+      ),
+      hr(),
+      p(strong("Warning:"), "This will remove the jobs from the Condor queue.", 
+        style = "color: #d9534f; margin-top: 15px;"),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("confirm_remove_jobs", "Remove Jobs", class = "btn-danger")
+      )
+    ))
+  })
+  
+  observeEvent(input$confirm_remove_jobs, {
+    selected_rows <- input$jobs_table_rows_selected
+    
+    if (length(selected_rows) == 0) {
+      removeModal()
+      return()
+    }
+    
+    selected_jobs <- rv$jobs_status[selected_rows, ]
+    job_ids <- selected_jobs$JobIDs
+    
+    removeModal()
+    
+    showNotification("Removing jobs...", type = "message", duration = 2)
+    
+    tryCatch({
+      removed_count <- 0
+      failed_count <- 0
+      
+      for (job_id in job_ids) {
+        if (nzchar(job_id)) {
+          # Remove job using condor_rm
+          cmd <- sprintf("ssh %s@%s 'condor_rm %s'", 
+                         input$remote_user, input$remote_host, job_id)
+          
+          result <- system(cmd, intern = TRUE, ignore.stderr = FALSE)
+          
+          if (length(result) > 0 && !grepl("ERROR|Error", result[1])) {
+            removed_count <- removed_count + 1
+          } else {
+            failed_count <- failed_count + 1
+          }
+        }
+      }
+      
+      # Show result
+      if (removed_count > 0) {
+        showNotification(
+          paste("Successfully removed", removed_count, "job(s)"), 
+          type = "message", 
+          duration = 3
+        )
+      }
+      
+      if (failed_count > 0) {
+        showNotification(
+          paste("Failed to remove", failed_count, "job(s)"), 
+          type = "warning", 
+          duration = 3
+        )
+      }
+      
+      # Refresh job list after a short delay
+      Sys.sleep(1)
+      shinyjs::click("refresh_jobs")
+      
+    }, error = function(e) {
+      showNotification(paste("Error removing jobs:", e$message), type = "error", duration = 5)
+    })
   })
 }
 
 # Run the application
 shinyApp(ui = ui, server = server)
-
-
 
