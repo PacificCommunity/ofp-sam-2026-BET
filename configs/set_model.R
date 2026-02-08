@@ -3,6 +3,9 @@
 models <- list(
   
   "mixP1" = list(
+    
+    "description"="mixing 1",
+    
     mfcl_commands = paste("bet.frq 11.par 12.par",
                       "-switch 2",
                       "1 1 10000",
@@ -27,6 +30,10 @@ models <- list(
   ),
   
   "base" = list(
+    
+    
+    "description"="base",
+    
     mfcl_commands = paste("bet.frq 11.par 12.par",
                           "-switch 1",
                           "1 1 1", 

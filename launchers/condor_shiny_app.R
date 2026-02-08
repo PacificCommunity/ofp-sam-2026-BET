@@ -412,6 +412,36 @@ ui <- dashboardPage(
       # ========== LAUNCH JOBS TAB ==========
       tabItem(
         tabName = "launch",
+        
+        # ---- Config File Loader (inline) ----
+        fluidRow(
+          box(
+            title = "Load Model Configuration", status = "info", solidHeader = TRUE, width = 12,
+            collapsible = TRUE, collapsed = FALSE,
+            fluidRow(
+              column(4,
+                fileInput("launch_config_upload", "Upload R Script / RDS:",
+                          accept = c(".R", ".r", ".rds", ".RDS"),
+                          width = "100%")
+              ),
+              column(5,
+                textInput("launch_config_path", "Or specify path:",
+                          value = "../configs/set_model.R",
+                          placeholder = "Path to set_model.R or saved .rds",
+                          width = "100%")
+              ),
+              column(3,
+                div(style = "margin-top: 25px;",
+                  actionButton("launch_load_config", "Load Models",
+                               icon = icon("folder-open"),
+                               class = "btn-info btn-block")
+                )
+              )
+            ),
+            uiOutput("launch_config_status_ui")
+          )
+        ),
+        
         fluidRow(
           box(
             title = "Job Configuration", status = "primary", solidHeader = TRUE, width = 6,
@@ -629,9 +659,23 @@ ui <- dashboardPage(
             
             br(),
             
-            actionButton("scan_results", "Scan Remote Directory", 
-                         icon = icon("search"),
-                         class = "btn-primary btn-block")
+            fluidRow(
+              column(4,
+                     actionButton("scan_results", "Scan Folders", 
+                                  icon = icon("search"),
+                                  class = "btn-info btn-block")
+              ),
+              column(4,
+                     actionButton("download_all", "Download All", 
+                                  icon = icon("download"),
+                                  class = "btn-success btn-block")
+              ),
+              column(4,
+                     actionButton("delete_remote_dir", "Delete Directory", 
+                                  icon = icon("trash"),
+                                  class = "btn-danger btn-block")
+              )
+            )
           ),
           
           box(
@@ -665,7 +709,8 @@ ui <- dashboardPage(
         
         fluidRow(
           box(
-            title = "Available Folders", status = "primary", solidHeader = TRUE, width = 12,
+            title = "Select Specific Folders (Advanced)", status = "warning", solidHeader = TRUE, width = 12,
+            collapsible = TRUE, collapsed = TRUE,
             
             fluidRow(
               column(3,
@@ -694,6 +739,23 @@ ui <- dashboardPage(
             uiOutput("folders_selection_ui"),
             
             hr(),
+            
+            p(strong("Actions for Selected Folders:"), style = "margin-top: 15px; color: #666;"),
+            
+            fluidRow(
+              column(6,
+                     actionButton("fetch_selected", "Download Selected", 
+                                  class = "btn-primary btn-block", 
+                                  icon = icon("download"))
+              ),
+              column(6,
+                     actionButton("delete_selected", "Delete Selected", 
+                                  class = "btn-danger btn-block", 
+                                  icon = icon("trash"))
+              )
+            ),
+            
+            br(),
             
             actionButton("preview_archives", "Preview Archive Contents", 
                          class = "btn-info btn-block", 
@@ -745,20 +807,6 @@ ui <- dashboardPage(
                 )
             ),
             
-            hr(),
-            
-            fluidRow(
-              column(6,
-                     actionButton("fetch_selected", "Download & Extract", 
-                                  class = "btn-success btn-block btn-lg", 
-                                  icon = icon("download"))
-              ),
-              column(6,
-                     actionButton("delete_selected", "Delete Selected (Remote)", 
-                                  class = "btn-danger btn-block btn-lg", 
-                                  icon = icon("trash"))
-              )
-            )
           )
         ),
         
@@ -840,6 +888,99 @@ ui <- dashboardPage(
 # ==================== SERVER ====================
 server <- function(input, output, session) {
   
+  # ===== SETTINGS SAVE/LOAD =====
+  # Settings file path
+  settings_file <- "../configs/.last_settings.rds"
+  
+  # Load saved settings on startup
+  observe({
+    if (file.exists(settings_file)) {
+      tryCatch({
+        saved_settings <- readRDS(settings_file)
+        
+        if (!is.null(saved_settings$scan_output_dir)) {
+          updateTextInput(session, "scan_output_dir", value = saved_settings$scan_output_dir)
+        }
+        
+        if (!is.null(saved_settings$download_location)) {
+          updateTextInput(session, "download_location", value = saved_settings$download_location)
+        }
+        
+        if (!is.null(saved_settings$extract_repo_name)) {
+          updateTextInput(session, "extract_repo_name", value = saved_settings$extract_repo_name)
+        }
+        
+        if (!is.null(saved_settings$extract_path_manual)) {
+          updateTextInput(session, "extract_path_manual", value = saved_settings$extract_path_manual)
+        }
+        
+        if (!is.null(saved_settings$output_dir)) {
+          updateTextInput(session, "output_dir", value = saved_settings$output_dir)
+        }
+        
+        if (!is.null(saved_settings$branch)) {
+          updateSelectInput(session, "branch", selected = saved_settings$branch)
+        }
+        
+        if (!is.null(saved_settings$job_type)) {
+          updateSelectInput(session, "job_type", selected = saved_settings$job_type)
+        }
+        
+      }, error = function(e) {
+        # If settings file is corrupted, ignore and use defaults
+      })
+    }
+  })
+  
+  # Function to save settings
+  save_settings <- function() {
+    settings <- list(
+      scan_output_dir = input$scan_output_dir,
+      download_location = input$download_location,
+      extract_repo_name = input$extract_repo_name,
+      extract_path_manual = input$extract_path_manual,
+      output_dir = input$output_dir,
+      branch = input$branch,
+      job_type = input$job_type,
+      timestamp = Sys.time()
+    )
+    
+    tryCatch({
+      saveRDS(settings, settings_file)
+    }, error = function(e) {
+      # Silently fail if can't save
+    })
+  }
+  
+  # Auto-save settings when they change
+  observeEvent(input$scan_output_dir, {
+    save_settings()
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$download_location, {
+    save_settings()
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$extract_repo_name, {
+    save_settings()
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$extract_path_manual, {
+    save_settings()
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$output_dir, {
+    save_settings()
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$branch, {
+    save_settings()
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$job_type, {
+    save_settings()
+  }, ignoreInit = TRUE)
+  # ===== END SETTINGS SAVE/LOAD =====
   # Reactive values storage
   rv <- reactiveValues(
     models = list(),
@@ -893,14 +1034,8 @@ server <- function(input, output, session) {
   # Browse download location
   observeEvent(input$browse_download_location, {
     tryCatch({
-      # Start from parent directory (..)
       start_path <- normalizePath("..", mustWork = FALSE)
-      
-      # Get directory list
       dirs <- list.dirs(start_path, recursive = FALSE, full.names = TRUE)
-      
-      # Convert to relative paths
-      dirs_relative <- gsub(paste0("^", normalizePath(getwd()), "/?"), "", dirs)
       
       showModal(modalDialog(
         title = "Select Download Location",
@@ -914,11 +1049,10 @@ server <- function(input, output, session) {
         div(
           style = "max-height: 400px; overflow-y: auto; background: #f9f9f9; padding: 15px; border: 1px solid #ddd; border-radius: 4px;",
           
-          # Parent directory (..)
           tags$div(
             tags$a(
               href = "#",
-              onclick = sprintf("document.getElementById('download_location').value = '..'; Shiny.setInputValue('close_download_modal', Math.random()); return false;"),
+              onclick = "Shiny.setInputValue('selected_download_path', '..', {priority: 'event'}); return false;",
               icon("folder", style = "color: #f39c12;"), " ..",
               style = "color: #333; cursor: pointer; text-decoration: none; font-size: 13px; font-weight: bold;"
             ),
@@ -933,7 +1067,7 @@ server <- function(input, output, session) {
               tags$div(
                 tags$a(
                   href = "#",
-                  onclick = sprintf("document.getElementById('download_location').value = '%s'; Shiny.setInputValue('close_download_modal', Math.random()); return false;", rel_path),
+                  onclick = sprintf("Shiny.setInputValue('selected_download_path', '%s', {priority: 'event'}); return false;", rel_path),
                   icon("folder-open", style = "color: #3c8dbc;"), " ", dir_name,
                   style = "color: #333; cursor: pointer; text-decoration: none; font-size: 13px;"
                 ),
@@ -964,9 +1098,12 @@ server <- function(input, output, session) {
     })
   })
   
-  observeEvent(input$close_download_modal, {
+  observeEvent(input$selected_download_path, {
+    req(input$selected_download_path)
+    updateTextInput(session, "download_location", value = input$selected_download_path)
     removeModal()
-  })
+    showNotification(paste("Selected:", input$selected_download_path), type = "message", duration = 2)
+  }, ignoreInit = TRUE)
   
   observeEvent(input$confirm_download_path, {
     if (!is.null(input$download_manual_path) && input$download_manual_path != "") {
@@ -978,7 +1115,7 @@ server <- function(input, output, session) {
   output$download_location_display <- renderText({
     dl_path <- input$download_location
     if (is.null(dl_path) || dl_path == "") {
-      dl_path <- "../model"
+      return("(not set - please browse or enter path)")
     }
     normalizePath(dl_path, mustWork = FALSE)
   })
@@ -1013,9 +1150,9 @@ server <- function(input, output, session) {
   output$extract_target_preview <- renderText({
     download_dir <- input$download_location
     if (is.null(download_dir) || download_dir == "") {
-      download_dir <- "../model"
+      return("(download location not set)")
     }
-    paste0(download_dir, "/[folder_name]/*")
+    paste0(normalizePath(download_dir, mustWork = FALSE), "/[folder_name]/*")
   })
   
   # ========== JOB HISTORY FUNCTIONS ==========
@@ -1066,6 +1203,10 @@ server <- function(input, output, session) {
     
     if (!is.null(input$config_file_path) && input$config_file_path != "") {
       possible_paths <- c(possible_paths, input$config_file_path)
+    }
+    
+    if (!is.null(input$launch_config_path) && input$launch_config_path != "") {
+      possible_paths <- c(possible_paths, input$launch_config_path)
     }
     
     possible_paths <- c(
@@ -1203,6 +1344,38 @@ server <- function(input, output, session) {
     load_models(input$config_file_upload$datapath)
   })
   
+  # ---- Launch tab config loader handlers ----
+  observeEvent(input$launch_load_config, {
+    load_models()
+  })
+  
+  observeEvent(input$launch_config_upload, {
+    req(input$launch_config_upload)
+    load_models(input$launch_config_upload$datapath)
+  })
+  
+  output$launch_config_status_ui <- renderUI({
+    req(rv$config_loaded)
+    n <- length(rv$models)
+    src <- if (!is.null(rv$config_path)) basename(rv$config_path) else "unknown"
+    
+    descs <- sapply(names(rv$models), function(nm) {
+      m <- rv$models[[nm]]
+      d <- if (!is.null(m$description) && m$description != "") m$description else "설명 없음"
+      paste0(nm, ": ", d)
+    })
+    
+    div(style = "margin-top: 4px; padding: 6px 10px; background: #f0f9f0; border-left: 3px solid #28a745; border-radius: 4px;",
+      tags$span(style = "color: #28a745; font-weight: bold;",
+        icon("check-circle"),
+        paste0(" ", n, " model", if(n != 1) "s", " loaded from ", src)
+      ),
+      tags$small(style = "display: block; color: #666; margin-top: 2px;",
+        HTML(paste(descs, collapse = " &nbsp;|&nbsp; "))
+      )
+    )
+  })
+  
   observeEvent(input$refresh_saved_configs, {
     rv$saved_configs_trigger <- rv$saved_configs_trigger + 1
     showNotification("Refreshed saved configurations list", type = "message", duration = 2)
@@ -1305,6 +1478,8 @@ server <- function(input, output, session) {
         
         if (!is.null(m$description) && m$description != "") {
           div(class = "model-desc", m$description)
+        } else {
+          div(class = "model-desc", style = "color: #999; font-style: italic;", "No description provided")
         },
         
         div(class = "model-param", 
@@ -1347,31 +1522,26 @@ server <- function(input, output, session) {
     showNotification("Loading remote directories...", type = "message", duration = 2)
     
     tryCatch({
-      # Find subdirectories from remote repository
       base_path <- input$github_repo
-      find_cmd <- sprintf("find %s -maxdepth 3 -mindepth 1 -type d | sort", base_path)
+      find_cmd <- sprintf("find %s -maxdepth 2 -mindepth 1 -type d | sort", base_path)
       cmd <- sprintf('ssh %s@%s "%s"', input$remote_user, input$remote_host, find_cmd)
       
       result <- system(cmd, intern = TRUE)
       
       if (length(result) > 0) {
-        # Remove repository name and show relative paths only
         dirs <- gsub(paste0("^", base_path, "/?"), "", result)
-        dirs <- dirs[nzchar(dirs)]  # Remove empty strings
+        dirs <- dirs[nzchar(dirs)]
         
-        # Group directories by depth and display in tree structure
         dir_items <- lapply(dirs, function(d) {
           depth <- length(strsplit(d, "/")[[1]])
           indent <- paste(rep("&nbsp;&nbsp;&nbsp;&nbsp;", depth - 1), collapse = "")
           dir_name <- basename(d)
-          parent_path <- dirname(d)
           
           list(
             path = d,
             depth = depth,
             indent = indent,
-            name = dir_name,
-            parent = parent_path
+            name = dir_name
           )
         })
         
@@ -1391,7 +1561,10 @@ server <- function(input, output, session) {
                   HTML(item$indent),
                   tags$a(
                     href = "#", 
-                    onclick = sprintf("document.getElementById('scan_output_dir').value = '%s'; Shiny.setInputValue('close_browse_modal', Math.random()); return false;", item$path),
+                    onclick = sprintf(
+                      "Shiny.setInputValue('selected_remote_path', '%s', {priority: 'event'}); return false;", 
+                      item$path
+                    ),
                     icon(icon_type, style = paste0("color: ", icon_color, ";")), " ", item$name,
                     style = "color: #333; cursor: pointer; text-decoration: none; font-size: 13px;"
                   ),
@@ -1421,6 +1594,38 @@ server <- function(input, output, session) {
     })
   })
   
+  observeEvent(input$selected_remote_path, {
+    req(input$selected_remote_path)
+    updateTextInput(session, "scan_output_dir", value = input$selected_remote_path)
+    removeModal()
+    showNotification(paste("Selected:", input$selected_remote_path), type = "message", duration = 2)
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$confirm_remote_output, {
+    req(input$remote_output_manual)
+    if (input$remote_output_manual != "") {
+      updateTextInput(session, "scan_output_dir", value = input$remote_output_manual)
+    }
+    removeModal()
+  })
+  observe({
+    # Get all inputs that start with select_dir_
+    dir_inputs <- names(input)
+    dir_inputs <- dir_inputs[grepl("^select_dir_", dir_inputs)]
+    
+    for (input_name in dir_inputs) {
+      local({
+        local_input <- input_name
+        observeEvent(input[[local_input]], {
+          selected_path <- input[[local_input]]
+          updateTextInput(session, "scan_output_dir", value = selected_path)
+          removeModal()
+          showNotification(paste("Selected:", selected_path), type = "message", duration = 2)
+        }, ignoreInit = TRUE)
+      })
+    }
+  })
+  
   observeEvent(input$confirm_remote_output, {
     if (!is.null(input$remote_output_manual) && input$remote_output_manual != "") {
       updateTextInput(session, "scan_output_dir", value = input$remote_output_manual)
@@ -1428,11 +1633,154 @@ server <- function(input, output, session) {
     removeModal()
   })
   
-  observeEvent(input$close_browse_modal, {
-    removeModal()
-  })
+  
   
   # ========== RETRIEVE RESULTS HANDLERS ==========
+  
+  
+  # Download All - downloads entire directory without scanning individual folders
+  observeEvent(input$download_all, {
+    scan_dir <- input$scan_output_dir
+    
+    if (is.null(scan_dir) || scan_dir == "") {
+      showNotification("Please specify a remote output directory first", type = "warning")
+      return()
+    }
+    
+    download_dir <- input$download_location
+    if (is.null(download_dir) || download_dir == "") {
+      showNotification("Please specify a download location first", type = "warning")
+      return()
+    }
+    
+    repo_name <- input$extract_repo_name
+    if (is.null(repo_name) || repo_name == "") {
+      repo_name <- input$github_repo
+    }
+    if (is.null(repo_name) || repo_name == "") {
+      showNotification("Repository name not specified", type = "error")
+      return()
+    }
+    
+    extract_subpath <- trimws(input$extract_path_manual)
+    if (extract_subpath == "") {
+      extract_path <- repo_name
+    } else {
+      extract_path <- paste0(repo_name, "/", extract_subpath)
+    }
+    
+    if (!dir.exists(download_dir)) {
+      dir.create(download_dir, recursive = TRUE)
+    }
+    
+    remote_path <- paste0(input$github_repo, "/", scan_dir)
+    
+    rv$retrieval_log <- paste0(Sys.time(), " - Download All Started\n",
+                               "   Remote: ", remote_path, "\n",
+                               "   Local: ", normalizePath(download_dir, mustWork = FALSE), "\n",
+                               "   Extract path: ", extract_path, "\n\n")
+    
+    showNotification("Downloading all files... This may take a while", 
+                     type = "message", duration = NULL, id = "download_all_progress")
+    
+    tryCatch({
+      find_cmd <- sprintf('find %s -name "*.tar.gz" -o -name "*.tgz"', remote_path)
+      ssh_find <- sprintf('ssh %s@%s "%s"', input$remote_user, input$remote_host, find_cmd)
+      
+      tar_files <- system(ssh_find, intern = TRUE)
+      
+      if (length(tar_files) == 0) {
+        rv$retrieval_log <- paste0(rv$retrieval_log, "✗ No tar.gz files found\n")
+        removeNotification("download_all_progress")
+        showNotification("No tar.gz files found in directory", type = "warning")
+        return()
+      }
+      
+      rv$retrieval_log <- paste0(rv$retrieval_log, "✓ Found ", length(tar_files), " tar.gz files\n\n")
+      
+      for (i in seq_along(tar_files)) {
+        tar_file <- tar_files[i]
+        tar_name <- basename(tar_file)
+        folder_name <- basename(dirname(tar_file))
+        
+        rv$retrieval_log <- paste0(rv$retrieval_log, 
+                                   "[", i, "/", length(tar_files), "] ", 
+                                   folder_name, "/", tar_name, "\n")
+        
+        temp_dir <- file.path(tempdir(), 
+                              paste0("condor_all_", gsub("[^a-zA-Z0-9]", "_", folder_name), 
+                                     "_", format(Sys.time(), "%H%M%S")))
+        if (!dir.exists(temp_dir)) {
+          dir.create(temp_dir, recursive = TRUE)
+        }
+        
+        remote_tar <- sprintf("%s@%s:%s", input$remote_user, input$remote_host, tar_file)
+        local_tar <- file.path(temp_dir, tar_name)
+        
+        rsync_cmd <- sprintf('rsync -avz --progress "%s" "%s"', remote_tar, local_tar)
+        system(rsync_cmd)
+        
+        extract_cmd <- sprintf('tar -xzf "%s" -C "%s"', local_tar, temp_dir)
+        system(extract_cmd)
+        
+        source_path <- file.path(temp_dir, extract_path)
+        
+        if (dir.exists(source_path)) {
+          items_in_source <- list.files(source_path, full.names = TRUE, all.files = TRUE, no.. = TRUE)
+          
+          if (length(items_in_source) == 1 && file.info(items_in_source[1])$isdir) {
+            single_folder_name <- basename(items_in_source[1])
+            if (single_folder_name == folder_name) {
+              items_in_source <- list.files(items_in_source[1], full.names = TRUE, all.files = TRUE, no.. = TRUE)
+            }
+          }
+          
+          if (length(items_in_source) > 0) {
+            target_dir <- file.path(download_dir, folder_name)
+            if (!dir.exists(target_dir)) {
+              dir.create(target_dir, recursive = TRUE)
+            }
+            
+            for (item in items_in_source) {
+              item_name <- basename(item)
+              target_item <- file.path(target_dir, item_name)
+              
+              if (file.info(item)$isdir) {
+                if (dir.exists(target_item)) {
+                  unlink(target_item, recursive = TRUE)
+                }
+                system(sprintf('cp -r "%s" "%s"', item, target_item))
+              } else {
+                file.copy(item, target_item, overwrite = TRUE)
+              }
+            }
+            
+            rv$retrieval_log <- paste0(rv$retrieval_log, 
+                                       "   ✓ ", length(items_in_source), " items → ", target_dir, "\n")
+          }
+        } else {
+          rv$retrieval_log <- paste0(rv$retrieval_log, "   ⚠ Path not found: ", extract_path, "\n")
+        }
+        
+        unlink(temp_dir, recursive = TRUE)
+      }
+      
+      rv$retrieval_log <- paste0(rv$retrieval_log, 
+                                 "\n", strrep("=", 70), "\n",
+                                 "✅ Download All Complete!\n",
+                                 "   Processed: ", length(tar_files), " archives\n",
+                                 "   Location: ", normalizePath(download_dir, mustWork = FALSE), "\n",
+                                 strrep("=", 70), "\n")
+      
+      removeNotification("download_all_progress")
+      showNotification("✓ Download complete!", type = "message", duration = 5)
+      
+    }, error = function(e) {
+      rv$retrieval_log <- paste0(rv$retrieval_log, "\n✗ ERROR: ", e$message, "\n")
+      removeNotification("download_all_progress")
+      showNotification(paste("Error:", e$message), type = "error")
+    })
+  })
   
   observeEvent(input$scan_results, {
     rv$retrieval_log <- paste0(Sys.time(), " - Scanning remote directory...\n")
@@ -1486,7 +1834,9 @@ server <- function(input, output, session) {
       showNotification(paste("Error:", e$message), type = "error")
     })
   })
-  # Delete entire remote output directory
+  
+  
+  # ========== DELETE REMOTE DIRECTORY ==========
   observeEvent(input$delete_remote_dir, {
     remote_dir <- input$scan_output_dir
     
@@ -1498,59 +1848,21 @@ server <- function(input, output, session) {
     full_path <- paste0(input$github_repo, "/", remote_dir)
     
     showModal(modalDialog(
-      title = "⚠️ DANGER: Delete Entire Remote Directory",
-      size = "m",
-      div(
-        div(
-          style = "background: #f8d7da; border: 3px solid #dc3545; border-radius: 6px; padding: 20px; margin: 15px 0;",
-          h4(icon("exclamation-triangle"), " CRITICAL WARNING", 
-             style = "color: #721c24; margin-top: 0;"),
-          p("You are about to permanently delete the ENTIRE remote directory:", 
-            style = "color: #721c24; font-size: 14px; margin: 10px 0;"),
-          div(
-            style = "background: white; padding: 12px; border-radius: 4px; font-family: monospace; font-size: 13px; margin: 10px 0;",
-            strong(full_path)
-          ),
-          p(strong("This will delete ALL subfolders and files inside this directory!"), 
-            style = "color: #dc3545; font-size: 15px; font-weight: bold; margin: 10px 0;"),
-          p("This action is IRREVERSIBLE and CANNOT be undone!", 
-            style = "color: #721c24; font-weight: bold; margin: 5px 0;")
-        ),
-        hr(),
-        div(
-          style = "background: #fff3cd; padding: 15px; border-radius: 4px;",
-          p(icon("info-circle"), strong(" What will be deleted:"),
-            style = "margin: 0 0 10px 0; font-size: 14px;"),
-          tags$ul(
-            style = "margin: 5px 0; padding-left: 25px;",
-            tags$li("All model run folders"),
-            tags$li("All tar.gz archive files"),
-            tags$li("All subdirectories and their contents"),
-            tags$li("Everything under ", code(full_path))
-          )
-        ),
-        br(),
-        p("Type 'DELETE' below to confirm:", style = "font-weight: bold; margin-bottom: 5px;"),
-        textInput("confirm_delete_text", NULL, 
-                  placeholder = "Type DELETE to confirm",
-                  width = "100%")
-      ),
+      title = "Delete Remote Directory",
+      p(strong("Delete entire directory:"), style = "margin-bottom: 10px;"),
+      p(code(full_path), style = "background: #f5f5f5; padding: 10px; border-radius: 4px; font-size: 13px;"),
+      p(strong("This will delete ALL files and folders!"), 
+        style = "color: #dc3545; margin-top: 15px;"),
+      p("This action cannot be undone.", style = "color: #666;"),
       footer = tagList(
-        modalButton("Cancel", icon = icon("times")),
-        actionButton("confirm_delete_remote_dir", "Delete Entire Directory", 
-                     class = "btn-danger", icon = icon("trash-alt"))
+        modalButton("Cancel"),
+        actionButton("confirm_delete_remote_dir", "Yes, Delete", 
+                     class = "btn-danger", icon = icon("trash"))
       )
     ))
   })
   
-  # Execute directory deletion after confirmation
   observeEvent(input$confirm_delete_remote_dir, {
-    if (is.null(input$confirm_delete_text) || 
-        toupper(trimws(input$confirm_delete_text)) != "DELETE") {
-      showNotification("Please type 'DELETE' to confirm", type = "error")
-      return()
-    }
-    
     removeModal()
     
     remote_dir <- input$scan_output_dir
@@ -1558,38 +1870,19 @@ server <- function(input, output, session) {
     
     rv$retrieval_log <- paste0(
       "\n", strrep("=", 70), "\n",
-      Sys.time(), " - DELETING ENTIRE REMOTE DIRECTORY\n",
+      Sys.time(), " - DELETING REMOTE DIRECTORY\n",
       strrep("=", 70), "\n",
-      "Target: ", full_path, "\n",
-      "Remote: ", input$remote_user, "@", input$remote_host, "\n\n"
+      "Target: ", full_path, "\n"
     )
     
     showNotification(
-      paste("Deleting directory:", remote_dir),
+      paste("Deleting:", remote_dir),
       type = "warning",
       duration = NULL,
-      id = "delete_dir_progress"
+      id = "delete_progress"
     )
     
     tryCatch({
-      # First, list what will be deleted
-      rv$retrieval_log <- paste0(rv$retrieval_log, 
-                                 "Checking directory contents...\n")
-      
-      check_cmd <- sprintf("ssh %s@%s 'ls -la %s 2>/dev/null | wc -l'", 
-                           input$remote_user, 
-                           input$remote_host, 
-                           full_path)
-      
-      file_count <- as.numeric(system(check_cmd, intern = TRUE))
-      
-      rv$retrieval_log <- paste0(rv$retrieval_log, 
-                                 "Found ", file_count, " items in directory\n\n")
-      
-      # Execute deletion
-      rv$retrieval_log <- paste0(rv$retrieval_log, 
-                                 "Executing deletion command...\n")
-      
       delete_cmd <- sprintf("ssh %s@%s 'rm -rf %s'", 
                             input$remote_user, 
                             input$remote_host, 
@@ -1598,8 +1891,7 @@ server <- function(input, output, session) {
       result <- system(delete_cmd, intern = FALSE)
       
       if (result == 0) {
-        # Verify deletion
-        verify_cmd <- sprintf("ssh %s@%s '[ ! -d %s ] && echo DELETED || echo STILL_EXISTS'", 
+        verify_cmd <- sprintf("ssh %s@%s '[ ! -d %s ] && echo DELETED || echo EXISTS'", 
                               input$remote_user, 
                               input$remote_host, 
                               full_path)
@@ -1608,64 +1900,31 @@ server <- function(input, output, session) {
         
         if (length(verify_result) > 0 && verify_result[1] == "DELETED") {
           rv$retrieval_log <- paste0(rv$retrieval_log,
-                                     "✓ Successfully deleted directory\n",
-                                     "✓ Verified: directory no longer exists\n\n",
-                                     strrep("=", 70), "\n",
-                                     "DELETION COMPLETED\n",
+                                     "✓ Successfully deleted\n",
                                      strrep("=", 70), "\n\n")
           
-          # Clear folders data since directory is gone
           rv$folders_data <- data.frame()
           rv$selected_folders <- c()
           
-          removeNotification("delete_dir_progress")
-          
-          showNotification(
-            paste0("✓ Successfully deleted: ", remote_dir),
-            type = "message",
-            duration = 5
-          )
+          removeNotification("delete_progress")
+          showNotification("✓ Directory deleted", type = "message", duration = 3)
         } else {
-          rv$retrieval_log <- paste0(rv$retrieval_log,
-                                     "⚠ Deletion command executed but verification failed\n",
-                                     "Directory may still exist\n\n")
-          
-          removeNotification("delete_dir_progress")
-          
-          showNotification(
-            "Deletion may not be complete - please verify manually",
-            type = "warning",
-            duration = 10
-          )
+          rv$retrieval_log <- paste0(rv$retrieval_log, "⚠ Verification failed\n\n")
+          removeNotification("delete_progress")
+          showNotification("Deletion may have failed", type = "warning", duration = 5)
         }
       } else {
-        rv$retrieval_log <- paste0(rv$retrieval_log,
-                                   "✗ Deletion command failed (exit code: ", result, ")\n\n")
-        
-        removeNotification("delete_dir_progress")
-        
-        showNotification(
-          "Failed to delete directory",
-          type = "error",
-          duration = 10
-        )
+        rv$retrieval_log <- paste0(rv$retrieval_log, "✗ Deletion failed\n\n")
+        removeNotification("delete_progress")
+        showNotification("Failed to delete", type = "error", duration = 5)
       }
       
     }, error = function(e) {
-      rv$retrieval_log <- paste0(rv$retrieval_log, 
-                                 "\n❌ ERROR: ", e$message, "\n",
-                                 strrep("=", 70), "\n\n")
-      
-      removeNotification("delete_dir_progress")
-      
-      showNotification(
-        paste("Error during deletion:", e$message), 
-        type = "error", 
-        duration = 10
-      )
+      rv$retrieval_log <- paste0(rv$retrieval_log, "ERROR: ", e$message, "\n\n")
+      removeNotification("delete_progress")
+      showNotification(paste("Error:", e$message), type = "error", duration = 5)
     })
   })
-  
   
   observeEvent(input$refresh_folders, {
     if (nrow(rv$folders_data) > 0) {
@@ -2899,4 +3158,7 @@ server <- function(input, output, session) {
 
 # Run the application
 shinyApp(ui = ui, server = server)
+
+
+
 
