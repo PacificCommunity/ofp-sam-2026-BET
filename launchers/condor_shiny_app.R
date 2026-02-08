@@ -1361,7 +1361,7 @@ server <- function(input, output, session) {
     
     descs <- sapply(names(rv$models), function(nm) {
       m <- rv$models[[nm]]
-      d <- if (!is.null(m$description) && m$description != "") m$description else "설명 없음"
+      d <- if (!is.null(m$description) && m$description != "") m$description else "No description"
       paste0(nm, ": ", d)
     })
     
