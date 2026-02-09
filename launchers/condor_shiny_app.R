@@ -570,7 +570,7 @@ ui <- dashboardPage(
                         choices = c("main", "develop", "develop_lik"),
                         selected = "develop_lik"),
             
-            hr(),
+            shiny::hr(),
             
             h4("Model Selection"),
             
@@ -623,7 +623,7 @@ ui <- dashboardPage(
             textInput("docker_image", "Docker Image:", 
                       value = "ghcr.io/pacificcommunity/bet-2026:v1.2"),
             
-            hr(),
+            shiny::hr(),
             
             numericInput("condor_cpus", "CPUs:", 
                          value = 2, min = 1, max = 32, step = 1),
@@ -677,7 +677,7 @@ ui <- dashboardPage(
               )
             ),
             
-            hr(),
+            shiny::hr(),
             
             div(class = "param-label", "Model Description:"),
             textAreaInput("edit_description", NULL,
@@ -686,7 +686,7 @@ ui <- dashboardPage(
             
             uiOutput("model_editor_ui"),
             
-            hr(),
+            shiny::hr(),
             
             fluidRow(
               column(4,
@@ -738,7 +738,7 @@ ui <- dashboardPage(
             ),
             
             
-            hr(),
+            shiny::hr(),
             DTOutput("jobs_table")
           )
         ),
@@ -849,11 +849,11 @@ ui <- dashboardPage(
               )
             ),
             
-            hr(),
+            shiny::hr(),
             
             uiOutput("folders_selection_ui"),
             
-            hr(),
+            shiny::hr(),
             
             p(strong("Actions for Selected Folders:"), style = "margin-top: 15px; color: #666;"),
             
@@ -970,7 +970,7 @@ ui <- dashboardPage(
             actionButton("reload_config", "Load Models from Script", 
                          icon = icon("sync"), class = "btn-info btn-block"),
             
-            hr(),
+            shiny::hr(),
             
             verbatimTextOutput("config_status")
           ),
@@ -1238,7 +1238,7 @@ server <- function(input, output, session) {
           }
         ),
         
-        hr(),
+        shiny::hr(),
         textInput("download_manual_path", "Or enter path manually:",
                   value = input$download_location,
                   placeholder = "../model"),
@@ -2501,7 +2501,7 @@ server <- function(input, output, session) {
               p("No directories found", style = "text-align: center; color: #999; padding: 20px;")
             }
           ),
-          hr(),
+          shiny::hr(),
           textInput("remote_output_manual", "Or enter path manually:", 
                     value = input$scan_output_dir,
                     placeholder = "e.g., quick/test_run, output/models"),
@@ -3346,7 +3346,7 @@ server <- function(input, output, session) {
           }
         ),
         
-        hr(),
+        shiny::hr(),
         textInput("program_manual_path", "Or enter path manually:",
                   value = input$edit_program_path,
                   placeholder = "mfcl/exe/mfclo64 or ./doitall.sh"),
@@ -3423,7 +3423,7 @@ server <- function(input, output, session) {
           }
         ),
         
-        hr(),
+        shiny::hr(),
         textInput("basedir_manual_path", "Or enter path manually:",
                   value = input$edit_base_dir,
                   placeholder = "mfcl/inputs/2023_rep"),
@@ -3519,7 +3519,7 @@ server <- function(input, output, session) {
           textOutput("mfcl_commands_preview")
       ),
       
-      hr(),
+      shiny::hr(),
       
       fluidRow(
         column(6,
@@ -3650,7 +3650,7 @@ server <- function(input, output, session) {
       title = "Save Model Run Configuration", size = "m",
       textInput("modal_run_name", "Run Name:", placeholder = "e.g., Sensitivity Analysis - February 2026"),
       textAreaInput("modal_run_description", "Description:", placeholder = "Why are you running these models?", rows = 4),
-      hr(),
+      shiny::hr(),
       p(strong("Current Models:"), paste(names(rv$models), collapse = ", ")),
       p(strong("Base Config:"), rv$base_config_name),
       footer = tagList(
@@ -4607,7 +4607,7 @@ server <- function(input, output, session) {
           )
         )
       ),
-      hr(),
+      shiny::hr(),
       p(strong("Warning:"), "This will remove the jobs from the Condor queue.", 
         style = "color: #d9534f; margin-top: 15px;"),
       footer = tagList(
