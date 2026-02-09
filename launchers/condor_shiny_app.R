@@ -2659,12 +2659,14 @@ server <- function(input, output, session) {
             target_item <- file.path(target_dir, item_name)
             
             if (file.info(item)$isdir) {
-              if (dir.exists(target_item)) {
-                unlink(target_item, recursive = TRUE)
+              if (!dir.exists(target_item)) {
+                dir.create(target_item, recursive = TRUE)
               }
-              system(sprintf('cp -r %s %s', shQuote(item), shQuote(target_item)))
+              # Merge contents without overwriting existing files
+              system(sprintf('rsync -a --ignore-existing %s %s', 
+                             shQuote(file.path(item, "")), shQuote(file.path(target_item, ""))))
             } else {
-              file.copy(item, target_item, overwrite = TRUE)
+              file.copy(item, target_item, overwrite = FALSE)
             }
           }
           
