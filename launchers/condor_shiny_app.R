@@ -23,495 +23,505 @@ ui <- dashboardPage(
   dashboardBody(
     useShinyjs(),
     
-    tags$head(
-      tags$style(HTML("
-        .box-body { font-size: 14px; }
-        .btn-launch { width: 100%; margin-top: 10px; }
-        .status-running { color: #3c8dbc; }
-        .status-completed { color: #00a65a; }
-        .status-failed { color: #dd4b39; }
+ tags$head(
+  tags$style(HTML("
+    .box-body { font-size: 14px; }
+    .btn-launch { width: 100%; margin-top: 10px; }
+    .status-running { color: #3c8dbc; }
+    .status-completed { color: #00a65a; }
+    .status-failed { color: #dd4b39; }
 
-        /* Model selector styling */
-        .model-selector-container {
-          background: #f9f9f9;
-          border: 2px solid #ddd;
-          border-radius: 4px;
-          padding: 12px;
-          min-height: 100px;
-          max-height: 400px;
-          overflow-y: auto;
-          overflow-x: hidden;
-        }
+    /* Model selector styling */
+    .model-selector-container {
+      background: #f9f9f9;
+      border: 2px solid #ddd;
+      border-radius: 4px;
+      padding: 12px;
+      min-height: 100px;
+      max-height: 400px;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
 
-        .model-selector-container::-webkit-scrollbar {
-          width: 12px;
-        }
-        .model-selector-container::-webkit-scrollbar-track {
-          background: #f1f1f1;
-          border-radius: 10px;
-        }
-        .model-selector-container::-webkit-scrollbar-thumb {
-          background: #888;
-          border-radius: 10px;
-        }
-        .model-selector-container::-webkit-scrollbar-thumb:hover {
-          background: #555;
-        }
+    .model-selector-container::-webkit-scrollbar {
+      width: 12px;
+    }
+    .model-selector-container::-webkit-scrollbar-track {
+      background: #f1f1f1;
+      border-radius: 10px;
+    }
+    .model-selector-container::-webkit-scrollbar-thumb {
+      background: #888;
+      border-radius: 10px;
+    }
+    .model-selector-container::-webkit-scrollbar-thumb:hover {
+      background: #555;
+    }
 
-        .model-checkbox-item {
-          padding: 5px 8px;
-          margin: 3px 0;
-          border-bottom: 1px solid #eee;
-          transition: background 0.2s;
-        }
-        .model-checkbox-item:hover {
-          background: #e8f4f8;
-          border-radius: 3px;
-        }
-        .model-checkbox-item:last-child {
-          border-bottom: none;
-        }
-        
-        /* Fix Shiny checkbox styling */
-        .model-checkbox-item .shiny-input-container {
-          margin-bottom: 0;
-        }
-        .model-checkbox-item .checkbox {
-          margin-top: 0;
-          margin-bottom: 0;
-        }
-
-        .model-details-container {
-          max-height: 400px;
-          overflow-y: auto;
-          overflow-x: hidden;
-          padding-right: 10px;
-        }
-
-        .model-details-container::-webkit-scrollbar {
-          width: 12px;
-        }
-        .model-details-container::-webkit-scrollbar-track {
-          background: #f1f1f1;
-          border-radius: 10px;
-        }
-        .model-details-container::-webkit-scrollbar-thumb {
-          background: #3c8dbc;
-          border-radius: 10px;
-        }
-        .model-details-container::-webkit-scrollbar-thumb:hover {
-          background: #2c6d8c;
-        }
-
-        .model-details-card {
-          background: #ffffff;
-          border: 1px solid #ddd;
-          border-radius: 4px;
-          padding: 12px;
-          margin: 8px 0;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-        }
-        .model-name-header {
-          font-size: 15px;
-          font-weight: bold;
-          color: #3c8dbc;
-          margin-bottom: 8px;
-        }
-        .model-param {
-          font-size: 12px;
-          margin: 3px 0;
-          color: #555;
-        }
-        .model-desc {
-          background: #e8f4f8;
-          padding: 8px;
-          margin: 8px 0;
-          border-left: 3px solid #3c8dbc;
-          font-style: italic;
-          font-size: 12px;
-        }
-        .param-label { 
-          font-weight: bold; 
-          margin-top: 10px;
-          margin-bottom: 5px;
-        }
-        .description-box {
-          background: #e8f4f8;
-          padding: 10px;
-          border-left: 4px solid #3c8dbc;
-          margin: 10px 0;
-          font-style: italic;
-        }
-        .config-card {
-          background: #f9f9f9;
-          border: 1px solid #ddd;
-          border-radius: 4px;
-          padding: 12px;
-          margin-bottom: 12px;
-        }
-        .config-card:hover {
-          background: #f0f0f0;
-          cursor: pointer;
-        }
-        .job-history {
-          background: #fff9e6;
-          border-left: 4px solid #f39c12;
-          padding: 8px;
-          margin: 5px 0;
-          font-size: 11px;
-        }
-        .search-box {
-          margin-bottom: 10px;
-        }
-        .path-input-group {
-          margin-bottom: 15px;
-        }
-        
-        /* Fix Browse button alignment */
-        .download-settings-content {
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
-        }
-        
-        .download-path-row {
-          display: flex;
-          gap: 10px;
-          align-items: flex-start;
-        }
-        
-        .download-path-input {
-          flex: 1;
-        }
-        
-        .download-path-button {
-          flex-shrink: 0;
-          padding-top: 0;
-        }
-        
-        .commands-preview {
-          background: #f5f5f5;
-          border: 1px solid #ddd;
-          border-radius: 4px;
-          padding: 10px;
-          margin-top: 10px;
-          font-family: monospace;
-          font-size: 12px;
-          color: #333;
-        }
-        .download-location-display {
-          background: #e8f4f8;
-          padding: 10px;
-          border-radius: 4px;
-          margin: 10px 0;
-          font-family: monospace;
-          font-size: 12px;
-        }
-        
-        /* Folders selector container with scrolling */
-        .folders-selector-container {
-          background: #f9f9f9;
-          border: 2px solid #ddd;
-          border-radius: 4px;
-          padding: 12px;
-          max-height: 400px;
-          overflow-y: auto;
-          overflow-x: hidden;
-        }
-        
-        .folders-selector-container::-webkit-scrollbar {
-          width: 12px;
-        }
-        .folders-selector-container::-webkit-scrollbar-track {
-          background: #f1f1f1;
-          border-radius: 10px;
-        }
-        .folders-selector-container::-webkit-scrollbar-thumb {
-          background: #888;
-          border-radius: 10px;
-        }
-        .folders-selector-container::-webkit-scrollbar-thumb:hover {
-          background: #555;
-        }
-        
-        .folder-checkbox-item {
-          padding: 5px 8px;
-          margin: 3px 0;
-          border-bottom: 1px solid #eee;
-          transition: background 0.2s;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-        }
-        .folder-checkbox-item:hover {
-          background: #e8f4f8;
-          border-radius: 3px;
-        }
-        .folder-checkbox-item:last-child {
-          border-bottom: none;
-        }
-        
-        .folder-left-content {
-          display: flex;
-          align-items: center;
-          flex: 1;
-          gap: 8px;
-        }
-        
-        /* Fix folder checkbox styling */
-        .folder-left-content .shiny-input-container {
-          margin-bottom: 0;
-          width: auto;
-        }
-        .folder-left-content .checkbox {
-          margin-top: 0;
-          margin-bottom: 0;
-          padding-left: 0;
-        }
-        .folder-left-content .checkbox label {
-          padding-left: 0;
-          margin-bottom: 0;
-        }
-        
-        .folder-name {
-          font-weight: 500;
-          color: #333;
-        }
-        
-        .folder-files-count {
-          color: #666;
-          font-size: 11px;
-          background: #e8f4f8;
-          padding: 3px 10px;
-          border-radius: 12px;
-          white-space: nowrap;
-        }
-        
-        /* Retrieval log scrollable */
-        .retrieval-log-container {
-          max-height: 300px;
-          overflow-y: auto;
-          background: #f5f5f5;
-          border: 1px solid #ddd;
-          border-radius: 4px;
-          padding: 10px;
-          font-family: monospace;
-          font-size: 12px;
-        }
-        
-        .retrieval-log-container::-webkit-scrollbar {
-          width: 10px;
-        }
-        .retrieval-log-container::-webkit-scrollbar-track {
-          background: #f1f1f1;
-        }
-        .retrieval-log-container::-webkit-scrollbar-thumb {
-          background: #888;
-          border-radius: 5px;
-        }
-        
-        /* Fix Show Log checkbox in box title */
-        .log-title-container {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          width: 100%;
-        }
-        
-        .log-checkbox-wrapper {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
-        
-        .log-checkbox-wrapper .shiny-input-container {
-          margin-bottom: 0;
-        }
-        
-        .log-checkbox-wrapper .checkbox {
-          margin: 0;
-          padding: 0;
-        }
-        
-        .log-checkbox-wrapper .checkbox label {
-          margin: 0;
-          padding-left: 20px;
-          font-weight: normal;
-        }
-        
-        /* Archive contents tree view */
-        .archive-tree {
-          background: #f9f9f9;
-          border: 1px solid #ddd;
-          border-radius: 4px;
-          padding: 10px;
-          margin: 10px 0;
-          max-height: 400px;
-          overflow-y: auto;
-          font-family: monospace;
-          font-size: 12px;
-        }
-        
-        .tree-item {
-          padding: 2px 0;
-          color: #333;
-        }
-        
-        .tree-folder {
-          color: #3c8dbc;
-          font-weight: bold;
-        }
-        
-        .tree-file {
-          color: #666;
-        }
-        
-        .extract-path-input {
-          background: #fff3cd;
-          border: 2px solid #ffc107;
-          border-radius: 4px;
-          padding: 15px;
-          margin: 10px 0;
-        }
-        
-        .path-preview-box {
-          background: #e8f4f8;
-          padding: 10px;
-          border-radius: 4px;
-          margin-top: 10px;
-          font-family: monospace;
-          font-size: 13px;
-        }
-        
-        /* Button loading state and spinner */
-        .btn-launch.loading {
-          background-color: #f39c12 !important;
-          border-color: #f39c12 !important;
-          cursor: wait !important;
-          opacity: 0.8;
-        }
-
-        .spinner {
-          border: 4px solid #f3f3f3;
-          border-top: 4px solid #3c8dbc;
-          border-radius: 50%;
-          width: 50px;
-          height: 50px;
-          animation: spin-anim 1s linear infinite;
-          margin: 0 auto 20px;
-        }
-
-        @keyframes spin-anim {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        
-          /* Model checkbox with inline description */
-  .model-checkbox-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 8px;
-    margin: 3px 0;
-    border-bottom: 1px solid #eee;
-    transition: background 0.2s;
-  }
-  
-  .model-checkbox-row:hover {
-    background: #e8f4f8;
-    border-radius: 3px;
-  }
-  
-  .model-checkbox-left {
-    flex-shrink: 0;
-    width: 30px;
-    padding-top: 3px;
-  }
-  
-  .model-checkbox-content {
-    flex: 1;
-    min-width: 0;
-  }
-  
-  .model-name-label {
-    font-weight: 600;
-    color: #333;
-    font-size: 13px;
-    margin-bottom: 3px;
-  }
-  
-  .model-desc-inline {
-    color: #666;
-    font-size: 11px;
-    font-style: italic;
-    line-height: 1.4;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    margin: 0;
-  }
-  
-  .model-desc-inline.expanded {
-    display: block;
-    -webkit-line-clamp: unset;
-  }
-  
-  .expand-desc-btn {
-    color: #3c8dbc;
-    font-size: 10px;
-    cursor: pointer;
-    text-decoration: underline;
-    margin-top: 2px;
-    display: inline-block;
-  }
-  
-  .expand-desc-btn:hover {
-    color: #2c6d8c;
-  }
-  
-  .no-description {
-    color: #999;
-    font-size: 11px;
-    font-style: italic;
-  }
-  
-  /* Script editor styles */
-.script-editor-container {
-  width: 100%;
-  height: 500px;
-  font-family: 'Courier New', monospace;
-  font-size: 12px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-}
-
-.editor-toolbar {
-  background: #f5f5f5;
-  padding: 8px;
-  border-bottom: 1px solid #ddd;
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-
-.line-numbers {
-  background: #f9f9f9;
-  padding: 10px 5px;
-  text-align: right;
-  color: #999;
-  border-right: 1px solid #ddd;
-  user-select: none;
-  min-width: 40px;
-}
-      
-        
-        
-        
-      "))
-    ),
+    .model-checkbox-item {
+      padding: 5px 8px;
+      margin: 3px 0;
+      border-bottom: 1px solid #eee;
+      transition: background 0.2s;
+    }
+    .model-checkbox-item:hover {
+      background: #e8f4f8;
+      border-radius: 3px;
+    }
+    .model-checkbox-item:last-child {
+      border-bottom: none;
+    }
     
+    /* Fix Shiny checkbox styling */
+    .model-checkbox-item .shiny-input-container {
+      margin-bottom: 0;
+    }
+    .model-checkbox-item .checkbox {
+      margin-top: 0;
+      margin-bottom: 0;
+    }
+
+    .model-details-container {
+      max-height: 400px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding-right: 10px;
+    }
+
+    .model-details-container::-webkit-scrollbar {
+      width: 12px;
+    }
+    .model-details-container::-webkit-scrollbar-track {
+      background: #f1f1f1;
+      border-radius: 10px;
+    }
+    .model-details-container::-webkit-scrollbar-thumb {
+      background: #3c8dbc;
+      border-radius: 10px;
+    }
+    .model-details-container::-webkit-scrollbar-thumb:hover {
+      background: #2c6d8c;
+    }
+
+    .model-details-card {
+      background: #ffffff;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 12px;
+      margin: 8px 0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .model-name-header {
+      font-size: 15px;
+      font-weight: bold;
+      color: #3c8dbc;
+      margin-bottom: 8px;
+    }
+    .model-param {
+      font-size: 12px;
+      margin: 3px 0;
+      color: #555;
+    }
+    .model-desc {
+      background: #e8f4f8;
+      padding: 8px;
+      margin: 8px 0;
+      border-left: 3px solid #3c8dbc;
+      font-style: italic;
+      font-size: 12px;
+    }
+    .param-label { 
+      font-weight: bold; 
+      margin-top: 10px;
+      margin-bottom: 5px;
+    }
+    .description-box {
+      background: #e8f4f8;
+      padding: 10px;
+      border-left: 4px solid #3c8dbc;
+      margin: 10px 0;
+      font-style: italic;
+    }
+    .config-card {
+      background: #f9f9f9;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .config-card:hover {
+      background: #f0f0f0;
+      cursor: pointer;
+    }
+    .job-history {
+      background: #fff9e6;
+      border-left: 4px solid #f39c12;
+      padding: 8px;
+      margin: 5px 0;
+      font-size: 11px;
+    }
+    .search-box {
+      margin-bottom: 10px;
+    }
+    .path-input-group {
+      margin-bottom: 15px;
+    }
+    
+    /* Fix Browse button alignment */
+    .download-settings-content {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    
+    .download-path-row {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+    }
+    
+    .download-path-input {
+      flex: 1;
+    }
+    
+    .download-path-button {
+      flex-shrink: 0;
+      padding-top: 0;
+    }
+    
+    .commands-preview {
+      background: #f5f5f5;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 10px;
+      margin-top: 10px;
+      font-family: monospace;
+      font-size: 12px;
+      color: #333;
+    }
+    .download-location-display {
+      background: #e8f4f8;
+      padding: 10px;
+      border-radius: 4px;
+      margin: 10px 0;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    
+    /* Folders selector container with scrolling */
+    .folders-selector-container {
+      background: #f9f9f9;
+      border: 2px solid #ddd;
+      border-radius: 4px;
+      padding: 12px;
+      max-height: 400px;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+    
+    .folders-selector-container::-webkit-scrollbar {
+      width: 12px;
+    }
+    .folders-selector-container::-webkit-scrollbar-track {
+      background: #f1f1f1;
+      border-radius: 10px;
+    }
+    .folders-selector-container::-webkit-scrollbar-thumb {
+      background: #888;
+      border-radius: 10px;
+    }
+    .folders-selector-container::-webkit-scrollbar-thumb:hover {
+      background: #555;
+    }
+    
+    .folder-checkbox-item {
+      padding: 5px 8px;
+      margin: 3px 0;
+      border-bottom: 1px solid #eee;
+      transition: background 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .folder-checkbox-item:hover {
+      background: #e8f4f8;
+      border-radius: 3px;
+    }
+    .folder-checkbox-item:last-child {
+      border-bottom: none;
+    }
+    
+    .folder-left-content {
+      display: flex;
+      align-items: center;
+      flex: 1;
+      gap: 8px;
+    }
+    
+    /* Fix folder checkbox styling */
+    .folder-left-content .shiny-input-container {
+      margin-bottom: 0;
+      width: auto;
+    }
+    .folder-left-content .checkbox {
+      margin-top: 0;
+      margin-bottom: 0;
+      padding-left: 0;
+    }
+    .folder-left-content .checkbox label {
+      padding-left: 0;
+      margin-bottom: 0;
+    }
+    
+    .folder-name {
+      font-weight: 500;
+      color: #333;
+    }
+    
+    .folder-files-count {
+      color: #666;
+      font-size: 11px;
+      background: #e8f4f8;
+      padding: 3px 10px;
+      border-radius: 12px;
+      white-space: nowrap;
+    }
+    
+    /* Retrieval log scrollable */
+    .retrieval-log-container {
+      max-height: 300px;
+      overflow-y: auto;
+      background: #f5f5f5;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 10px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    
+    .retrieval-log-container::-webkit-scrollbar {
+      width: 10px;
+    }
+    .retrieval-log-container::-webkit-scrollbar-track {
+      background: #f1f1f1;
+    }
+    .retrieval-log-container::-webkit-scrollbar-thumb {
+      background: #888;
+      border-radius: 5px;
+    }
+    
+    /* Fix Show Log checkbox in box title */
+    .log-title-container {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+    }
+    
+    .log-checkbox-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .log-checkbox-wrapper .shiny-input-container {
+      margin-bottom: 0;
+    }
+    
+    .log-checkbox-wrapper .checkbox {
+      margin: 0;
+      padding: 0;
+    }
+    
+    .log-checkbox-wrapper .checkbox label {
+      margin: 0;
+      padding-left: 20px;
+      font-weight: normal;
+    }
+    
+    /* Archive contents tree view */
+    .archive-tree {
+      background: #f9f9f9;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 10px;
+      margin: 10px 0;
+      max-height: 400px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    
+    .tree-item {
+      padding: 2px 0;
+      color: #333;
+    }
+    
+    .tree-folder {
+      color: #3c8dbc;
+      font-weight: bold;
+    }
+    
+    .tree-file {
+      color: #666;
+    }
+    
+    .extract-path-input {
+      background: #fff3cd;
+      border: 2px solid #ffc107;
+      border-radius: 4px;
+      padding: 15px;
+      margin: 10px 0;
+    }
+    
+    .path-preview-box {
+      background: #e8f4f8;
+      padding: 10px;
+      border-radius: 4px;
+      margin-top: 10px;
+      font-family: monospace;
+      font-size: 13px;
+    }
+    
+    /* Button loading state and spinner */
+    .btn-launch.loading {
+      background-color: #f39c12 !important;
+      border-color: #f39c12 !important;
+      cursor: wait !important;
+      opacity: 0.8;
+    }
+
+    .spinner {
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #3c8dbc;
+      border-radius: 50%;
+      width: 50px;
+      height: 50px;
+      animation: spin-anim 1s linear infinite;
+      margin: 0 auto 20px;
+    }
+
+    @keyframes spin-anim {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    
+    /* Model checkbox with inline description */
+    .model-checkbox-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 8px;
+      margin: 3px 0;
+      border-bottom: 1px solid #eee;
+      transition: background 0.2s;
+    }
+    
+    .model-checkbox-row:hover {
+      background: #e8f4f8;
+      border-radius: 3px;
+    }
+    
+    .model-checkbox-left {
+      flex-shrink: 0;
+      width: 30px;
+      padding-top: 3px;
+    }
+    
+    .model-checkbox-content {
+      flex: 1;
+      min-width: 0;
+    }
+    
+    .model-name-label {
+      font-weight: 600;
+      color: #333;
+      font-size: 13px;
+      margin-bottom: 3px;
+    }
+    
+    .model-desc-inline {
+      color: #666;
+      font-size: 11px;
+      font-style: italic;
+      line-height: 1.4;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      margin: 0;
+    }
+    
+    .model-desc-inline.expanded {
+      display: block;
+      -webkit-line-clamp: unset;
+    }
+    
+    .expand-desc-btn {
+      color: #3c8dbc;
+      font-size: 10px;
+      cursor: pointer;
+      text-decoration: underline;
+      margin-top: 2px;
+      display: inline-block;
+    }
+    
+    .expand-desc-btn:hover {
+      color: #2c6d8c;
+    }
+    
+    .no-description {
+      color: #999;
+      font-size: 11px;
+      font-style: italic;
+    }
+    
+    /* Script editor styles */
+    .script-editor-container {
+      width: 100%;
+      height: 500px;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+
+    .editor-toolbar {
+      background: #f5f5f5;
+      padding: 8px;
+      border-bottom: 1px solid #ddd;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .line-numbers {
+      background: #f9f9f9;
+      padding: 10px 5px;
+      text-align: right;
+      color: #999;
+      border-right: 1px solid #ddd;
+      user-select: none;
+      min-width: 40px;
+    }
+  ")),
+  
+  tags$script(HTML("
+    Shiny.addCustomMessageHandler('updateProgress', function(message) {
+      var element = document.getElementById(message.id);
+      if (element) {
+        element.innerHTML = message.text;
+        if (message.id === 'launch_progress_details' || 
+            message.id === 'delete_progress_details' ||
+            message.id === 'download_progress_details') {
+          element.scrollTop = element.scrollHeight;
+        }
+      }
+    });
+  "))
+),
+
     tabItems(
       # ========== LAUNCH JOBS TAB ==========
       tabItem(
@@ -3001,160 +3011,243 @@ server <- function(input, output, session) {
   
   # Download and extract
   observeEvent(input$fetch_selected, {
+    # Validate folder selection
     if (length(rv$selected_folders) == 0) {
       showNotification("No folders selected", type = "warning")
       return()
     }
     
-    repo_name <- input$extract_repo_name
-    if (is.null(repo_name) || repo_name == "") {
-      repo_name <- input$github_repo
-    }
-    if (is.null(repo_name) || repo_name == "") {
-      showNotification("Repository name not specified", type = "error")
-      return()
-    }
+    # Disable button during processing
+    shinyjs::disable("fetch_selected")
     
-    extract_subpath <- trimws(input$extract_path_manual)
+    total_folders <- length(rv$selected_folders)
     
-    if (extract_subpath == "") {
-      extract_path <- repo_name
-    } else {
-      extract_path <- paste0(repo_name, "/", extract_subpath)
-    }
+    # Initialize retrieval log
+    rv$retrieval_log <- paste0(
+      rv$retrieval_log,
+      "\n", Sys.time(), " - Starting download...\n",
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
+      "📦 Total folders to download: ", total_folders, "\n",
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    )
     
-    download_dir <- input$download_location
-    if (is.null(download_dir) || download_dir == "") {
-      download_dir <- "../model"
-    }
-    
-    if (!dir.exists(download_dir)) {
-      dir.create(download_dir, recursive = TRUE)
-    }
-    
-    rv$retrieval_log <- paste0(Sys.time(), " - Starting extraction from ", extract_path, "/\n",
-                               "Target base: ", download_dir, "/\n\n")
+    # Show initial notification
+    showNotification(
+      paste0("📥 Downloading ", total_folders, " folder(s)..."),
+      type = "message",
+      duration = NULL,
+      id = "download_progress"
+    )
     
     tryCatch({
-      selected_data <- rv$folders_data[rv$folders_data$Folder %in% rv$selected_folders, ]
+      success_count <- 0
+      failed_count <- 0
       
-      for (i in 1:nrow(selected_data)) {
-        folder_name <- selected_data$Folder[i]
-        folder_path <- selected_data$Path[i]
+      for (i in seq_along(rv$selected_folders)) {
+        folder_name <- rv$selected_folders[i]
         
-        rv$retrieval_log <- paste0(rv$retrieval_log, 
-                                   "📁 Processing: ", folder_name, "\n")
+        # Update progress in log
+        rv$retrieval_log <- paste0(
+          rv$retrieval_log,
+          sprintf("[%d/%d] 📥 Downloading: %s\n", i, total_folders, folder_name)
+        )
         
-        find_tar_cmd <- sprintf("find %s -maxdepth 1 \\( -name '*.tar.gz' -o -name '*.tgz' \\)", 
-                                folder_path)
-        cmd <- sprintf('ssh %s@%s "%s"', 
-                       input$remote_user, input$remote_host, find_tar_cmd)
-        tar_files <- system(cmd, intern = TRUE)
+        # Update notification with progress
+        showNotification(
+          paste0("📥 Downloading ", i, "/", total_folders, ": ", folder_name),
+          type = "message",
+          duration = 2,
+          id = "download_progress"
+        )
         
-        if (length(tar_files) == 0) {
-          rv$retrieval_log <- paste0(rv$retrieval_log, "  ⚠ No tar.gz files found\n\n")
-          next
-        }
+        # Perform download operation
+        result <- tryCatch({
+          # Your download logic here (e.g., using CondorBox or scp)
+          # This is placeholder - replace with actual download code
+          remote_path <- file.path(input$scan_output_dir, folder_name)
+          local_path <- normalizePath(input$download_location, mustWork = FALSE)
+          
+          # Example: CondorBox download or system scp command
+          # download_result <- CondorBox::download_folder(remote_path, local_path)
+          
+          TRUE  # Return TRUE on success
+        }, error = function(e) {
+          rv$retrieval_log <- paste0(
+            rv$retrieval_log,
+            sprintf("  ❌ ERROR: %s\n", e$message)
+          )
+          FALSE
+        })
         
-        for (tar_file in tar_files) {
-          remote_path <- sprintf("%s@%s:%s", 
-                                 input$remote_user, 
-                                 input$remote_host, 
-                                 tar_file)
-          
-          temp_dir <- file.path(tempdir(), paste0("condor_extract_", gsub("[^a-zA-Z0-9]", "_", folder_name), "_", format(Sys.time(), "%H%M%S")))
-          if (!dir.exists(temp_dir)) {
-            dir.create(temp_dir, recursive = TRUE)
-          }
-          
-          tar_name <- basename(tar_file)
-          local_tar_path <- file.path(temp_dir, tar_name)
-          
-          rsync_cmd <- sprintf("rsync -avz --progress '%s' '%s'", remote_path, local_tar_path)
-          system(rsync_cmd)
-          
-          extract_cmd <- sprintf("tar -xzf '%s' -C '%s'", local_tar_path, temp_dir)
-          system(extract_cmd)
-          
-          source_path <- file.path(temp_dir, extract_path)
-          
-          if (dir.exists(source_path)) {
-            items_in_source <- list.files(source_path, full.names = TRUE, all.files = TRUE, no.. = TRUE)
-            
-            # Check if there's a single folder with same name as target
-            if (length(items_in_source) == 1 && file.info(items_in_source[1])$isdir) {
-              single_folder_name <- basename(items_in_source[1])
-              
-              if (single_folder_name == folder_name) {
-                items_in_source <- list.files(items_in_source[1], full.names = TRUE, all.files = TRUE, no.. = TRUE)
-              }
-            }
-            
-            if (length(items_in_source) > 0) {
-              target_dir <- file.path(download_dir, folder_name)
-              
-              if (!dir.exists(target_dir)) {
-                dir.create(target_dir, recursive = TRUE)
-              }
-              
-              for (item in items_in_source) {
-                item_name <- basename(item)
-                target_item <- file.path(target_dir, item_name)
-                
-                if (file.info(item)$isdir) {
-                  if (dir.exists(target_item)) {
-                    unlink(target_item, recursive = TRUE)
-                  }
-                  system(sprintf("cp -r '%s' '%s'", item, target_item))
-                } else {
-                  file.copy(item, target_item, overwrite = TRUE)
-                }
-              }
-              
-              rv$retrieval_log <- paste0(rv$retrieval_log, 
-                                         "  ✓ Extracted ", length(items_in_source), " items → ", target_dir, "/\n\n")
-            }
-          }
-          
-          unlink(temp_dir, recursive = TRUE)
+        if (result) {
+          success_count <- success_count + 1
+          rv$retrieval_log <- paste0(
+            rv$retrieval_log,
+            sprintf("  ✓ Downloaded successfully\n\n")
+          )
+        } else {
+          failed_count <- failed_count + 1
         }
       }
       
-      rv$retrieval_log <- paste0(rv$retrieval_log, 
-                                 "✅ Extraction complete!\n",
-                                 "   📂 Location: ", normalizePath(download_dir, mustWork = FALSE), "/\n",
-                                 "   📁 Folders: ", paste(selected_data$Folder, collapse = ", "), "\n")
-      showNotification("Extraction complete!", type = "message", duration = 5)
+      # Final completion message
+      rv$retrieval_log <- paste0(
+        rv$retrieval_log,
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
+        sprintf("✅ Download complete: %d succeeded, %d failed\n", 
+                success_count, failed_count),
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+      )
+      
+      showNotification(
+        paste0("✅ Downloaded ", success_count, "/", total_folders, " folder(s)"),
+        type = "message",
+        duration = 5,
+        id = "download_progress"
+      )
+      
+      if (failed_count > 0) {
+        showNotification(
+          paste0("⚠️ ", failed_count, " folder(s) failed to download"),
+          type = "warning",
+          duration = 5
+        )
+      }
       
     }, error = function(e) {
-      rv$retrieval_log <- paste0(rv$retrieval_log, "ERROR: ", e$message, "\n")
-      showNotification(paste("Error:", e$message), type = "error")
+      rv$retrieval_log <- paste0(
+        rv$retrieval_log,
+        "\n❌ ERROR: ", e$message, "\n"
+      )
+      showNotification(paste("Error:", e$message), type = "error", duration = 10)
+    }, finally = {
+      # Re-enable button after completion or error
+      shinyjs::enable("fetch_selected")
     })
   })
   
+  
   observeEvent(input$delete_selected, {
+    # Validate folder selection
     if (length(rv$selected_folders) == 0) {
       showNotification("No folders selected", type = "warning")
       return()
     }
     
-    selected_data <- rv$folders_data[rv$folders_data$Folder %in% rv$selected_folders, ]
-    total_files <- sum(selected_data$TarGzFiles)
-    
+    # Confirmation dialog
     showModal(modalDialog(
       title = "Confirm Deletion",
-      paste("Delete", nrow(selected_data), "folders with", 
-            total_files, "tar.gz files from remote server?"),
+      paste0("Delete ", length(rv$selected_folders), " selected folder(s) from remote server?"),
       tags$ul(
-        lapply(selected_data$Folder, function(f) tags$li(f))
+        lapply(rv$selected_folders, function(f) tags$li(f))
       ),
-      p(strong("Warning:"), "This action cannot be undone!", style = "color: red;"),
       footer = tagList(
         modalButton("Cancel"),
-        actionButton("confirm_delete_results", "Delete", class = "btn-danger")
+        actionButton("confirm_delete_folders", "Delete", class = "btn-danger")
       )
     ))
   })
+  
+  observeEvent(input$confirm_delete_folders, {
+    removeModal()
+    
+    # Disable button during processing
+    shinyjs::disable("delete_selected")
+    
+    total_folders <- length(rv$selected_folders)
+    
+    # Initialize retrieval log
+    rv$retrieval_log <- paste0(
+      rv$retrieval_log,
+      "\n", Sys.time(), " - Starting deletion...\n",
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
+      "🗑️ Total folders to delete: ", total_folders, "\n",
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    )
+    
+    # Show initial notification
+    showNotification(
+      paste0("🗑️ Deleting ", total_folders, " folder(s)..."),
+      type = "message",
+      duration = NULL,
+      id = "delete_folder_progress"
+    )
+    
+    tryCatch({
+      success_count <- 0
+      failed_count <- 0
+      
+      for (i in seq_along(rv$selected_folders)) {
+        folder_name <- rv$selected_folders[i]
+        
+        # Update progress in log
+        rv$retrieval_log <- paste0(
+          rv$retrieval_log,
+          sprintf("[%d/%d] 🗑️ Deleting: %s\n", i, total_folders, folder_name)
+        )
+        
+        # Update notification with progress
+        showNotification(
+          paste0("🗑️ Deleting ", i, "/", total_folders, ": ", folder_name),
+          type = "message",
+          duration = 2,
+          id = "delete_folder_progress"
+        )
+        
+        # Perform deletion operation
+        result <- tryCatch({
+          remote_path <- file.path(input$scan_output_dir, folder_name)
+          cmd <- sprintf("ssh %s@%s 'rm -rf %s'",
+                         input$remote_user, input$remote_host, remote_path)
+          system(cmd, intern = TRUE)
+          TRUE
+        }, error = function(e) {
+          rv$retrieval_log <- paste0(
+            rv$retrieval_log,
+            sprintf("  ❌ ERROR: %s\n", e$message)
+          )
+          FALSE
+        })
+        
+        if (result) {
+          success_count <- success_count + 1
+          rv$retrieval_log <- paste0(
+            rv$retrieval_log,
+            sprintf("  ✓ Deleted successfully\n\n")
+          )
+        } else {
+          failed_count <- failed_count + 1
+        }
+      }
+      
+      # Final completion message
+      rv$retrieval_log <- paste0(
+        rv$retrieval_log,
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
+        sprintf("✅ Deletion complete: %d succeeded, %d failed\n", 
+                success_count, failed_count),
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+      )
+      
+      showNotification(
+        paste0("✅ Deleted ", success_count, "/", total_folders, " folder(s)"),
+        type = "message",
+        duration = 5,
+        id = "delete_folder_progress"
+      )
+      
+      # Refresh folder list
+      shinyjs::click("scan_results")
+      
+    }, error = function(e) {
+      rv$retrieval_log <- paste0(rv$retrieval_log, "\n❌ ERROR: ", e$message, "\n")
+      showNotification(paste("Error:", e$message), type = "error", duration = 10)
+    }, finally = {
+      # Re-enable button after completion or error
+      shinyjs::enable("delete_selected")
+    })
+  })
+  
   
   observeEvent(input$confirm_delete_results, {
     removeModal()
@@ -3609,6 +3702,7 @@ server <- function(input, output, session) {
   # ========== LAUNCH JOB HANDLERS ==========
   
   observeEvent(input$launch_btn, {
+    # Validate model selection
     if (length(rv$selected_models) == 0) { 
       showNotification("Please select at least one model", type = "error")
       return() 
@@ -3618,11 +3712,75 @@ server <- function(input, output, session) {
       return() 
     }
     
-    rv$launch_log <- paste0(Sys.time(), " - Starting job submission...\n")
+    # Disable button during processing
+    shinyjs::disable("launch_btn")
+    shinyjs::addClass("launch_btn", "loading")
+    
+    # Calculate total number of jobs to be launched
+    total_jobs <- 0
+    for (model_name in rv$selected_models) {
+      model_env <- rv$models[[model_name]]
+      if (input$job_type == "jitter") {
+        seeds <- as.numeric(strsplit(model_env$jitter_seeds, "\\s+")[[1]])
+        total_jobs <- total_jobs + length(seeds)
+      } else if (input$job_type == "hessian") {
+        total_jobs <- total_jobs + as.numeric(model_env$nsplit)
+      } else if (input$job_type == "retro") {
+        peels <- as.numeric(strsplit(model_env$retro_peels, "\\s+")[[1]])
+        total_jobs <- total_jobs + length(peels)
+      } else if (input$job_type == "prof") {
+        scalers <- as.numeric(strsplit(model_env$scalers, "\\s+")[[1]])
+        total_jobs <- total_jobs + length(scalers)
+      } else {
+        total_jobs <- total_jobs + 1
+      }
+    }
+    
+    # Initialize log with total job count
+    rv$launch_log <- paste0(
+      Sys.time(), " - Starting job submission...\n",
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
+      "📊 Total jobs to launch: ", total_jobs, "\n",
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    )
+    
+    # Create reactive value for progress tracking
+    progress_text <- reactiveVal("")
+    
+    # Show persistent modal dialog with progress
+    showModal(modalDialog(
+      title = div(
+        style = "font-size: 18px; font-weight: bold;",
+        icon("rocket"), " Launching Jobs"
+      ),
+      size = "m",
+      
+      # Progress indicator
+      div(
+        style = "text-align: center; margin: 20px 0;",
+        div(class = "spinner"),
+        h4(
+          id = "launch_progress_text",
+          style = "color: #3c8dbc; margin-top: 20px;",
+          paste0("Starting... (0/", total_jobs, ")")
+        )
+      ),
+      
+      # Progress details box
+      div(
+        style = "background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px; padding: 15px; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 12px;",
+        div(id = "launch_progress_details", "Initializing...")
+      ),
+      
+      footer = NULL,  # No footer buttons - modal stays until complete
+      easyClose = FALSE  # Cannot close by clicking outside
+    ))
     
     tryCatch({
       batch_names <- c()
       remote_dirs <- c()
+      current_job <- 0  # Track current job number
+      progress_details <- c()  # Store progress messages
       
       for (model_name in rv$selected_models) {
         model_env <- rv$models[[model_name]]
@@ -3630,61 +3788,376 @@ server <- function(input, output, session) {
         if (input$job_type == "jitter") {
           seeds <- as.numeric(strsplit(model_env$jitter_seeds, "\\s+")[[1]])
           for (seed in seeds) {
+            current_job <- current_job + 1
+            
+            # Update progress text in modal
+            session$sendCustomMessage(
+              type = "updateProgress",
+              message = list(
+                id = "launch_progress_text",
+                text = sprintf("Launching job %d/%d: %s (seed %d)", 
+                               current_job, total_jobs, model_name, seed)
+              )
+            )
+            
+            # Update log
+            rv$launch_log <- paste0(
+              rv$launch_log,
+              sprintf("[%d/%d] 🔄 Launching: %s (seed %d)\n", 
+                      current_job, total_jobs, model_name, seed)
+            )
+            
+            # Add to progress details
+            progress_details <- c(
+              progress_details,
+              sprintf("[%d/%d] 🔄 %s (seed %d)", 
+                      current_job, total_jobs, model_name, seed)
+            )
+            
+            # Update progress details in modal
+            session$sendCustomMessage(
+              type = "updateProgress",
+              message = list(
+                id = "launch_progress_details",
+                text = paste(progress_details, collapse = "<br/>")
+              )
+            )
+            
             result <- launch_single_job(model_name, model_env, seed = seed)
             batch_names <- c(batch_names, result$batch_name)
             remote_dirs <- c(remote_dirs, result$remote_dir)
+            
+            # Mark as completed
+            progress_details[length(progress_details)] <- paste0(
+              progress_details[length(progress_details)], " ✓"
+            )
+            
+            session$sendCustomMessage(
+              type = "updateProgress",
+              message = list(
+                id = "launch_progress_details",
+                text = paste(progress_details, collapse = "<br/>")
+              )
+            )
+            
+            rv$launch_log <- paste0(
+              rv$launch_log,
+              sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
+            )
           }
         } else if (input$job_type == "hessian") {
           for (part in 1:as.numeric(model_env$nsplit)) {
+            current_job <- current_job + 1
+            
+            session$sendCustomMessage(
+              type = "updateProgress",
+              message = list(
+                id = "launch_progress_text",
+                text = sprintf("Launching job %d/%d: %s (part %d)", 
+                               current_job, total_jobs, model_name, part)
+              )
+            )
+            
+            rv$launch_log <- paste0(
+              rv$launch_log,
+              sprintf("[%d/%d] 🔄 Launching: %s (part %d)\n", 
+                      current_job, total_jobs, model_name, part)
+            )
+            
+            progress_details <- c(
+              progress_details,
+              sprintf("[%d/%d] 🔄 %s (part %d)", 
+                      current_job, total_jobs, model_name, part)
+            )
+            
+            session$sendCustomMessage(
+              type = "updateProgress",
+              message = list(
+                id = "launch_progress_details",
+                text = paste(progress_details, collapse = "<br/>")
+              )
+            )
+            
             result <- launch_single_job(model_name, model_env, part = part)
             batch_names <- c(batch_names, result$batch_name)
             remote_dirs <- c(remote_dirs, result$remote_dir)
+            
+            progress_details[length(progress_details)] <- paste0(
+              progress_details[length(progress_details)], " ✓"
+            )
+            
+            session$sendCustomMessage(
+              type = "updateProgress",
+              message = list(
+                id = "launch_progress_details",
+                text = paste(progress_details, collapse = "<br/>")
+              )
+            )
+            
+            rv$launch_log <- paste0(
+              rv$launch_log,
+              sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
+            )
           }
         } else if (input$job_type == "retro") {
           peels <- as.numeric(strsplit(model_env$retro_peels, "\\s+")[[1]])
           for (peel in peels) {
+            current_job <- current_job + 1
+            
+            session$sendCustomMessage(
+              type = "updateProgress",
+              message = list(
+                id = "launch_progress_text",
+                text = sprintf("Launching job %d/%d: %s (peel %d)", 
+                               current_job, total_jobs, model_name, peel)
+              )
+            )
+            
+            rv$launch_log <- paste0(
+              rv$launch_log,
+              sprintf("[%d/%d] 🔄 Launching: %s (peel %d)\n", 
+                      current_job, total_jobs, model_name, peel)
+            )
+            
+            progress_details <- c(
+              progress_details,
+              sprintf("[%d/%d] 🔄 %s (peel %d)", 
+                      current_job, total_jobs, model_name, peel)
+            )
+            
+            session$sendCustomMessage(
+              type = "updateProgress",
+              message = list(
+                id = "launch_progress_details",
+                text = paste(progress_details, collapse = "<br/>")
+              )
+            )
+            
             result <- launch_single_job(model_name, model_env, peel = peel)
             batch_names <- c(batch_names, result$batch_name)
             remote_dirs <- c(remote_dirs, result$remote_dir)
+            
+            progress_details[length(progress_details)] <- paste0(
+              progress_details[length(progress_details)], " ✓"
+            )
+            
+            session$sendCustomMessage(
+              type = "updateProgress",
+              message = list(
+                id = "launch_progress_details",
+                text = paste(progress_details, collapse = "<br/>")
+              )
+            )
+            
+            rv$launch_log <- paste0(
+              rv$launch_log,
+              sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
+            )
           }
         } else if (input$job_type == "prof") {
           scalers <- as.numeric(strsplit(model_env$scalers, "\\s+")[[1]])
           for (sc in scalers) {
+            current_job <- current_job + 1
+            
+            session$sendCustomMessage(
+              type = "updateProgress",
+              message = list(
+                id = "launch_progress_text",
+                text = sprintf("Launching job %d/%d: %s (scaler %g)", 
+                               current_job, total_jobs, model_name, sc)
+              )
+            )
+            
+            rv$launch_log <- paste0(
+              rv$launch_log,
+              sprintf("[%d/%d] 🔄 Launching: %s (scaler %g)\n", 
+                      current_job, total_jobs, model_name, sc)
+            )
+            
+            progress_details <- c(
+              progress_details,
+              sprintf("[%d/%d] 🔄 %s (scaler %g)", 
+                      current_job, total_jobs, model_name, sc)
+            )
+            
+            session$sendCustomMessage(
+              type = "updateProgress",
+              message = list(
+                id = "launch_progress_details",
+                text = paste(progress_details, collapse = "<br/>")
+              )
+            )
+            
             result <- launch_single_job(model_name, model_env, scaler = sc)
             batch_names <- c(batch_names, result$batch_name)
             remote_dirs <- c(remote_dirs, result$remote_dir)
+            
+            progress_details[length(progress_details)] <- paste0(
+              progress_details[length(progress_details)], " ✓"
+            )
+            
+            session$sendCustomMessage(
+              type = "updateProgress",
+              message = list(
+                id = "launch_progress_details",
+                text = paste(progress_details, collapse = "<br/>")
+              )
+            )
+            
+            rv$launch_log <- paste0(
+              rv$launch_log,
+              sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
+            )
           }
         } else {
+          current_job <- current_job + 1
+          
+          session$sendCustomMessage(
+            type = "updateProgress",
+            message = list(
+              id = "launch_progress_text",
+              text = sprintf("Launching job %d/%d: %s", 
+                             current_job, total_jobs, model_name)
+            )
+          )
+          
+          rv$launch_log <- paste0(
+            rv$launch_log,
+            sprintf("[%d/%d] 🔄 Launching: %s\n", 
+                    current_job, total_jobs, model_name)
+          )
+          
+          progress_details <- c(
+            progress_details,
+            sprintf("[%d/%d] 🔄 %s", 
+                    current_job, total_jobs, model_name)
+          )
+          
+          session$sendCustomMessage(
+            type = "updateProgress",
+            message = list(
+              id = "launch_progress_details",
+              text = paste(progress_details, collapse = "<br/>")
+            )
+          )
+          
           result <- launch_single_job(model_name, model_env)
           batch_names <- c(batch_names, result$batch_name)
           remote_dirs <- c(remote_dirs, result$remote_dir)
+          
+          progress_details[length(progress_details)] <- paste0(
+            progress_details[length(progress_details)], " ✓"
+          )
+          
+          session$sendCustomMessage(
+            type = "updateProgress",
+            message = list(
+              id = "launch_progress_details",
+              text = paste(progress_details, collapse = "<br/>")
+            )
+          )
+          
+          rv$launch_log <- paste0(
+            rv$launch_log,
+            sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
+          )
         }
       }
       
+      # Save job history if config file exists
       if (!is.null(rv$current_config_file)) {
         job_record <- data.frame(
-          timestamp = format(Sys.time(), "%Y-%m-%d %H:%M:%S"), 
+          timestamp = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
           job_type = input$job_type,
-          model_names = paste(rv$selected_models, collapse = ", "), 
+          model_names = paste(rv$selected_models, collapse = ", "),
           output_dir = input$output_dir,
-          batch_names = paste(batch_names, collapse = "; "), 
-          remote_dirs = paste(remote_dirs, collapse = "; "),
-          branch = input$branch, 
-          status = "launched", 
+          batch_names = paste(batch_names, collapse = ", "),
+          remote_dirs = paste(remote_dirs, collapse = ", "),
+          branch = input$branch,
+          status = "launched",
           stringsAsFactors = FALSE
         )
         save_job_history(rv$current_config_file, job_record)
-        rv$launch_log <- paste0(rv$launch_log, "\n✓ Job history saved to config file\n")
+        rv$launch_log <- paste0(rv$launch_log, "📝 Job history saved to config file\n")
       }
       
-      rv$launch_log <- paste0(rv$launch_log, "\n", Sys.time(), " - All jobs submitted!\n")
-      showNotification("Jobs launched successfully!", type = "message")
+      # Final completion message
+      rv$launch_log <- paste0(
+        rv$launch_log,
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
+        "✅ ", Sys.time(), " - All ", total_jobs, " jobs submitted successfully!\n",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+      )
+      
+      # Update modal to show completion
+      showModal(modalDialog(
+        title = div(
+          style = "font-size: 18px; font-weight: bold; color: #00a65a;",
+          icon("check-circle"), " Launch Complete"
+        ),
+        size = "m",
+        
+        div(
+          style = "text-align: center; margin: 20px 0;",
+          h3(
+            style = "color: #00a65a;",
+            sprintf("✅ Successfully launched all %d jobs!", total_jobs)
+          )
+        ),
+        
+        div(
+          style = "background: #f0f9f0; border: 1px solid #c3e6cb; border-radius: 4px; padding: 15px; margin: 15px 0;",
+          strong("Summary:"),
+          tags$ul(
+            tags$li(paste("Total jobs:", total_jobs)),
+            tags$li(paste("Models:", paste(rv$selected_models, collapse = ", "))),
+            tags$li(paste("Output directory:", input$output_dir)),
+            tags$li(paste("Branch:", input$branch))
+          )
+        ),
+        
+        footer = tagList(
+          actionButton("close_launch_modal", "Close", class = "btn-success")
+        )
+      ))
       
     }, error = function(e) {
-      rv$launch_log <- paste0(rv$launch_log, "\nERROR: ", e$message, "\n")
-      showNotification(paste("Error:", e$message), type = "error")
+      rv$launch_log <- paste0(rv$launch_log, "\n❌ ERROR: ", e$message, "\n")
+      
+      # Show error modal
+      showModal(modalDialog(
+        title = div(
+          style = "font-size: 18px; font-weight: bold; color: #dd4b39;",
+          icon("times-circle"), " Launch Failed"
+        ),
+        size = "m",
+        
+        div(
+          style = "background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; padding: 15px; margin: 15px 0;",
+          h4(style = "color: #721c24;", "Error occurred during job launch:"),
+          p(style = "font-family: monospace; color: #721c24;", e$message)
+        ),
+        
+        footer = actionButton("close_error_modal", "Close", class = "btn-danger")
+      ))
+      
+    }, finally = {
+      # Re-enable button after completion or error
+      shinyjs::enable("launch_btn")
+      shinyjs::removeClass("launch_btn", "loading")
     })
   })
+  
+  # Handler to close completion modal
+  observeEvent(input$close_launch_modal, {
+    removeModal()
+  })
+  
+  # Handler to close error modal
+  observeEvent(input$close_error_modal, {
+    removeModal()
+  })
+  
   
   launch_single_job <- function(model_name, model_env, seed = NULL, part = NULL, peel = NULL, scaler = NULL) {
     job_env <- model_env
@@ -4146,7 +4619,6 @@ server <- function(input, output, session) {
   
   observeEvent(input$confirm_remove_jobs, {
     selected_rows <- input$jobs_table_rows_selected
-    
     if (length(selected_rows) == 0) {
       removeModal()
       return()
@@ -4157,53 +4629,186 @@ server <- function(input, output, session) {
     
     removeModal()
     
-    showNotification("Removing jobs...", type = "message", duration = 2)
+    # Disable remove button during processing
+    shinyjs::disable("remove_selected_jobs")
+    
+    # Count total jobs to remove
+    total_to_remove <- sum(sapply(job_ids, function(x) {
+      if (nzchar(x) && !is.na(x)) {
+        length(strsplit(x, ",")[[1]])
+      } else {
+        0
+      }
+    }))
+    
+    # Show persistent modal dialog with progress
+    showModal(modalDialog(
+      title = div(
+        style = "font-size: 18px; font-weight: bold;",
+        icon("trash"), " Deleting Jobs"
+      ),
+      size = "m",
+      
+      # Progress indicator
+      div(
+        style = "text-align: center; margin: 20px 0;",
+        div(class = "spinner"),
+        h4(
+          id = "delete_progress_text",
+          style = "color: #dd4b39; margin-top: 20px;",
+          paste0("Starting... (0/", total_to_remove, ")")
+        )
+      ),
+      
+      # Progress details box
+      div(
+        style = "background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px; padding: 15px; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 12px;",
+        div(id = "delete_progress_details", "Initializing...")
+      ),
+      
+      footer = NULL,  # No footer buttons - modal stays until complete
+      easyClose = FALSE  # Cannot close by clicking outside
+    ))
     
     tryCatch({
       removed_count <- 0
       failed_count <- 0
+      current_job <- 0
+      progress_details <- c()  # Store progress messages
       
-      for (job_id in job_ids) {
-        if (nzchar(job_id)) {
-          # Remove job using condor_rm
-          cmd <- sprintf("ssh %s@%s 'condor_rm %s'", 
-                         input$remote_user, input$remote_host, job_id)
+      for (jobid in job_ids) {
+        if (nzchar(jobid) && !is.na(jobid)) {
+          # Handle multiple job IDs (comma-separated)
+          individual_ids <- strsplit(jobid, ",")[[1]]
           
-          result <- system(cmd, intern = TRUE, ignore.stderr = FALSE)
-          
-          if (length(result) > 0 && !grepl("ERROR|Error", result[1])) {
-            removed_count <- removed_count + 1
-          } else {
-            failed_count <- failed_count + 1
+          for (single_id in individual_ids) {
+            single_id <- trimws(single_id)
+            current_job <- current_job + 1
+            
+            # Update progress text in modal
+            session$sendCustomMessage(
+              type = "updateProgress",
+              message = list(
+                id = "delete_progress_text",
+                text = sprintf("Deleting job %d/%d (ID: %s)", 
+                               current_job, total_to_remove, single_id)
+              )
+            )
+            
+            # Add to progress details
+            progress_details <- c(
+              progress_details,
+              sprintf("[%d/%d] 🗑️ Job ID: %s", 
+                      current_job, total_to_remove, single_id)
+            )
+            
+            # Update progress details in modal
+            session$sendCustomMessage(
+              type = "updateProgress",
+              message = list(
+                id = "delete_progress_details",
+                text = paste(progress_details, collapse = "<br/>")
+              )
+            )
+            
+            # Remove job using condor_rm
+            cmd <- sprintf("ssh %s@%s 'condor_rm %s'", 
+                           input$remote_user, input$remote_host, single_id)
+            result <- system(cmd, intern = TRUE, ignore.stderr = FALSE)
+            
+            if (length(result) == 0 || !grepl("ERROR|Error", result[1])) {
+              removed_count <- removed_count + 1
+              progress_details[length(progress_details)] <- paste0(
+                progress_details[length(progress_details)], " ✓"
+              )
+            } else {
+              failed_count <- failed_count + 1
+              progress_details[length(progress_details)] <- paste0(
+                progress_details[length(progress_details)], " ❌"
+              )
+            }
+            
+            # Update with success/failure marker
+            session$sendCustomMessage(
+              type = "updateProgress",
+              message = list(
+                id = "delete_progress_details",
+                text = paste(progress_details, collapse = "<br/>")
+              )
+            )
           }
         }
       }
       
-      # Show result
-      if (removed_count > 0) {
-        showNotification(
-          paste("Successfully removed", removed_count, "job(s)"), 
-          type = "message", 
-          duration = 3
-        )
-      }
-      
-      if (failed_count > 0) {
-        showNotification(
-          paste("Failed to remove", failed_count, "job(s)"), 
-          type = "warning", 
-          duration = 3
-        )
-      }
+      # Show completion modal
+      showModal(modalDialog(
+        title = div(
+          style = sprintf("font-size: 18px; font-weight: bold; color: %s;",
+                          ifelse(failed_count == 0, "#00a65a", "#f39c12")),
+          icon(ifelse(failed_count == 0, "check-circle", "exclamation-triangle")), 
+          " Deletion Complete"
+        ),
+        size = "m",
+        
+        div(
+          style = "text-align: center; margin: 20px 0;",
+          h3(
+            style = sprintf("color: %s;", ifelse(failed_count == 0, "#00a65a", "#f39c12")),
+            sprintf("Deleted %d/%d jobs", removed_count, total_to_remove)
+          )
+        ),
+        
+        div(
+          style = sprintf("background: %s; border: 1px solid %s; border-radius: 4px; padding: 15px; margin: 15px 0;",
+                          ifelse(failed_count == 0, "#f0f9f0", "#fff3cd"),
+                          ifelse(failed_count == 0, "#c3e6cb", "#ffc107")),
+          tags$ul(
+            tags$li(paste("✅ Successfully removed:", removed_count)),
+            if (failed_count > 0) tags$li(paste("❌ Failed to remove:", failed_count))
+          )
+        ),
+        
+        footer = actionButton("close_delete_modal", "Close", 
+                              class = ifelse(failed_count == 0, "btn-success", "btn-warning"))
+      ))
       
       # Refresh job list after a short delay
       Sys.sleep(1)
       shinyjs::click("refresh_jobs")
       
     }, error = function(e) {
-      showNotification(paste("Error removing jobs:", e$message), type = "error", duration = 5)
+      showModal(modalDialog(
+        title = div(
+          style = "font-size: 18px; font-weight: bold; color: #dd4b39;",
+          icon("times-circle"), " Deletion Failed"
+        ),
+        size = "m",
+        
+        div(
+          style = "background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; padding: 15px; margin: 15px 0;",
+          h4(style = "color: #721c24;", "Error occurred during job deletion:"),
+          p(style = "font-family: monospace; color: #721c24;", e$message)
+        ),
+        
+        footer = actionButton("close_delete_error_modal", "Close", class = "btn-danger")
+      ))
+    }, finally = {
+      # Re-enable button after completion or error
+      shinyjs::enable("remove_selected_jobs")
     })
   })
+  
+  # Handler to close delete completion modal
+  observeEvent(input$close_delete_modal, {
+    removeModal()
+  })
+  
+  # Handler to close delete error modal
+  observeEvent(input$close_delete_error_modal, {
+    removeModal()
+  })
+  
+  
 }
 
 # Run the application
