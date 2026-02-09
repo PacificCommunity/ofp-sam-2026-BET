@@ -42,6 +42,34 @@ mod_likelihood_ui <- function() {
           selected = "components"
         ),
 
+        pickerInput(
+          "lik_groups",
+          "Lines:",
+          choices = NULL,
+          selected = NULL,
+          multiple = TRUE,
+          options = pickerOptions(
+            actionsBox = TRUE,
+            selectAllText = "Select All",
+            deselectAllText = "Deselect All",
+            selectedTextFormat = "count > 3",
+            countSelectedText = "{0} lines selected",
+            liveSearch = TRUE,
+            liveSearchPlaceholder = "Search lines...",
+            size = 10
+          )
+        ),
+
+        shiny::hr(),
+        h5("Download Plot", style = "font-weight: bold;"),
+        actionButton(
+          "show_lik_download_modal",
+          "Download Plot...",
+          class = "btn-info",
+          style = "width: 100%;",
+          icon = icon("download")
+        ),
+
         helpText(
           "Requires prof/scaler_* outputs (test_plot_output) in each scenario.",
           style = "margin-top: 10px; font-size: 11px; color: #666;"
@@ -416,15 +444,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
     bind_rows(rows)
   }
 
-  likelihood_plot_reactive <- reactive({
+  profile_data_reactive <- reactive({
     req(rv$data_loaded, input$lik_scenarios, input$model_dir)
 
     if (length(input$lik_scenarios) == 0) {
-      return(
-        ggplot() +
-          annotate("text", x = 0.5, y = 0.5, label = "No scenarios selected", size = 6, color = "#999") +
-          theme_void()
-      )
+      return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No scenarios selected"))
     }
 
     selected <- input$lik_scenarios
@@ -437,24 +461,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
     profile_data <- profile_data[has_data]
 
     if (length(profile_data) == 0) {
-      return(
-        ggplot() +
-          annotate("text", x = 0.5, y = 0.5,
-                   label = "No likelihood profile data found",
-                   size = 6, color = "#999") +
-          theme_void()
-      )
+      return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No likelihood profile data found"))
     }
 
     base_scales <- profile_data[[names(profile_data)[1]]]$scales
     if (length(base_scales) == 0) {
-      return(
-        ggplot() +
-          annotate("text", x = 0.5, y = 0.5,
-                   label = "No likelihood profile data found",
-                   size = 6, color = "#999") +
-          theme_void()
-      )
+      return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No likelihood profile data found"))
     }
 
     type <- input$lik_profile_type
@@ -462,78 +474,173 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (type == "components") {
       data <- build_components_data(profile_data, names(profile_data), base_scales)
       data <- data %>% filter(is.finite(value) & is.finite(scaler))
-      if (nrow(data) == 0) return(ggplot() + annotate("text", x = 0.5, y = 0.5,
-                                                      label = "No component data available",
-                                                      size = 6, color = "#999") + theme_void())
+      if (nrow(data) == 0) {
+        return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No component data available"))
+      }
       data <- calc_lik_change(data, "Likelihood")
-      return(create_piner_plot(data, "Likelihood"))
+      return(list(data = data, group_col = "Likelihood", label = "Components", message = NULL))
     }
 
     if (type == "lfs") {
       data <- build_fishery_data(profile_data, names(profile_data), rv$FISHERY_MAPS,
                                  "total_length_fish", "Fishery", base_scales)
       data <- data %>% filter(is.finite(value) & is.finite(scaler))
-      if (nrow(data) == 0) return(ggplot() + annotate("text", x = 0.5, y = 0.5,
-                                                      label = "No LF profile data available",
-                                                      size = 6, color = "#999") + theme_void())
+      if (nrow(data) == 0) {
+        return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No LF profile data available"))
+      }
       data <- calc_lik_change(data, "Fishery")
-      return(create_piner_plot(data, "Fishery", "LFs"))
+      return(list(data = data, group_col = "Fishery", label = "LFs", message = NULL))
     }
 
     if (type == "wfs") {
       data <- build_fishery_data(profile_data, names(profile_data), rv$FISHERY_MAPS,
                                  "total_weight_fish", "Fishery", base_scales)
       data <- data %>% filter(is.finite(value) & is.finite(scaler))
-      if (nrow(data) == 0) return(ggplot() + annotate("text", x = 0.5, y = 0.5,
-                                                      label = "No WF profile data available",
-                                                      size = 6, color = "#999") + theme_void())
+      if (nrow(data) == 0) {
+        return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No WF profile data available"))
+      }
       data <- calc_lik_change(data, "Fishery")
-      return(create_piner_plot(data, "Fishery", "WFs"))
+      return(list(data = data, group_col = "Fishery", label = "WFs", message = NULL))
     }
 
     if (type == "tagging") {
       data <- build_tagging_data(profile_data, names(profile_data), rv$TagOut_list, base_scales)
       data <- data %>% filter(is.finite(value) & is.finite(scaler))
-      if (nrow(data) == 0) return(ggplot() + annotate("text", x = 0.5, y = 0.5,
-                                                      label = "No tagging profile data available",
-                                                      size = 6, color = "#999") + theme_void())
+      if (nrow(data) == 0) {
+        return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No tagging profile data available"))
+      }
       total_row <- data %>%
         group_by(scaler, scenario) %>%
         summarise(value = sum(value), .groups = "drop") %>%
         mutate(program = "Total")
       data <- bind_rows(data, total_row)
       data <- calc_lik_change(data, "program")
-      return(create_piner_plot(data, "program", "Tagging"))
+      return(list(data = data, group_col = "program", label = "Tagging", message = NULL))
     }
 
     if (type == "cal_fishery") {
       data <- build_cal_data(profile_data, names(profile_data), rv$AgeOut_list,
                              rv$FISHERY_MAPS, by = "fishery", base_scales)
       data <- data %>% filter(is.finite(value) & is.finite(scaler))
-      if (nrow(data) == 0) return(ggplot() + annotate("text", x = 0.5, y = 0.5,
-                                                      label = "No CAL by fishery data available",
-                                                      size = 6, color = "#999") + theme_void())
+      if (nrow(data) == 0) {
+        return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No CAL by fishery data available"))
+      }
       data <- calc_lik_change(data, "fishery")
-      return(create_piner_plot(data, "fishery", "CAL"))
+      return(list(data = data, group_col = "fishery", label = "CAL", message = NULL))
     }
 
     if (type == "cal_year") {
       data <- build_cal_data(profile_data, names(profile_data), rv$AgeOut_list,
                              rv$FISHERY_MAPS, by = "year", base_scales)
       data <- data %>% filter(is.finite(value) & is.finite(scaler))
-      if (nrow(data) == 0) return(ggplot() + annotate("text", x = 0.5, y = 0.5,
-                                                      label = "No CAL by year data available",
-                                                      size = 6, color = "#999") + theme_void())
+      if (nrow(data) == 0) {
+        return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No CAL by year data available"))
+      }
       data <- calc_lik_change(data, "year")
-      return(create_piner_plot(data, "year", "CAL"))
+      return(list(data = data, group_col = "year", label = "CAL", message = NULL))
     }
 
-    ggplot() +
-      annotate("text", x = 0.5, y = 0.5, label = "Unsupported profile type", size = 6, color = "#999") +
-      theme_void()
+    list(data = data.frame(), group_col = NULL, label = NULL, message = "Unsupported profile type")
+  })
+
+  observeEvent(profile_data_reactive(), {
+    info <- profile_data_reactive()
+    if (is.null(info$group_col) || nrow(info$data) == 0) {
+      updatePickerInput(session, "lik_groups", choices = character(0), selected = character(0))
+      return()
+    }
+
+    groups <- sort(unique(info$data[[info$group_col]]))
+    current <- isolate(input$lik_groups)
+    if (is.null(current) || length(current) == 0) {
+      selected <- groups
+    } else {
+      selected <- intersect(current, groups)
+      if (length(selected) == 0) selected <- groups
+    }
+
+    updatePickerInput(session, "lik_groups", choices = groups, selected = selected)
+  }, ignoreInit = TRUE)
+
+  likelihood_plot_reactive <- reactive({
+    info <- profile_data_reactive()
+    if (!is.null(info$message)) {
+      return(
+        ggplot() +
+          annotate("text", x = 0.5, y = 0.5, label = info$message, size = 6, color = "#999") +
+          theme_void()
+      )
+    }
+
+    data <- info$data
+    group_col <- info$group_col
+    label <- info$label
+
+    if (!is.null(input$lik_groups) && length(input$lik_groups) > 0) {
+      data <- data[data[[group_col]] %in% input$lik_groups, , drop = FALSE]
+    }
+
+    if (nrow(data) == 0) {
+      return(
+        ggplot() +
+          annotate("text", x = 0.5, y = 0.5, label = "No data after filtering", size = 6, color = "#999") +
+          theme_void()
+      )
+    }
+
+    create_piner_plot(data, group_col, label)
   })
 
   output$likelihood_plot <- renderPlot({
     likelihood_plot_reactive()
   })
+
+  observeEvent(input$show_lik_download_modal, {
+    show_download_modal("lik", "Likelihood Profile Plot")
+  })
+
+  observeEvent(input$lik_preset_wide, {
+    updateNumericInput(session, "lik_width", value = 16)
+    updateNumericInput(session, "lik_height", value = 9)
+  })
+
+  observeEvent(input$lik_preset_standard, {
+    updateNumericInput(session, "lik_width", value = 12)
+    updateNumericInput(session, "lik_height", value = 9)
+  })
+
+  observeEvent(input$lik_preset_square, {
+    updateNumericInput(session, "lik_width", value = 10)
+    updateNumericInput(session, "lik_height", value = 10)
+  })
+
+  output$lik_download_confirm <- downloadHandler(
+    filename = function() {
+      format <- input$lik_format
+      paste0("likelihood_profile_", Sys.Date(), ".", format)
+    },
+    content = function(file) {
+      p <- likelihood_plot_reactive()
+      width <- input$lik_width
+      height <- input$lik_height
+      dpi <- as.numeric(input$lik_dpi)
+      format <- input$lik_format
+
+      if (format == "png") {
+        ggsave(file, plot = p, width = width, height = height, dpi = dpi,
+               device = "png", bg = "white")
+      } else if (format == "pdf") {
+        ggsave(file, plot = p, width = width, height = height,
+               device = "pdf")
+      } else if (format == "svg") {
+        ggsave(file, plot = p, width = width, height = height,
+               device = "svg", bg = "white")
+      } else if (format == "jpeg") {
+        ggsave(file, plot = p, width = width, height = height, dpi = dpi,
+               device = "jpeg", bg = "white", quality = 95)
+      }
+
+      removeModal()
+    }
+  )
 }
