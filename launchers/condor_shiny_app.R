@@ -2627,7 +2627,7 @@ server <- function(input, output, session) {
         }
         
         if (length(items_in_source) > 0) {
-          target_dir <- file.path(download_dir, folder_name)
+          target_dir <- download_dir
           if (!dir.exists(target_dir)) {
             dir.create(target_dir, recursive = TRUE)
           }
@@ -4946,5 +4946,4 @@ server <- function(input, output, session) {
 
 # Run the application
 shinyApp(ui = ui, server = server)
-
 
