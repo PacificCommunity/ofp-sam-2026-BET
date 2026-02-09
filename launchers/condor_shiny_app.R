@@ -14,9 +14,9 @@ ui <- dashboardPage(
     sidebarMenu(
       menuItem("Launch Jobs", tabName = "launch", icon = icon("rocket")),
       menuItem("Monitor Jobs", tabName = "monitor", icon = icon("chart-line")),
-      menuItem("Retrieve Results", tabName = "retrieve", icon = icon("download")),
-      menuItem("Edit Models", tabName = "edit", icon = icon("edit")),
-      menuItem("Settings", tabName = "settings", icon = icon("cog"))
+      menuItem("Retrieve Results", tabName = "retrieve", icon = icon("download")) #,
+  #    menuItem("Edit Models", tabName = "edit", icon = icon("edit")),
+  #    menuItem("Settings", tabName = "settings", icon = icon("cog"))
     )
   ),
   
@@ -524,28 +524,22 @@ ui <- dashboardPage(
             collapsible = TRUE, collapsed = FALSE,
             fluidRow(
               column(6,
-                     fileInput("launch_config_upload", "Upload R Script / RDS:",
-                               accept = c(".R", ".r", ".rds", ".RDS"),
-                               width = "100%")
+                     actionButton("launch_load_config", "Browse & Load Configuration",
+                                  icon = icon("folder-open"),
+                                  class = "btn-info btn-lg",
+                                  style = "width: 100%; margin-top: 10px; height: 60px; font-size: 16px;")
               ),
-              column(3,
-                     div(style = "margin-top: 25px;",
-                         actionButton("launch_load_config", "Load from Path",
-                                      icon = icon("folder-open"),
-                                      class = "btn-info btn-block")
-                     )
-              ),
-              column(3,
-                     div(style = "margin-top: 25px;",
-                         actionButton("edit_script_rstudio", "Modify Script",
-                                      icon = icon("edit"),
-                                      class = "btn-warning btn-block")
-                     )
+              column(6,
+                     actionButton("edit_script_rstudio", "Modify Current Script",
+                                  icon = icon("edit"),
+                                  class = "btn-warning btn-lg",
+                                  style = "width: 100%; margin-top: 10px; height: 60px; font-size: 16px;")
               )
             ),
             uiOutput("launch_config_status_ui")
           )
         ),
+        
         
         fluidRow(
           box(
@@ -621,16 +615,15 @@ ui <- dashboardPage(
             
             hr(),
             
-            sliderInput("condor_cpus", "CPUs:", 
-                        min = 1, max = 16, value = 2, step = 1),
+            numericInput("condor_cpus", "CPUs:", 
+                         value = 2, min = 1, max = 32, step = 1),
             
-            selectInput("condor_memory", "Memory:",
-                        choices = c("4GB", "6GB", "8GB", "10GB", "12GB", "16GB", "24GB"),
-                        selected = "12GB"),
+            numericInput("condor_memory", "Memory (GB):",
+                         value = 12, min = 1, max = 128, step = 1),
             
-            selectInput("condor_disk", "Disk:",
-                        choices = c("5GB", "10GB", "15GB", "20GB", "30GB"),
-                        selected = "10GB")
+            numericInput("condor_disk", "Disk (GB):",
+                         value = 10, min = 1, max = 100, step = 1)
+            
           )
         ),
         
@@ -721,12 +714,19 @@ ui <- dashboardPage(
                                   icon = icon("trash"),
                                   class = "btn-danger btn-block")
               ),
-              column(8,
+              column(2,
+                     div(style = "margin-top: 5px;",
+                         checkboxInput("show_all_jobs", "Show All Users", 
+                                       value = FALSE)
+                     )
+              ),
+              column(6,
                      div(id = "job_selection_info",
                          style = "padding: 8px; color: #666; font-size: 13px;",
                          textOutput("selected_jobs_info", inline = TRUE))
               )
             ),
+            
             
             hr(),
             DTOutput("jobs_table")
@@ -1031,11 +1031,33 @@ server <- function(input, output, session) {
           updateSelectInput(session, "job_type", selected = saved_settings$job_type)
         }
         
+        if (!is.null(saved_settings$last_browse_path)) {
+          rv$last_browse_path <- saved_settings$last_browse_path
+        }
+        
+        if (!is.null(saved_settings$last_config_file)) {
+          rv$config_path <- saved_settings$last_config_file
+        }
+        
+        if (!is.null(saved_settings$condor_cpus)) {
+          updateNumericInput(session, "condor_cpus", value = saved_settings$condor_cpus)
+        }
+        
+        if (!is.null(saved_settings$condor_memory)) {
+          updateNumericInput(session, "condor_memory", value = saved_settings$condor_memory)
+        }
+        
+        if (!is.null(saved_settings$condor_disk)) {
+          updateNumericInput(session, "condor_disk", value = saved_settings$condor_disk)
+        }
+        
       }, error = function(e) {
+        
         # If settings file is corrupted, ignore and use defaults
       })
     }
   })
+  
   
   # Function to save settings
   save_settings <- function() {
@@ -1047,8 +1069,15 @@ server <- function(input, output, session) {
       output_dir = input$output_dir,
       branch = input$branch,
       job_type = input$job_type,
+      last_browse_path = rv$last_browse_path,
+      last_config_file = rv$config_path,
+      condor_cpus = input$condor_cpus,
+      condor_memory = input$condor_memory,
+      condor_disk = input$condor_disk,
       timestamp = Sys.time()
     )
+    
+    
     
     tryCatch({
       saveRDS(settings, settings_file)
@@ -1082,9 +1111,18 @@ server <- function(input, output, session) {
     save_settings()
   }, ignoreInit = TRUE)
   
-  observeEvent(input$job_type, {
+  observeEvent(input$condor_cpus, {
     save_settings()
   }, ignoreInit = TRUE)
+  
+  observeEvent(input$condor_memory, {
+    save_settings()
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$condor_disk, {
+    save_settings()
+  }, ignoreInit = TRUE)
+  
   # ===== END SETTINGS SAVE/LOAD =====
   # Reactive values storage
   rv <- reactiveValues(
@@ -1114,13 +1152,15 @@ server <- function(input, output, session) {
       run_name = "",
       description = "",
       date = NULL,
-      base_config = ""
+      base_config = "",
+      summary = NULL
     ),
     saved_configs_trigger = 0,
     current_config_file = NULL,
     selected_models = c(),
-    uploaded_filename = NULL,      
-    uploaded_temp_path = NULL      
+    # uploaded_filename = NULL,
+    # uploaded_temp_path = NULL,
+    last_browse_path = "../configs"
   )
   
   # Initialize directories
@@ -1371,6 +1411,11 @@ server <- function(input, output, session) {
           rv$run_metadata$summary <- saved_data$metadata$summary
         }
         
+        # Extract summary from saved config
+        if (!is.null(saved_data$metadata$summary)) {
+          rv$run_metadata$summary <- saved_data$metadata$summary
+        }
+        
         job_history <- load_job_history(found_path)
         rv$config_status_msg <- paste0(rv$config_status_msg, 
                                        "\n✓ Loaded saved run configuration",
@@ -1414,6 +1459,13 @@ server <- function(input, output, session) {
         }
         
         if (exists("models", envir = env)) {
+          
+          rv$run_metadata$summary <- env$summary
+        } else {
+          rv$run_metadata$summary <- NULL
+        }
+        
+        if (exists("models", envir = env)) {
           rv$models <- env$models
           rv$models_original <- env$models
           rv$base_config_name <- basename(found_path)
@@ -1429,21 +1481,31 @@ server <- function(input, output, session) {
       }
       
       rv$config_loaded <- TRUE
-      # Use original filename if file was uploaded, otherwise use path
+      
+      # Store the actual full path for saving
       if (!is.null(original_filename)) {
-        rv$config_path <- original_filename
+        rv$config_path <- found_path  # Store full path, not just filename
       } else {
         rv$config_path <- found_path
       }
       
-      rv$selected_models <- names(rv$models)
+      # Store the original filename for display
+      rv$uploaded_filename <- if (!is.null(original_filename)) original_filename else basename(found_path)
       
+      
+      rv$selected_models <- names(rv$models)
       updateSelectInput(session, "edit_model_select", 
-                        choices = names(rv$models),
+                        choices = names(rv$models), 
                         selected = names(rv$models)[1])
       
-      showNotification(paste("✓ Loaded", length(rv$models), "models"), type = "message")
+      showNotification(paste("Loaded", length(rv$models), "models"), type = "message")
+      
+      # Save this config path for next time
+      save_settings()
+      
+      
       return(TRUE)
+      
       
     }, error = function(e) {
       rv$config_status_msg <- paste0(rv$config_status_msg, "❌ Error loading R script:\n", e$message)
@@ -1454,9 +1516,41 @@ server <- function(input, output, session) {
   
   observe({
     if (!rv$config_loaded) {
-      load_models()
+      # Check if we have a saved last config path
+      if (file.exists(settings_file)) {
+        tryCatch({
+          saved_settings <- readRDS(settings_file)
+          
+          # If we have a saved config file, try to load it
+          if (!is.null(saved_settings$last_config_file) && 
+              saved_settings$last_config_file != "") {
+            
+            # Try to find the file
+            possible_paths <- c(
+              saved_settings$last_config_file,
+              file.path("../configs", saved_settings$last_config_file),
+              file.path("../configs", basename(saved_settings$last_config_file))
+            )
+            
+            for (path in possible_paths) {
+              if (file.exists(path)) {
+                load_models(config_path = path,
+                            original_filename = basename(path))
+                return()
+              }
+            }
+          }
+        }, error = function(e) {
+          # Silently ignore errors
+        })
+      }
+      
+      # Don't load anything by default - user must choose
+      # This prevents auto-loading set_model.R every time
     }
   })
+  
+  
   
   observeEvent(input$reload_config, { load_models() })
   
@@ -1466,26 +1560,31 @@ server <- function(input, output, session) {
   })
   
   # ---- Launch tab config loader handlers ----
-  observeEvent(input$launch_load_config, {
-    load_models()
-  })
+  # observeEvent(input$launch_load_config, {
+  #   load_models()
+  # })
   
-  observeEvent(input$launch_config_upload, {
-    req(input$launch_config_upload)
-    
-    # Store the actual uploaded filename and temp path
-    rv$uploaded_filename <- input$launch_config_upload$name
-    rv$uploaded_temp_path <- input$launch_config_upload$datapath
-    
-    # Load models with original filename
-    load_models(
-      config_path = input$launch_config_upload$datapath,
-      original_filename = input$launch_config_upload$name
-    )
-  })
+  # observeEvent(input$launch_config_upload, {
+  #   req(input$launch_config_upload)
+  #   
+  #   # Store the actual uploaded filename and temp path
+  #   rv$uploaded_filename <- input$launch_config_upload$name
+  #   rv$uploaded_temp_path <- input$launch_config_upload$datapath
+  #   
+  #   # Load models with original filename
+  #   load_models(
+  #     config_path = input$launch_config_upload$datapath,
+  #     original_filename = input$launch_config_upload$name
+  #   )
+  # })
+  # 
+  # 
   
   
-  # "Modify Script" button handler
+  
+  # ============================================================
+  # "Modify Script" button handler - Open editor in modal
+  # ============================================================
   observeEvent(input$edit_script_rstudio, {
     if (!rv$config_loaded) {
       showNotification("Please load a configuration file first", type = "warning")
@@ -1496,12 +1595,8 @@ server <- function(input, output, session) {
     script_content <- ""
     current_file <- NULL
     
-    if (!is.null(rv$uploaded_temp_path) && file.exists(rv$uploaded_temp_path)) {
-      # Uploaded file
-      script_content <- paste(readLines(rv$uploaded_temp_path, warn = FALSE), collapse = "\n")
-      current_file <- rv$uploaded_filename
-    } else if (!is.null(rv$config_path)) {
-      # File from path
+    if (!is.null(rv$config_path)) {
+      # Find the file
       possible_paths <- c(
         rv$config_path,
         file.path("../configs", basename(rv$config_path)),
@@ -1521,6 +1616,7 @@ server <- function(input, output, session) {
       showNotification("Cannot read script content", type = "error")
       return()
     }
+    
     
     # Show modal with editor
     showModal(modalDialog(
@@ -1549,9 +1645,9 @@ server <- function(input, output, session) {
         id = "script_editor",
         class = "script-editor-container",
         style = "width: 100%; height: 500px; padding: 10px; 
-               font-family: 'Courier New', monospace; font-size: 13px;
-               border: 1px solid #ddd; border-radius: 4px;
-               background: #f9f9f9; resize: vertical;",
+                 font-family: 'Courier New', monospace; font-size: 13px;
+                 border: 1px solid #ddd; border-radius: 4px;
+                 background: #f9f9f9; resize: vertical;",
         script_content
       ),
       
@@ -1648,6 +1744,408 @@ server <- function(input, output, session) {
     })
   })
   
+  # ============================================================
+  # Browse button for loading config files
+  # ============================================================
+  observeEvent(input$launch_load_config, {
+    showNotification("Loading config files...", type = "message", duration = 2)
+    
+    tryCatch({
+      # Start from last browsed path or default
+      start_path <- if (!is.null(rv$last_browse_path) && dir.exists(rv$last_browse_path)) {
+        rv$last_browse_path
+      } else {
+        "../configs"
+      }
+      
+      # Normalize path
+      start_path <- normalizePath(start_path, mustWork = FALSE)
+      
+      # Get R and RDS files in current directory
+      all_files <- list.files(start_path, 
+                              pattern = "\\.(R|r|rds|RDS)$", 
+                              full.names = TRUE)
+      
+      # Get subdirectories
+      dirs <- list.dirs(start_path, recursive = FALSE, full.names = TRUE)
+      
+      # Get parent directory option
+      parent_dir <- dirname(start_path)
+      
+      showModal(modalDialog(
+        title = "Browse for Configuration File",
+        size = "l",
+        
+        p(strong("Current directory:"), 
+          style = "color: #666; font-size: 12px; margin-bottom: 15px;",
+          code(start_path)),
+        
+        div(
+          style = "max-height: 500px; overflow-y: auto; background: #f9f9f9; 
+                   padding: 15px; border: 1px solid #ddd; border-radius: 4px;",
+          
+          # Parent directory link
+          if (start_path != normalizePath("..", mustWork = FALSE)) {
+            tags$div(
+              style = "padding: 8px; margin-bottom: 10px; border-bottom: 2px solid #ddd;",
+              tags$a(
+                href = "#",
+                onclick = sprintf(
+                  "Shiny.setInputValue('browse_goto_parent_config', '%s', {priority: 'event'}); return false;",
+                  parent_dir
+                ),
+                icon("level-up-alt", style = "color: #f39c12;"), 
+                " .. (parent directory)",
+                style = "color: #333; font-weight: bold; text-decoration: none; font-size: 14px;"
+              )
+            )
+          },
+          
+          # Subdirectories
+          if (length(dirs) > 0) {
+            tagList(
+              tags$div(
+                style = "margin-bottom: 15px;",
+                tags$h5(icon("folder"), " Folders", 
+                        style = "color: #3c8dbc; margin-bottom: 10px;"),
+                lapply(dirs, function(d) {
+                  dir_name <- basename(d)
+                  tags$div(
+                    style = "padding: 5px 10px; margin: 2px 0; 
+                             transition: background 0.2s; cursor: pointer;",
+                    onmouseover = "this.style.background='#e8f4f8'; this.style.borderRadius='3px';",
+                    onmouseout = "this.style.background='';",
+                    tags$a(
+                      href = "#",
+                      onclick = sprintf(
+                        "Shiny.setInputValue('browse_goto_dir_config', '%s', {priority: 'event'}); return false;",
+                        d
+                      ),
+                      icon("folder-open", style = "color: #3c8dbc;"), 
+                      " ", dir_name,
+                      style = "color: #333; text-decoration: none; font-size: 13px;"
+                    )
+                  )
+                })
+              )
+            )
+          },
+          
+          # Files
+          if (length(all_files) > 0) {
+            tagList(
+              tags$h5(icon("file-code"), " Configuration Files", 
+                      style = "color: #28a745; margin-bottom: 10px; margin-top: 15px;"),
+              lapply(all_files, function(f) {
+                file_name <- basename(f)
+                file_ext <- tools::file_ext(f)
+                file_icon <- if (file_ext %in% c("rds", "RDS")) "database" else "file-code"
+                file_color <- if (file_ext %in% c("rds", "RDS")) "#9b59b6" else "#28a745"
+                
+                tags$div(
+                  style = "padding: 5px 10px; margin: 2px 0; 
+                           transition: background 0.2s; cursor: pointer;",
+                  onmouseover = "this.style.background='#e8f8f0'; this.style.borderRadius='3px';",
+                  onmouseout = "this.style.background='';",
+                  tags$a(
+                    href = "#",
+                    onclick = sprintf(
+                      "Shiny.setInputValue('browse_select_file_config', '%s', {priority: 'event'}); return false;",
+                      f
+                    ),
+                    icon(file_icon, style = paste0("color: ", file_color, ";")), 
+                    " ", file_name,
+                    style = "color: #333; text-decoration: none; font-size: 13px;"
+                  )
+                )
+              })
+            )
+          } else {
+            tags$p("No R or RDS files in this directory", 
+                   style = "text-align: center; color: #999; padding: 20px;")
+          }
+        ),
+        
+        footer = tagList(
+          modalButton("Cancel")
+        )
+      ))
+      
+    }, error = function(e) {
+      showNotification(paste("Error browsing:", e$message), type = "error")
+    })
+  })
+  
+  # Handle directory navigation
+  observeEvent(input$browse_goto_dir_config, {
+    req(input$browse_goto_dir_config)
+    
+    # Update last browse path
+    rv$last_browse_path <- input$browse_goto_dir_config
+    
+    # Close modal and re-open with new path
+    removeModal()
+    Sys.sleep(0.1)
+    
+    # Manually re-trigger browse
+    tryCatch({
+      start_path <- normalizePath(rv$last_browse_path, mustWork = FALSE)
+      
+      all_files <- list.files(start_path, 
+                              pattern = "\\.(R|r|rds|RDS)$", 
+                              full.names = TRUE)
+      dirs <- list.dirs(start_path, recursive = FALSE, full.names = TRUE)
+      parent_dir <- dirname(start_path)
+      
+      showModal(modalDialog(
+        title = "Browse for Configuration File",
+        size = "l",
+        
+        p(strong("Current directory:"), 
+          style = "color: #666; font-size: 12px; margin-bottom: 15px;",
+          code(start_path)),
+        
+        div(
+          style = "max-height: 500px; overflow-y: auto; background: #f9f9f9; 
+                   padding: 15px; border: 1px solid #ddd; border-radius: 4px;",
+          
+          if (start_path != normalizePath("..", mustWork = FALSE)) {
+            tags$div(
+              style = "padding: 8px; margin-bottom: 10px; border-bottom: 2px solid #ddd;",
+              tags$a(
+                href = "#",
+                onclick = sprintf(
+                  "Shiny.setInputValue('browse_goto_parent_config', '%s', {priority: 'event'}); return false;",
+                  parent_dir
+                ),
+                icon("level-up-alt", style = "color: #f39c12;"), 
+                " .. (parent directory)",
+                style = "color: #333; font-weight: bold; text-decoration: none; font-size: 14px;"
+              )
+            )
+          },
+          
+          if (length(dirs) > 0) {
+            tagList(
+              tags$div(
+                style = "margin-bottom: 15px;",
+                tags$h5(icon("folder"), " Folders", 
+                        style = "color: #3c8dbc; margin-bottom: 10px;"),
+                lapply(dirs, function(d) {
+                  dir_name <- basename(d)
+                  tags$div(
+                    style = "padding: 5px 10px; margin: 2px 0; 
+                             transition: background 0.2s; cursor: pointer;",
+                    onmouseover = "this.style.background='#e8f4f8'; this.style.borderRadius='3px';",
+                    onmouseout = "this.style.background='';",
+                    tags$a(
+                      href = "#",
+                      onclick = sprintf(
+                        "Shiny.setInputValue('browse_goto_dir_config', '%s', {priority: 'event'}); return false;",
+                        d
+                      ),
+                      icon("folder-open", style = "color: #3c8dbc;"), 
+                      " ", dir_name,
+                      style = "color: #333; text-decoration: none; font-size: 13px;"
+                    )
+                  )
+                })
+              )
+            )
+          },
+          
+          if (length(all_files) > 0) {
+            tagList(
+              tags$h5(icon("file-code"), " Configuration Files", 
+                      style = "color: #28a745; margin-bottom: 10px; margin-top: 15px;"),
+              lapply(all_files, function(f) {
+                file_name <- basename(f)
+                file_ext <- tools::file_ext(f)
+                file_icon <- if (file_ext %in% c("rds", "RDS")) "database" else "file-code"
+                file_color <- if (file_ext %in% c("rds", "RDS")) "#9b59b6" else "#28a745"
+                
+                tags$div(
+                  style = "padding: 5px 10px; margin: 2px 0; 
+                           transition: background 0.2s; cursor: pointer;",
+                  onmouseover = "this.style.background='#e8f8f0'; this.style.borderRadius='3px';",
+                  onmouseout = "this.style.background='';",
+                  tags$a(
+                    href = "#",
+                    onclick = sprintf(
+                      "Shiny.setInputValue('browse_select_file_config', '%s', {priority: 'event'}); return false;",
+                      f
+                    ),
+                    icon(file_icon, style = paste0("color: ", file_color, ";")), 
+                    " ", file_name,
+                    style = "color: #333; text-decoration: none; font-size: 13px;"
+                  )
+                )
+              })
+            )
+          } else {
+            tags$p("No R or RDS files in this directory", 
+                   style = "text-align: center; color: #999; padding: 20px;")
+          }
+        ),
+        
+        footer = tagList(
+          modalButton("Cancel")
+        )
+      ))
+      
+    }, error = function(e) {
+      showNotification(paste("Error:", e$message), type = "error")
+    })
+  }, ignoreInit = TRUE)
+  
+  # Handle parent directory navigation
+  observeEvent(input$browse_goto_parent_config, {
+    req(input$browse_goto_parent_config)
+    
+    # Update last browse path
+    rv$last_browse_path <- input$browse_goto_parent_config
+    
+    # Close modal and re-open with new path
+    removeModal()
+    Sys.sleep(0.1)
+    
+    # Same code as browse_goto_dir_config
+    tryCatch({
+      start_path <- normalizePath(rv$last_browse_path, mustWork = FALSE)
+      
+      all_files <- list.files(start_path, 
+                              pattern = "\\.(R|r|rds|RDS)$", 
+                              full.names = TRUE)
+      dirs <- list.dirs(start_path, recursive = FALSE, full.names = TRUE)
+      parent_dir <- dirname(start_path)
+      
+      showModal(modalDialog(
+        title = "Browse for Configuration File",
+        size = "l",
+        
+        p(strong("Current directory:"), 
+          style = "color: #666; font-size: 12px; margin-bottom: 15px;",
+          code(start_path)),
+        
+        div(
+          style = "max-height: 500px; overflow-y: auto; background: #f9f9f9; 
+                   padding: 15px; border: 1px solid #ddd; border-radius: 4px;",
+          
+          if (start_path != normalizePath("..", mustWork = FALSE)) {
+            tags$div(
+              style = "padding: 8px; margin-bottom: 10px; border-bottom: 2px solid #ddd;",
+              tags$a(
+                href = "#",
+                onclick = sprintf(
+                  "Shiny.setInputValue('browse_goto_parent_config', '%s', {priority: 'event'}); return false;",
+                  parent_dir
+                ),
+                icon("level-up-alt", style = "color: #f39c12;"), 
+                " .. (parent directory)",
+                style = "color: #333; font-weight: bold; text-decoration: none; font-size: 14px;"
+              )
+            )
+          },
+          
+          if (length(dirs) > 0) {
+            tagList(
+              tags$div(
+                style = "margin-bottom: 15px;",
+                tags$h5(icon("folder"), " Folders", 
+                        style = "color: #3c8dbc; margin-bottom: 10px;"),
+                lapply(dirs, function(d) {
+                  dir_name <- basename(d)
+                  tags$div(
+                    style = "padding: 5px 10px; margin: 2px 0; 
+                             transition: background 0.2s; cursor: pointer;",
+                    onmouseover = "this.style.background='#e8f4f8'; this.style.borderRadius='3px';",
+                    onmouseout = "this.style.background='';",
+                    tags$a(
+                      href = "#",
+                      onclick = sprintf(
+                        "Shiny.setInputValue('browse_goto_dir_config', '%s', {priority: 'event'}); return false;",
+                        d
+                      ),
+                      icon("folder-open", style = "color: #3c8dbc;"), 
+                      " ", dir_name,
+                      style = "color: #333; text-decoration: none; font-size: 13px;"
+                    )
+                  )
+                })
+              )
+            )
+          },
+          
+          if (length(all_files) > 0) {
+            tagList(
+              tags$h5(icon("file-code"), " Configuration Files", 
+                      style = "color: #28a745; margin-bottom: 10px; margin-top: 15px;"),
+              lapply(all_files, function(f) {
+                file_name <- basename(f)
+                file_ext <- tools::file_ext(f)
+                file_icon <- if (file_ext %in% c("rds", "RDS")) "database" else "file-code"
+                file_color <- if (file_ext %in% c("rds", "RDS")) "#9b59b6" else "#28a745"
+                
+                tags$div(
+                  style = "padding: 5px 10px; margin: 2px 0; 
+                           transition: background 0.2s; cursor: pointer;",
+                  onmouseover = "this.style.background='#e8f8f0'; this.style.borderRadius='3px';",
+                  onmouseout = "this.style.background='';",
+                  tags$a(
+                    href = "#",
+                    onclick = sprintf(
+                      "Shiny.setInputValue('browse_select_file_config', '%s', {priority: 'event'}); return false;",
+                      f
+                    ),
+                    icon(file_icon, style = paste0("color: ", file_color, ";")), 
+                    " ", file_name,
+                    style = "color: #333; text-decoration: none; font-size: 13px;"
+                  )
+                )
+              })
+            )
+          } else {
+            tags$p("No R or RDS files in this directory", 
+                   style = "text-align: center; color: #999; padding: 20px;")
+          }
+        ),
+        
+        footer = tagList(
+          modalButton("Cancel")
+        )
+      ))
+      
+    }, error = function(e) {
+      showNotification(paste("Error:", e$message), type = "error")
+    })
+  }, ignoreInit = TRUE)
+  
+  # Handle file selection
+  observeEvent(input$browse_select_file_config, {
+    req(input$browse_select_file_config)
+    
+    selected_file <- input$browse_select_file_config
+    
+    # Update last browse path to parent directory
+    rv$last_browse_path <- dirname(selected_file)
+    
+    removeModal()
+    
+    # Load the selected file
+    load_models(
+      config_path = selected_file,
+      original_filename = basename(selected_file)
+    )
+    
+    showNotification(
+      paste("Loading:", basename(selected_file)),
+      type = "message",
+      duration = 2
+    )
+  }, ignoreInit = TRUE)
+  
+  
+  
   # Handle save and edit for uploaded files
   observeEvent(input$confirm_save_and_edit, {
     req(input$save_script_path)
@@ -1702,12 +2200,12 @@ server <- function(input, output, session) {
       summary_text <- rv$run_metadata$summary
       summary_style <- "color: #28a745; font-weight: bold; font-size: 14px;"
       box_style <- "margin-top: 4px; padding: 8px 12px; background: #f0f9f0; 
-                  border-left: 3px solid #28a745; border-radius: 4px;"
+                    border-left: 3px solid #28a745; border-radius: 4px;"
     } else {
       summary_text <- "⚠ Summary not provided"
       summary_style <- "color: #f39c12; font-weight: bold; font-size: 14px;"
       box_style <- "margin-top: 4px; padding: 8px 12px; background: #fff9e6; 
-                  border-left: 3px solid #f39c12; border-radius: 4px;"
+                    border-left: 3px solid #f39c12; border-radius: 4px;"
     }
     
     # Model count text
@@ -1732,6 +2230,7 @@ server <- function(input, output, session) {
       )
     )
   })
+  
   
   
   
@@ -1869,50 +2368,64 @@ server <- function(input, output, session) {
                style = "text-align: center; color: #999; padding: 20px;"))
     }
     
+    
+    # Add summary section if available
+    summary_section <- NULL
+    if (!is.null(rv$run_metadata$summary) && rv$run_metadata$summary != "") {
+      summary_section <- div(
+        style = "background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                 padding: 20px; margin-bottom: 25px; 
+                 border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);",
+        tags$h3(
+          icon("star"), 
+          " Run Summary",
+          style = "color: white; margin-top: 0; margin-bottom: 15px; font-weight: bold;"
+        ),
+        p(rv$run_metadata$summary, 
+          style = "margin: 0; font-size: 15px; line-height: 1.8; color: white;")
+      )
+    }
+    
     model_cards <- lapply(rv$selected_models, function(model_name) {
       m <- rv$models[[model_name]]
       
       div(
         class = "model-details-card",
-        div(class = "model-name-header", 
-            icon("cube"), " ", model_name),
+        div(class = "model-name-header", model_name),
         
+        # Description
         if (!is.null(m$description) && m$description != "") {
           div(class = "model-desc", m$description)
-        } else {
-          div(class = "model-desc", style = "color: #999; font-style: italic;", "No description provided")
         },
         
-        div(class = "model-param", 
-            strong("Program: "), m$program_path),
-        div(class = "model-param", 
-            strong("Base Dir: "), m$base_dir),
-        div(class = "model-param", 
-            strong("Commands: "), m$mfcl_commands),
-        
-        hr(style = "margin: 8px 0;"),
-        
-        fluidRow(
-          column(6,
-                 div(class = "model-param", 
-                     strong(icon("random"), " Jitter Seeds: "), m$jitter_seeds),
-                 div(class = "model-param", 
-                     strong(icon("history"), " Retro Peels: "), m$retro_peels)
-          ),
-          column(6,
-                 div(class = "model-param", 
-                     strong(icon("calculator"), " Hessian Splits: "), m$nsplit),
-                 div(class = "model-param", 
-                     strong(icon("chart-line"), " Profile Scalers: "), m$scalers),
-                 div(class = "model-param", 
-                     strong(icon("repeat"), " Profile Reps: "), m$Reps)
-          )
+        # Parameters
+        tags$div(
+          style = "margin-top: 10px;",
+          lapply(names(m), function(param_name) {
+            if (param_name == "description") return(NULL)
+            
+            param_value <- m[[param_name]]
+            if (is.null(param_value)) return(NULL)
+            
+            div(
+              class = "model-param",
+              tags$strong(param_name, ":"), " ",
+              if (is.list(param_value)) {
+                paste(names(param_value), "=", param_value, collapse = ", ")
+              } else if (length(param_value) > 1) {
+                paste(param_value, collapse = ", ")
+              } else {
+                as.character(param_value)
+              }
+            )
+          })
         )
       )
     })
     
     div(
       class = "model-details-container",
+      summary_section,  # Add summary at the top
       model_cards
     )
   })
@@ -3211,9 +3724,9 @@ server <- function(input, output, session) {
       github_org = input$github_org, 
       github_repo = input$github_repo, 
       docker_image = input$docker_image,
-      condor_memory = input$condor_memory, 
-      condor_cpus = input$condor_cpus, 
-      condor_disk = input$condor_disk,
+      condor_cpus = as.integer(input$condor_cpus),
+      condor_memory = paste0(input$condor_memory, "GB"),
+      condor_disk = paste0(input$condor_disk, "GB"),
       stream_error = "TRUE", 
       branch = input$branch, 
       rmclone_script = "no", 
@@ -3334,8 +3847,12 @@ server <- function(input, output, session) {
     showNotification("Refreshing jobs...", type = "message", duration = 1)
     
     tryCatch({
-      # SSH command execution (batch format)
-      cmd <- sprintf("ssh %s@%s 'condor_q'", input$remote_user, input$remote_host)
+      # SSH command execution (batch format) - add -all flag if showing all users
+      if (input$show_all_jobs) {
+        cmd <- sprintf("ssh %s@%s 'condor_q -all'", input$remote_user, input$remote_host)
+      } else {
+        cmd <- sprintf("ssh %s@%s 'condor_q'", input$remote_user, input$remote_host)
+      }
       
       jobs_output <- system(cmd, intern = TRUE)
       
@@ -3390,7 +3907,13 @@ server <- function(input, output, session) {
       
       if (length(jobs_list) > 0) {
         rv$jobs_status <- do.call(rbind, jobs_list)
-        showNotification(paste("Found", nrow(rv$jobs_status), "jobs"), type = "message", duration = 2)
+        
+        msg <- if (input$show_all_jobs) {
+          paste("Found", nrow(rv$jobs_status), "jobs (all users)")
+        } else {
+          paste("Found", nrow(rv$jobs_status), "jobs (yours)")
+        }
+        showNotification(msg, type = "message", duration = 2)
       } else {
         rv$jobs_status <- data.frame(
           Owner = character(),
@@ -3403,7 +3926,13 @@ server <- function(input, output, session) {
           JobIDs = character(),
           stringsAsFactors = FALSE
         )
-        showNotification("No jobs found", type = "warning", duration = 2)
+        
+        msg <- if (input$show_all_jobs) {
+          "No jobs found (all users)"
+        } else {
+          "No jobs found"
+        }
+        showNotification(msg, type = "warning", duration = 2)
       }
       
     }, error = function(e) {
@@ -3422,6 +3951,12 @@ server <- function(input, output, session) {
     })
   })
   
+  # Auto-refresh when toggle changes
+  observeEvent(input$show_all_jobs, {
+    shinyjs::click("refresh_jobs")
+  }, ignoreInit = TRUE)
+  
+  
   output$jobs_table <- renderDT({
     datatable(
       rv$jobs_status, 
@@ -3435,6 +3970,120 @@ server <- function(input, output, session) {
       class = 'cell-border stripe'
     )
   })
+  
+  output$job_details <- renderPrint({
+    if (nrow(rv$jobs_status) == 0) {
+      cat("No jobs found. Click 'Refresh' to check job status.\n")
+      return()
+    }
+    
+    # DEBUG: Print raw data structure
+    #cat("========== DEBUG INFO ==========\n\n")
+    #cat("Structure of rv$jobs_status:\n")
+    #print(str(rv$jobs_status))
+    #cat("\n")
+    #cat("First few rows:\n")
+    #print(head(rv$jobs_status, 3))
+    #cat("\n")
+    #cat("Column classes:\n")
+    #print(sapply(rv$jobs_status, class))
+    #cat("\n================================\n\n")
+    
+    # Get full condor_q output
+    tryCatch({
+      if (input$show_all_jobs) {
+        cmd <- sprintf("ssh %s@%s 'condor_q -all'", 
+                       input$remote_user, 
+                       input$remote_host)
+      } else {
+        cmd <- sprintf("ssh %s@%s 'condor_q'", 
+                       input$remote_user, 
+                       input$remote_host)
+      }
+      
+      result <- system(cmd, intern = TRUE)
+      
+      if (length(result) == 0) {
+        cat("No jobs currently in queue.\n")
+        return()
+      }
+      
+      # Extract summary lines
+      summary_lines <- grep("^Total for", result, value = TRUE)
+      
+      if (length(summary_lines) > 0) {
+        cat("========== Condor Queue Summary ==========\n\n")
+        for (line in summary_lines) {
+          cat(line, "\n")
+        }
+        cat("\n==========================================\n\n")
+      }
+      
+      # Simple user count without aggregation
+      if (nrow(rv$jobs_status) > 0) {
+        cat("========== Jobs by User ==========\n\n")
+        
+        # Get unique owners
+        owners <- unique(rv$jobs_status$Owner)
+        my_user <- input$remote_user
+        
+        for (owner in owners) {
+          # Filter jobs for this owner
+          owner_jobs <- rv$jobs_status[rv$jobs_status$Owner == owner, ]
+          
+          # Count jobs
+          n_jobs <- nrow(owner_jobs)
+          
+          # Mark current user
+          if (owner == my_user) {
+            cat(sprintf("➤ %s (YOU):\n", owner))
+          } else {
+            cat(sprintf("  %s:\n", owner))
+          }
+          
+          cat(sprintf("    %d job(s) in queue\n", n_jobs))
+          
+          # Show batch names
+          batch_names <- owner_jobs$BatchName
+          if (length(batch_names) > 0) {
+            cat(sprintf("    Batches: %s\n", paste(batch_names, collapse = ", ")))
+          }
+          
+          cat("\n")
+        }
+        
+        cat("======================================\n\n")
+      }
+      
+      # Show selected job info
+      selected_jobs <- input$jobs_table_rows_selected
+      
+      if (!is.null(selected_jobs) && length(selected_jobs) > 0) {
+        cat("========== Selected Jobs ==========\n\n")
+        
+        for (i in selected_jobs) {
+          job <- rv$jobs_status[i, ]
+          cat(sprintf("• %s\n", job$BatchName))
+          cat(sprintf("  Owner: %s | Submitted: %s\n", job$Owner, job$Submitted))
+          cat(sprintf("  Status: %s done, %s running, %s idle (%s total)\n",
+                      job$Done, job$Run, job$Idle, job$Total))
+          
+          if (!is.na(job$JobIDs) && job$JobIDs != "") {
+            cat(sprintf("  Job IDs: %s\n", job$JobIDs))
+          }
+          cat("\n")
+        }
+      } else {
+        cat("💡 Tip: Select a job from the table above to see details\n")
+      }
+      
+    }, error = function(e) {
+      cat(sprintf("❌ Error: %s\n", e$message))
+    })
+  })
+  
+  
+  
   
   output$selected_jobs_info <- renderText({
     selected_rows <- input$jobs_table_rows_selected
