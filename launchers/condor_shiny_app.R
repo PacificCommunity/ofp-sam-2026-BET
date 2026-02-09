@@ -2561,6 +2561,110 @@ server <- function(input, output, session) {
   
   # ========== RETRIEVE RESULTS HANDLERS ==========
   
+  download_and_extract_from_folder <- function(folder_name, folder_path, download_dir, extract_path) {
+    find_tar_cmd <- sprintf("find %s -maxdepth 1 \\( -name '*.tar.gz' -o -name '*.tgz' \\)", folder_path)
+    ssh_find <- sprintf('ssh %s@%s "%s"', input$remote_user, input$remote_host, find_tar_cmd)
+    
+    tar_files <- system(ssh_find, intern = TRUE)
+    if (length(tar_files) == 0) {
+      return(list(ok = FALSE, message = "No tar.gz files found"))
+    }
+    
+    extracted_any <- FALSE
+    
+    for (tar_file in tar_files) {
+      tar_name <- basename(tar_file)
+      
+      rv$retrieval_log <- paste0(rv$retrieval_log, "  • ", tar_name, "\n")
+      
+      temp_dir <- file.path(
+        tempdir(),
+        paste0("condor_sel_", gsub("[^a-zA-Z0-9]", "_", folder_name), "_", format(Sys.time(), "%H%M%S"))
+      )
+      if (!dir.exists(temp_dir)) {
+        dir.create(temp_dir, recursive = TRUE)
+      }
+      
+      remote_tar <- sprintf("%s@%s:%s", input$remote_user, input$remote_host, tar_file)
+      local_tar <- file.path(temp_dir, tar_name)
+      
+      rsync_cmd <- sprintf('rsync -avz --progress %s %s', shQuote(remote_tar), shQuote(local_tar))
+      rsync_status <- system(rsync_cmd)
+      if (rsync_status != 0) {
+        rv$retrieval_log <- paste0(rv$retrieval_log, "    ❌ rsync failed\n")
+        unlink(temp_dir, recursive = TRUE)
+        next
+      }
+      
+      extract_cmd <- sprintf('tar -xzf %s -C %s', shQuote(local_tar), shQuote(temp_dir))
+      extract_status <- system(extract_cmd)
+      if (extract_status != 0) {
+        rv$retrieval_log <- paste0(rv$retrieval_log, "    ❌ extract failed\n")
+        unlink(temp_dir, recursive = TRUE)
+        next
+      }
+      
+      source_path <- file.path(temp_dir, extract_path)
+      
+      if (!dir.exists(source_path)) {
+        # Fallback: try to find the extract path anywhere in the archive
+        candidate_dirs <- list.dirs(temp_dir, recursive = TRUE, full.names = TRUE)
+        pattern <- paste0("/", gsub("([.])", "\\\\.", extract_path), "$")
+        matches <- candidate_dirs[grepl(pattern, candidate_dirs)]
+        if (length(matches) > 0) {
+          source_path <- matches[1]
+        }
+      }
+      
+      if (dir.exists(source_path)) {
+        items_in_source <- list.files(source_path, full.names = TRUE, all.files = TRUE, no.. = TRUE)
+        
+        if (length(items_in_source) == 1 && file.info(items_in_source[1])$isdir) {
+          single_folder_name <- basename(items_in_source[1])
+          if (single_folder_name == folder_name) {
+            items_in_source <- list.files(items_in_source[1], full.names = TRUE, all.files = TRUE, no.. = TRUE)
+          }
+        }
+        
+        if (length(items_in_source) > 0) {
+          target_dir <- file.path(download_dir, folder_name)
+          if (!dir.exists(target_dir)) {
+            dir.create(target_dir, recursive = TRUE)
+          }
+          
+          for (item in items_in_source) {
+            item_name <- basename(item)
+            target_item <- file.path(target_dir, item_name)
+            
+            if (file.info(item)$isdir) {
+              if (dir.exists(target_item)) {
+                unlink(target_item, recursive = TRUE)
+              }
+              system(sprintf('cp -r %s %s', shQuote(item), shQuote(target_item)))
+            } else {
+              file.copy(item, target_item, overwrite = TRUE)
+            }
+          }
+          
+          rv$retrieval_log <- paste0(rv$retrieval_log, "    ✓ Extracted to ", target_dir, "\n")
+          extracted_any <- TRUE
+        } else {
+          rv$retrieval_log <- paste0(rv$retrieval_log, "    ⚠ No items under extract path\n")
+        }
+      } else {
+        rv$retrieval_log <- paste0(rv$retrieval_log, "    ⚠ Path not found: ", extract_path, "\n")
+      }
+      
+      unlink(temp_dir, recursive = TRUE)
+    }
+    
+    if (!extracted_any) {
+      return(list(ok = FALSE, message = "No items extracted"))
+    }
+    
+    list(ok = TRUE, message = "ok")
+  }
+  
   
   # Download All - downloads entire directory without scanning individual folders
   observeEvent(input$download_all, {
@@ -3017,6 +3121,28 @@ server <- function(input, output, session) {
       return()
     }
     
+    download_dir <- input$download_location
+    if (is.null(download_dir) || download_dir == "") {
+      showNotification("Please specify a download location first", type = "warning")
+      return()
+    }
+    
+    repo_name <- input$extract_repo_name
+    if (is.null(repo_name) || repo_name == "") {
+      repo_name <- input$github_repo
+    }
+    if (is.null(repo_name) || repo_name == "") {
+      showNotification("Repository name not specified", type = "error")
+      return()
+    }
+    
+    extract_subpath <- trimws(input$extract_path_manual)
+    if (extract_subpath == "") {
+      extract_path <- repo_name
+    } else {
+      extract_path <- paste0(repo_name, "/", extract_subpath)
+    }
+    
     # Disable button during processing
     shinyjs::disable("fetch_selected")
     
@@ -3060,17 +3186,24 @@ server <- function(input, output, session) {
           id = "download_progress"
         )
         
-        # Perform download operation
         result <- tryCatch({
-          # Your download logic here (e.g., using CondorBox or scp)
-          # This is placeholder - replace with actual download code
-          remote_path <- file.path(input$scan_output_dir, folder_name)
-          local_path <- normalizePath(input$download_location, mustWork = FALSE)
+          if (!dir.exists(download_dir)) {
+            dir.create(download_dir, recursive = TRUE)
+          }
           
-          # Example: CondorBox download or system scp command
-          # download_result <- CondorBox::download_folder(remote_path, local_path)
+          folder_row <- rv$folders_data[rv$folders_data$Folder == folder_name, ]
+          if (nrow(folder_row) == 0) {
+            stop("Folder not found in scanned results")
+          }
           
-          TRUE  # Return TRUE on success
+          folder_path <- folder_row$Path[1]
+          
+          download_and_extract_from_folder(
+            folder_name = folder_name,
+            folder_path = folder_path,
+            download_dir = download_dir,
+            extract_path = extract_path
+          )$ok
         }, error = function(e) {
           rv$retrieval_log <- paste0(
             rv$retrieval_log,
@@ -4813,7 +4946,5 @@ server <- function(input, output, session) {
 
 # Run the application
 shinyApp(ui = ui, server = server)
-
-
 
 
