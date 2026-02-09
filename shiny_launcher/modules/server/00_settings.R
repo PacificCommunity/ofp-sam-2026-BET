@@ -37,6 +37,10 @@
           updateTextInput(session, "repo_root", value = saved_settings$repo_root)
         }
         
+        if (!is.null(saved_settings$recent_repo_roots)) {
+          rv$recent_repo_roots <- saved_settings$recent_repo_roots
+        }
+        
         if (!is.null(saved_settings$scan_output_dir)) {
           updateTextInput(session, "scan_output_dir", value = saved_settings$scan_output_dir)
         }
@@ -97,6 +101,7 @@
   save_settings <- function() {
     settings <- list(
       repo_root = repo_root_val(),
+      recent_repo_roots = rv$recent_repo_roots,
       scan_output_dir = input$scan_output_dir,
       download_location = input$download_location,
       extract_repo_name = input$extract_repo_name,
@@ -167,7 +172,7 @@
     tryCatch({
       start_path <- normalizePath(input$repo_root, mustWork = FALSE)
       if (!dir.exists(start_path)) {
-        start_path <- repo_root_default
+        start_path <- "/"
       }
       dirs <- list.dirs(start_path, recursive = FALSE, full.names = TRUE)
       
@@ -181,8 +186,8 @@
           tags$div(
             tags$a(
               href = "#",
-              onclick = "Shiny.setInputValue('selected_repo_root_path', '..', {priority: 'event'}); return false;",
-              icon("folder", style = "color: #f39c12;"), " ..",
+              onclick = "Shiny.setInputValue('selected_repo_root_path', '/', {priority: 'event'}); return false;",
+              icon("folder", style = "color: #f39c12;"), " /",
               style = "color: #333; cursor: pointer; text-decoration: none; font-size: 13px; font-weight: bold;"
             ),
             style = "padding: 5px 0; margin-bottom: 10px; border-bottom: 2px solid #ddd;"
@@ -200,7 +205,14 @@
             )
           })
         ),
-        footer = modalButton("Close")
+        shiny::hr(),
+        textInput("repo_root_manual_path", "Or enter path manually:",
+                  value = input$repo_root,
+                  placeholder = "/path/to/repo"),
+        footer = tagList(
+          modalButton("Close"),
+          actionButton("confirm_repo_root_path", "Select", class = "btn-primary")
+        )
       ))
     }, error = function(e) {
       showNotification(paste("Error:", e$message), type = "error")
@@ -212,6 +224,51 @@
     updateTextInput(session, "repo_root", value = input$selected_repo_root_path)
     removeModal()
   }, ignoreInit = TRUE)
+  
+  observeEvent(input$confirm_repo_root_path, {
+    if (!is.null(input$repo_root_manual_path) && input$repo_root_manual_path != "") {
+      updateTextInput(session, "repo_root", value = input$repo_root_manual_path)
+    }
+    removeModal()
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$repo_root, {
+    root <- normalizePath(input$repo_root, mustWork = FALSE)
+    if (dir.exists(root)) {
+      current <- rv$recent_repo_roots
+      current <- current[current != root]
+      rv$recent_repo_roots <- c(root, current)[1:min(5, length(c(root, current)))]
+      save_settings()
+    }
+  }, ignoreInit = TRUE)
+  
+  output$recent_repo_roots_ui <- renderUI({
+    if (length(rv$recent_repo_roots) == 0) {
+      return(NULL)
+    }
+    tagList(
+      div(style = "color:#666; font-size:12px; margin-bottom:4px;", "Recent:"),
+      lapply(seq_along(rv$recent_repo_roots), function(i) {
+        path <- rv$recent_repo_roots[i]
+        btn_id <- paste0("recent_repo_root_", i)
+        actionLink(btn_id, path, style = "display:block; font-family: monospace;")
+      })
+    )
+  })
+  
+  observe({
+    if (length(rv$recent_repo_roots) == 0) return()
+    for (i in seq_along(rv$recent_repo_roots)) {
+      btn_id <- paste0("recent_repo_root_", i)
+      local({
+        idx <- i
+        local_btn <- btn_id
+        observeEvent(input[[local_btn]], {
+          updateTextInput(session, "repo_root", value = rv$recent_repo_roots[idx])
+        }, ignoreInit = TRUE)
+      })
+    }
+  })
   
   observeEvent(repo_root_val(), {
     if (is.null(rv$last_browse_path) || !dir.exists(rv$last_browse_path)) {
@@ -263,7 +320,8 @@
     selected_models = c(),
     # uploaded_filename = NULL,
     # uploaded_temp_path = NULL,
-    last_browse_path = file.path(repo_root_default, "configs")
+    last_browse_path = file.path(repo_root_default, "configs"),
+    recent_repo_roots = c()
   )
   
   # Initialize directories

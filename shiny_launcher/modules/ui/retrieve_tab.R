@@ -59,7 +59,7 @@ retrieve_tab_ui <- function() {
                       div(class = "download-path-input",
                           textInput("download_location", NULL, 
                                     value = "model",
-                                    placeholder = "model")
+                                    placeholder = "/path/to/download")
                       ),
                       div(class = "download-path-button",
                           actionButton("browse_download_location", "Browse", 

@@ -1,7 +1,10 @@
   # Browse download location
   observeEvent(input$browse_download_location, {
     tryCatch({
-      start_path <- normalizePath(repo_root_val(), mustWork = FALSE)
+      start_path <- normalizePath(input$download_location, mustWork = FALSE)
+      if (!dir.exists(start_path)) {
+        start_path <- "/"
+      }
       dirs <- list.dirs(start_path, recursive = FALSE, full.names = TRUE)
       
       showModal(modalDialog(
@@ -19,8 +22,8 @@
           tags$div(
             tags$a(
               href = "#",
-              onclick = "Shiny.setInputValue('selected_download_path', '..', {priority: 'event'}); return false;",
-              icon("folder", style = "color: #f39c12;"), " ..",
+              onclick = "Shiny.setInputValue('selected_download_path', '/', {priority: 'event'}); return false;",
+              icon("folder", style = "color: #f39c12;"), " /",
               style = "color: #333; cursor: pointer; text-decoration: none; font-size: 13px; font-weight: bold;"
             ),
             style = "padding: 5px 0; margin-bottom: 10px; border-bottom: 2px solid #ddd;"
@@ -29,7 +32,7 @@
           if (length(dirs) > 0) {
             lapply(dirs, function(d) {
               dir_name <- basename(d)
-              rel_path <- gsub(paste0("^", normalizePath(repo_root_val(), mustWork = FALSE), "/?"), "", d)
+              rel_path <- d
               
               tags$div(
                 tags$a(
@@ -51,9 +54,9 @@
         shiny::hr(),
         textInput("download_manual_path", "Or enter path manually:",
                   value = input$download_location,
-                  placeholder = "model"),
+                  placeholder = "/path/to/download"),
         p(style = "color: #666; font-size: 12px;", 
-          "Tip: Path relative to repo root (e.g., model, output)"),
+          "Tip: Absolute path recommended. Relative paths resolve to repo root."),
         footer = tagList(
           modalButton("Cancel"),
           actionButton("confirm_download_path", "Select", class = "btn-primary")
