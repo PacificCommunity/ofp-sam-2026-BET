@@ -776,9 +776,12 @@ ui <- dashboardPage(
             
             fluidRow(
               column(4,
-                     actionButton("scan_results", "Scan Folders", 
-                                  icon = icon("search"),
-                                  class = "btn-info btn-block")
+                     div(style = "display:flex; align-items:center; gap:8px;",
+                         actionButton("scan_results", "Scan Folders", 
+                                      icon = icon("search"),
+                                      class = "btn-info"),
+                         textOutput("scan_results_status", inline = TRUE)
+                     )
               ),
               column(4,
                      div(style = "display:flex; align-items:center; gap:8px;",
@@ -1156,6 +1159,7 @@ server <- function(input, output, session) {
     archive_contents = list(),
     selected_folders = c(),
     action_status = list(
+      scan_results = "",
       download_all = "",
       delete_remote_dir = "",
       download_selected = "",
@@ -1293,6 +1297,10 @@ server <- function(input, output, session) {
       return("(not set - please browse or enter path)")
     }
     normalizePath(dl_path, mustWork = FALSE)
+  })
+  
+  output$scan_results_status <- renderText({
+    rv$action_status$scan_results
   })
   
   output$download_all_status <- renderText({
@@ -2824,7 +2832,28 @@ server <- function(input, output, session) {
         
         source_path <- file.path(temp_dir, extract_path)
         
+        if (!dir.exists(source_path)) {
+          extract_parts <- strsplit(extract_path, "/", fixed = TRUE)[[1]]
+          if (length(extract_parts) >= 3) {
+            repo_part <- extract_parts[1]
+            rest_parts <- extract_parts[-1]
+            if (length(rest_parts) >= 1) {
+              alt_parts <- c(rest_parts[1], folder_name, rest_parts[-1])
+              alt_extract_path <- paste(c(repo_part, alt_parts), collapse = "/")
+              alt_source_path <- file.path(temp_dir, alt_extract_path)
+              if (dir.exists(alt_source_path)) {
+                source_path <- alt_source_path
+              }
+            }
+          }
+        }
+        
         if (dir.exists(source_path)) {
+          job_child_path <- file.path(source_path, folder_name)
+          if (dir.exists(job_child_path)) {
+            source_path <- job_child_path
+          }
+          
           items_in_source <- list.files(source_path, full.names = TRUE, all.files = TRUE, no.. = TRUE)
           
           if (length(items_in_source) == 1 && file.info(items_in_source[1])$isdir) {
@@ -2835,7 +2864,7 @@ server <- function(input, output, session) {
           }
           
           if (length(items_in_source) > 0) {
-            target_dir <- file.path(download_dir, folder_name)
+            target_dir <- download_dir
             if (!dir.exists(target_dir)) {
               dir.create(target_dir, recursive = TRUE)
             }
@@ -2845,12 +2874,13 @@ server <- function(input, output, session) {
               target_item <- file.path(target_dir, item_name)
               
               if (file.info(item)$isdir) {
-                if (dir.exists(target_item)) {
-                  unlink(target_item, recursive = TRUE)
+                if (!dir.exists(target_item)) {
+                  dir.create(target_item, recursive = TRUE)
                 }
-                system(sprintf('cp -r "%s" "%s"', item, target_item))
+                system(sprintf('rsync -a --ignore-existing %s %s', 
+                               shQuote(file.path(item, "")), shQuote(file.path(target_item, ""))))
               } else {
-                file.copy(item, target_item, overwrite = TRUE)
+                file.copy(item, target_item, overwrite = FALSE)
               }
             }
             
@@ -2886,6 +2916,8 @@ server <- function(input, output, session) {
   })
   
   observeEvent(input$scan_results, {
+    shinyjs::disable("scan_results")
+    rv$action_status$scan_results <- "Loading..."
     rv$retrieval_log <- paste0(Sys.time(), " - Scanning remote directory...\n")
     
     tryCatch({
@@ -2901,6 +2933,8 @@ server <- function(input, output, session) {
         rv$selected_folders <- c()
         rv$retrieval_log <- paste0(rv$retrieval_log, "⚠ No folders found\n")
         showNotification("No folders found", type = "warning")
+        rv$action_status$scan_results <- "0 folders"
+        shinyjs::enable("scan_results")
         return()
       }
       
@@ -2931,10 +2965,14 @@ server <- function(input, output, session) {
                                  sum(rv$folders_data$TarGzFiles), " tar.gz files total\n",
                                  "All folders selected by default\n")
       showNotification(paste("Found", nrow(rv$folders_data), "folders (all selected)"), type = "message")
+      rv$action_status$scan_results <- paste0(nrow(rv$folders_data), " folders")
       
     }, error = function(e) {
       rv$retrieval_log <- paste0(rv$retrieval_log, "ERROR: ", e$message, "\n")
       showNotification(paste("Error:", e$message), type = "error")
+      rv$action_status$scan_results <- "Error"
+    }, finally = {
+      shinyjs::enable("scan_results")
     })
   })
   
