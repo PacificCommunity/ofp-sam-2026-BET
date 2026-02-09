@@ -405,6 +405,110 @@ ui <- dashboardPage(
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
+        
+          /* Model checkbox with inline description */
+  .model-checkbox-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px;
+    margin: 3px 0;
+    border-bottom: 1px solid #eee;
+    transition: background 0.2s;
+  }
+  
+  .model-checkbox-row:hover {
+    background: #e8f4f8;
+    border-radius: 3px;
+  }
+  
+  .model-checkbox-left {
+    flex-shrink: 0;
+    width: 30px;
+    padding-top: 3px;
+  }
+  
+  .model-checkbox-content {
+    flex: 1;
+    min-width: 0;
+  }
+  
+  .model-name-label {
+    font-weight: 600;
+    color: #333;
+    font-size: 13px;
+    margin-bottom: 3px;
+  }
+  
+  .model-desc-inline {
+    color: #666;
+    font-size: 11px;
+    font-style: italic;
+    line-height: 1.4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    margin: 0;
+  }
+  
+  .model-desc-inline.expanded {
+    display: block;
+    -webkit-line-clamp: unset;
+  }
+  
+  .expand-desc-btn {
+    color: #3c8dbc;
+    font-size: 10px;
+    cursor: pointer;
+    text-decoration: underline;
+    margin-top: 2px;
+    display: inline-block;
+  }
+  
+  .expand-desc-btn:hover {
+    color: #2c6d8c;
+  }
+  
+  .no-description {
+    color: #999;
+    font-size: 11px;
+    font-style: italic;
+  }
+  
+  /* Script editor styles */
+.script-editor-container {
+  width: 100%;
+  height: 500px;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.editor-toolbar {
+  background: #f5f5f5;
+  padding: 8px;
+  border-bottom: 1px solid #ddd;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.line-numbers {
+  background: #f9f9f9;
+  padding: 10px 5px;
+  text-align: right;
+  color: #999;
+  border-right: 1px solid #ddd;
+  user-select: none;
+  min-width: 40px;
+}
+      
+        
+        
+        
       "))
     ),
     
@@ -419,23 +523,24 @@ ui <- dashboardPage(
             title = "Load Model Configuration", status = "info", solidHeader = TRUE, width = 12,
             collapsible = TRUE, collapsed = FALSE,
             fluidRow(
-              column(4,
-                fileInput("launch_config_upload", "Upload R Script / RDS:",
-                          accept = c(".R", ".r", ".rds", ".RDS"),
-                          width = "100%")
-              ),
-              column(5,
-                textInput("launch_config_path", "Or specify path:",
-                          value = "../configs/set_model.R",
-                          placeholder = "Path to set_model.R or saved .rds",
-                          width = "100%")
+              column(6,
+                     fileInput("launch_config_upload", "Upload R Script / RDS:",
+                               accept = c(".R", ".r", ".rds", ".RDS"),
+                               width = "100%")
               ),
               column(3,
-                div(style = "margin-top: 25px;",
-                  actionButton("launch_load_config", "Load Models",
-                               icon = icon("folder-open"),
-                               class = "btn-info btn-block")
-                )
+                     div(style = "margin-top: 25px;",
+                         actionButton("launch_load_config", "Load from Path",
+                                      icon = icon("folder-open"),
+                                      class = "btn-info btn-block")
+                     )
+              ),
+              column(3,
+                     div(style = "margin-top: 25px;",
+                         actionButton("edit_script_rstudio", "Modify Script",
+                                      icon = icon("edit"),
+                                      class = "btn-warning btn-block")
+                     )
               )
             ),
             uiOutput("launch_config_status_ui")
@@ -1013,7 +1118,9 @@ server <- function(input, output, session) {
     ),
     saved_configs_trigger = 0,
     current_config_file = NULL,
-    selected_models = c()
+    selected_models = c(),
+    uploaded_filename = NULL,      
+    uploaded_temp_path = NULL      
   )
   
   # Initialize directories
@@ -1193,7 +1300,8 @@ server <- function(input, output, session) {
   
   # ========== LOAD MODELS FUNCTION ==========
   
-  load_models <- function(config_path = NULL, is_saved_run = FALSE) {
+  load_models <- function(config_path = NULL, is_saved_run = FALSE, original_filename = NULL) {
+    
     current_wd <- getwd()
     possible_paths <- c()
     
@@ -1250,7 +1358,7 @@ server <- function(input, output, session) {
                                    "\n✅ Found R script at:\n", found_path, "\n\n")
     
     tryCatch({
-      if (grepl("\\.rds$|\\.RDS$", found_path)) {
+      if (grepl("\\.rds|\\.RDS", found_path)) {
         saved_data <- readRDS(found_path)
         rv$models <- saved_data$models
         rv$models_original <- saved_data$models
@@ -1258,17 +1366,20 @@ server <- function(input, output, session) {
         rv$base_config_name <- saved_data$metadata$base_config
         rv$current_config_file <- found_path
         
-        job_history <- load_job_history(found_path)
+        # Extract summary from saved config
+        if (!is.null(saved_data$metadata$summary)) {
+          rv$run_metadata$summary <- saved_data$metadata$summary
+        }
         
-        rv$config_status_msg <- paste0(rv$config_status_msg,
-                                       "✅ Loaded saved run configuration:\n",
-                                       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
-                                       "Run Name: ", saved_data$metadata$run_name, "\n",
-                                       "Description: ", saved_data$metadata$description, "\n",
-                                       "Date: ", format(saved_data$metadata$date, "%Y-%m-%d %H:%M"), "\n",
-                                       "Base Config: ", saved_data$metadata$base_config, "\n",
-                                       "Created By: ", saved_data$metadata$created_by, "\n",
-                                       "Models: ", length(rv$models), "\n")
+        job_history <- load_job_history(found_path)
+        rv$config_status_msg <- paste0(rv$config_status_msg, 
+                                       "\n✓ Loaded saved run configuration",
+                                       "\n  - Run Name: ", saved_data$metadata$run_name,
+                                       "\n  - Description: ", saved_data$metadata$description,
+                                       "\n  - Date: ", format(saved_data$metadata$date, "%Y-%m-%d %H:%M"),
+                                       "\n  - Base Config: ", saved_data$metadata$base_config,
+                                       "\n  - Created By: ", saved_data$metadata$created_by,
+                                       "\n  - Models: ", length(rv$models))
         
         if (nrow(job_history) > 0) {
           rv$config_status_msg <- paste0(rv$config_status_msg,
@@ -1295,26 +1406,36 @@ server <- function(input, output, session) {
         env <- new.env()
         source(found_path, local = env)
         
+        # Extract summary if defined in the script
+        if (exists("summary", envir = env)) {
+          rv$run_metadata$summary <- env$summary
+        } else {
+          rv$run_metadata$summary <- NULL
+        }
+        
         if (exists("models", envir = env)) {
           rv$models <- env$models
           rv$models_original <- env$models
           rv$base_config_name <- basename(found_path)
           rv$current_config_file <- NULL
-          
           rv$config_status_msg <- paste0(rv$config_status_msg,
-                                         "✅ Successfully loaded R script\n",
-                                         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
-                                         "Script: ", basename(found_path), "\n",
-                                         "Models found: ", length(rv$models), "\n",
-                                         "  - ", paste(names(rv$models), collapse = "\n  - "), "\n",
-                                         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+                                         "\n✓ Successfully loaded R script",
+                                         "\n  - Script: ", basename(found_path),
+                                         "\n  - Models found: ", length(rv$models),
+                                         "\n  - ", paste(names(rv$models), collapse = " - "), "\n")
         } else {
-          stop("No 'models' list object found in the R script.\nMake sure your script contains: models <- list(...)")
+          stop("No 'models' list object found in the R script.")
         }
       }
       
       rv$config_loaded <- TRUE
-      rv$config_path <- found_path
+      # Use original filename if file was uploaded, otherwise use path
+      if (!is.null(original_filename)) {
+        rv$config_path <- original_filename
+      } else {
+        rv$config_path <- found_path
+      }
+      
       rv$selected_models <- names(rv$models)
       
       updateSelectInput(session, "edit_model_select", 
@@ -1351,30 +1472,269 @@ server <- function(input, output, session) {
   
   observeEvent(input$launch_config_upload, {
     req(input$launch_config_upload)
-    load_models(input$launch_config_upload$datapath)
+    
+    # Store the actual uploaded filename and temp path
+    rv$uploaded_filename <- input$launch_config_upload$name
+    rv$uploaded_temp_path <- input$launch_config_upload$datapath
+    
+    # Load models with original filename
+    load_models(
+      config_path = input$launch_config_upload$datapath,
+      original_filename = input$launch_config_upload$name
+    )
   })
+  
+  
+  # "Modify Script" button handler
+  observeEvent(input$edit_script_rstudio, {
+    if (!rv$config_loaded) {
+      showNotification("Please load a configuration file first", type = "warning")
+      return()
+    }
+    
+    # Read the current script content
+    script_content <- ""
+    current_file <- NULL
+    
+    if (!is.null(rv$uploaded_temp_path) && file.exists(rv$uploaded_temp_path)) {
+      # Uploaded file
+      script_content <- paste(readLines(rv$uploaded_temp_path, warn = FALSE), collapse = "\n")
+      current_file <- rv$uploaded_filename
+    } else if (!is.null(rv$config_path)) {
+      # File from path
+      possible_paths <- c(
+        rv$config_path,
+        file.path("../configs", basename(rv$config_path)),
+        file.path("configs", basename(rv$config_path))
+      )
+      
+      for (p in possible_paths) {
+        if (file.exists(p)) {
+          script_content <- paste(readLines(p, warn = FALSE), collapse = "\n")
+          current_file <- basename(p)
+          break
+        }
+      }
+    }
+    
+    if (script_content == "") {
+      showNotification("Cannot read script content", type = "error")
+      return()
+    }
+    
+    # Show modal with editor
+    showModal(modalDialog(
+      title = div(
+        style = "display: flex; justify-content: space-between; align-items: center;",
+        span(icon("edit"), " Edit Script"),
+        span(style = "font-size: 12px; color: #666; font-weight: normal;", current_file)
+      ),
+      size = "l",
+      
+      div(
+        class = "editor-toolbar",
+        textInput("save_script_name", "Save as:",
+                  value = if(!is.null(current_file)) current_file else "my_model.R",
+                  placeholder = "filename.R",
+                  width = "300px"),
+        actionButton("save_script_btn", "Save", 
+                     class = "btn-success btn-sm", 
+                     icon = icon("save")),
+        actionButton("reload_script_btn", "Save & Reload", 
+                     class = "btn-primary btn-sm", 
+                     icon = icon("sync"))
+      ),
+      
+      tags$textarea(
+        id = "script_editor",
+        class = "script-editor-container",
+        style = "width: 100%; height: 500px; padding: 10px; 
+               font-family: 'Courier New', monospace; font-size: 13px;
+               border: 1px solid #ddd; border-radius: 4px;
+               background: #f9f9f9; resize: vertical;",
+        script_content
+      ),
+      
+      p(style = "color: #666; font-size: 11px; margin-top: 10px;",
+        icon("info-circle"), 
+        " Edit your script above. Click 'Save' to save changes, or 'Save & Reload' to save and load the updated models."),
+      
+      footer = tagList(
+        modalButton("Cancel")
+      )
+    ))
+  })
+  
+  # Save script without reloading
+  observeEvent(input$save_script_btn, {
+    req(input$save_script_name, input$script_editor)
+    
+    filename <- input$save_script_name
+    content <- input$script_editor
+    
+    # Ensure .R extension
+    if (!grepl("\\.R$|\\.r$", filename)) {
+      filename <- paste0(filename, ".R")
+    }
+    
+    save_path <- file.path("../configs", filename)
+    
+    tryCatch({
+      # Create directory if needed
+      if (!dir.exists("../configs")) {
+        dir.create("../configs", recursive = TRUE)
+      }
+      
+      # Write content
+      writeLines(content, save_path)
+      
+      showNotification(
+        paste("✓ Saved:", filename),
+        type = "message",
+        duration = 3
+      )
+      
+      # Update config path
+      rv$config_path <- filename
+      rv$uploaded_filename <- NULL
+      
+    }, error = function(e) {
+      showNotification(
+        paste("Error saving:", e$message),
+        type = "error"
+      )
+    })
+  })
+  
+  # Save and reload script
+  observeEvent(input$reload_script_btn, {
+    req(input$save_script_name, input$script_editor)
+    
+    filename <- input$save_script_name
+    content <- input$script_editor
+    
+    # Ensure .R extension
+    if (!grepl("\\.R$|\\.r$", filename)) {
+      filename <- paste0(filename, ".R")
+    }
+    
+    save_path <- file.path("../configs", filename)
+    
+    tryCatch({
+      # Create directory if needed
+      if (!dir.exists("../configs")) {
+        dir.create("../configs", recursive = TRUE)
+      }
+      
+      # Write content
+      writeLines(content, save_path)
+      
+      removeModal()
+      
+      # Reload models
+      load_models(config_path = save_path, original_filename = filename)
+      
+      showNotification(
+        paste("✓ Saved and reloaded:", filename),
+        type = "message",
+        duration = 3
+      )
+      
+    }, error = function(e) {
+      showNotification(
+        paste("Error:", e$message),
+        type = "error"
+      )
+    })
+  })
+  
+  # Handle save and edit for uploaded files
+  observeEvent(input$confirm_save_and_edit, {
+    req(input$save_script_path)
+    
+    save_path <- input$save_script_path
+    
+    tryCatch({
+      # Create directory if needed
+      save_dir <- dirname(save_path)
+      if (!dir.exists(save_dir)) {
+        dir.create(save_dir, recursive = TRUE)
+      }
+      
+      # Copy the uploaded temp file to new location
+      if (!is.null(rv$uploaded_temp_path) && file.exists(rv$uploaded_temp_path)) {
+        file.copy(rv$uploaded_temp_path, save_path, overwrite = TRUE)
+      }
+      
+      removeModal()
+      
+      # Open in RStudio
+      if (file.exists(save_path)) {
+        rstudioapi::navigateToFile(normalizePath(save_path))
+        rv$config_path <- save_path
+        rv$uploaded_filename <- NULL  # Clear uploaded flag
+        showNotification(
+          paste("Saved and opened in RStudio:", basename(save_path)),
+          type = "message",
+          duration = 3
+        )
+      }
+      
+    }, error = function(e) {
+      showNotification(
+        paste("Error saving file:", e$message),
+        type = "error"
+      )
+    })
+  })
+  
   
   output$launch_config_status_ui <- renderUI({
     req(rv$config_loaded)
+    
     n <- length(rv$models)
     src <- if (!is.null(rv$config_path)) basename(rv$config_path) else "unknown"
     
-    descs <- sapply(names(rv$models), function(nm) {
-      m <- rv$models[[nm]]
-      d <- if (!is.null(m$description) && m$description != "") m$description else "No description"
-      paste0(nm, ": ", d)
-    })
+    # Check if summary exists
+    has_summary <- !is.null(rv$run_metadata$summary) && rv$run_metadata$summary != ""
     
-    div(style = "margin-top: 4px; padding: 6px 10px; background: #f0f9f0; border-left: 3px solid #28a745; border-radius: 4px;",
-      tags$span(style = "color: #28a745; font-weight: bold;",
-        icon("check-circle"),
-        paste0(" ", n, " model", if(n != 1) "s", " loaded from ", src)
+    if (has_summary) {
+      summary_text <- rv$run_metadata$summary
+      summary_style <- "color: #28a745; font-weight: bold; font-size: 14px;"
+      box_style <- "margin-top: 4px; padding: 8px 12px; background: #f0f9f0; 
+                  border-left: 3px solid #28a745; border-radius: 4px;"
+    } else {
+      summary_text <- "⚠ Summary not provided"
+      summary_style <- "color: #f39c12; font-weight: bold; font-size: 14px;"
+      box_style <- "margin-top: 4px; padding: 8px 12px; background: #fff9e6; 
+                  border-left: 3px solid #f39c12; border-radius: 4px;"
+    }
+    
+    # Model count text
+    model_count_text <- paste0(n, " model", if(n != 1) "s", " loaded")
+    
+    div(
+      style = box_style,
+      tags$div(
+        style = summary_style,
+        if (has_summary) icon("check-circle") else icon("exclamation-triangle"),
+        paste0(" ", summary_text)
       ),
-      tags$small(style = "display: block; color: #666; margin-top: 2px;",
-        HTML(paste(descs, collapse = " &nbsp;|&nbsp; "))
+      tags$div(
+        style = "color: #666; font-size: 11px; margin-top: 4px; margin-left: 20px;",
+        icon("cube"),
+        paste0(" ", model_count_text, " • "),
+        tags$span(
+          style = "font-style: italic;",
+          icon("file-code"),
+          paste0(" ", src)
+        )
       )
     )
   })
+  
+  
+  
   
   observeEvent(input$refresh_saved_configs, {
     rv$saved_configs_trigger <- rv$saved_configs_trigger + 1
@@ -1413,20 +1773,28 @@ server <- function(input, output, session) {
     }
     
     visible_models <- filtered_models()
-    
     if (length(visible_models) == 0) {
       return(div(
         class = "model-selector-container",
-        p("No models match your search.", style = "color: #999; font-style: italic; text-align: center; padding: 20px;")
+        p("No models match your search.", 
+          style = "color: #999; font-style: italic; text-align: center; padding: 20px;")
       ))
     }
     
     model_checkboxes <- lapply(visible_models, function(model_name) {
       checkbox_id <- paste0("model_check_", gsub("[^a-zA-Z0-9]", "_", model_name))
+      desc_id <- paste0("desc_", gsub("[^a-zA-Z0-9]", "_", model_name))
+      expand_id <- paste0("expand_", gsub("[^a-zA-Z0-9]", "_", model_name))
       
+      # Get model description
+      m <- rv$models[[model_name]]
+      has_desc <- !is.null(m$description) && m$description != ""
+      desc_text <- if (has_desc) m$description else NULL
+      
+      # Checkbox change observer
       observeEvent(input[[checkbox_id]], {
         if (input[[checkbox_id]]) {
-          if (!(model_name %in% rv$selected_models)) {
+          if (!model_name %in% rv$selected_models) {
             rv$selected_models <- c(rv$selected_models, model_name)
           }
         } else {
@@ -1434,12 +1802,45 @@ server <- function(input, output, session) {
         }
       }, ignoreInit = TRUE)
       
+      # Expand button observer
+      observeEvent(input[[expand_id]], {
+        shinyjs::toggleClass(id = desc_id, class = "expanded")
+      }, ignoreInit = TRUE)
+      
       div(
-        class = "model-checkbox-item",
-        checkboxInput(
-          checkbox_id,
-          label = model_name,
-          value = model_name %in% rv$selected_models
+        class = "model-checkbox-row",
+        div(
+          class = "model-checkbox-left",
+          checkboxInput(
+            checkbox_id,
+            label = NULL,
+            value = model_name %in% rv$selected_models
+          )
+        ),
+        div(
+          class = "model-checkbox-content",
+          div(class = "model-name-label", model_name),
+          if (has_desc) {
+            tagList(
+              div(
+                id = desc_id,
+                class = "model-desc-inline",
+                desc_text
+              ),
+              tags$a(
+                id = expand_id,
+                class = "expand-desc-btn",
+                href = "#",
+                onclick = sprintf(
+                  "Shiny.setInputValue('%s', Math.random()); return false;",
+                  expand_id
+                ),
+                "show more/less"
+              )
+            )
+          } else {
+            span(class = "no-description", "No description")
+          }
         )
       )
     })
