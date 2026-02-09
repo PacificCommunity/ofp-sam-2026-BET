@@ -2561,7 +2561,7 @@ server <- function(input, output, session) {
   
   # ========== RETRIEVE RESULTS HANDLERS ==========
   
-  download_and_extract_from_folder <- function(folder_name, folder_path, download_dir, extract_path) {
+  download_and_extract_from_folder <- function(folder_name, folder_path, download_dir, extract_path, extract_subpath) {
     find_tar_cmd <- sprintf("find %s -maxdepth 1 \\( -name '*.tar.gz' -o -name '*.tgz' \\)", folder_path)
     ssh_find <- sprintf('ssh %s@%s "%s"', input$remote_user, input$remote_host, find_tar_cmd)
     
@@ -2607,6 +2607,23 @@ server <- function(input, output, session) {
       source_path <- file.path(temp_dir, extract_path)
       
       if (!dir.exists(source_path)) {
+        # Fallback: if job folder is inserted after the first repo subdir (e.g., repo/model/<job>/...)
+        extract_parts <- strsplit(extract_path, "/", fixed = TRUE)[[1]]
+        if (length(extract_parts) >= 3) {
+          repo_part <- extract_parts[1]
+          rest_parts <- extract_parts[-1]
+          if (length(rest_parts) >= 1) {
+            alt_parts <- c(rest_parts[1], folder_name, rest_parts[-1])
+            alt_extract_path <- paste(c(repo_part, alt_parts), collapse = "/")
+            alt_source_path <- file.path(temp_dir, alt_extract_path)
+            if (dir.exists(alt_source_path)) {
+              source_path <- alt_source_path
+            }
+          }
+        }
+      }
+      
+      if (!dir.exists(source_path)) {
         # Fallback: try to find the extract path anywhere in the archive
         candidate_dirs <- list.dirs(temp_dir, recursive = TRUE, full.names = TRUE)
         pattern <- paste0("/", gsub("([.])", "\\\\.", extract_path), "$")
@@ -2617,6 +2634,11 @@ server <- function(input, output, session) {
       }
       
       if (dir.exists(source_path)) {
+        job_child_path <- file.path(source_path, folder_name)
+        if (dir.exists(job_child_path)) {
+          source_path <- job_child_path
+        }
+        
         items_in_source <- list.files(source_path, full.names = TRUE, all.files = TRUE, no.. = TRUE)
         
         if (length(items_in_source) == 1 && file.info(items_in_source[1])$isdir) {
@@ -3202,7 +3224,8 @@ server <- function(input, output, session) {
             folder_name = folder_name,
             folder_path = folder_path,
             download_dir = download_dir,
-            extract_path = extract_path
+            extract_path = extract_path,
+            extract_subpath = extract_subpath
           )$ok
         }, error = function(e) {
           rv$retrieval_log <- paste0(
@@ -4946,4 +4969,3 @@ server <- function(input, output, session) {
 
 # Run the application
 shinyApp(ui = ui, server = server)
-
