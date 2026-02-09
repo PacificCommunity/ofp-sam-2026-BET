@@ -5,6 +5,7 @@ source("R/modules/mod_stock.R")
 source("R/modules/mod_cpue.R")
 source("R/modules/mod_lf.R")
 source("R/modules/mod_wf.R")
+source("R/modules/mod_likelihood.R")
 source("R/server/download_helpers.R")
 source("R/server/server_dir_detection.R")
 source("R/server/server_data_load.R")
@@ -22,6 +23,8 @@ server <- function(input, output, session) {
     RepOut_list = NULL,               # List of MFCLRep objects
     LengOut_list = NULL,              # List of MFCLLenFit objects
     WeightOut_list = NULL,            # List of MFCLWgtFit objects
+    TagOut_list = NULL,               # List of MFCLTag objects
+    AgeOut_list = NULL,               # List of MFCLALK objects
     IndepOut_list = NULL,             # List of indepvar.rpt contents
     FISHERY_MAPS = NULL,              # Fishery name mappings
     INDEX_FISHERIES_MAPS = NULL,      # Index fishery identifiers
@@ -38,5 +41,6 @@ server <- function(input, output, session) {
   mod_cpue_server(input, output, session, rv)
   mod_lf_server(input, output, session, rv)
   mod_wf_server(input, output, session, rv)
+  mod_likelihood_server(input, output, session, rv)
   server_nav(input, output, session, rv)
 }

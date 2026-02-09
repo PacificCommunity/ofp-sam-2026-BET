@@ -5,6 +5,7 @@ source("R/modules/mod_stock.R")
 source("R/modules/mod_cpue.R")
 source("R/modules/mod_lf.R")
 source("R/modules/mod_wf.R")
+source("R/modules/mod_likelihood.R")
 
 ui <- dashboardPage(
   skin = "blue",
@@ -28,7 +29,8 @@ ui <- dashboardPage(
       menuItem("🐟 Stock Status", tabName = "stock", icon = icon("chart-line")),
       menuItem("📈 CPUE Fits", tabName = "cpue", icon = icon("chart-area")),
       menuItem("📏 Length Frequency", tabName = "lf", icon = icon("ruler-horizontal")),
-      menuItem("⚖️ Weight Frequency", tabName = "wf", icon = icon("weight-hanging"))
+      menuItem("⚖️ Weight Frequency", tabName = "wf", icon = icon("weight-hanging")),
+      menuItem("📉 Likelihood Profile", tabName = "likelihood", icon = icon("chart-line"))
     ),
     
     shiny::hr(),
@@ -187,7 +189,11 @@ ui <- dashboardPage(
       # -----------------------------------------------------------------------
       # TAB 7: WEIGHT FREQUENCY (DYNAMIC BOX HEIGHT)
       # -----------------------------------------------------------------------
-      mod_wf_ui()
+      mod_wf_ui(),
+      # -----------------------------------------------------------------------
+      # TAB 8: LIKELIHOOD PROFILE
+      # -----------------------------------------------------------------------
+      mod_likelihood_ui()
     )
   )
 )

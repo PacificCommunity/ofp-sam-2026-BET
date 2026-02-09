@@ -129,6 +129,14 @@ server_data_load <- function(input, output, session, rv) {
                   wf_file <- file.path(folder, "weight.fit")
                   if (file.exists(wf_file)) read.MFCLWgtFit(wf_file) else NULL
                 }, error = function(e) NULL),
+                TagOut = tryCatch({
+                  tag_files <- list.files(folder, "\\.tag$", full.names = TRUE)
+                  if (length(tag_files) > 0) read.MFCLTag(tag_files) else NULL
+                }, error = function(e) NULL),
+                AgeOut = tryCatch({
+                  age_files <- list.files(folder, "\\.age_length$", full.names = TRUE)
+                  if (length(age_files) > 0) read.MFCLALK(age_files) else NULL
+                }, error = function(e) NULL),
                 IndepOut = safe_read(file.path(folder, "indepvar.rpt"))
               )
             
@@ -191,6 +199,8 @@ server_data_load <- function(input, output, session, rv) {
         rv$RepOut_list <- map(results_named, "RepOut")
         rv$LengOut_list <- map(results_named, "LengOut")
         rv$WeightOut_list <- map(results_named, "WeightOut")
+        rv$TagOut_list <- map(results_named, "TagOut")
+        rv$AgeOut_list <- map(results_named, "AgeOut")
         rv$IndepOut_list <- map(results_named, "IndepOut")
       
         # Create fishery name mappings for each scenario
