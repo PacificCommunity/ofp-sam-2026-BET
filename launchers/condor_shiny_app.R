@@ -781,14 +781,20 @@ ui <- dashboardPage(
                                   class = "btn-info btn-block")
               ),
               column(4,
-                     actionButton("download_all", "Download All", 
-                                  icon = icon("download"),
-                                  class = "btn-success btn-block")
+                     div(style = "display:flex; align-items:center; gap:8px;",
+                         actionButton("download_all", "Download All", 
+                                      icon = icon("download"),
+                                      class = "btn-success"),
+                         textOutput("download_all_status", inline = TRUE)
+                     )
               ),
               column(4,
-                     actionButton("delete_remote_dir", "Delete Directory", 
-                                  icon = icon("trash"),
-                                  class = "btn-danger btn-block")
+                     div(style = "display:flex; align-items:center; gap:8px;",
+                         actionButton("delete_remote_dir", "Delete Directory", 
+                                      icon = icon("trash"),
+                                      class = "btn-danger"),
+                         textOutput("delete_remote_dir_status", inline = TRUE)
+                     )
               )
             )
           ),
@@ -859,14 +865,20 @@ ui <- dashboardPage(
             
             fluidRow(
               column(6,
-                     actionButton("fetch_selected", "Download Selected", 
-                                  class = "btn-primary btn-block", 
-                                  icon = icon("download"))
+                     div(style = "display:flex; align-items:center; gap:8px;",
+                         actionButton("fetch_selected", "Download Selected", 
+                                      class = "btn-primary", 
+                                      icon = icon("download")),
+                         textOutput("download_selected_status", inline = TRUE)
+                     )
               ),
               column(6,
-                     actionButton("delete_selected", "Delete Selected", 
-                                  class = "btn-danger btn-block", 
-                                  icon = icon("trash"))
+                     div(style = "display:flex; align-items:center; gap:8px;",
+                         actionButton("delete_selected", "Delete Selected", 
+                                      class = "btn-danger", 
+                                      icon = icon("trash")),
+                         textOutput("delete_selected_status", inline = TRUE)
+                     )
               )
             ),
             
@@ -1143,6 +1155,12 @@ server <- function(input, output, session) {
     folders_data = data.frame(),
     archive_contents = list(),
     selected_folders = c(),
+    action_status = list(
+      download_all = "",
+      delete_remote_dir = "",
+      download_selected = "",
+      delete_selected = ""
+    ),
     jobs_status = data.frame(
       Owner = character(),
       BatchName = character(),
@@ -1275,6 +1293,22 @@ server <- function(input, output, session) {
       return("(not set - please browse or enter path)")
     }
     normalizePath(dl_path, mustWork = FALSE)
+  })
+  
+  output$download_all_status <- renderText({
+    rv$action_status$download_all
+  })
+  
+  output$delete_remote_dir_status <- renderText({
+    rv$action_status$delete_remote_dir
+  })
+  
+  output$download_selected_status <- renderText({
+    rv$action_status$download_selected
+  })
+  
+  output$delete_selected_status <- renderText({
+    rv$action_status$delete_selected
   })
   
   output$selected_folders_count <- renderText({
@@ -2692,16 +2726,22 @@ server <- function(input, output, session) {
   
   # Download All - downloads entire directory without scanning individual folders
   observeEvent(input$download_all, {
+    shinyjs::disable("download_all")
+    rv$action_status$download_all <- "Starting..."
     scan_dir <- input$scan_output_dir
     
     if (is.null(scan_dir) || scan_dir == "") {
       showNotification("Please specify a remote output directory first", type = "warning")
+      rv$action_status$download_all <- "Not started"
+      shinyjs::enable("download_all")
       return()
     }
     
     download_dir <- input$download_location
     if (is.null(download_dir) || download_dir == "") {
       showNotification("Please specify a download location first", type = "warning")
+      rv$action_status$download_all <- "Not started"
+      shinyjs::enable("download_all")
       return()
     }
     
@@ -2711,6 +2751,8 @@ server <- function(input, output, session) {
     }
     if (is.null(repo_name) || repo_name == "") {
       showNotification("Repository name not specified", type = "error")
+      rv$action_status$download_all <- "Not started"
+      shinyjs::enable("download_all")
       return()
     }
     
@@ -2745,15 +2787,20 @@ server <- function(input, output, session) {
         rv$retrieval_log <- paste0(rv$retrieval_log, "✗ No tar.gz files found\n")
         removeNotification("download_all_progress")
         showNotification("No tar.gz files found in directory", type = "warning")
+        rv$action_status$download_all <- "0/0"
+        shinyjs::enable("download_all")
         return()
       }
       
       rv$retrieval_log <- paste0(rv$retrieval_log, "✓ Found ", length(tar_files), " tar.gz files\n\n")
+      rv$action_status$download_all <- paste0("0/", length(tar_files))
       
       for (i in seq_along(tar_files)) {
         tar_file <- tar_files[i]
         tar_name <- basename(tar_file)
         folder_name <- basename(dirname(tar_file))
+        
+        rv$action_status$download_all <- paste0(i, "/", length(tar_files))
         
         rv$retrieval_log <- paste0(rv$retrieval_log, 
                                    "[", i, "/", length(tar_files), "] ", 
@@ -2826,11 +2873,15 @@ server <- function(input, output, session) {
       
       removeNotification("download_all_progress")
       showNotification("✓ Download complete!", type = "message", duration = 5)
+      rv$action_status$download_all <- paste0(length(tar_files), "/", length(tar_files), " done")
+      shinyjs::enable("download_all")
       
     }, error = function(e) {
       rv$retrieval_log <- paste0(rv$retrieval_log, "\n✗ ERROR: ", e$message, "\n")
       removeNotification("download_all_progress")
       showNotification(paste("Error:", e$message), type = "error")
+      rv$action_status$download_all <- "Error"
+      shinyjs::enable("download_all")
     })
   })
   
@@ -2916,6 +2967,8 @@ server <- function(input, output, session) {
   
   observeEvent(input$confirm_delete_remote_dir, {
     removeModal()
+    shinyjs::disable("delete_remote_dir")
+    rv$action_status$delete_remote_dir <- "1/1"
     
     remote_dir <- input$scan_output_dir
     full_path <- paste0(input$github_repo, "/", remote_dir)
@@ -2960,21 +3013,27 @@ server <- function(input, output, session) {
           
           removeNotification("delete_progress")
           showNotification("✓ Directory deleted", type = "message", duration = 3)
+          rv$action_status$delete_remote_dir <- "1/1 done"
         } else {
           rv$retrieval_log <- paste0(rv$retrieval_log, "⚠ Verification failed\n\n")
           removeNotification("delete_progress")
           showNotification("Deletion may have failed", type = "warning", duration = 5)
+          rv$action_status$delete_remote_dir <- "Verification failed"
         }
       } else {
         rv$retrieval_log <- paste0(rv$retrieval_log, "✗ Deletion failed\n\n")
         removeNotification("delete_progress")
         showNotification("Failed to delete", type = "error", duration = 5)
+        rv$action_status$delete_remote_dir <- "Failed"
       }
       
     }, error = function(e) {
       rv$retrieval_log <- paste0(rv$retrieval_log, "ERROR: ", e$message, "\n\n")
       removeNotification("delete_progress")
       showNotification(paste("Error:", e$message), type = "error", duration = 5)
+      rv$action_status$delete_remote_dir <- "Error"
+    }, finally = {
+      shinyjs::enable("delete_remote_dir")
     })
   })
   
@@ -3169,6 +3228,7 @@ server <- function(input, output, session) {
     
     # Disable button during processing
     shinyjs::disable("fetch_selected")
+    rv$action_status$download_selected <- paste0("0/", length(rv$selected_folders))
     
     total_folders <- length(rv$selected_folders)
     
@@ -3195,6 +3255,7 @@ server <- function(input, output, session) {
       
       for (i in seq_along(rv$selected_folders)) {
         folder_name <- rv$selected_folders[i]
+        rv$action_status$download_selected <- paste0(i, "/", total_folders)
         
         # Update progress in log
         rv$retrieval_log <- paste0(
@@ -3263,6 +3324,7 @@ server <- function(input, output, session) {
         duration = 5,
         id = "download_progress"
       )
+      rv$action_status$download_selected <- paste0(total_folders, "/", total_folders, " done")
       
       if (failed_count > 0) {
         showNotification(
@@ -3278,6 +3340,7 @@ server <- function(input, output, session) {
         "\n❌ ERROR: ", e$message, "\n"
       )
       showNotification(paste("Error:", e$message), type = "error", duration = 10)
+      rv$action_status$download_selected <- "Error"
     }, finally = {
       # Re-enable button after completion or error
       shinyjs::enable("fetch_selected")
@@ -3313,6 +3376,7 @@ server <- function(input, output, session) {
     shinyjs::disable("delete_selected")
     
     total_folders <- length(rv$selected_folders)
+    rv$action_status$delete_selected <- paste0("0/", total_folders)
     
     # Initialize retrieval log
     rv$retrieval_log <- paste0(
@@ -3337,6 +3401,7 @@ server <- function(input, output, session) {
       
       for (i in seq_along(rv$selected_folders)) {
         folder_name <- rv$selected_folders[i]
+        rv$action_status$delete_selected <- paste0(i, "/", total_folders)
         
         # Update progress in log
         rv$retrieval_log <- paste0(
@@ -3393,6 +3458,7 @@ server <- function(input, output, session) {
         duration = 5,
         id = "delete_folder_progress"
       )
+      rv$action_status$delete_selected <- paste0(total_folders, "/", total_folders, " done")
       
       # Refresh folder list
       shinyjs::click("scan_results")
@@ -3400,6 +3466,7 @@ server <- function(input, output, session) {
     }, error = function(e) {
       rv$retrieval_log <- paste0(rv$retrieval_log, "\n❌ ERROR: ", e$message, "\n")
       showNotification(paste("Error:", e$message), type = "error", duration = 10)
+      rv$action_status$delete_selected <- "Error"
     }, finally = {
       # Re-enable button after completion or error
       shinyjs::enable("delete_selected")
