@@ -206,14 +206,19 @@
   }, ignoreInit = TRUE)
 
   update_makefile_docker_image <- function(new_image) {
-    mk <- file.path(repo_root_val(), "Makefile")
-    if (!file.exists(mk)) return(FALSE)
-    lines <- readLines(mk, warn = FALSE)
-    idx <- grep("^\\s*DOCKER_IMAGE\\s*=", lines)
-    if (length(idx) == 0) return(FALSE)
-    lines[idx[1]] <- paste0("DOCKER_IMAGE=", new_image)
-    writeLines(lines, mk)
-    TRUE
+    paths <- c(file.path(repo_root_val(), "Makefile"),
+               file.path(repo_root_val(), "makefile"))
+    updated <- FALSE
+    for (mk in paths) {
+      if (!file.exists(mk)) next
+      lines <- readLines(mk, warn = FALSE)
+      idx <- grep("^\\s*DOCKER_IMAGE\\s*=", lines)
+      if (length(idx) == 0) next
+      lines[idx[1]] <- paste0("DOCKER_IMAGE=", new_image)
+      writeLines(lines, mk)
+      updated <- TRUE
+    }
+    updated
   }
 
   observeEvent(input$docker_image, {
