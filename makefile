@@ -1,5 +1,5 @@
 # Docker image and working directory
-DOCKER_IMAGE=ghcr.io/pacificcommunity/bet-2026:v1.2
+DOCKER_IMAGE=ghcr.io/pacificcommunity/bet-2026:v1.5
 WORKDIR=/workspace
 
 model:
