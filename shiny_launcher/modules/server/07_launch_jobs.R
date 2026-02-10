@@ -26,6 +26,8 @@
     selected_job_types <- input$job_types
     if (is.null(selected_job_types) || length(selected_job_types) == 0) {
       showNotification("Please select at least one job type", type = "error")
+      shinyjs::enable("launch_btn")
+      shinyjs::removeClass("launch_btn", "loading")
       return()
     }
     
@@ -59,9 +61,11 @@
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
     )
     
-    # Create reactive value for progress tracking
-    progress_text <- reactiveVal("")
     cancel_launch <- reactiveVal(FALSE)
+    current_job <- 0
+    batch_names <- c()
+    remote_dirs <- c()
+    progress_details <- c()
     
     # Show persistent modal dialog with progress
     showModal(modalDialog(
@@ -71,7 +75,6 @@
       ),
       size = "m",
       
-      # Progress indicator
       div(
         style = "text-align: center; margin: 20px 0;",
         div(class = "spinner"),
@@ -82,29 +85,31 @@
         )
       ),
       
-      # Progress details box
       div(
         style = "background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px; padding: 15px; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 12px;",
         div(id = "launch_progress_details", "Initializing...")
       ),
       
-      footer = actionButton("cancel_launch", "Cancel", class = "btn-warning"),
-      easyClose = FALSE  # Cannot close by clicking outside
+      footer = tagList(
+        actionButton("cancel_launch_btn", "Cancel", class = "btn-warning")
+      ),
+      easyClose = FALSE
     ))
     
-    observeEvent(input$cancel_launch, {
+    observeEvent(input$cancel_launch_btn, {
       cancel_launch(TRUE)
-      showNotification("Cancellation requested. Forcing stop after current call...", type = "warning", duration = 3)
-    }, ignoreInit = TRUE)
+      shinyjs::disable("cancel_launch_btn")
+      session$sendCustomMessage(
+        type = "updateProgress",
+        message = list(
+          id = "launch_progress_text",
+          text = sprintf("Cancelling... (%d/%d)", current_job, total_jobs)
+        )
+      )
+    }, ignoreInit = TRUE, once = TRUE)
     
     tryCatch({
-      batch_names <- c()
-      remote_dirs <- c()
-      current_job <- 0  # Track current job number
-      progress_details <- c()  # Store progress messages
-      
       for (model_name in selected_models) {
-        if (cancel_launch()) stop("Launch cancelled")
         model_env <- rv$models[[model_name]]
         
         for (job_type in selected_job_types) {
@@ -120,23 +125,15 @@
                 type = "updateProgress",
                 message = list(
                   id = "launch_progress_text",
-                  text = sprintf("Launching job %d/%d: %s (seed %d)", 
+                  text = sprintf("Launching %d/%d (model: %s, jitter: %s)", 
                                  current_job, total_jobs, model_name, seed)
                 )
               )
               
-              rv$launch_log <- paste0(
-                rv$launch_log,
-                sprintf("[%d/%d] 🔄 Launching: %s (seed %d)\n", 
-                        current_job, total_jobs, model_name, seed)
-              )
-              
               progress_details <- c(
                 progress_details,
-                sprintf("[%d/%d] 🔄 %s (seed %d)", 
-                        current_job, total_jobs, model_name, seed)
+                sprintf("[%d/%d] %s - jitter %s", current_job, total_jobs, model_name, seed)
               )
-              
               session$sendCustomMessage(
                 type = "updateProgress",
                 message = list(
@@ -145,30 +142,14 @@
                 )
               )
               
-              result <- launch_single_job(model_name, model_env, job_type = job_type, seed = seed)
+              result <- launch_single_job(model_name, model_env, job_type, seed = seed)
               batch_names <- c(batch_names, result$batch_name)
               remote_dirs <- c(remote_dirs, result$remote_dir)
-              
-              progress_details[length(progress_details)] <- paste0(
-                progress_details[length(progress_details)], " ✓"
-              )
-              
-              session$sendCustomMessage(
-                type = "updateProgress",
-                message = list(
-                  id = "launch_progress_details",
-                  text = paste(progress_details, collapse = "<br/>")
-                )
-              )
-              
-              rv$launch_log <- paste0(
-                rv$launch_log,
-                sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
-              )
             }
-            if (cancel_launch()) stop("Launch cancelled")
+            
           } else if (job_type == "hessian") {
-            for (part in 1:as.numeric(model_env$nsplit)) {
+            parts <- seq_len(as.numeric(model_env$nsplit))
+            for (part in parts) {
               if (cancel_launch()) stop("Launch cancelled")
               current_job <- current_job + 1
               
@@ -176,23 +157,15 @@
                 type = "updateProgress",
                 message = list(
                   id = "launch_progress_text",
-                  text = sprintf("Launching job %d/%d: %s (part %d)", 
+                  text = sprintf("Launching %d/%d (model: %s, hessian part: %s)", 
                                  current_job, total_jobs, model_name, part)
                 )
               )
               
-              rv$launch_log <- paste0(
-                rv$launch_log,
-                sprintf("[%d/%d] 🔄 Launching: %s (part %d)\n", 
-                        current_job, total_jobs, model_name, part)
-              )
-              
               progress_details <- c(
                 progress_details,
-                sprintf("[%d/%d] 🔄 %s (part %d)", 
-                        current_job, total_jobs, model_name, part)
+                sprintf("[%d/%d] %s - hessian part %s", current_job, total_jobs, model_name, part)
               )
-              
               session$sendCustomMessage(
                 type = "updateProgress",
                 message = list(
@@ -201,28 +174,11 @@
                 )
               )
               
-              result <- launch_single_job(model_name, model_env, job_type = job_type, part = part)
+              result <- launch_single_job(model_name, model_env, job_type, part = part)
               batch_names <- c(batch_names, result$batch_name)
               remote_dirs <- c(remote_dirs, result$remote_dir)
-              
-              progress_details[length(progress_details)] <- paste0(
-                progress_details[length(progress_details)], " ✓"
-              )
-              
-              session$sendCustomMessage(
-                type = "updateProgress",
-                message = list(
-                  id = "launch_progress_details",
-                  text = paste(progress_details, collapse = "<br/>")
-                )
-              )
-              
-              rv$launch_log <- paste0(
-                rv$launch_log,
-                sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
-              )
             }
-            if (cancel_launch()) stop("Launch cancelled")
+            
           } else if (job_type == "retro") {
             peels <- as.numeric(strsplit(model_env$retro_peels, "\\s+")[[1]])
             for (peel in peels) {
@@ -233,23 +189,15 @@
                 type = "updateProgress",
                 message = list(
                   id = "launch_progress_text",
-                  text = sprintf("Launching job %d/%d: %s (peel %d)", 
+                  text = sprintf("Launching %d/%d (model: %s, retro peel: %s)", 
                                  current_job, total_jobs, model_name, peel)
                 )
               )
               
-              rv$launch_log <- paste0(
-                rv$launch_log,
-                sprintf("[%d/%d] 🔄 Launching: %s (peel %d)\n", 
-                        current_job, total_jobs, model_name, peel)
-              )
-              
               progress_details <- c(
                 progress_details,
-                sprintf("[%d/%d] 🔄 %s (peel %d)", 
-                        current_job, total_jobs, model_name, peel)
+                sprintf("[%d/%d] %s - retro peel %s", current_job, total_jobs, model_name, peel)
               )
-              
               session$sendCustomMessage(
                 type = "updateProgress",
                 message = list(
@@ -258,31 +206,14 @@
                 )
               )
               
-              result <- launch_single_job(model_name, model_env, job_type = job_type, peel = peel)
+              result <- launch_single_job(model_name, model_env, job_type, peel = peel)
               batch_names <- c(batch_names, result$batch_name)
               remote_dirs <- c(remote_dirs, result$remote_dir)
-              
-              progress_details[length(progress_details)] <- paste0(
-                progress_details[length(progress_details)], " ✓"
-              )
-              
-              session$sendCustomMessage(
-                type = "updateProgress",
-                message = list(
-                  id = "launch_progress_details",
-                  text = paste(progress_details, collapse = "<br/>")
-                )
-              )
-              
-              rv$launch_log <- paste0(
-                rv$launch_log,
-                sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
-              )
             }
-            if (cancel_launch()) stop("Launch cancelled")
+            
           } else if (job_type == "prof") {
             scalers <- as.numeric(strsplit(model_env$scalers, "\\s+")[[1]])
-            for (sc in scalers) {
+            for (scaler in scalers) {
               if (cancel_launch()) stop("Launch cancelled")
               current_job <- current_job + 1
               
@@ -290,23 +221,15 @@
                 type = "updateProgress",
                 message = list(
                   id = "launch_progress_text",
-                  text = sprintf("Launching job %d/%d: %s (scaler %g)", 
-                                 current_job, total_jobs, model_name, sc)
+                  text = sprintf("Launching %d/%d (model: %s, scaler: %s)", 
+                                 current_job, total_jobs, model_name, scaler)
                 )
-              )
-              
-              rv$launch_log <- paste0(
-                rv$launch_log,
-                sprintf("[%d/%d] 🔄 Launching: %s (scaler %g)\n", 
-                        current_job, total_jobs, model_name, sc)
               )
               
               progress_details <- c(
                 progress_details,
-                sprintf("[%d/%d] 🔄 %s (scaler %g)", 
-                        current_job, total_jobs, model_name, sc)
+                sprintf("[%d/%d] %s - prof scaler %s", current_job, total_jobs, model_name, scaler)
               )
-              
               session$sendCustomMessage(
                 type = "updateProgress",
                 message = list(
@@ -315,53 +238,27 @@
                 )
               )
               
-              result <- launch_single_job(model_name, model_env, job_type = job_type, scaler = sc)
+              result <- launch_single_job(model_name, model_env, job_type, scaler = scaler)
               batch_names <- c(batch_names, result$batch_name)
               remote_dirs <- c(remote_dirs, result$remote_dir)
-              
-              progress_details[length(progress_details)] <- paste0(
-                progress_details[length(progress_details)], " ✓"
-              )
-              
-              session$sendCustomMessage(
-                type = "updateProgress",
-                message = list(
-                  id = "launch_progress_details",
-                  text = paste(progress_details, collapse = "<br/>")
-                )
-              )
-              
-              rv$launch_log <- paste0(
-                rv$launch_log,
-                sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
-              )
             }
-            if (cancel_launch()) stop("Launch cancelled")
+            
           } else {
-            if (cancel_launch()) stop("Launch cancelled")
             current_job <- current_job + 1
             
             session$sendCustomMessage(
               type = "updateProgress",
               message = list(
                 id = "launch_progress_text",
-                text = sprintf("Launching job %d/%d: %s", 
+                text = sprintf("Launching %d/%d (model: %s)", 
                                current_job, total_jobs, model_name)
               )
             )
             
-            rv$launch_log <- paste0(
-              rv$launch_log,
-              sprintf("[%d/%d] 🔄 Launching: %s\n", 
-                      current_job, total_jobs, model_name)
-            )
-            
             progress_details <- c(
               progress_details,
-              sprintf("[%d/%d] 🔄 %s", 
-                      current_job, total_jobs, model_name)
+              sprintf("[%d/%d] %s - %s", current_job, total_jobs, model_name, job_type)
             )
-            
             session$sendCustomMessage(
               type = "updateProgress",
               message = list(
@@ -370,26 +267,9 @@
               )
             )
             
-            result <- launch_single_job(model_name, model_env, job_type = job_type)
+            result <- launch_single_job(model_name, model_env, job_type)
             batch_names <- c(batch_names, result$batch_name)
             remote_dirs <- c(remote_dirs, result$remote_dir)
-            
-            progress_details[length(progress_details)] <- paste0(
-              progress_details[length(progress_details)], " ✓"
-            )
-            
-            session$sendCustomMessage(
-              type = "updateProgress",
-              message = list(
-                id = "launch_progress_details",
-                text = paste(progress_details, collapse = "<br/>")
-              )
-            )
-            
-            rv$launch_log <- paste0(
-              rv$launch_log,
-              sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
-            )
           }
         }
       }
