@@ -103,7 +103,7 @@
         }
         
         if (!is.null(saved_settings$job_type)) {
-          updateSelectInput(session, "job_type", selected = saved_settings$job_type)
+          rv$last_job_type <- saved_settings$job_type
         }
         
         if (!is.null(saved_settings$last_browse_path)) {
@@ -361,6 +361,7 @@
     # uploaded_filename = NULL,
     # uploaded_temp_path = NULL,
     last_browse_path = file.path(repo_root_default, "configs"),
+    last_job_type = NULL,
     pending_repo_root_path = NULL,
     pending_download_path = NULL,
     pending_remote_path = NULL,
@@ -369,6 +370,43 @@
     pending_config_file = NULL,
     launcher_settings_loaded = FALSE
   )
+
+  get_makefile_targets <- function(repo_root) {
+    mk <- file.path(repo_root, "Makefile")
+    if (!file.exists(mk)) return(character(0))
+    lines <- readLines(mk, warn = FALSE)
+    # Strip comments
+    lines <- sub("#.*$", "", lines)
+    # Match target lines like "name: ..."
+    m <- regmatches(lines, regexpr("^\\s*([A-Za-z0-9_.-]+)\\s*:", lines, perl = TRUE))
+    targets <- gsub("^\\s*|\\s*$", "", sub(":$", "", m))
+    targets <- targets[targets != ""]
+    # Filter
+    targets <- targets[grepl("shiny-", targets)]
+    targets <- targets[!grepl("docker", targets)]
+    unique(targets)
+  }
+
+  observeEvent(repo_root_val(), {
+    targets <- get_makefile_targets(repo_root_val())
+    if (length(targets) == 0) {
+      # fallback to legacy defaults
+      choices <- c("Model" = "model",
+                   "Jitter" = "jitter",
+                   "Hessian" = "hessian",
+                   "Retrospective" = "retro",
+                   "Profile" = "prof")
+      updateSelectInput(session, "job_type", choices = choices, selected = "model")
+    } else {
+      choices <- setNames(targets, targets)
+      selected <- if (!is.null(rv$last_job_type) && rv$last_job_type %in% targets) {
+        rv$last_job_type
+      } else {
+        targets[1]
+      }
+      updateSelectInput(session, "job_type", choices = choices, selected = selected)
+    }
+  }, ignoreInit = FALSE)
   
   # Initialize directories
   observeEvent(repo_root_val(), {
