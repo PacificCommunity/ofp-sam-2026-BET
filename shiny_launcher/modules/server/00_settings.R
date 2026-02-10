@@ -41,6 +41,15 @@
         if (!is.null(ls$last_download_location) && ls$last_download_location != "") {
           updateTextInput(session, "download_location", value = ls$last_download_location)
         }
+        if (!is.null(ls$remote_user)) updateTextInput(session, "remote_user", value = ls$remote_user)
+        if (!is.null(ls$remote_host)) updateTextInput(session, "remote_host", value = ls$remote_host)
+        if (!is.null(ls$github_username)) updateTextInput(session, "github_username", value = ls$github_username)
+        if (!is.null(ls$github_org)) updateTextInput(session, "github_org", value = ls$github_org)
+        if (!is.null(ls$github_repo)) updateTextInput(session, "github_repo", value = ls$github_repo)
+        if (!is.null(ls$docker_image)) updateTextInput(session, "docker_image", value = ls$docker_image)
+        if (!is.null(ls$condor_cpus)) updateNumericInput(session, "condor_cpus", value = ls$condor_cpus)
+        if (!is.null(ls$condor_memory)) updateNumericInput(session, "condor_memory", value = ls$condor_memory)
+        if (!is.null(ls$condor_disk)) updateNumericInput(session, "condor_disk", value = ls$condor_disk)
       }, error = function(e) {
         # ignore
       })
@@ -50,7 +59,16 @@
   save_launcher_settings <- function() {
     ls <- list(
       last_repo_root = repo_root_val(),
-      last_download_location = input$download_location
+      last_download_location = input$download_location,
+      remote_user = input$remote_user,
+      remote_host = input$remote_host,
+      github_username = input$github_username,
+      github_org = input$github_org,
+      github_repo = input$github_repo,
+      docker_image = input$docker_image,
+      condor_cpus = input$condor_cpus,
+      condor_memory = input$condor_memory,
+      condor_disk = input$condor_disk
     )
     tryCatch({
       saveRDS(ls, launcher_settings_path())

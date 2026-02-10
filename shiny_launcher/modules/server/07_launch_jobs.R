@@ -86,7 +86,7 @@
     
     observeEvent(input$cancel_launch, {
       cancel_launch(TRUE)
-      showNotification("Cancellation requested. Finishing current job...", type = "warning", duration = 3)
+      showNotification("Cancellation requested. Forcing stop after current call...", type = "warning", duration = 3)
     }, ignoreInit = TRUE)
     
     tryCatch({
@@ -96,13 +96,13 @@
       progress_details <- c()  # Store progress messages
       
       for (model_name in selected_models) {
-        if (cancel_launch()) break
+        if (cancel_launch()) stop("Launch cancelled")
         model_env <- rv$models[[model_name]]
         
         if (input$job_type == "jitter") {
           seeds <- as.numeric(strsplit(model_env$jitter_seeds, "\\s+")[[1]])
           for (seed in seeds) {
-            if (cancel_launch()) break
+            if (cancel_launch()) stop("Launch cancelled")
             current_job <- current_job + 1
             
             # Update progress text in modal
@@ -160,10 +160,10 @@
               sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
             )
           }
-          if (cancel_launch()) break
+          if (cancel_launch()) stop("Launch cancelled")
         } else if (input$job_type == "hessian") {
           for (part in 1:as.numeric(model_env$nsplit)) {
-            if (cancel_launch()) break
+            if (cancel_launch()) stop("Launch cancelled")
             current_job <- current_job + 1
             
             session$sendCustomMessage(
@@ -216,11 +216,11 @@
               sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
             )
           }
-          if (cancel_launch()) break
+          if (cancel_launch()) stop("Launch cancelled")
         } else if (input$job_type == "retro") {
           peels <- as.numeric(strsplit(model_env$retro_peels, "\\s+")[[1]])
           for (peel in peels) {
-            if (cancel_launch()) break
+            if (cancel_launch()) stop("Launch cancelled")
             current_job <- current_job + 1
             
             session$sendCustomMessage(
@@ -273,11 +273,11 @@
               sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
             )
           }
-          if (cancel_launch()) break
+          if (cancel_launch()) stop("Launch cancelled")
         } else if (input$job_type == "prof") {
           scalers <- as.numeric(strsplit(model_env$scalers, "\\s+")[[1]])
           for (sc in scalers) {
-            if (cancel_launch()) break
+            if (cancel_launch()) stop("Launch cancelled")
             current_job <- current_job + 1
             
             session$sendCustomMessage(
@@ -330,9 +330,9 @@
               sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
             )
           }
-          if (cancel_launch()) break
+          if (cancel_launch()) stop("Launch cancelled")
         } else {
-          if (cancel_launch()) break
+          if (cancel_launch()) stop("Launch cancelled")
           current_job <- current_job + 1
           
           session$sendCustomMessage(
@@ -472,24 +472,51 @@
       }
       
     }, error = function(e) {
-      rv$launch_log <- paste0(rv$launch_log, "\n❌ ERROR: ", e$message, "\n")
-      
-      # Show error modal
-      showModal(modalDialog(
-        title = div(
-          style = "font-size: 18px; font-weight: bold; color: #dd4b39;",
-          icon("times-circle"), " Launch Failed"
-        ),
-        size = "m",
+      if (grepl("Launch cancelled", e$message)) {
+        rv$launch_log <- paste0(
+          rv$launch_log,
+          "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
+          "⚠️ ", Sys.time(), " - Launch cancelled by user after ", current_job, " submissions\n",
+          "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        )
         
-        div(
-          style = "background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; padding: 15px; margin: 15px 0;",
-          h4(style = "color: #721c24;", "Error occurred during job launch:"),
-          p(style = "font-family: monospace; color: #721c24;", e$message)
-        ),
+        showModal(modalDialog(
+          title = div(
+            style = "font-size: 18px; font-weight: bold; color: #f39c12;",
+            icon("ban"), " Launch Cancelled"
+          ),
+          size = "m",
+          div(
+            style = "text-align: center; margin: 20px 0;",
+            h3(
+              style = "color: #f39c12;",
+              sprintf("⚠️ Cancelled after %d job(s) submitted.", current_job)
+            )
+          ),
+          footer = tagList(
+            actionButton("close_launch_modal", "Close", class = "btn-warning")
+          )
+        ))
+      } else {
+        rv$launch_log <- paste0(rv$launch_log, "\n❌ ERROR: ", e$message, "\n")
         
-        footer = actionButton("close_error_modal", "Close", class = "btn-danger")
-      ))
+        # Show error modal
+        showModal(modalDialog(
+          title = div(
+            style = "font-size: 18px; font-weight: bold; color: #dd4b39;",
+            icon("times-circle"), " Launch Failed"
+          ),
+          size = "m",
+          
+          div(
+            style = "background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; padding: 15px; margin: 15px 0;",
+            h4(style = "color: #721c24;", "Error occurred during job launch:"),
+            p(style = "font-family: monospace; color: #721c24;", e$message)
+          ),
+          
+          footer = actionButton("close_launch_error_modal", "Close", class = "btn-danger")
+        ))
+      }
       
     }, finally = {
       # Re-enable button after completion or error
