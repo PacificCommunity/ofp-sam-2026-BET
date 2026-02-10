@@ -1,4 +1,4 @@
-
+summary <-"Test configurations for MFCL models"
 
 models <- list(
   
@@ -20,6 +20,9 @@ models <- list(
     
     ## retrospective configuration
     retro_peels = "1 2",
+    
+    ## n_mixing_periods (this is only for retrospective runs, so should match with what is specified in doitall.sh)
+    n_mixing_periods = "1",
     
     ## Jitter settings
     jitter_seeds = paste0(1:3, collapse = " "),
@@ -48,6 +51,9 @@ models <- list(
     
     ## retrospective configuration
     retro_peels = "1 2 3",
+    
+    ## n_mixing_periods
+    n_mixing_periods = "2",
     
     ## Jitter settings
     jitter_seeds = paste0(1:2, collapse = " "),

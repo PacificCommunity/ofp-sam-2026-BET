@@ -18,7 +18,10 @@ base_dir_abs <- file.path(project_root, base_dir)
 ## Retrospective analysis settings
 ## Single peel value for parallel execution via condor
 ## peel = number of years to remove from the end of the time series
-retro_peel <- as.integer(Sys.getenv("retro_peel", "1"))
+retro_peel <- as.integer(Sys.getenv("retro_peel", "4"))
+
+## mixing period
+n_mixing_periods <- as.integer(Sys.getenv("n_mixing_periods", "2"))
 
 ## Create retro-specific directory inside retro folder
 retro_dir <- file.path(model_dir, "retro")
@@ -102,10 +105,17 @@ age_data <- read.MFCLALK(file.path(peel_dir, age_file))
 ini_data <- read.MFCLIni(file.path(peel_dir, ini_file))
 
 ## Apply retrospective modifications
-retro_tag <- retro.tag(tag_data, new_max_year)
+retro_tag <- retro.tag(tag_data, new_max_year, n_mixing_periods = n_mixing_periods)
 retro_frq <- retro.frq(frq_orig, new_max_year, retro_tag)
 retro_age <- retro.age(age_data, new_max_year)
-retro_ini <- retro.ini(ini_data, tag.obj = tag_data, max_year = new_max_year)
+retro_ini <- retro.ini(ini_data, tag.obj = tag_data, max_year = new_max_year, n_mixing_periods = n_mixing_periods)
+
+
+# # check modifications 
+# cat("Before write:\n")
+# head(retro_age@ALK, 20)
+# cat("\nFirst year:", min(retro_age@ALK$year), "\n")
+# cat("ESS length:", length(retro_age@ESS), "\n")
 
 ## Write modified input files
 FLR4MFCL::write(retro_ini$ini, file = file.path(peel_dir, ini_file))
