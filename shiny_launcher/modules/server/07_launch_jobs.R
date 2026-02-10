@@ -460,6 +460,7 @@
   
   launch_single_job <- function(model_name, model_env, seed = NULL, part = NULL, peel = NULL, scaler = NULL) {
     job_env <- model_env
+    job_env$DOCKER_IMAGE <- input$docker_image
     remote_dir_suffix <- model_name
     batch_suffix <- ""
     
