@@ -53,6 +53,7 @@
     
     # Create reactive value for progress tracking
     progress_text <- reactiveVal("")
+    cancel_launch <- reactiveVal(FALSE)
     
     # Show persistent modal dialog with progress
     showModal(modalDialog(
@@ -79,9 +80,14 @@
         div(id = "launch_progress_details", "Initializing...")
       ),
       
-      footer = NULL,  # No footer buttons - modal stays until complete
+      footer = actionButton("cancel_launch", "Cancel", class = "btn-warning"),
       easyClose = FALSE  # Cannot close by clicking outside
     ))
+    
+    observeEvent(input$cancel_launch, {
+      cancel_launch(TRUE)
+      showNotification("Cancellation requested. Finishing current job...", type = "warning", duration = 3)
+    }, ignoreInit = TRUE)
     
     tryCatch({
       batch_names <- c()
@@ -90,11 +96,13 @@
       progress_details <- c()  # Store progress messages
       
       for (model_name in selected_models) {
+        if (cancel_launch()) break
         model_env <- rv$models[[model_name]]
         
         if (input$job_type == "jitter") {
           seeds <- as.numeric(strsplit(model_env$jitter_seeds, "\\s+")[[1]])
           for (seed in seeds) {
+            if (cancel_launch()) break
             current_job <- current_job + 1
             
             # Update progress text in modal
@@ -152,8 +160,10 @@
               sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
             )
           }
+          if (cancel_launch()) break
         } else if (input$job_type == "hessian") {
           for (part in 1:as.numeric(model_env$nsplit)) {
+            if (cancel_launch()) break
             current_job <- current_job + 1
             
             session$sendCustomMessage(
@@ -206,9 +216,11 @@
               sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
             )
           }
+          if (cancel_launch()) break
         } else if (input$job_type == "retro") {
           peels <- as.numeric(strsplit(model_env$retro_peels, "\\s+")[[1]])
           for (peel in peels) {
+            if (cancel_launch()) break
             current_job <- current_job + 1
             
             session$sendCustomMessage(
@@ -261,9 +273,11 @@
               sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
             )
           }
+          if (cancel_launch()) break
         } else if (input$job_type == "prof") {
           scalers <- as.numeric(strsplit(model_env$scalers, "\\s+")[[1]])
           for (sc in scalers) {
+            if (cancel_launch()) break
             current_job <- current_job + 1
             
             session$sendCustomMessage(
@@ -316,7 +330,9 @@
               sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
             )
           }
+          if (cancel_launch()) break
         } else {
+          if (cancel_launch()) break
           current_job <- current_job + 1
           
           session$sendCustomMessage(
@@ -381,52 +397,79 @@
           batch_names = paste(batch_names, collapse = ", "),
           remote_dirs = paste(remote_dirs, collapse = ", "),
           branch = input$branch,
-          status = "launched",
+          status = if (cancel_launch()) "cancelled" else "launched",
           stringsAsFactors = FALSE
         )
         save_job_history(rv$current_config_file, job_record)
         rv$launch_log <- paste0(rv$launch_log, "📝 Job history saved to config file\n")
       }
       
-      # Final completion message
-      rv$launch_log <- paste0(
-        rv$launch_log,
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
-        "✅ ", Sys.time(), " - All ", total_jobs, " jobs submitted successfully!\n",
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-      )
-      
-      # Update modal to show completion
-      showModal(modalDialog(
-        title = div(
-          style = "font-size: 18px; font-weight: bold; color: #00a65a;",
-          icon("check-circle"), " Launch Complete"
-        ),
-        size = "m",
-        
-        div(
-          style = "text-align: center; margin: 20px 0;",
-          h3(
-            style = "color: #00a65a;",
-            sprintf("✅ Successfully launched all %d jobs!", total_jobs)
-          )
-        ),
-        
-        div(
-          style = "background: #f0f9f0; border: 1px solid #c3e6cb; border-radius: 4px; padding: 15px; margin: 15px 0;",
-          strong("Summary:"),
-          tags$ul(
-            tags$li(paste("Total jobs:", total_jobs)),
-            tags$li(paste("Models:", paste(selected_models, collapse = ", "))),
-            tags$li(paste("Output directory:", input$output_dir)),
-            tags$li(paste("Branch:", input$branch))
-          )
-        ),
-        
-        footer = tagList(
-          actionButton("close_launch_modal", "Close", class = "btn-success")
+      if (cancel_launch()) {
+        rv$launch_log <- paste0(
+          rv$launch_log,
+          "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
+          "⚠️ ", Sys.time(), " - Launch cancelled by user after ", current_job, " submissions\n",
+          "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         )
-      ))
+        
+        showModal(modalDialog(
+          title = div(
+            style = "font-size: 18px; font-weight: bold; color: #f39c12;",
+            icon("ban"), " Launch Cancelled"
+          ),
+          size = "m",
+          div(
+            style = "text-align: center; margin: 20px 0;",
+            h3(
+              style = "color: #f39c12;",
+              sprintf("⚠️ Cancelled after %d job(s) submitted.", current_job)
+            )
+          ),
+          footer = tagList(
+            actionButton("close_launch_modal", "Close", class = "btn-warning")
+          )
+        ))
+      } else {
+        # Final completion message
+        rv$launch_log <- paste0(
+          rv$launch_log,
+          "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
+          "✅ ", Sys.time(), " - All ", total_jobs, " jobs submitted successfully!\n",
+          "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        )
+        
+        # Update modal to show completion
+        showModal(modalDialog(
+          title = div(
+            style = "font-size: 18px; font-weight: bold; color: #00a65a;",
+            icon("check-circle"), " Launch Complete"
+          ),
+          size = "m",
+          
+          div(
+            style = "text-align: center; margin: 20px 0;",
+            h3(
+              style = "color: #00a65a;",
+              sprintf("✅ Successfully launched all %d jobs!", total_jobs)
+            )
+          ),
+          
+          div(
+            style = "background: #f0f9f0; border: 1px solid #c3e6cb; border-radius: 4px; padding: 15px; margin: 15px 0;",
+            strong("Summary:"),
+            tags$ul(
+              tags$li(paste("Total jobs:", total_jobs)),
+              tags$li(paste("Models:", paste(selected_models, collapse = ", "))),
+              tags$li(paste("Output directory:", input$output_dir)),
+              tags$li(paste("Branch:", input$branch))
+            )
+          ),
+          
+          footer = tagList(
+            actionButton("close_launch_modal", "Close", class = "btn-success")
+          )
+        ))
+      }
       
     }, error = function(e) {
       rv$launch_log <- paste0(rv$launch_log, "\n❌ ERROR: ", e$message, "\n")
