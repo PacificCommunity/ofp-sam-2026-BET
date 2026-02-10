@@ -1,14 +1,28 @@
 server_dir_detection <- function(input, output, session, rv) {
     # DIRECTORY DETECTION
     # ---------------------------------------------------------------------------
-  
-    # Automatically detect scenarios when directory path changes
+    repo_root <- normalizePath("..", mustWork = FALSE)
+    state_file <- file.path(repo_root, ".model_dir_last.rds")
+    initialized <- FALSE
+
     observe({
-      model_dir <- input$model_dir
-    
+      if (!initialized && file.exists(state_file)) {
+        saved_dir <- tryCatch(readRDS(state_file), error = function(e) NULL)
+        if (!is.null(saved_dir) && is.character(saved_dir) && nchar(saved_dir) > 0 && dir.exists(saved_dir)) {
+          updateTextInput(session, "model_dir", value = saved_dir)
+        } else {
+          updateTextInput(session, "model_dir", value = repo_root)
+        }
+        initialized <<- TRUE
+      } else if (!initialized && !file.exists(state_file)) {
+        updateTextInput(session, "model_dir", value = repo_root)
+        initialized <<- TRUE
+      }
+    })
+  
+    detect_and_update <- function(model_dir) {
       # Check if directory exists
       if (nchar(model_dir) > 0 && dir.exists(model_dir)) {
-      
         # Get all subdirectories (potential scenarios)
         scenario_folders <- list.dirs(model_dir, full.names = FALSE, recursive = FALSE)
       
@@ -40,7 +54,18 @@ server_dir_detection <- function(input, output, session, rv) {
         rv$detected_scenario_names <- NULL
         updatePickerInput(session, "models_to_load", choices = NULL)
       }
-    })
+    }
+
+    # Automatically detect scenarios when directory path changes or on refresh
+    observeEvent(list(input$model_dir, input$refresh_dir), {
+      detect_and_update(input$model_dir)
+    }, ignoreInit = FALSE)
+
+    observeEvent(input$model_dir, {
+      if (nchar(input$model_dir) > 0 && dir.exists(input$model_dir)) {
+        try(saveRDS(input$model_dir, state_file), silent = TRUE)
+      }
+    }, ignoreInit = TRUE)
   
     # Output: scenarios detected flag
     output$scenarios_detected <- reactive({ rv$scenarios_detected })
@@ -67,41 +92,19 @@ server_dir_detection <- function(input, output, session, rv) {
     })
   
     # ---------------------------------------------------------------------------
-    # BROWSE DIRECTORY BUTTON
+    # BROWSE DIRECTORY BUTTON (ALL PLATFORMS)
     # ---------------------------------------------------------------------------
   
+    volumes <- shinyFiles::getVolumes()
+  
+    observe({
+      shinyFiles::shinyDirChoose(input, "browse_dir", roots = volumes(), session = session)
+    })
+  
     observeEvent(input$browse_dir, {
-    
-      # Windows: use choose.dir() for directory dialog
-      if (.Platform$OS.type == "windows") {
-        tryCatch({
-          selected <- choose.dir(default = input$model_dir, 
-                                 caption = "Select Model Directory")
-          if (!is.na(selected) && !is.null(selected)) {
-            updateTextInput(session, "model_dir", value = selected)
-          }
-        }, error = function(e) {
-          showNotification("Please enter path manually", type = "message")
-        })
-      } else {
-        # Mac/Linux: show instruction modal
-        showModal(modalDialog(
-          title = "📁 Select Directory",
-          HTML(paste0(
-            "<p>Please enter the path manually in the text box above.</p>",
-            "<p><strong>Current path:</strong><br/>",
-            "<code>", input$model_dir, "</code></p>",
-            "<hr/>",
-            "<p><strong>Examples:</strong></p>",
-            "<ul>",
-            "<li>Mac: <code>/Users/username/Documents/model</code></li>",
-            "<li>Linux: <code>/home/username/model</code></li>",
-            "<li>Windows: <code>C:/Users/username/model</code></li>",
-            "</ul>"
-          )),
-          easyClose = TRUE,
-          footer = modalButton("OK")
-        ))
+      selected <- shinyFiles::parseDirPath(volumes(), input$browse_dir)
+      if (length(selected) > 0 && dir.exists(selected)) {
+        updateTextInput(session, "model_dir", value = selected)
       }
     })
   

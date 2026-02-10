@@ -42,16 +42,21 @@ ui <- dashboardPage(
     div(
       style = "margin: 0 15px;",
       textInput("model_dir", "Model Directory:",
-                value = normalizePath(file.path("..", "model"), mustWork = FALSE),
+                value = normalizePath("..", mustWork = FALSE),
                 placeholder = "/path/to/model")
     ),
     
-    # Browse button (Windows only)
+    # Browse + Refresh buttons
     div(
       style = "margin: 0 15px 10px 15px;",
-      actionButton("browse_dir", "Browse...", 
-                   icon = icon("folder-open"),
-                   class = "btn-info btn-sm")
+      shinyFiles::shinyDirButton("browse_dir", "Browse...", 
+                                 title = "Select Model Directory",
+                                 icon = icon("folder-open"),
+                                 class = "btn-info btn-sm"),
+      actionButton("refresh_dir", "Refresh", 
+                   icon = icon("sync"),
+                   class = "btn-default btn-sm",
+                   style = "margin-left: 8px;")
     ),
     
     helpText("Folder containing scenario subfolders", 
@@ -131,6 +136,100 @@ ui <- dashboardPage(
   # Body
   # ---------------------------------------------------------------------------
   dashboardBody(
+    tags$head(
+      tags$style(HTML("
+        /* Pretty modal styling (used by shinyFiles browse dialog) */
+        .modal-header {
+          background: #3c8dbc;
+          color: #fff;
+          border-bottom: 0;
+        }
+        .modal-header .modal-title {
+          font-weight: 600;
+          letter-spacing: 0.2px;
+        }
+        .modal-content {
+          border-radius: 8px;
+          border: 1px solid #e6e9ef;
+          box-shadow: 0 10px 30px rgba(22, 41, 70, 0.15);
+        }
+        .modal-body {
+          background: #f7f9fb;
+        }
+        .modal-footer {
+          border-top: 0;
+          background: #f7f9fb;
+        }
+        .modal-footer .btn {
+          border-radius: 6px;
+        }
+        /* shinyFiles modal prettify */
+        .shinyFiles .form-group,
+        .shinyfiles .form-group {
+          margin-bottom: 10px;
+        }
+        .shinyFiles .form-control,
+        .shinyfiles .form-control {
+          border-radius: 6px;
+          border: 1px solid #d7dce3;
+          box-shadow: none;
+        }
+        .shinyFiles .btn,
+        .shinyfiles .btn {
+          border-radius: 6px;
+        }
+        .shinyFiles select.form-control,
+        .shinyfiles select.form-control {
+          background-color: #fff;
+        }
+        .modal-dialog {
+          max-width: 860px;
+          width: 80%;
+        }
+        .shinyFiles .well,
+        .shinyfiles .well {
+          background: #ffffff;
+          border: 1px solid #e6e9ef;
+          box-shadow: none;
+        }
+        .shinyFiles label,
+        .shinyfiles label {
+          font-weight: 600;
+          color: #2c3e50;
+        }
+        .shinyFiles .help-block,
+        .shinyfiles .help-block {
+          color: #6c7a89;
+        }
+        .shinyFiles .btn-default,
+        .shinyfiles .btn-default {
+          background: #ffffff;
+          border: 1px solid #d7dce3;
+        }
+        .shinyFiles .btn-default:hover,
+        .shinyfiles .btn-default:hover {
+          background: #f2f4f7;
+        }
+        .shinyFiles .btn-primary,
+        .shinyfiles .btn-primary {
+          background: #3c8dbc;
+          border-color: #367fa9;
+        }
+        .shinyFiles .btn-primary:hover,
+        .shinyfiles .btn-primary:hover {
+          background: #367fa9;
+        }
+        .shinyFiles select,
+        .shinyfiles select {
+          font-size: 13px;
+          padding: 6px 10px;
+        }
+        .shinyFiles .well .form-group:last-child,
+        .shinyfiles .well .form-group:last-child {
+          margin-bottom: 0;
+        }
+      "))
+    ),
     
     # Custom CSS styling
     tags$head(

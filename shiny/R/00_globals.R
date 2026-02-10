@@ -2,6 +2,7 @@
 library(shiny)              # Web application framework
 library(shinydashboard)     # Dashboard layout
 library(shinyWidgets)       # Enhanced UI widgets
+library(shinyFiles)         # Directory browser
 library(ggplot2)            # Data visualization
 library(cowplot)            # Plot arrangement
 library(dplyr)              # Data manipulation
