@@ -1,13 +1,21 @@
   # ========== LAUNCH JOB HANDLERS ==========
   
   observeEvent(input$launch_btn, {
-    # Validate model selection
-    if (length(rv$selected_models) == 0) { 
-      showNotification("Please select at least one model", type = "error")
-      return() 
-    }
     if (length(rv$models) == 0) { 
       showNotification("Please load models first", type = "error")
+      return() 
+    }
+    
+    # Recompute selected models from current checkbox inputs
+    selected_models <- names(rv$models)[sapply(names(rv$models), function(model_name) {
+      checkbox_id <- paste0("model_check_", gsub("[^a-zA-Z0-9]", "_", model_name))
+      isTRUE(input[[checkbox_id]])
+    })]
+    rv$selected_models <- selected_models
+    
+    # Validate model selection
+    if (length(selected_models) == 0) { 
+      showNotification("Please select at least one model", type = "error")
       return() 
     }
     
@@ -17,7 +25,7 @@
     
     # Calculate total number of jobs to be launched
     total_jobs <- 0
-    for (model_name in rv$selected_models) {
+    for (model_name in selected_models) {
       model_env <- rv$models[[model_name]]
       if (input$job_type == "jitter") {
         seeds <- as.numeric(strsplit(model_env$jitter_seeds, "\\s+")[[1]])
@@ -81,7 +89,7 @@
       current_job <- 0  # Track current job number
       progress_details <- c()  # Store progress messages
       
-      for (model_name in rv$selected_models) {
+      for (model_name in selected_models) {
         model_env <- rv$models[[model_name]]
         
         if (input$job_type == "jitter") {
@@ -368,7 +376,7 @@
         job_record <- data.frame(
           timestamp = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
           job_type = input$job_type,
-          model_names = paste(rv$selected_models, collapse = ", "),
+          model_names = paste(selected_models, collapse = ", "),
           output_dir = input$output_dir,
           batch_names = paste(batch_names, collapse = ", "),
           remote_dirs = paste(remote_dirs, collapse = ", "),
@@ -409,7 +417,7 @@
           strong("Summary:"),
           tags$ul(
             tags$li(paste("Total jobs:", total_jobs)),
-            tags$li(paste("Models:", paste(rv$selected_models, collapse = ", "))),
+            tags$li(paste("Models:", paste(selected_models, collapse = ", "))),
             tags$li(paste("Output directory:", input$output_dir)),
             tags$li(paste("Branch:", input$branch))
           )
