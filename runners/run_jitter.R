@@ -6,7 +6,7 @@ source("tools/jitter.R")
 
 
 ## environment variables
-program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_01_22_vsn2278")
+program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_02_04_vsn2278")
 Sys.setenv("PROGRAM_PATH" = paste0("../../", program_path))
 base_dir <- Sys.getenv("base_dir", "mfcl/inputs/2023_rep")
 model_dir <- Sys.getenv("model_dir", "model/base")
