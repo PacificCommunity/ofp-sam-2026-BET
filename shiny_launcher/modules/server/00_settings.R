@@ -204,6 +204,27 @@
   observeEvent(input$condor_disk, {
     save_settings()
   }, ignoreInit = TRUE)
+
+  update_makefile_docker_image <- function(new_image) {
+    mk <- file.path(repo_root_val(), "Makefile")
+    if (!file.exists(mk)) return(FALSE)
+    lines <- readLines(mk, warn = FALSE)
+    idx <- grep("^\\s*DOCKER_IMAGE\\s*=", lines)
+    if (length(idx) == 0) return(FALSE)
+    lines[idx[1]] <- paste0("DOCKER_IMAGE=", new_image)
+    writeLines(lines, mk)
+    TRUE
+  }
+
+  observeEvent(input$docker_image, {
+    if (!is.null(input$docker_image) && input$docker_image != "") {
+      ok <- update_makefile_docker_image(input$docker_image)
+      if (!ok) {
+        showNotification("Makefile not found or DOCKER_IMAGE not set", type = "warning")
+      }
+    }
+    save_settings()
+  }, ignoreInit = TRUE)
   
   # Browse repo root
   show_repo_root_browser <- function(start_path) {
@@ -371,41 +392,18 @@
     launcher_settings_loaded = FALSE
   )
 
-  get_makefile_targets <- function(repo_root) {
-    mk <- file.path(repo_root, "Makefile")
-    if (!file.exists(mk)) return(character(0))
-    lines <- readLines(mk, warn = FALSE)
-    # Strip comments
-    lines <- sub("#.*$", "", lines)
-    # Match target lines like "name: ..."
-    m <- regmatches(lines, regexpr("^\\s*([A-Za-z0-9_.-]+)\\s*:", lines, perl = TRUE))
-    targets <- gsub("^\\s*|\\s*$", "", sub(":$", "", m))
-    targets <- targets[targets != ""]
-    # Filter
-    targets <- targets[grepl("shiny-", targets)]
-    targets <- targets[!grepl("docker", targets)]
-    unique(targets)
-  }
-
   observeEvent(repo_root_val(), {
-    targets <- get_makefile_targets(repo_root_val())
-    if (length(targets) == 0) {
-      # fallback to legacy defaults
-      choices <- c("Model" = "model",
-                   "Jitter" = "jitter",
-                   "Hessian" = "hessian",
-                   "Retrospective" = "retro",
-                   "Profile" = "prof")
-      updateSelectInput(session, "job_type", choices = choices, selected = "model")
+    choices <- c("Model" = "model",
+                 "Jitter" = "jitter",
+                 "Hessian" = "hessian",
+                 "Retrospective" = "retro",
+                 "Profile" = "prof")
+    selected <- if (!is.null(rv$last_job_type) && rv$last_job_type %in% choices) {
+      rv$last_job_type
     } else {
-      choices <- setNames(targets, targets)
-      selected <- if (!is.null(rv$last_job_type) && rv$last_job_type %in% targets) {
-        rv$last_job_type
-      } else {
-        targets[1]
-      }
-      updateSelectInput(session, "job_type", choices = choices, selected = selected)
+      "model"
     }
+    updateSelectInput(session, "job_type", choices = choices, selected = selected)
   }, ignoreInit = FALSE)
   
   # Initialize directories
