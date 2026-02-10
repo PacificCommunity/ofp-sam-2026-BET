@@ -221,11 +221,11 @@
     updated
   }
 
-  observeEvent(input$docker_image, {
+  observeEvent(list(input$docker_image, repo_root_val()), {
     if (!is.null(input$docker_image) && input$docker_image != "") {
       ok <- update_makefile_docker_image(input$docker_image)
       if (!ok) {
-        showNotification("Makefile not found or DOCKER_IMAGE not set", type = "warning")
+        showNotification("Makefile/makefile not found or DOCKER_IMAGE not set", type = "warning")
       }
     }
     save_settings()
