@@ -27,6 +27,7 @@
           )
         })
         
+        rv$pending_remote_path <- NULL
         showModal(modalDialog(
           title = "Select Remote Output Directory",
           size = "l",
@@ -60,6 +61,10 @@
             }
           ),
           shiny::hr(),
+          div(style = "font-size:12px; color:#666;",
+              "Selected: ",
+              strong(textOutput("remote_path_pending_display", inline = TRUE))
+          ),
           textInput("remote_output_manual", "Or enter path manually:", 
                     value = input$scan_output_dir,
                     placeholder = "e.g., quick/test_run, output/models"),
@@ -78,14 +83,22 @@
   
   observeEvent(input$selected_remote_path, {
     req(input$selected_remote_path)
-    updateTextInput(session, "scan_output_dir", value = input$selected_remote_path)
-    removeModal()
-    showNotification(paste("Selected:", input$selected_remote_path), type = "message", duration = 2)
+    rv$pending_remote_path <- input$selected_remote_path
   }, ignoreInit = TRUE)
+  
+  output$remote_path_pending_display <- renderText({
+    if (!is.null(rv$pending_remote_path) && rv$pending_remote_path != "") {
+      rv$pending_remote_path
+    } else {
+      "(none)"
+    }
+  })
   
   observeEvent(input$confirm_remote_output, {
     req(input$remote_output_manual)
-    if (input$remote_output_manual != "") {
+    if (!is.null(rv$pending_remote_path) && rv$pending_remote_path != "") {
+      updateTextInput(session, "scan_output_dir", value = rv$pending_remote_path)
+    } else if (input$remote_output_manual != "") {
       updateTextInput(session, "scan_output_dir", value = input$remote_output_manual)
     }
     removeModal()
@@ -100,19 +113,20 @@
         local_input <- input_name
         observeEvent(input[[local_input]], {
           selected_path <- input[[local_input]]
-          updateTextInput(session, "scan_output_dir", value = selected_path)
-          removeModal()
-          showNotification(paste("Selected:", selected_path), type = "message", duration = 2)
+          rv$pending_remote_path <- selected_path
         }, ignoreInit = TRUE)
       })
     }
   })
   
   observeEvent(input$confirm_remote_output, {
-    if (!is.null(input$remote_output_manual) && input$remote_output_manual != "") {
+    if (!is.null(rv$pending_remote_path) && rv$pending_remote_path != "") {
+      updateTextInput(session, "scan_output_dir", value = rv$pending_remote_path)
+      removeModal()
+    } else if (!is.null(input$remote_output_manual) && input$remote_output_manual != "") {
       updateTextInput(session, "scan_output_dir", value = input$remote_output_manual)
+      removeModal()
     }
-    removeModal()
   })
   
   

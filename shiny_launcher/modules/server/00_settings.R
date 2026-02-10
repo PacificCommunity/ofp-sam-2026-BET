@@ -26,6 +26,46 @@
     file.path(repo_root_val(), "configs", ".last_settings.rds")
   }
   
+  launcher_settings_path <- function() {
+    file.path(app_dir, ".launcher_settings.rds")
+  }
+  
+  load_launcher_settings <- function() {
+    if (file.exists(launcher_settings_path())) {
+      tryCatch({
+        ls <- readRDS(launcher_settings_path())
+        rv$launcher_settings_loaded <- TRUE
+        if (!is.null(ls$last_repo_root) && ls$last_repo_root != "") {
+          updateTextInput(session, "repo_root", value = ls$last_repo_root)
+        }
+        if (!is.null(ls$last_download_location) && ls$last_download_location != "") {
+          updateTextInput(session, "download_location", value = ls$last_download_location)
+        }
+      }, error = function(e) {
+        # ignore
+      })
+    }
+  }
+  
+  save_launcher_settings <- function() {
+    ls <- list(
+      last_repo_root = repo_root_val(),
+      last_download_location = input$download_location
+    )
+    tryCatch({
+      saveRDS(ls, launcher_settings_path())
+    }, error = function(e) {
+      # ignore
+    })
+  }
+  
+  observe({
+    session$onFlushed(function() {
+      load_launcher_settings()
+      rv$launcher_settings_loaded <- TRUE
+    }, once = TRUE)
+  })
+  
   # Load saved settings on startup
   observeEvent(repo_root_val(), {
     settings_file <- settings_path()
@@ -33,19 +73,16 @@
       tryCatch({
         saved_settings <- readRDS(settings_file)
         
-        if (!is.null(saved_settings$repo_root)) {
+        if (!is.null(saved_settings$repo_root) && !isTRUE(rv$launcher_settings_loaded)) {
           updateTextInput(session, "repo_root", value = saved_settings$repo_root)
         }
         
-        if (!is.null(saved_settings$recent_repo_roots)) {
-          rv$recent_repo_roots <- saved_settings$recent_repo_roots
-        }
         
         if (!is.null(saved_settings$scan_output_dir)) {
           updateTextInput(session, "scan_output_dir", value = saved_settings$scan_output_dir)
         }
         
-        if (!is.null(saved_settings$download_location)) {
+        if (!is.null(saved_settings$download_location) && !isTRUE(rv$launcher_settings_loaded)) {
           updateTextInput(session, "download_location", value = saved_settings$download_location)
         }
         
@@ -101,7 +138,6 @@
   save_settings <- function() {
     settings <- list(
       repo_root = repo_root_val(),
-      recent_repo_roots = rv$recent_repo_roots,
       scan_output_dir = input$scan_output_dir,
       download_location = input$download_location,
       extract_repo_name = input$extract_repo_name,
@@ -124,6 +160,8 @@
     }, error = function(e) {
       # Silently fail if can't save
     })
+    
+    save_launcher_settings()
   }
   
   # Auto-save settings when they change
@@ -168,107 +206,109 @@
   }, ignoreInit = TRUE)
   
   # Browse repo root
-  observeEvent(input$browse_repo_root, {
-    tryCatch({
-      start_path <- normalizePath(input$repo_root, mustWork = FALSE)
-      if (!dir.exists(start_path)) {
-        start_path <- "/"
-      }
-      dirs <- list.dirs(start_path, recursive = FALSE, full.names = TRUE)
-      
-      showModal(modalDialog(
-        title = "Select Repository Root",
-        size = "m",
-        p(strong("Available directories:"), style = "margin-bottom: 10px;"),
-        p(paste("Browsing:", start_path), style = "color: #666; font-size: 11px; margin-bottom: 15px;"),
-        div(
-          style = "max-height: 400px; overflow-y: auto; background: #f9f9f9; padding: 15px; border: 1px solid #ddd; border-radius: 4px;",
+  show_repo_root_browser <- function(start_path) {
+    if (!dir.exists(start_path)) {
+      start_path <- "/"
+    }
+    rv$current_repo_root_browse <- start_path
+    parent_path <- dirname(start_path)
+    dirs <- list.dirs(start_path, recursive = FALSE, full.names = TRUE)
+    
+    rv$pending_repo_root_path <- NULL
+    showModal(modalDialog(
+      title = "Select Repository Root",
+      size = "m",
+      p(strong("Available directories:"), style = "margin-bottom: 10px;"),
+      p(paste("Browsing:", start_path), style = "color: #666; font-size: 11px; margin-bottom: 15px;"),
+      div(
+        style = "max-height: 400px; overflow-y: auto; background: #f9f9f9; padding: 15px; border: 1px solid #ddd; border-radius: 4px;",
+        tags$div(
+          tags$a(
+            href = "#",
+            onclick = "Shiny.setInputValue('repo_root_browse_to', '/', {priority: 'event'}); return false;",
+            icon("folder", style = "color: #f39c12;"), " /",
+            style = "color: #333; cursor: pointer; text-decoration: none; font-size: 13px; font-weight: bold;"
+          ),
+          if (start_path != "/" && parent_path != start_path) {
+            tags$a(
+              href = "#",
+              onclick = sprintf("Shiny.setInputValue('repo_root_browse_to', '%s', {priority: 'event'}); return false;", parent_path),
+              icon("level-up-alt", style = "color: #666;"), " ..",
+              style = "color: #333; cursor: pointer; text-decoration: none; font-size: 13px; font-weight: bold; margin-left: 10px;"
+            )
+          },
+          style = "padding: 5px 0; margin-bottom: 10px; border-bottom: 2px solid #ddd;"
+        ),
+        lapply(dirs, function(d) {
+          rel_path <- basename(d)
           tags$div(
             tags$a(
               href = "#",
-              onclick = "Shiny.setInputValue('selected_repo_root_path', '/', {priority: 'event'}); return false;",
-              icon("folder", style = "color: #f39c12;"), " /",
-              style = "color: #333; cursor: pointer; text-decoration: none; font-size: 13px; font-weight: bold;"
+              onclick = sprintf("Shiny.setInputValue('repo_root_browse_to', '%s', {priority: 'event'}); return false;", d),
+              icon("folder", style = "color: #3c8dbc;"), " ", rel_path,
+              style = "color: #333; cursor: pointer; text-decoration: none; font-size: 13px;"
             ),
-            style = "padding: 5px 0; margin-bottom: 10px; border-bottom: 2px solid #ddd;"
-          ),
-          lapply(dirs, function(d) {
-            rel_path <- basename(d)
-            tags$div(
-              tags$a(
-                href = "#",
-                onclick = sprintf("Shiny.setInputValue('selected_repo_root_path', '%s', {priority: 'event'}); return false;", d),
-                icon("folder", style = "color: #3c8dbc;"), " ", rel_path,
-                style = "color: #333; cursor: pointer; text-decoration: none; font-size: 13px;"
-              ),
-              style = "padding: 3px 0;"
-            )
-          })
-        ),
-        shiny::hr(),
-        textInput("repo_root_manual_path", "Or enter path manually:",
-                  value = input$repo_root,
-                  placeholder = "/path/to/repo"),
-        footer = tagList(
-          modalButton("Close"),
-          actionButton("confirm_repo_root_path", "Select", class = "btn-primary")
-        )
-      ))
+            style = "padding: 3px 0;"
+          )
+        })
+      ),
+      shiny::hr(),
+      div(style = "font-size:12px; color:#666;",
+          "Selected: ",
+          strong(textOutput("repo_root_pending_display", inline = TRUE))
+      ),
+      actionButton("select_repo_root_current", "Use This Folder", class = "btn-default"),
+      textInput("repo_root_manual_path", "Or enter path manually:",
+                value = input$repo_root,
+                placeholder = "/path/to/repo"),
+      footer = tagList(
+        modalButton("Close"),
+        actionButton("confirm_repo_root_path", "Select", class = "btn-primary")
+      )
+    ))
+  }
+  
+  observeEvent(input$browse_repo_root, {
+    tryCatch({
+      start_path <- normalizePath(input$repo_root, mustWork = FALSE)
+      show_repo_root_browser(start_path)
     }, error = function(e) {
       showNotification(paste("Error:", e$message), type = "error")
     })
   })
   
-  observeEvent(input$selected_repo_root_path, {
-    req(input$selected_repo_root_path)
-    updateTextInput(session, "repo_root", value = input$selected_repo_root_path)
-    removeModal()
+  observeEvent(input$repo_root_browse_to, {
+    req(input$repo_root_browse_to)
+    show_repo_root_browser(input$repo_root_browse_to)
   }, ignoreInit = TRUE)
   
+  observeEvent(input$select_repo_root_current, {
+    if (!is.null(rv$current_repo_root_browse) && rv$current_repo_root_browse != "") {
+      rv$pending_repo_root_path <- rv$current_repo_root_browse
+    }
+  }, ignoreInit = TRUE)
+  
+  output$repo_root_pending_display <- renderText({
+    if (!is.null(rv$pending_repo_root_path) && rv$pending_repo_root_path != "") {
+      rv$pending_repo_root_path
+    } else if (!is.null(rv$current_repo_root_browse) && rv$current_repo_root_browse != "") {
+      rv$current_repo_root_browse
+    } else {
+      "(none)"
+    }
+  })
+  
   observeEvent(input$confirm_repo_root_path, {
-    if (!is.null(input$repo_root_manual_path) && input$repo_root_manual_path != "") {
+    if (!is.null(rv$pending_repo_root_path) && rv$pending_repo_root_path != "") {
+      updateTextInput(session, "repo_root", value = rv$pending_repo_root_path)
+    } else if (!is.null(rv$current_repo_root_browse) && rv$current_repo_root_browse != "") {
+      updateTextInput(session, "repo_root", value = rv$current_repo_root_browse)
+    } else if (!is.null(input$repo_root_manual_path) && input$repo_root_manual_path != "") {
       updateTextInput(session, "repo_root", value = input$repo_root_manual_path)
     }
     removeModal()
   }, ignoreInit = TRUE)
   
-  observeEvent(input$repo_root, {
-    root <- normalizePath(input$repo_root, mustWork = FALSE)
-    if (dir.exists(root)) {
-      current <- rv$recent_repo_roots
-      current <- current[current != root]
-      rv$recent_repo_roots <- c(root, current)[1:min(5, length(c(root, current)))]
-      save_settings()
-    }
-  }, ignoreInit = TRUE)
-  
-  output$recent_repo_roots_ui <- renderUI({
-    if (length(rv$recent_repo_roots) == 0) {
-      return(NULL)
-    }
-    tagList(
-      div(style = "color:#666; font-size:12px; margin-bottom:4px;", "Recent:"),
-      lapply(seq_along(rv$recent_repo_roots), function(i) {
-        path <- rv$recent_repo_roots[i]
-        btn_id <- paste0("recent_repo_root_", i)
-        actionLink(btn_id, path, style = "display:block; font-family: monospace;")
-      })
-    )
-  })
-  
-  observe({
-    if (length(rv$recent_repo_roots) == 0) return()
-    for (i in seq_along(rv$recent_repo_roots)) {
-      btn_id <- paste0("recent_repo_root_", i)
-      local({
-        idx <- i
-        local_btn <- btn_id
-        observeEvent(input[[local_btn]], {
-          updateTextInput(session, "repo_root", value = rv$recent_repo_roots[idx])
-        }, ignoreInit = TRUE)
-      })
-    }
-  })
   
   observeEvent(repo_root_val(), {
     if (is.null(rv$last_browse_path) || !dir.exists(rv$last_browse_path)) {
@@ -321,7 +361,13 @@
     # uploaded_filename = NULL,
     # uploaded_temp_path = NULL,
     last_browse_path = file.path(repo_root_default, "configs"),
-    recent_repo_roots = c()
+    pending_repo_root_path = NULL,
+    pending_download_path = NULL,
+    pending_remote_path = NULL,
+    pending_program_path = NULL,
+    pending_basedir_path = NULL,
+    pending_config_file = NULL,
+    launcher_settings_loaded = FALSE
   )
   
   # Initialize directories

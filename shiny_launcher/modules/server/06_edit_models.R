@@ -23,6 +23,7 @@
         gsub(paste0("^", current_dir, "/?"), "", f)
       })
       
+      rv$pending_program_path <- NULL
       showModal(modalDialog(
         title = "Select Program File",
         size = "l",
@@ -38,7 +39,7 @@
               tags$div(
                 tags$a(
                   href = "#",
-                  onclick = sprintf("document.getElementById('edit_program_path').value = '%s'; Shiny.setInputValue('close_program_modal', Math.random()); return false;", f),
+                  onclick = sprintf("Shiny.setInputValue('pending_program_path', '%s', {priority: 'event'}); return false;", f),
                   icon("file-code", style = "color: #e74c3c;"), " ", file_name,
                   style = "color: #333; cursor: pointer; text-decoration: none; font-size: 12px;"
                 ),
@@ -53,6 +54,10 @@
         ),
         
         shiny::hr(),
+        div(style = "font-size:12px; color:#666;",
+            "Selected: ",
+            strong(textOutput("program_path_pending_display", inline = TRUE))
+        ),
         textInput("program_manual_path", "Or enter path manually:",
                   value = input$edit_program_path,
                   placeholder = "mfcl/exe/mfclo64 or ./doitall.sh"),
@@ -66,12 +71,22 @@
     })
   })
   
-  observeEvent(input$close_program_modal, {
-    removeModal()
+  observeEvent(input$pending_program_path, {
+    rv$pending_program_path <- input$pending_program_path
+  }, ignoreInit = TRUE)
+  
+  output$program_path_pending_display <- renderText({
+    if (!is.null(rv$pending_program_path) && rv$pending_program_path != "") {
+      rv$pending_program_path
+    } else {
+      "(none)"
+    }
   })
   
   observeEvent(input$confirm_program_path, {
-    if (!is.null(input$program_manual_path) && input$program_manual_path != "") {
+    if (!is.null(rv$pending_program_path) && rv$pending_program_path != "") {
+      updateTextInput(session, "edit_program_path", value = rv$pending_program_path)
+    } else if (!is.null(input$program_manual_path) && input$program_manual_path != "") {
       updateTextInput(session, "edit_program_path", value = input$program_manual_path)
     }
     removeModal()
@@ -100,6 +115,7 @@
       # Sort directories
       subdirs_relative <- sort(subdirs_relative)
       
+      rv$pending_basedir_path <- NULL
       showModal(modalDialog(
         title = "Select Base Directory",
         size = "l",
@@ -115,7 +131,7 @@
               tags$div(
                 tags$a(
                   href = "#",
-                  onclick = sprintf("document.getElementById('edit_base_dir').value = '%s'; Shiny.setInputValue('close_basedir_modal', Math.random()); return false;", d),
+                  onclick = sprintf("Shiny.setInputValue('pending_basedir_path', '%s', {priority: 'event'}); return false;", d),
                   icon("folder", style = "color: #3c8dbc;"), " ", dir_name,
                   style = "color: #333; cursor: pointer; text-decoration: none; font-size: 13px;"
                 ),
@@ -130,6 +146,10 @@
         ),
         
         shiny::hr(),
+        div(style = "font-size:12px; color:#666;",
+            "Selected: ",
+            strong(textOutput("basedir_path_pending_display", inline = TRUE))
+        ),
         textInput("basedir_manual_path", "Or enter path manually:",
                   value = input$edit_base_dir,
                   placeholder = "mfcl/inputs/2023_rep"),
@@ -145,12 +165,22 @@
     })
   })
   
-  observeEvent(input$close_basedir_modal, {
-    removeModal()
+  observeEvent(input$pending_basedir_path, {
+    rv$pending_basedir_path <- input$pending_basedir_path
+  }, ignoreInit = TRUE)
+  
+  output$basedir_path_pending_display <- renderText({
+    if (!is.null(rv$pending_basedir_path) && rv$pending_basedir_path != "") {
+      rv$pending_basedir_path
+    } else {
+      "(none)"
+    }
   })
   
   observeEvent(input$confirm_basedir_path, {
-    if (!is.null(input$basedir_manual_path) && input$basedir_manual_path != "") {
+    if (!is.null(rv$pending_basedir_path) && rv$pending_basedir_path != "") {
+      updateTextInput(session, "edit_base_dir", value = rv$pending_basedir_path)
+    } else if (!is.null(input$basedir_manual_path) && input$basedir_manual_path != "") {
       updateTextInput(session, "edit_base_dir", value = input$basedir_manual_path)
     }
     removeModal()

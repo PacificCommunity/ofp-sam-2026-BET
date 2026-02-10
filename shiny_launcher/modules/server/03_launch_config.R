@@ -187,6 +187,7 @@
       # Get parent directory option
       parent_dir <- dirname(start_path)
       
+      rv$pending_config_file <- NULL
       showModal(modalDialog(
         title = "Browse for Configuration File",
         size = "l",
@@ -262,14 +263,14 @@
                            transition: background 0.2s; cursor: pointer;",
                   onmouseover = "this.style.background='#e8f8f0'; this.style.borderRadius='3px';",
                   onmouseout = "this.style.background='';",
-                  tags$a(
-                    href = "#",
-                    onclick = sprintf(
+                tags$a(
+                  href = "#",
+                  onclick = sprintf(
                       "Shiny.setInputValue('browse_select_file_config', '%s', {priority: 'event'}); return false;",
                       f
                     ),
-                    icon(file_icon, style = paste0("color: ", file_color, ";")), 
-                    " ", file_name,
+                  icon(file_icon, style = paste0("color: ", file_color, ";")), 
+                  " ", file_name,
                     style = "color: #333; text-decoration: none; font-size: 13px;"
                   )
                 )
@@ -280,9 +281,14 @@
                    style = "text-align: center; color: #999; padding: 20px;")
           }
         ),
-        
+        shiny::hr(),
+        div(style = "font-size:12px; color:#666;",
+            "Selected: ",
+            strong(textOutput("config_file_pending_display", inline = TRUE))
+        ),
         footer = tagList(
-          modalButton("Cancel")
+          modalButton("Cancel"),
+          actionButton("confirm_config_file_select", "Select", class = "btn-primary")
         )
       ))
       
@@ -539,7 +545,23 @@
   observeEvent(input$browse_select_file_config, {
     req(input$browse_select_file_config)
     
-    selected_file <- input$browse_select_file_config
+    rv$pending_config_file <- input$browse_select_file_config
+  }, ignoreInit = TRUE)
+  
+  output$config_file_pending_display <- renderText({
+    if (!is.null(rv$pending_config_file) && rv$pending_config_file != "") {
+      basename(rv$pending_config_file)
+    } else {
+      "(none)"
+    }
+  })
+  
+  observeEvent(input$confirm_config_file_select, {
+    if (is.null(rv$pending_config_file) || rv$pending_config_file == "") {
+      return()
+    }
+    
+    selected_file <- rv$pending_config_file
     
     # Update last browse path to parent directory
     rv$last_browse_path <- dirname(selected_file)

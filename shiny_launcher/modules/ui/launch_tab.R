@@ -18,9 +18,6 @@ launch_tab_ui <- function() {
                               icon = icon("folder-open"))
           )
         ),
-        div(style = "margin-top: 8px;",
-            uiOutput("recent_repo_roots_ui")
-        ),
         div(style = "margin-top: 6px; color: #666; font-size: 12px;",
             "All config/model paths are resolved relative to this root unless absolute.")
       )
