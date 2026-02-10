@@ -120,8 +120,8 @@
           updateSelectInput(session, "branch", selected = saved_settings$branch)
         }
         
-        if (!is.null(saved_settings$job_type)) {
-          rv$last_job_type <- saved_settings$job_type
+        if (!is.null(saved_settings$job_types)) {
+          rv$last_job_type <- saved_settings$job_types
         }
         
         if (!is.null(saved_settings$last_browse_path)) {
@@ -162,7 +162,7 @@
       extract_path_manual = input$extract_path_manual,
       output_dir = input$output_dir,
       branch = input$branch,
-      job_type = input$job_type,
+      job_types = input$job_types,
       last_browse_path = rv$last_browse_path,
       last_config_file = rv$config_path,
       condor_cpus = input$condor_cpus,
@@ -421,12 +421,13 @@
                  "Hessian" = "hessian",
                  "Retrospective" = "retro",
                  "Profile" = "prof")
-    selected <- if (!is.null(rv$last_job_type) && rv$last_job_type %in% choices) {
-      rv$last_job_type
+    selected <- if (!is.null(rv$last_job_type)) {
+      intersect(rv$last_job_type, unname(choices))
     } else {
       "model"
     }
-    updateSelectInput(session, "job_type", choices = choices, selected = selected)
+    if (length(selected) == 0) selected <- "model"
+    updateCheckboxGroupInput(session, "job_types", choices = choices, selected = selected)
   }, ignoreInit = FALSE)
   
   # Initialize directories

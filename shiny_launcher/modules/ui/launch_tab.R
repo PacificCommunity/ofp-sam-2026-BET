@@ -51,13 +51,13 @@ launch_tab_ui <- function() {
           box(
             title = "Job Configuration", status = "primary", solidHeader = TRUE, width = 6,
             
-            selectInput("job_type", "Job Type:",
-                        choices = c("Model" = "model", 
-                                    "Jitter" = "jitter",
-                                    "Hessian" = "hessian",
-                                    "Retrospective" = "retro",
-                                    "Profile" = "prof"),
-                        selected = "model"),
+            checkboxGroupInput("job_types", "Job Types:",
+                               choices = c("Model" = "model", 
+                                           "Jitter" = "jitter",
+                                           "Hessian" = "hessian",
+                                           "Retrospective" = "retro",
+                                           "Profile" = "prof"),
+                               selected = "model"),
             
             textInput("output_dir", "Output Directory:", 
                       value = "quick/test_run"),
