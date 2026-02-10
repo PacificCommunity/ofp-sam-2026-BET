@@ -708,109 +708,137 @@ print(final_plot)
 
 # Jitter Analysis {.tabset}
 
-```{r jitter-analysis, echo=FALSE, message=FALSE, warning=FALSE, results='asis', fig.dim=c(10,8), eval=RUN_CHUNKS$jitter_analysis}
-# =============================================================================
-# JITTER ANALYSIS
-# Compares model fits from different starting values (jittered parameters)
-# =============================================================================
-
+```{r jitter-analysis, echo=FALSE, message=FALSE, warning=FALSE, results='asis', fig.dim=c(12,8), eval=RUN_CHUNKS$jitter_analysis}
 # Get scenarios with jitter runs
 scenarios_with_jitter <- names(JitterPars_list)[sapply(JitterPars_list, function(x) length(x) > 0)]
 
 if (length(scenarios_with_jitter) > 0) {
   
+  # Collect all data including max_grad
+  all_jitter_data <- list()
+  
   for (scenario in scenarios_with_jitter) {
-    cat(sprintf("\n## %s\n\n", scenario))
-    
     jitter_pars <- JitterPars_list[[scenario]]
     base_par <- ParOut_list[[scenario]]
     seeds <- names(jitter_pars)
     
-    if (length(seeds) == 0) {
-      cat("*No jitter results available*\n\n")
-      next
-    }
+    if (length(seeds) == 0) next
     
-    # Extract objective function values
-    obj_fun_df <- data.frame(
-      seed = c("Base", seeds),
-      obj_fun = c(
-        as.numeric(base_par@obj_fun),
-        sapply(jitter_pars, function(p) as.numeric(p@obj_fun))
-      ),
-      max_grad = c(
-        as.numeric(base_par@max_grad),
-        sapply(jitter_pars, function(p) as.numeric(p@max_grad))
-      )
+    ref_obj <- as.numeric(base_par@obj_fun)
+    ref_grad <- base_par@max_grad
+    
+    jitter_obj <- sapply(jitter_pars, function(p) as.numeric(p@obj_fun))
+    jitter_grad <- sapply(jitter_pars, function(p) p@max_grad)
+    
+    # Percent difference from reference
+    pct_diff <- ((jitter_obj - ref_obj) / abs(ref_obj)) * 100
+    
+    all_jitter_data[[scenario]] <- data.frame(
+      scenario = scenario,
+      obj_fun = jitter_obj,
+      ref_obj = ref_obj,
+      pct_diff = pct_diff,
+      max_grad = jitter_grad,
+      ref_grad = ref_grad,
+      jitter_id = seq_along(jitter_grad)
     )
-    
-    # Identify best (lowest obj_fun)
-    obj_fun_df$is_best <- obj_fun_df$obj_fun == min(obj_fun_df$obj_fun)
-    obj_fun_df$diff_from_base <- obj_fun_df$obj_fun - obj_fun_df$obj_fun[1]
-    
-    # Summary table
-    cat("### Summary Table\n\n")
-    
-    display_df <- obj_fun_df %>%
-      mutate(
-        obj_fun_fmt = sprintf("%.2f", obj_fun),
-        max_grad_fmt = sprintf("%.2e", max_grad),
-        diff_fmt = sprintf("%+.2f", diff_from_base)
-      ) %>%
-      select(seed, obj_fun_fmt, diff_fmt, max_grad_fmt, is_best)
-    
-    print(
-      kable(display_df,
-            col.names = c("Seed", "Obj. Function", "Diff from Base", "Max Gradient", "Best"),
-            align = c("l", "r", "r", "r", "c")) %>%
-        kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
-                      full_width = FALSE) %>%
-        row_spec(0, bold = TRUE, background = "#673AB7", color = "white") %>%
-        row_spec(which(obj_fun_df$is_best), bold = TRUE, background = "#E8F5E9")
-    )
-    
-    cat("\n\n### Objective Function Comparison\n\n")
-    
-    # Plot objective function
-    p1 <- ggplot(obj_fun_df, aes(x = seed, y = obj_fun, fill = is_best)) +
-      geom_col(alpha = 0.8) +
-      geom_hline(yintercept = obj_fun_df$obj_fun[1], linetype = "dashed", color = "red", linewidth = 1) +
-      scale_fill_manual(values = c("FALSE" = "steelblue", "TRUE" = "forestgreen"), guide = "none") +
-      labs(x = "Seed", y = "Objective Function", 
-           title = paste(scenario, "- Jitter Analysis"),
-           subtitle = "Red dashed line = Base model") +
-      theme_bw() +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1))
-    
-    print(p1)
-    
-    cat("\n\n### Difference from Base Model\n\n")
-    
-    # Plot difference from base
-    p2 <- ggplot(obj_fun_df %>% filter(seed != "Base"), 
-                 aes(x = seed, y = diff_from_base, fill = diff_from_base < 0)) +
-      geom_col(alpha = 0.8) +
-      geom_hline(yintercept = 0, linetype = "solid", color = "black") +
-      scale_fill_manual(values = c("FALSE" = "coral", "TRUE" = "forestgreen"), 
-                        labels = c("Worse", "Better"), name = "") +
-      labs(x = "Seed", y = "Difference in Obj. Function from Base",
-           title = "Jitter Results vs Base Model",
-           subtitle = "Negative = better fit than base") +
-      theme_bw() +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1),
-            legend.position = "bottom")
-    
-    print(p2)
-    
-    cat("\n\n")
   }
   
+  # Combine all data
+  plot_df <- do.call(rbind, all_jitter_data)
+  
+  # Identify outliers
+  plot_df <- plot_df %>%
+    mutate(
+      is_outlier = pct_diff < -5 | pct_diff > 20,
+      outlier_direction = case_when(
+        pct_diff < -5 ~ "below",
+        pct_diff > 20 ~ "above",
+        TRUE ~ "none"
+      )
+    )
+  
+  # Create reference model dataframe
+  ref_df <- plot_df %>%
+    group_by(scenario) %>%
+    slice(1) %>%
+    select(scenario, ref_obj, ref_grad)
+  
+  # Separate outliers
+  outliers_df <- plot_df %>% filter(is_outlier)
+  
+  # Scatter plot with jitter_id as continuous color
+  p <- ggplot(plot_df %>% filter(!is_outlier), aes(x = max_grad, y = pct_diff)) +
+    geom_point(aes(color = jitter_id), size = 3, alpha = 0.7) +
+    # Outliers at plot edges with arrows
+    geom_point(data = outliers_df %>% filter(outlier_direction == "above"),
+               aes(x = max_grad, y = 19.5), 
+               color = "orange", size = 3, shape = 24, fill = "orange") +
+    geom_point(data = outliers_df %>% filter(outlier_direction == "below"),
+               aes(x = max_grad, y = -4.5), 
+               color = "orange", size = 3, shape = 25, fill = "orange") +
+    geom_point(data = ref_df, aes(x = ref_grad, y = 0), 
+               color = "red", size = 5, shape = 18) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "red", linewidth = 0.8, alpha = 0.5) +
+    geom_vline(xintercept = 0.001, linetype = "dotted", color = "gray50", linewidth = 0.6) +
+    scale_color_viridis_c(option = "viridis", 
+                          name = "Jitter ID") +
+    scale_x_log10() +
+    coord_cartesian(ylim = c(-5, 20)) +
+    facet_wrap(~scenario, scales = "free_x", ncol = 2) +
+    labs(x = "Maximum Gradient (log scale)", 
+         y = "% Difference in Objective Function",
+         title = "Jitter Analysis: Convergence Diagnostics",
+         subtitle = "Red diamond = Reference Model | Gray line = 0.001 reference | Orange triangles = Outliers") +
+    theme_bw() +
+    theme(plot.title = element_text(size = 14, face = "bold"),
+          strip.text = element_text(size = 11, face = "bold"),
+          strip.background = element_rect(fill = "lightblue"),
+          legend.position = "right")
+  
+  print(p)
+  
+  cat("\\n\\n")
+  
+  # Summary table
+  cat("### Summary Statistics\\n\\n")
+  
+  summary_list <- lapply(split(plot_df, plot_df$scenario), function(df) {
+    data.frame(
+      scenario = unique(df$scenario),
+      ref_obj = sprintf("%.2f", unique(df$ref_obj)),
+      ref_grad = sprintf("%.4f", unique(df$ref_grad)),
+      n_jitter = nrow(df),
+      pct_diff_min = sprintf("%.2f%%", min(df$pct_diff)),
+      pct_diff_median = sprintf("%.2f%%", median(df$pct_diff)),
+      pct_diff_max = sprintf("%.2f%%", max(df$pct_diff)),
+      grad_min = sprintf("%.4f", min(df$max_grad)),
+      grad_median = sprintf("%.4f", median(df$max_grad)),
+      grad_max = sprintf("%.4f", max(df$max_grad)),
+      n_outliers_above = sum(df$pct_diff > 20),
+      n_outliers_below = sum(df$pct_diff < -5)
+    )
+  })
+  
+  summary_df <- do.call(rbind, summary_list)
+  rownames(summary_df) <- NULL
+  
+  print(
+    kable(summary_df,
+          col.names = c("Scenario", "Ref Obj", "Ref Grad", "N", 
+                        "% Diff Min", "% Diff Med", "% Diff Max",
+                        "Grad Min", "Grad Med", "Grad Max", 
+                        "Outliers ▲", "Outliers ▼"),
+          align = c("l", "r", "r", "r", "r", "r", "r", "r", "r", "r", "r", "r")) %>%
+      kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                    full_width = FALSE) %>%
+      row_spec(0, bold = TRUE, background = "#673AB7", color = "white")
+  )
+  
 } else {
-  cat("\n## No Jitter Results\n\n")
-  cat("*No jitter analysis results found in any model folder.*\n\n")
+  cat("*No jitter analysis results found in any model folder.*\\n\\n")
 }
 ```
-
 
 # Likelihood profile {.tabset}
 
@@ -871,6 +899,56 @@ if (length(scenarios_prof) > 0) {
   print(create_piner_plot(Likes_change, "Likelihood"))
 }
 ```
+
+
+
+## Piner (CPUEs)
+
+```{r piner-CPUEs, echo=FALSE, message=FALSE, fig.dim=c(8,8), eval=RUN_CHUNKS$piner_lfs}
+# =============================================================================
+# PINER PLOT: INDEX CPUE LIKELIHOODS BY FISHERY
+# =============================================================================
+
+scenarios_prof <- get_prof_scenarios(Info_list, ProfLikOut_list)
+
+if (length(scenarios_prof) > 0) {
+  
+  avg_bio <- get_avg_bio(scenarios_prof)
+  scales <- results[[scenarios_prof[1]]]$scales
+  
+  Likes <- map(scales, function(scl) {
+    mat <- sapply(scenarios_prof, function(sc) {
+      cpue_vec <- ProfLikOutRaw_list[[sc]][[scl]][68] %>%  
+        strsplit(" ") %>%
+        unlist() %>% 
+        as.numeric() %>%
+        na.omit()
+      names(cpue_vec) <- INDEX_FISHERIES_MAP[as.character(seq_along(cpue_vec))]
+      cpue_vec
+    })
+    
+    # Remove zero rows and add total
+    mat <- mat[rowSums(mat != 0) > 0, , drop = FALSE]
+    rbind(mat, Total = colSums(mat))
+  })
+  
+  # Convert to long format
+  Likes_long <- imap_dfr(Likes, function(mat, scl) {
+    as.data.frame(mat) %>%
+      tibble::rownames_to_column("Fishery") %>%
+      mutate(scaler = scl)
+  }) %>%
+    pivot_longer(cols = all_of(scenarios_prof), names_to = "scenario", values_to = "value") %>%
+    mutate(scaler = scale_to_biomass(scaler, scenario, avg_bio))
+  
+  # Calculate change and plot
+  Likes_change <- calc_lik_change(Likes_long, "Fishery")
+  print(create_piner_plot(Likes_change, "Fishery", "CPUEs"))
+}
+
+```
+
+
 
 ## Piner (LFs)
 
