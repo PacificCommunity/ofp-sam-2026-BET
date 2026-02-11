@@ -706,6 +706,190 @@ print(final_plot)
 ```
 
 
+
+
+#### Total biomass  {.tabset .tabset-dropdown}
+
+##### without fishing
+
+```{r model_TB_nofish, echo=FALSE, message=F, fig.dim=c(10,8)}
+
+linewidth <- config$linewidth
+alpha <- config$alpha
+
+## make sure the scenario names are in the same order as RepOut_list
+scenarios_name<-names(RepOut_list)
+
+# Initialize an empty data frame
+bioNoFish_all <- data.frame()
+
+# Extract data from each list element and assign scenario names
+for (i in seq_along(RepOut_list)) {
+  bioNoFish_temp <- as.data.frame(RepOut_list[[i]]@totalBiomass_nofish) %>%
+    mutate(scenario = scenarios_name[i])
+  
+  bioNoFish_all <- bind_rows(bioNoFish_all, bioNoFish_temp)
+}
+
+# Aggregate recruitment data by year and area for each scenario
+bioNoFish_yearly <- bioNoFish_all %>%
+  group_by(year, area, scenario) %>%
+  summarise(data = sum(data) / n_distinct(season) / 1e3, .groups = "drop")  # Convert to thousands
+
+# Create a dataset for total recruitment across all regions
+bioNoFish_total <- bioNoFish_all %>%
+  group_by(year, season, scenario) %>%
+  summarise(data = sum(data), .groups = "drop") %>%  # Sum data from all regions per season
+  group_by(year, scenario) %>%
+  summarise(data = mean(data) / 1e3, .groups = "drop")  %>%  # Compute the yearly average from seasonal values
+  mutate(area = "All")  # Label this dataset as 'All' to represent all regions
+
+# Combine the original dataset with the total recruitment dataset
+bioNoFish_combined <- bind_rows(bioNoFish_yearly, bioNoFish_total)
+
+# Plot recruitment trends by year, area, and scenario
+ggplot(bioNoFish_combined, aes(x = year, y = data, color = scenario)) +
+    geom_line(linewidth = linewidth, alpha = alpha) + 
+  scale_color_manual(values = scenario_colors) + 
+  facet_wrap(~ area, scales = "free_y", ncol = 3) +  # Separate plots for each area, including "Across Region"
+  labs(#title = "Total biomass (without fishing) by year and region",
+       x = "Year",
+       y = bquote("Biomass (" * 10^3 * " MT)"),
+       color = "Model Scenario") +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    strip.text = element_text(size = 10, face = "bold")
+  )
+
+```
+
+
+##### with fishing
+
+```{r model_TB_fish, echo=FALSE, message=F, fig.dim=c(10,8)}
+
+## make sure the scenario names are in the same order as RepOut_list
+scenarios_name<-names(RepOut_list)
+
+# Initialize an empty data frame
+bioFish_all <- data.frame()
+
+# Extract data from each list element and assign scenario names
+for (i in seq_along(RepOut_list)) {
+  bioFish_temp <- as.data.frame(RepOut_list[[i]]@totalBiomass) %>%
+    mutate(scenario = scenarios_name[i])
+  
+  bioFish_all <- bind_rows(bioFish_all, bioFish_temp)
+}
+
+# Aggregate recruitment data by year and area for each scenario
+bioFish_yearly <- bioFish_all %>%
+  group_by(year, area, scenario) %>%
+  summarise(data = sum(data) / n_distinct(season) / 1e3, .groups = "drop")  # Convert to thousands
+
+# Create a dataset for total recruitment across all regions
+bioFish_total <- bioFish_all %>%
+  group_by(year, season, scenario) %>%
+  summarise(data = sum(data), .groups = "drop") %>%  # Sum data from all regions per season
+  group_by(year, scenario) %>%
+  summarise(data = mean(data) / 1e3, .groups = "drop")  %>%  # Compute the yearly average from seasonal values
+  mutate(area = "All")  # Label this dataset as 'All' to represent all regions
+
+# Combine the original dataset with the total recruitment dataset
+bioFish_combined <- bind_rows(bioFish_yearly, bioFish_total)
+
+# Plot recruitment trends by year, area, and scenario
+ggplot(bioFish_combined, aes(x = year, y = data, color = scenario)) +
+    geom_line(linewidth = linewidth, alpha = alpha) + 
+  scale_color_manual(values = scenario_colors) + 
+  facet_wrap(~ area, scales = "free_y", ncol = 3) +  # Separate plots for each area, including "Across Region"
+  labs(#title = "Total biomass (with fishing) by year and region",
+       x = "Year",
+       y = bquote("Biomass (" * 10^3 * " MT)"),
+       color = "Model Scenario") +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    strip.text = element_text(size = 10, face = "bold")
+  )
+
+```
+
+
+##### Facet (comparing)
+
+```{r model_TB_facet, echo=FALSE, message=F, fig.dim=c(10,14)}
+
+## make sure the scenario names are in the same order as RepOut_list
+scenarios_name<-names(RepOut_list)
+
+# Initialize empty data frames for storing biomass data
+bioNoFish_all <- data.frame()
+bioFish_all <- data.frame()
+
+# Extract 'without fishing' data
+for (i in seq_along(RepOut_list)) {
+  bioNoFish_temp <- as.data.frame(RepOut_list[[i]]@totalBiomass_nofish) %>%
+    mutate(scenario = scenarios_name[i], fishing_status = "Without Fishing")  # Add fishing status
+  bioNoFish_all <- bind_rows(bioNoFish_all, bioNoFish_temp)
+}
+
+# Extract 'with fishing' data
+for (i in seq_along(RepOut_list)) {
+  bioFish_temp <- as.data.frame(RepOut_list[[i]]@totalBiomass) %>%
+    mutate(scenario = scenarios_name[i], fishing_status = "With Fishing")  # Add fishing status
+  bioFish_all <- bind_rows(bioFish_all, bioFish_temp)
+}
+
+# Combine both datasets into a single dataframe
+bio_all <- bind_rows(bioNoFish_all, bioFish_all)
+
+# Step 1: Aggregate biomass by year, area, scenario, and fishing status
+# Summing seasonal data and calculating the yearly average
+bio_yearly <- bio_all %>%
+  group_by(year, area, scenario, fishing_status) %>%
+  summarise(data = sum(data) / n_distinct(season) / 1e3, .groups = "drop")  # Convert to thousands (10³ MT)
+
+# Step 2: Create a dataset representing total biomass across all regions
+bio_total <- bio_all %>%
+  group_by(year, season, scenario, fishing_status) %>%
+  summarise(data = sum(data), .groups = "drop") %>%  # Sum data from all regions per season
+  group_by(year, scenario, fishing_status) %>%
+  summarise(data = mean(data) / 1e3, .groups = "drop") %>%  # Compute the yearly average from seasonal values
+  mutate(area = "All")  # Label this dataset as 'All' to represent all regions
+
+# Step 3: Combine region-specific and total biomass data
+bio_combined <- bind_rows(bio_yearly, bio_total)
+
+# Step 4: Generate biomass trend plot by year, area, and fishing status
+ggplot(bio_combined, aes(x = year, y = data, color = scenario)) +
+    geom_line(linewidth = linewidth, alpha = alpha) + 
+    scale_color_manual(values = scenario_colors) + 
+    facet_grid(area ~ fishing_status, scales = "free_y") +  # Separate plots by area and fishing status
+    labs(#title = "Total Biomass",
+         x = "Year",
+         y = bquote("Biomass (" * 10^3 * " MT)"),
+         color = "Model Scenario") +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    strip.text = element_text(size = 10, face = "bold")
+  )
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
 # Jitter Analysis {.tabset}
 
 ```{r jitter-analysis, echo=FALSE, message=FALSE, warning=FALSE, results='asis', fig.dim=c(12,8), eval=RUN_CHUNKS$jitter_analysis}
