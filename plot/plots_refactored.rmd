@@ -637,29 +637,130 @@ for (model_name in null_models) {
 ```
 
 
-# Spawning depletion
 
-```{r spawning-depletion, echo=FALSE, message=FALSE, fig.dim=c(8,6), eval=RUN_CHUNKS$spawning_depletion}
+# Derived Quantity Plots {.tabset .tabset-dropdown}
+
+## Spawning Biomass Depletion, Recruitment, and Fishing Mortality
+
+```{r spawning-depletion, echo=FALSE, message=FALSE, fig.dim=c(8,9), eval=RUN_CHUNKS$spawning_depletion}
 # =============================================================================
-# SPAWNING BIOMASS DEPLETION AND RECRUITMENT PLOTS
+# SPAWNING BIOMASS DEPLETION, RECRUITMENT, AND FISHING MORTALITY PLOTS
 # =============================================================================
 
-# Extract spawning biomass depletion and recruitment
+# Extract spawning biomass depletion
 SBdep <- GetQuantSimple(SBSBF0, RepOut_list, minYear, maxYear)
-Rec <- GetQuantSimple(eq_rec, RepOut_list, minYear, maxYear, scale_factor = 1/1e6)
 
-# Define color palette
+# Calculate recruitment using the same method as model_rec
+scenarios_name <- names(RepOut_list)
+rec_all <- data.frame()
+
+# Extract recruitment data from each scenario
+for (i in seq_along(RepOut_list)) {
+  rec_temp <- as.data.frame(RepOut_list[[i]]@rec_region) %>%
+    mutate(scenario = scenarios_name[i])
+
+  rec_all <- bind_rows(rec_all, rec_temp)
+}
+
+# Create total recruitment dataset by summing across all regions and seasons
+rec_total <- rec_all %>%
+  group_by(year, scenario) %>%
+  summarise(data = sum(data) / 1e6, .groups = "drop")  # Convert to millions
+
+# Rename columns to match expected format
+Rec <- rec_total %>%
+  rename(Year = year, Quant = data, Scenario = scenario)
+
+# =============================================================================
+# Calculate Juvenile vs Adult Fishing Mortality
+# =============================================================================
+
+# Initialize data frames for FM, maturity, and population
+fm_all <- data.frame()
+mat_all <- data.frame()
+popn_all <- data.frame()
+
+# Extract data from each scenario
+for (i in seq_along(RepOut_list)) {
+  # Extract fishing mortality by area (not aggregated)
+  fm_temp <- as.data.frame(RepOut_list[[i]]@fm) %>%
+    mutate(scenario = scenarios_name[i])
+  fm_all <- bind_rows(fm_all, fm_temp)
+  
+  # Extract population numbers
+  popn_temp <- as.data.frame(RepOut_list[[i]]@popN) %>%
+    mutate(scenario = scenarios_name[i]) %>%
+    rename(N = data)
+  popn_all <- bind_rows(popn_all, popn_temp)
+  
+  # Extract maturity and stack by age then season to get age 1-40
+  # Age 0 season 1-4 -> ages 1-4, Age 1 season 1-4 -> ages 5-8, etc.
+  mat_temp <- as.data.frame(ParOut_list[[i]]@mat) %>%
+    arrange(age, season) %>%
+    mutate(scenario = scenarios_name[i],
+           age_new = row_number()) %>%
+    select(age = age_new, maturity = data, scenario)
+  
+  mat_all <- bind_rows(mat_all, mat_temp)
+}
+
+# Calculate juvenile and adult fishing mortality
+fm_juv_adult <- fm_all %>%
+  left_join(popn_all, by = c("age", "year", "unit", "season", "area", "iter", "scenario")) %>%
+  mutate(age_num = as.numeric(as.character(age))) %>%
+  left_join(mat_all, by = c("age_num" = "age", "scenario")) %>%
+  mutate(
+    juv = (1 - maturity) * N,        # Juvenile population
+    adult = maturity * N,             # Adult population
+    dead.juv = data * juv,            # Juvenile deaths
+    dead.adult = data * adult         # Adult deaths
+  ) %>%
+  group_by(year, season, scenario) %>%
+  summarise(
+    dead.juv = sum(dead.juv, na.rm = TRUE),
+    juv = sum(juv, na.rm = TRUE),
+    dead.adult = sum(dead.adult, na.rm = TRUE),
+    adult = sum(adult, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    F.juv = dead.juv / juv,           # Juvenile F
+    F.adult = dead.adult / adult      # Adult F
+  ) %>%
+  group_by(year, scenario) %>%
+  summarise(
+    F.juv = mean(F.juv, na.rm = TRUE) * 4,    # Annual juvenile F
+    F.adult = mean(F.adult, na.rm = TRUE) * 4, # Annual adult F
+    .groups = "drop"
+  )
+
+# Reshape data for plotting
+fm_plot_data <- fm_juv_adult %>%
+  pivot_longer(cols = c(F.juv, F.adult), names_to = "type", values_to = "F") %>%
+  mutate(type = factor(type, 
+                      levels = c("F.juv", "F.adult"),
+                      labels = c("Juvenile F", "Adult F")))
+
+# =============================================================================
+# Define color palette and convert to factors
+# =============================================================================
+
 scenario_levels <- unique(SBdep$Scenario)
 scenario_colors <- get_scenario_colors(scenario_levels)
 
 # Convert to factor for consistent ordering
 SBdep$Scenario <- factor(SBdep$Scenario, levels = scenario_levels)
 Rec$Scenario <- factor(Rec$Scenario, levels = scenario_levels)
+fm_plot_data$scenario <- factor(fm_plot_data$scenario, levels = scenario_levels)
 
-# Common theme for both plots
+# =============================================================================
+# Create plots
+# =============================================================================
+
+# Common theme for all plots
 common_theme <- theme_bw() + theme(legend.position = "none")
 
-# Plot 1: SB/SBF=0
+# Plot A: Spawning Biomass Depletion (SB/SBF=0)
 SBdepPlot <- ggplot(SBdep, aes(x = Year, y = Quant, color = Scenario, group = Scenario)) +
   geom_line(linewidth = 1.2) +
   scale_color_manual(values = scenario_colors) +
@@ -669,16 +770,30 @@ SBdepPlot <- ggplot(SBdep, aes(x = Year, y = Quant, color = Scenario, group = Sc
   geom_hline(yintercept = 0.5, linetype = "dashed", color = "darkgreen") +
   common_theme
 
-# Plot 2: Recruitment
+# Plot B: Recruitment
 RecPlot <- ggplot(Rec, aes(x = Year, y = Quant, color = Scenario, group = Scenario)) +
   geom_line(linewidth = 1.2) +
   coord_cartesian(ylim = c(0, NA)) +
   scale_color_manual(values = scenario_colors) +
-  labs(x = "Year", y = bquote("Spawning Potential (" * 10^3 * " MT)")) +
+  labs(x = "Year", y = "Recruitment (Millions)") +
   common_theme
 
-# Extract legend from a temporary plot
-legend <- cowplot::get_legend(
+# Plot C: Juvenile vs Adult Fishing Mortality
+FMJuvAdultPlot <- ggplot(fm_plot_data, aes(x = year, y = F, color = scenario, linetype = type)) +
+  geom_line(linewidth = 1.2) +
+  scale_color_manual(values = scenario_colors) +
+  scale_linetype_manual(name = "Life Stage", 
+                       values = c("Juvenile F" = "dashed", "Adult F" = "solid")) +
+  labs(x = "Year", y = "Annual Average F") +
+  coord_cartesian(ylim = c(0, NA)) +
+  common_theme
+
+# =============================================================================
+# Extract legends
+# =============================================================================
+
+# Extract scenario color legend
+scenario_legend <- cowplot::get_legend(
   ggplot(SBdep, aes(x = Year, y = Quant, color = Scenario)) +
     geom_line(linewidth = 2) +
     scale_color_manual(values = scenario_colors) +
@@ -691,20 +806,265 @@ legend <- cowplot::get_legend(
     labs(color = "Scenario")
 )
 
-# Combine plots
-combined_plot <- cowplot::plot_grid(
-  SBdepPlot, RecPlot,
-  ncol = 1, labels = c("A", "B"), label_size = 12, align = "v"
+# Extract life stage linetype legend
+lifestage_legend <- cowplot::get_legend(
+  ggplot(fm_plot_data, aes(x = year, y = F, linetype = type)) +
+    geom_line(linewidth = 2) +
+    scale_linetype_manual(name = "Life Stage", 
+                         values = c("Juvenile F" = "dashed", "Adult F" = "solid")) +
+    guides(linetype = guide_legend(override.aes = list(linewidth = 1.5))) +
+    theme_bw() +
+    theme(
+      legend.position = "right",
+      legend.title = element_text(face = "bold"),
+      legend.key.width = unit(2.5, "cm")
+    )
 )
 
+# Combine legends vertically
+combined_legend <- cowplot::plot_grid(
+  scenario_legend, lifestage_legend,
+  ncol = 1
+)
+
+# =============================================================================
+# Combine plots and legends
+# =============================================================================
+
+# Combine all three plots vertically
+combined_plot <- cowplot::plot_grid(
+  SBdepPlot, RecPlot, FMJuvAdultPlot,
+  ncol = 1, labels = c("A", "B", "C"), label_size = 12, align = "v"
+)
+
+# Add legends to the right side
 final_plot <- cowplot::plot_grid(
-  combined_plot, legend,
+  combined_plot, combined_legend,
   ncol = 2, rel_widths = c(4, 1)
 )
 
 print(final_plot)
+
 ```
 
+
+## Depletion by Area
+
+```{r model_depletion_area, echo=FALSE, message=F, fig.dim=c(10,8)}
+
+# =============================================================================
+# Calculate depletion (biomass with fishing / biomass without fishing)
+# =============================================================================
+
+scenarios_name <- names(RepOut_list)
+
+# Initialize empty data frames
+bioNoFish_all <- data.frame()
+bioFish_all <- data.frame()
+
+# Extract biomass without fishing data from each scenario
+for (i in seq_along(RepOut_list)) {
+  bioNoFish_temp <- as.data.frame(RepOut_list[[i]]@adultBiomass_nofish) %>%
+    mutate(scenario = scenarios_name[i])
+  bioNoFish_all <- bind_rows(bioNoFish_all, bioNoFish_temp)
+}
+
+# Extract biomass with fishing data from each scenario
+for (i in seq_along(RepOut_list)) {
+  bioFish_temp <- as.data.frame(RepOut_list[[i]]@adultBiomass) %>%
+    mutate(scenario = scenarios_name[i])
+  bioFish_all <- bind_rows(bioFish_all, bioFish_temp)
+}
+
+# Aggregate by year and area for both datasets
+bioNoFish_yearly <- bioNoFish_all %>%
+  group_by(year, area, scenario) %>%
+  summarise(biomass_nofish = sum(data) / n_distinct(season), .groups = "drop")
+
+bioFish_yearly <- bioFish_all %>%
+  group_by(year, area, scenario) %>%
+  summarise(biomass_fish = sum(data) / n_distinct(season), .groups = "drop")
+
+# Join and calculate depletion by area
+depletion_area <- bioFish_yearly %>%
+  left_join(bioNoFish_yearly, by = c("year", "area", "scenario")) %>%
+  mutate(depletion = biomass_fish / biomass_nofish)
+
+# Calculate depletion for all areas combined
+bioNoFish_all_areas <- bioNoFish_all %>%
+  group_by(year, season, scenario) %>%
+  summarise(biomass_nofish = sum(data), .groups = "drop") %>%
+  group_by(year, scenario) %>%
+  summarise(biomass_nofish = mean(biomass_nofish), .groups = "drop")
+
+bioFish_all_areas <- bioFish_all %>%
+  group_by(year, season, scenario) %>%
+  summarise(biomass_fish = sum(data), .groups = "drop") %>%
+  group_by(year, scenario) %>%
+  summarise(biomass_fish = mean(biomass_fish), .groups = "drop")
+
+depletion_all <- bioFish_all_areas %>%
+  left_join(bioNoFish_all_areas, by = c("year", "scenario")) %>%
+  mutate(depletion = biomass_fish / biomass_nofish,
+         area = "All")
+
+# Combine area-specific and all-areas depletion
+depletion_combined <- bind_rows(depletion_area, depletion_all)
+
+# =============================================================================
+# Define color palette and convert to factors
+# =============================================================================
+
+scenario_levels <- unique(depletion_combined$scenario)
+scenario_colors <- get_scenario_colors(scenario_levels)
+
+# Convert scenario to factor for consistent ordering
+depletion_combined$scenario <- factor(depletion_combined$scenario, levels = scenario_levels)
+
+# =============================================================================
+# Create plot
+# =============================================================================
+
+depletion_plot <- ggplot(depletion_combined, aes(x = year, y = depletion, color = scenario)) +
+  geom_line(linewidth = linewidth, alpha = alpha) +
+  geom_hline(yintercept = 0.2, linetype = "dashed", color = "darkred") +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "darkgreen") +
+  scale_color_manual(values = scenario_colors) +
+  coord_cartesian(ylim = c(0, 1)) +
+  facet_wrap(~ area, ncol = 3) +
+  labs(x = "Year",
+       y = bquote(SB/SB["F=0"])) +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(size = 10, face = "bold")
+  )
+
+# =============================================================================
+# Extract legend
+# =============================================================================
+
+scenario_legend <- cowplot::get_legend(
+  ggplot(depletion_combined, aes(x = year, y = depletion, color = scenario)) +
+    geom_line(linewidth = 2) +
+    scale_color_manual(values = scenario_colors) +
+    theme_bw() +
+    theme(
+      legend.position = "right",
+      legend.title = element_text(face = "bold"),
+      legend.key.width = unit(1.5, "cm")
+    ) +
+    labs(color = "Scenario") +
+    guides(color = guide_legend(override.aes = list(linewidth = 2)))
+)
+
+# =============================================================================
+# Combine plot and legend
+# =============================================================================
+
+final_plot <- cowplot::plot_grid(
+  depletion_plot, scenario_legend,
+  ncol = 2, rel_widths = c(4, 0.8)
+)
+
+print(final_plot)
+
+
+```
+
+## Recruitment by Area
+
+```{r model_rec, echo=FALSE, message=F, fig.dim=c(10,8)}
+
+# =============================================================================
+# Extract and aggregate recruitment data by area
+# =============================================================================
+
+# Initialize an empty data frame
+rec_all <- data.frame()
+
+# Make sure the scenario names are in the same order as RepOut_list
+scenarios_name <- names(RepOut_list)
+
+# Extract recruitment data from each scenario
+for (i in seq_along(RepOut_list)) {
+  rec_temp <- as.data.frame(RepOut_list[[i]]@rec_region) %>%
+    mutate(scenario = scenarios_name[i])
+
+  rec_all <- bind_rows(rec_all, rec_temp)
+}
+
+# Aggregate recruitment data by year and area for each scenario
+rec_yearly <- rec_all %>%
+  group_by(year, area, scenario) %>%
+  summarise(data = sum(data) / 1e6, .groups = "drop")  # Sum all seasons, convert to millions
+
+# Create a dataset for total recruitment across all regions
+rec_total <- rec_all %>%
+  group_by(year, scenario) %>%
+  summarise(data = sum(data) / 1e6, .groups = "drop") %>%  # Sum all regions and seasons
+  mutate(area = "All")  # Label as 'All' to represent all regions
+
+# Combine area-specific and all-areas recruitment
+rec_combined <- bind_rows(rec_yearly, rec_total)
+
+# =============================================================================
+# Define color palette and convert to factors
+# =============================================================================
+
+scenario_levels <- unique(rec_combined$scenario)
+scenario_colors <- get_scenario_colors(scenario_levels)
+
+# Convert scenario to factor for consistent ordering
+rec_combined$scenario <- factor(rec_combined$scenario, levels = scenario_levels)
+
+# =============================================================================
+# Create plot
+# =============================================================================
+
+rec_plot <- ggplot(rec_combined, aes(x = year, y = data, color = scenario)) +
+  geom_line(linewidth = linewidth, alpha = alpha) + 
+  scale_color_manual(values = scenario_colors) +
+  coord_cartesian(ylim = c(0, NA)) +
+  facet_wrap(~ area, scales = "free_y", ncol = 3) +
+  labs(x = "Year",
+       y = "Recruitment (Millions)") +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(size = 10, face = "bold")
+  )
+
+# =============================================================================
+# Extract legend
+# =============================================================================
+
+scenario_legend <- cowplot::get_legend(
+  ggplot(rec_combined, aes(x = year, y = data, color = scenario)) +
+    geom_line(linewidth = 2) +
+    scale_color_manual(values = scenario_colors) +
+    theme_bw() +
+    theme(
+      legend.position = "right",
+      legend.title = element_text(face = "bold"),
+      legend.key.width = unit(1.5, "cm")
+    ) +
+    labs(color = "Scenario") +
+    guides(color = guide_legend(override.aes = list(linewidth = 2)))
+)
+
+# =============================================================================
+# Combine plot and legend
+# =============================================================================
+
+final_plot <- cowplot::plot_grid(
+  rec_plot, scenario_legend,
+  ncol = 2, rel_widths = c(4, 0.8)
+)
+
+print(final_plot)
+
+```
 
 
 
@@ -750,7 +1110,7 @@ bioNoFish_combined <- bind_rows(bioNoFish_yearly, bioNoFish_total)
 # Plot recruitment trends by year, area, and scenario
 ggplot(bioNoFish_combined, aes(x = year, y = data, color = scenario)) +
     geom_line(linewidth = linewidth, alpha = alpha) + 
-  scale_color_manual(values = scenario_colors) + 
+   scale_color_viridis_d(name = "Scenario") +
   facet_wrap(~ area, scales = "free_y", ncol = 3) +  # Separate plots for each area, including "Across Region"
   labs(#title = "Total biomass (without fishing) by year and region",
        x = "Year",
@@ -802,7 +1162,7 @@ bioFish_combined <- bind_rows(bioFish_yearly, bioFish_total)
 # Plot recruitment trends by year, area, and scenario
 ggplot(bioFish_combined, aes(x = year, y = data, color = scenario)) +
     geom_line(linewidth = linewidth, alpha = alpha) + 
-  scale_color_manual(values = scenario_colors) + 
+   scale_color_viridis_d(name = "Scenario") +
   facet_wrap(~ area, scales = "free_y", ncol = 3) +  # Separate plots for each area, including "Across Region"
   labs(#title = "Total biomass (with fishing) by year and region",
        x = "Year",
@@ -865,7 +1225,7 @@ bio_combined <- bind_rows(bio_yearly, bio_total)
 # Step 4: Generate biomass trend plot by year, area, and fishing status
 ggplot(bio_combined, aes(x = year, y = data, color = scenario)) +
     geom_line(linewidth = linewidth, alpha = alpha) + 
-    scale_color_manual(values = scenario_colors) + 
+    scale_color_viridis_d(name = "Scenario") +
     facet_grid(area ~ fishing_status, scales = "free_y") +  # Separate plots by area and fishing status
     labs(#title = "Total Biomass",
          x = "Year",
@@ -885,8 +1245,257 @@ ggplot(bio_combined, aes(x = year, y = data, color = scenario)) +
 
 
 
+#### adult biomass  {.tabset .tabset-dropdown}
+
+##### without fishing
+
+```{r model_TB_nofish, echo=FALSE, message=F, fig.dim=c(10,8)}
+
+linewidth <- config$linewidth
+alpha <- config$alpha
+
+## make sure the scenario names are in the same order as RepOut_list
+scenarios_name<-names(RepOut_list)
+
+# Initialize an empty data frame
+bioNoFish_all <- data.frame()
+
+# Extract data from each list element and assign scenario names
+for (i in seq_along(RepOut_list)) {
+  bioNoFish_temp <- as.data.frame(RepOut_list[[i]]@adultBiomass_nofish) %>%
+    mutate(scenario = scenarios_name[i])
+  
+  bioNoFish_all <- bind_rows(bioNoFish_all, bioNoFish_temp)
+}
+
+# Aggregate recruitment data by year and area for each scenario
+bioNoFish_yearly <- bioNoFish_all %>%
+  group_by(year, area, scenario) %>%
+  summarise(data = sum(data) / n_distinct(season) / 1e3, .groups = "drop")  # Convert to thousands
+
+# Create a dataset for adult recruitment across all regions
+bioNoFish_adult <- bioNoFish_all %>%
+  group_by(year, season, scenario) %>%
+  summarise(data = sum(data), .groups = "drop") %>%  # Sum data from all regions per season
+  group_by(year, scenario) %>%
+  summarise(data = mean(data) / 1e3, .groups = "drop")  %>%  # Compute the yearly average from seasonal values
+  mutate(area = "All")  # Label this dataset as 'All' to represent all regions
+
+# Combine the original dataset with the adult recruitment dataset
+bioNoFish_combined <- bind_rows(bioNoFish_yearly, bioNoFish_adult)
+
+# Plot recruitment trends by year, area, and scenario
+ggplot(bioNoFish_combined, aes(x = year, y = data, color = scenario)) +
+    geom_line(linewidth = linewidth, alpha = alpha) + 
+   scale_color_viridis_d(name = "Scenario") +
+  facet_wrap(~ area, scales = "free_y", ncol = 3) +  # Separate plots for each area, including "Across Region"
+  labs(#title = "adult biomass (without fishing) by year and region",
+       x = "Year",
+       y = bquote("Biomass (" * 10^3 * " MT)"),
+       color = "Model Scenario") +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    strip.text = element_text(size = 10, face = "bold")
+  )
+
+```
 
 
+##### with fishing
+
+```{r model_TB_fish, echo=FALSE, message=F, fig.dim=c(10,8)}
+
+## make sure the scenario names are in the same order as RepOut_list
+scenarios_name<-names(RepOut_list)
+
+# Initialize an empty data frame
+bioFish_all <- data.frame()
+
+# Extract data from each list element and assign scenario names
+for (i in seq_along(RepOut_list)) {
+  bioFish_temp <- as.data.frame(RepOut_list[[i]]@adultBiomass) %>%
+    mutate(scenario = scenarios_name[i])
+  
+  bioFish_all <- bind_rows(bioFish_all, bioFish_temp)
+}
+
+# Aggregate recruitment data by year and area for each scenario
+bioFish_yearly <- bioFish_all %>%
+  group_by(year, area, scenario) %>%
+  summarise(data = sum(data) / n_distinct(season) / 1e3, .groups = "drop")  # Convert to thousands
+
+# Create a dataset for adult recruitment across all regions
+bioFish_adult <- bioFish_all %>%
+  group_by(year, season, scenario) %>%
+  summarise(data = sum(data), .groups = "drop") %>%  # Sum data from all regions per season
+  group_by(year, scenario) %>%
+  summarise(data = mean(data) / 1e3, .groups = "drop")  %>%  # Compute the yearly average from seasonal values
+  mutate(area = "All")  # Label this dataset as 'All' to represent all regions
+
+# Combine the original dataset with the adult recruitment dataset
+bioFish_combined <- bind_rows(bioFish_yearly, bioFish_adult)
+
+# Plot recruitment trends by year, area, and scenario
+ggplot(bioFish_combined, aes(x = year, y = data, color = scenario)) +
+    geom_line(linewidth = linewidth, alpha = alpha) + 
+   scale_color_viridis_d(name = "Scenario") +
+  facet_wrap(~ area, scales = "free_y", ncol = 3) +  # Separate plots for each area, including "Across Region"
+  labs(#title = "adult biomass (with fishing) by year and region",
+       x = "Year",
+       y = bquote("Biomass (" * 10^3 * " MT)"),
+       color = "Model Scenario") +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    strip.text = element_text(size = 10, face = "bold")
+  )
+
+```
+
+
+##### Facet (comparing)
+
+```{r model_TB_facet, echo=FALSE, message=F, fig.dim=c(10,14)}
+
+## make sure the scenario names are in the same order as RepOut_list
+scenarios_name<-names(RepOut_list)
+
+# Initialize empty data frames for storing biomass data
+bioNoFish_all <- data.frame()
+bioFish_all <- data.frame()
+
+# Extract 'without fishing' data
+for (i in seq_along(RepOut_list)) {
+  bioNoFish_temp <- as.data.frame(RepOut_list[[i]]@adultBiomass_nofish) %>%
+    mutate(scenario = scenarios_name[i], fishing_status = "Without Fishing")  # Add fishing status
+  bioNoFish_all <- bind_rows(bioNoFish_all, bioNoFish_temp)
+}
+
+# Extract 'with fishing' data
+for (i in seq_along(RepOut_list)) {
+  bioFish_temp <- as.data.frame(RepOut_list[[i]]@adultBiomass) %>%
+    mutate(scenario = scenarios_name[i], fishing_status = "With Fishing")  # Add fishing status
+  bioFish_all <- bind_rows(bioFish_all, bioFish_temp)
+}
+
+# Combine both datasets into a single dataframe
+bio_all <- bind_rows(bioNoFish_all, bioFish_all)
+
+# Step 1: Aggregate biomass by year, area, scenario, and fishing status
+# Summing seasonal data and calculating the yearly average
+bio_yearly <- bio_all %>%
+  group_by(year, area, scenario, fishing_status) %>%
+  summarise(data = sum(data) / n_distinct(season) / 1e3, .groups = "drop")  # Convert to thousands (10³ MT)
+
+# Step 2: Create a dataset representing adult biomass across all regions
+bio_adult <- bio_all %>%
+  group_by(year, season, scenario, fishing_status) %>%
+  summarise(data = sum(data), .groups = "drop") %>%  # Sum data from all regions per season
+  group_by(year, scenario, fishing_status) %>%
+  summarise(data = mean(data) / 1e3, .groups = "drop") %>%  # Compute the yearly average from seasonal values
+  mutate(area = "All")  # Label this dataset as 'All' to represent all regions
+
+# Step 3: Combine region-specific and adult biomass data
+bio_combined <- bind_rows(bio_yearly, bio_adult)
+
+# Step 4: Generate biomass trend plot by year, area, and fishing status
+ggplot(bio_combined, aes(x = year, y = data, color = scenario)) +
+    geom_line(linewidth = linewidth, alpha = alpha) + 
+    scale_color_viridis_d(name = "Scenario") +
+    facet_grid(area ~ fishing_status, scales = "free_y") +  # Separate plots by area and fishing status
+    labs(#title = "adult Biomass",
+         x = "Year",
+         y = bquote("Biomass (" * 10^3 * " MT)"),
+         color = "Model Scenario") +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    strip.text = element_text(size = 10, face = "bold")
+  )
+
+
+```
+
+
+
+##### Depletion by Area
+
+```{r model_depletion_area, echo=FALSE, message=F, fig.dim=c(10,8)}
+
+## Calculate depletion (biomass with fishing / biomass without fishing)
+scenarios_name <- names(RepOut_list)
+
+# Initialize empty data frames
+bioNoFish_all <- data.frame()
+bioFish_all <- data.frame()
+
+# Extract 'without fishing' data
+for (i in seq_along(RepOut_list)) {
+  bioNoFish_temp <- as.data.frame(RepOut_list[[i]]@adultBiomass_nofish) %>%
+    mutate(scenario = scenarios_name[i])
+  bioNoFish_all <- bind_rows(bioNoFish_all, bioNoFish_temp)
+}
+
+# Extract 'with fishing' data
+for (i in seq_along(RepOut_list)) {
+  bioFish_temp <- as.data.frame(RepOut_list[[i]]@adultBiomass) %>%
+    mutate(scenario = scenarios_name[i])
+  bioFish_all <- bind_rows(bioFish_all, bioFish_temp)
+}
+
+# Aggregate by year and area for both datasets
+bioNoFish_yearly <- bioNoFish_all %>%
+  group_by(year, area, scenario) %>%
+  summarise(biomass_nofish = sum(data) / n_distinct(season), .groups = "drop")
+
+bioFish_yearly <- bioFish_all %>%
+  group_by(year, area, scenario) %>%
+  summarise(biomass_fish = sum(data) / n_distinct(season), .groups = "drop")
+
+# Join and calculate depletion
+depletion_area <- bioFish_yearly %>%
+  left_join(bioNoFish_yearly, by = c("year", "area", "scenario")) %>%
+  mutate(depletion = biomass_fish / biomass_nofish)
+
+# Calculate depletion for all areas combined
+bioNoFish_all_areas <- bioNoFish_all %>%
+  group_by(year, season, scenario) %>%
+  summarise(biomass_nofish = sum(data), .groups = "drop") %>%
+  group_by(year, scenario) %>%
+  summarise(biomass_nofish = mean(biomass_nofish), .groups = "drop")
+
+bioFish_all_areas <- bioFish_all %>%
+  group_by(year, season, scenario) %>%
+  summarise(biomass_fish = sum(data), .groups = "drop") %>%
+  group_by(year, scenario) %>%
+  summarise(biomass_fish = mean(biomass_fish), .groups = "drop")
+
+depletion_all <- bioFish_all_areas %>%
+  left_join(bioNoFish_all_areas, by = c("year", "scenario")) %>%
+  mutate(depletion = biomass_fish / biomass_nofish,
+         area = "All")
+
+# Combine area-specific and all-areas depletion
+depletion_combined <- bind_rows(depletion_area, depletion_all)
+
+# Plot depletion trends
+ggplot(depletion_combined, aes(x = year, y = depletion, color = scenario)) +
+  geom_line(linewidth = linewidth, alpha = alpha) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "gray50") +
+  scale_color_viridis_d(name = "Scenario") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  facet_wrap(~ area, scales = "free_y", ncol = 3) +
+  labs(x = "Year",
+       y = "Depletion (B/B₀)",
+       color = "Model Scenario") +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    strip.text = element_text(size = 10, face = "bold")
+  )
+
+```
 
 
 
@@ -1647,3 +2256,55 @@ for (scenario_name in all_scenarios) {
   }
 }
 ```
+
+
+
+#### Recruitment
+
+```{r model_rec, echo=FALSE, message=F, fig.dim=c(10,8)}
+
+# Initialize an empty data frame
+rec_all <- data.frame()
+
+## make sure the scenario names are in the same order as RepOut_list
+scenarios_name<-names(RepOut_list)
+
+# Extract data from each list element and assign scenario names
+for (i in seq_along(RepOut_list)) {
+  rec_temp <- as.data.frame(RepOut_list[[i]]@rec_region) %>%
+    mutate(scenario = scenarios_name[i])
+
+  rec_all <- bind_rows(rec_all, rec_temp)
+}
+
+# Aggregate recruitment data by year and area for each scenario
+rec_yearly <- rec_all %>%
+  group_by(year, area, scenario) %>%
+  summarise(data = sum(data) / 1e6, .groups = "drop")  # Sum all seasons (in thousands)
+
+# Create a dataset for total recruitment across all regions
+rec_total <- rec_all %>%
+  group_by(year, scenario) %>%
+  summarise(data = sum(data) / 1e6, .groups = "drop") %>%  # Sum all regions and seasons
+  mutate(area = "All")  # Label this dataset as 'All' to represent all regions
+
+# Combine the original dataset with the total recruitment dataset
+rec_combined <- bind_rows(rec_yearly, rec_total)
+
+# Plot recruitment trends by year, area, and scenario
+ggplot(rec_combined, aes(x = year, y = data, color = scenario)) +
+    geom_line(linewidth = linewidth, alpha = alpha) + 
+  scale_color_viridis_d(name = "Scenario") +
+  facet_wrap(~ area, scales = "free_y", ncol = 3) +  # Separate plots for each area, including "Across Region"
+  labs(#title = "Recruitment by year and region",
+       x = "Year",
+       y = "Recruitment (Millions)",
+       color = "Model Scenario") +
+    theme(
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    strip.text = element_text(size = 10, face = "bold")
+  )
+
+```
+
