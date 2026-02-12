@@ -636,15 +636,13 @@ for (model_name in null_models) {
 }
 ```
 
-
-
 # Derived Quantity Plots {.tabset .tabset-dropdown}
 
-## Spawning Biomass Depletion, Recruitment, and Fishing Mortality
+## Spawning Biomass Depletion, Recruitment, Spawning Potential, and Fishing Mortality
 
-```{r spawning-depletion, echo=FALSE, message=FALSE, fig.dim=c(8,9), eval=RUN_CHUNKS$spawning_depletion}
+```{r spawning-depletion, echo=FALSE, message=FALSE, fig.dim=c(8,12), eval=RUN_CHUNKS$spawning_depletion}
 # =============================================================================
-# SPAWNING BIOMASS DEPLETION, RECRUITMENT, AND FISHING MORTALITY PLOTS
+# SPAWNING BIOMASS DEPLETION, RECRUITMENT, SPAWNING POTENTIAL, AND FISHING MORTALITY PLOTS
 # =============================================================================
 
 # Extract spawning biomass depletion
@@ -672,18 +670,37 @@ Rec <- rec_total %>%
   rename(Year = year, Quant = data, Scenario = scenario)
 
 # =============================================================================
-# Calculate Instantaneous Juvenile vs Adult Fishing Mortality
+# Extract Spawning Potential (with fishing only)
 # =============================================================================
 
-# Initialize data frames for FM, maturity, population, and natural mortality
+bioFish_all <- data.frame()
+
+# Extract biomass with fishing from each scenario
+for (i in seq_along(RepOut_list)) {
+  bioFish_temp <- as.data.frame(RepOut_list[[i]]@adultBiomass) %>%
+    mutate(scenario = scenarios_name[i])
+  
+  bioFish_all <- bind_rows(bioFish_all, bioFish_temp)
+}
+
+# Calculate spawning potential with fishing across all areas
+SpawnPot <- bioFish_all %>%
+  group_by(year, season, scenario) %>%
+  summarise(data = sum(data), .groups = "drop") %>%
+  group_by(year, scenario) %>%
+  summarise(data = mean(data) / 1e3, .groups = "drop") %>%
+  rename(Year = year, Quant = data, Scenario = scenario)
+
+# =============================================================================
+# Calculate Instantaneous Age-Averaged Fishing Mortality (Approximation)
+# =============================================================================
+
 fm_all <- data.frame()
-mat_all <- data.frame()
 popn_all <- data.frame()
-m_all <- data.frame()
 
 # Extract data from each scenario
 for (i in seq_along(RepOut_list)) {
-  # Extract fishing mortality by area (not aggregated)
+  # Extract fishing mortality (harvest rate)
   fm_temp <- as.data.frame(RepOut_list[[i]]@fm) %>%
     mutate(scenario = scenarios_name[i])
   fm_all <- bind_rows(fm_all, fm_temp)
@@ -693,65 +710,33 @@ for (i in seq_along(RepOut_list)) {
     mutate(scenario = scenarios_name[i]) %>%
     rename(N = data)
   popn_all <- bind_rows(popn_all, popn_temp)
-  
-  # Extract maturity and stack by age then season to get age 1-40
-  # Age 0 season 1-4 -> ages 1-4, Age 1 season 1-4 -> ages 5-8, etc.
-  mat_temp <- as.data.frame(ParOut_list[[i]]@mat) %>%
-    arrange(age, season) %>%
-    mutate(scenario = scenarios_name[i],
-           age_new = row_number()) %>%
-    select(age = age_new, maturity = data, scenario)
-  
-  mat_all <- bind_rows(mat_all, mat_temp)
-  
-  # Extract natural mortality and stack by age then season to get age 1-40
-  m_temp <- as.data.frame(RepOut_list[[i]]@m_at_age) %>%
-    arrange(age, season) %>%
-    mutate(scenario = scenarios_name[i],
-           age_new = row_number()) %>%
-    select(age = age_new, M = data, scenario)
-  
-  m_all <- bind_rows(m_all, m_temp)
 }
 
-# Calculate instantaneous juvenile and adult fishing mortality
-fm_juv_adult <- fm_all %>%
+# Calculate instantaneous F using approximation: F ≈ -ln(1 - C/N)
+# Note: This is a simple approximation that works well when harvest rates are moderate
+FM <- fm_all %>%
   left_join(popn_all, by = c("age", "year", "unit", "season", "area", "iter", "scenario")) %>%
-  mutate(age_num = as.numeric(as.character(age))) %>%
-  left_join(mat_all, by = c("age_num" = "age", "scenario")) %>%
-  left_join(m_all, by = c("age_num" = "age", "scenario")) %>%
   mutate(
-    juv = (1 - maturity) * N,        # Juvenile population
-    adult = maturity * N,             # Adult population
-    catch.juv = data * juv,           # Juvenile catch
-    catch.adult = data * adult        # Adult catch
+    catch = data * N  # Catch = harvest rate * population
   ) %>%
   group_by(year, season, scenario) %>%
   summarise(
-    catch.juv = sum(catch.juv, na.rm = TRUE),
-    juv = sum(juv, na.rm = TRUE),
-    catch.adult = sum(catch.adult, na.rm = TRUE),
-    adult = sum(adult, na.rm = TRUE),
+    total_catch = sum(catch, na.rm = TRUE),
+    total_N = sum(N, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   mutate(
-    # Instantaneous F from catch equation: F = -log(1 - C/N)
-    F.juv = -log(1 - pmin(catch.juv / juv, 0.99)),      # Cap at 0.99 to avoid log(0)
-    F.adult = -log(1 - pmin(catch.adult / adult, 0.99))
+    harvest_rate = total_catch / total_N,
+    # Approximate instantaneous F: F ≈ -ln(1 - C/N)
+    inst_F = -log(pmax(1 - harvest_rate, 0.001))
   ) %>%
   group_by(year, scenario) %>%
   summarise(
-    F.juv = sum(F.juv, na.rm = TRUE),    # Annual instantaneous juvenile F
-    F.adult = sum(F.adult, na.rm = TRUE), # Annual instantaneous adult F
+    # Sum instantaneous F across seasons to get annual F
+    Quant = sum(inst_F, na.rm = TRUE),
     .groups = "drop"
-  )
-
-# Reshape data for plotting
-fm_plot_data <- fm_juv_adult %>%
-  pivot_longer(cols = c(F.juv, F.adult), names_to = "type", values_to = "F") %>%
-  mutate(type = factor(type, 
-                      levels = c("F.juv", "F.adult"),
-                      labels = c("Juvenile F", "Adult F")))
+  ) %>%
+  rename(Year = year, Scenario = scenario)
 
 # =============================================================================
 # Define color palette and convert to factors
@@ -763,7 +748,8 @@ scenario_colors <- get_scenario_colors(scenario_levels)
 # Convert to factor for consistent ordering
 SBdep$Scenario <- factor(SBdep$Scenario, levels = scenario_levels)
 Rec$Scenario <- factor(Rec$Scenario, levels = scenario_levels)
-fm_plot_data$scenario <- factor(fm_plot_data$scenario, levels = scenario_levels)
+SpawnPot$Scenario <- factor(SpawnPot$Scenario, levels = scenario_levels)
+FM$Scenario <- factor(FM$Scenario, levels = scenario_levels)
 
 # =============================================================================
 # Create plots
@@ -790,18 +776,24 @@ RecPlot <- ggplot(Rec, aes(x = Year, y = Quant, color = Scenario, group = Scenar
   labs(x = "Year", y = "Recruitment (Millions)") +
   common_theme
 
-# Plot 3: Juvenile vs Adult Fishing Mortality
-FMJuvAdultPlot <- ggplot(fm_plot_data, aes(x = year, y = F, color = scenario, linetype = type)) +
+# Plot 3: Spawning Potential (with fishing)
+SpawnPotPlot <- ggplot(SpawnPot, aes(x = Year, y = Quant, color = Scenario, group = Scenario)) +
   geom_line(linewidth = 1.2) +
   scale_color_manual(values = scenario_colors) +
-  scale_linetype_manual(name = "Life Stage", 
-                       values = c("Juvenile F" = "dashed", "Adult F" = "solid")) +
+  labs(x = "Year", y = bquote("Spawning Potential (" * 10^3 * " MT)")) +
+  coord_cartesian(ylim = c(0, NA)) +
+  common_theme
+
+# Plot 4: Age-Averaged Instantaneous Fishing Mortality
+FMPlot <- ggplot(FM, aes(x = Year, y = Quant, color = Scenario, group = Scenario)) +
+  geom_line(linewidth = 1.2) +
+  scale_color_manual(values = scenario_colors) +
   labs(x = "Year", y = "Annual Instantaneous F") +
   coord_cartesian(ylim = c(0, NA)) +
   common_theme
 
 # =============================================================================
-# Extract legends
+# Extract legend
 # =============================================================================
 
 # Extract scenario color legend
@@ -819,47 +811,25 @@ scenario_legend <- cowplot::get_legend(
     guides(color = guide_legend(override.aes = list(linewidth = 2)))
 )
 
-# Extract life stage linetype legend
-lifestage_legend <- cowplot::get_legend(
-  ggplot(fm_plot_data, aes(x = year, y = F, linetype = type)) +
-    geom_line(linewidth = 2) +
-    scale_linetype_manual(name = "Life Stage", 
-                         values = c("Juvenile F" = "dashed", "Adult F" = "solid")) +
-    guides(linetype = guide_legend(override.aes = list(linewidth = 1.5))) +
-    theme_bw() +
-    theme(
-      legend.position = "right",
-      legend.title = element_text(face = "bold"),
-      legend.key.width = unit(2.5, "cm")
-    )
-)
-
-# Combine legends vertically
-combined_legend <- cowplot::plot_grid(
-  scenario_legend, lifestage_legend,
-  ncol = 1
-)
-
 # =============================================================================
 # Combine plots and legends
 # =============================================================================
 
-# Combine all three plots vertically
+# Combine all four plots vertically
 combined_plot <- cowplot::plot_grid(
-  SBdepPlot, RecPlot, FMJuvAdultPlot,
+  SBdepPlot, RecPlot, SpawnPotPlot, FMPlot,
   ncol = 1, align = "v"
 )
 
-# Add legends to the right side
+# Add legend to the right side
 final_plot <- cowplot::plot_grid(
-  combined_plot, combined_legend,
+  combined_plot, scenario_legend,
   ncol = 2, rel_widths = c(4, 1)
 )
 
 print(final_plot)
 
 ```
-
 
 ## Depletion by Area
 
@@ -1093,7 +1063,6 @@ scenarios_name <- names(RepOut_list)
 fm_all <- data.frame()
 mat_all <- data.frame()
 popn_all <- data.frame()
-m_all <- data.frame()
 
 # Extract data from each scenario
 for (i in seq_along(RepOut_list)) {
@@ -1117,31 +1086,20 @@ for (i in seq_along(RepOut_list)) {
     select(age = age_new, maturity = data, scenario)
   
   mat_all <- bind_rows(mat_all, mat_temp)
-  
-  # Extract natural mortality and stack by age then season to get age 1-40
-  # Age 0 season 1-4 -> ages 1-4, Age 1 season 1-4 -> ages 5-8, etc.
-  m_temp <- as.data.frame(RepOut_list[[i]]@m_at_age) %>%
-    arrange(age, season) %>%
-    mutate(scenario = scenarios_name[i],
-           age_new = row_number()) %>%
-    select(age = age_new, M = data, scenario)
-  
-  m_all <- bind_rows(m_all, m_temp)
 }
 
 # Calculate instantaneous juvenile and adult fishing mortality by area
+# Note: Using approximation F ≈ -ln(1 - C/N) for instantaneous fishing mortality
+# This is a simple approximation that works well when harvest rates are moderate
 fm_juv_adult_area <- fm_all %>%
   left_join(popn_all, by = c("age", "year", "unit", "season", "area", "iter", "scenario")) %>%
   mutate(age_num = as.numeric(as.character(age))) %>%
   left_join(mat_all, by = c("age_num" = "age", "scenario")) %>%
-  left_join(m_all, by = c("age_num" = "age", "scenario")) %>%
   mutate(
     juv = (1 - maturity) * N,        # Juvenile population
     adult = maturity * N,             # Adult population
     catch.juv = data * juv,           # Juvenile catch
-    catch.adult = data * adult,       # Adult catch
-    Z.juv = data + M,                 # Total mortality for juveniles
-    Z.adult = data + M                # Total mortality for adults
+    catch.adult = data * adult        # Adult catch
   ) %>%
   group_by(year, season, area, scenario) %>%
   summarise(
@@ -1152,9 +1110,11 @@ fm_juv_adult_area <- fm_all %>%
     .groups = "drop"
   ) %>%
   mutate(
-    # Instantaneous F from catch equation: F = -log(1 - C/N)
-    F.juv = -log(1 - pmin(catch.juv / juv, 0.99)),      # Cap at 0.99 to avoid log(0)
-    F.adult = -log(1 - pmin(catch.adult / adult, 0.99))
+    harvest_rate.juv = catch.juv / juv,
+    harvest_rate.adult = catch.adult / adult,
+    # Approximate instantaneous F: F ≈ -ln(1 - C/N)
+    F.juv = -log(pmax(1 - harvest_rate.juv, 0.001)),
+    F.adult = -log(pmax(1 - harvest_rate.adult, 0.001))
   ) %>%
   group_by(year, area, scenario) %>%
   summarise(
@@ -1168,7 +1128,6 @@ fm_juv_adult_all <- fm_all %>%
   left_join(popn_all, by = c("age", "year", "unit", "season", "area", "iter", "scenario")) %>%
   mutate(age_num = as.numeric(as.character(age))) %>%
   left_join(mat_all, by = c("age_num" = "age", "scenario")) %>%
-  left_join(m_all, by = c("age_num" = "age", "scenario")) %>%
   mutate(
     juv = (1 - maturity) * N,
     adult = maturity * N,
@@ -1184,8 +1143,10 @@ fm_juv_adult_all <- fm_all %>%
     .groups = "drop"
   ) %>%
   mutate(
-    F.juv = -log(1 - pmin(catch.juv / juv, 0.99)),
-    F.adult = -log(1 - pmin(catch.adult / adult, 0.99))
+    harvest_rate.juv = catch.juv / juv,
+    harvest_rate.adult = catch.adult / adult,
+    F.juv = -log(pmax(1 - harvest_rate.juv, 0.001)),
+    F.adult = -log(pmax(1 - harvest_rate.adult, 0.001))
   ) %>%
   group_by(year, scenario) %>%
   summarise(
@@ -1285,7 +1246,307 @@ final_plot <- cowplot::plot_grid(
 
 print(final_plot)
 
+
 ```
+
+
+
+
+## Area Contribution to Total Fishing Mortality
+
+```{r model_fm_area_contribution, echo=FALSE, message=F, fig.dim=c(10,8)}
+
+# =============================================================================
+# Calculate area contribution to total F (based on F values, not catch)
+# =============================================================================
+
+scenarios_name <- names(RepOut_list)
+
+# Initialize data frames for FM, maturity, population, and natural mortality
+fm_all <- data.frame()
+mat_all <- data.frame()
+popn_all <- data.frame()
+m_all <- data.frame()
+
+# Extract data from each scenario
+for (i in seq_along(RepOut_list)) {
+  # Extract fishing mortality by area (not aggregated)
+  fm_temp <- as.data.frame(RepOut_list[[i]]@fm) %>%
+    mutate(scenario = scenarios_name[i])
+  fm_all <- bind_rows(fm_all, fm_temp)
+  
+  # Extract population numbers
+  popn_temp <- as.data.frame(RepOut_list[[i]]@popN) %>%
+    mutate(scenario = scenarios_name[i]) %>%
+    rename(N = data)
+  popn_all <- bind_rows(popn_all, popn_temp)
+  
+  # Extract maturity and stack by age then season to get age 1-40
+  mat_temp <- as.data.frame(ParOut_list[[i]]@mat) %>%
+    arrange(age, season) %>%
+    mutate(scenario = scenarios_name[i],
+           age_new = row_number()) %>%
+    select(age = age_new, maturity = data, scenario)
+  
+  mat_all <- bind_rows(mat_all, mat_temp)
+  
+  # Extract natural mortality and stack by age then season to get age 1-40
+  m_temp <- as.data.frame(RepOut_list[[i]]@m_at_age) %>%
+    arrange(age, season) %>%
+    mutate(scenario = scenarios_name[i],
+           age_new = row_number()) %>%
+    select(age = age_new, M = data, scenario)
+  
+  m_all <- bind_rows(m_all, m_temp)
+}
+
+# Calculate catch, population, and F by area and season
+area_data <- fm_all %>%
+  left_join(popn_all, by = c("age", "year", "unit", "season", "area", "iter", "scenario")) %>%
+  mutate(age_num = as.numeric(as.character(age))) %>%
+  left_join(mat_all, by = c("age_num" = "age", "scenario")) %>%
+  left_join(m_all, by = c("age_num" = "age", "scenario")) %>%
+  mutate(
+    catch = data * N  # Catch by area
+  ) %>%
+  group_by(year, season, area, scenario) %>%
+  summarise(
+    catch = sum(catch, na.rm = TRUE),
+    N = sum(N, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    F_season = -log(1 - pmin(catch / N, 0.99))  # Seasonal F by area
+  )
+
+# Calculate annual F by area
+area_F <- area_data %>%
+  group_by(year, area, scenario) %>%
+  summarise(
+    F_area = sum(F_season, na.rm = TRUE),  # Annual F by area
+    .groups = "drop"
+  )
+
+# Calculate total F across all areas
+total_F <- fm_all %>%
+  left_join(popn_all, by = c("age", "year", "unit", "season", "area", "iter", "scenario")) %>%
+  mutate(age_num = as.numeric(as.character(age))) %>%
+  mutate(catch = data * N) %>%
+  group_by(year, season, scenario) %>%
+  summarise(
+    catch = sum(catch, na.rm = TRUE),
+    N = sum(N, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(F_season = -log(1 - pmin(catch / N, 0.99))) %>%
+  group_by(year, scenario) %>%
+  summarise(
+    F_total = sum(F_season, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Calculate F contribution: weighted by population
+# Contribution = (F_area * N_area) / (F_total * N_total) * 100
+area_contribution <- area_data %>%
+  group_by(year, area, scenario) %>%
+  summarise(
+    weighted_F = sum(F_season * N, na.rm = TRUE),  # F weighted by population
+    .groups = "drop"
+  ) %>%
+  group_by(year, scenario) %>%
+  mutate(
+    total_weighted_F = sum(weighted_F),
+    contribution = (weighted_F / total_weighted_F) * 100
+  ) %>%
+  ungroup()
+
+# =============================================================================
+# Define color palette and convert to factors
+# =============================================================================
+
+scenario_levels <- unique(area_contribution$scenario)
+
+# Convert to factor for consistent ordering
+area_contribution$scenario <- factor(area_contribution$scenario, levels = scenario_levels)
+area_contribution$area <- factor(area_contribution$area)
+
+# =============================================================================
+# Create stacked area plot
+# =============================================================================
+
+contribution_plot <- ggplot(area_contribution, aes(x = year, y = contribution, fill = area)) +
+  geom_area(position = "stack", alpha = 0.8) +
+  scale_fill_viridis_d(name = "Area") +
+  facet_wrap(~ scenario, ncol = 1) +
+  labs(x = "Year",
+       y = "Contribution to Total F (%)") +
+  theme_bw() +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    strip.text = element_text(size = 10, face = "bold")
+  )
+
+print(contribution_plot)
+
+```
+
+
+
+## Spawning Potential (with and without fishing)
+
+```{r model_SP_combined, echo=FALSE, message=F, fig.dim=c(10,8)}
+
+# =============================================================================
+# Extract spawning potential with and without fishing
+# =============================================================================
+
+linewidth <- config$linewidth
+alpha <- config$alpha
+
+# Make sure the scenario names are in the same order as RepOut_list
+scenarios_name <- names(RepOut_list)
+
+# Initialize empty data frames
+bioNoFish_all <- data.frame()
+bioFish_all <- data.frame()
+
+# Extract biomass without fishing from each scenario
+for (i in seq_along(RepOut_list)) {
+  bioNoFish_temp <- as.data.frame(RepOut_list[[i]]@adultBiomass_nofish) %>%
+    mutate(scenario = scenarios_name[i])
+  
+  bioNoFish_all <- bind_rows(bioNoFish_all, bioNoFish_temp)
+}
+
+# Extract biomass with fishing from each scenario
+for (i in seq_along(RepOut_list)) {
+  bioFish_temp <- as.data.frame(RepOut_list[[i]]@adultBiomass) %>%
+    mutate(scenario = scenarios_name[i])
+  
+  bioFish_all <- bind_rows(bioFish_all, bioFish_temp)
+}
+
+# Aggregate biomass without fishing by year and area
+bioNoFish_yearly <- bioNoFish_all %>%
+  group_by(year, area, scenario) %>%
+  summarise(data = sum(data) / n_distinct(season) / 1e3, .groups = "drop")
+
+# Aggregate biomass with fishing by year and area
+bioFish_yearly <- bioFish_all %>%
+  group_by(year, area, scenario) %>%
+  summarise(data = sum(data) / n_distinct(season) / 1e3, .groups = "drop")
+
+# Calculate spawning potential without fishing across all areas
+bioNoFish_adult <- bioNoFish_all %>%
+  group_by(year, season, scenario) %>%
+  summarise(data = sum(data), .groups = "drop") %>%
+  group_by(year, scenario) %>%
+  summarise(data = mean(data) / 1e3, .groups = "drop") %>%
+  mutate(area = "All")
+
+# Calculate spawning potential with fishing across all areas
+bioFish_adult <- bioFish_all %>%
+  group_by(year, season, scenario) %>%
+  summarise(data = sum(data), .groups = "drop") %>%
+  group_by(year, scenario) %>%
+  summarise(data = mean(data) / 1e3, .groups = "drop") %>%
+  mutate(area = "All")
+
+# Combine area-specific and all-areas data
+bioNoFish_combined <- bind_rows(bioNoFish_yearly, bioNoFish_adult) %>%
+  mutate(type = "No fishing")
+
+bioFish_combined <- bind_rows(bioFish_yearly, bioFish_adult) %>%
+  mutate(type = "Fished")
+
+# Combine both datasets
+bio_combined <- bind_rows(bioNoFish_combined, bioFish_combined)
+
+# =============================================================================
+# Define color palette and convert to factors
+# =============================================================================
+
+scenario_levels <- unique(bio_combined$scenario)
+scenario_colors <- get_scenario_colors(scenario_levels)
+
+# Convert to factor for consistent ordering
+bio_combined$scenario <- factor(bio_combined$scenario, levels = scenario_levels)
+bio_combined$type <- factor(bio_combined$type, 
+                            levels = c("No fishing", "Fished"))
+
+# =============================================================================
+# Create plot
+# =============================================================================
+
+bio_plot <- ggplot(bio_combined, aes(x = year, y = data, color = scenario, linetype = type)) +
+  geom_line(linewidth = linewidth, alpha = alpha) + 
+  scale_color_manual(values = scenario_colors) +
+  scale_linetype_manual(name = "Status",
+                       values = c("No fishing" = "dashed", "Fished" = "solid")) +
+  coord_cartesian(ylim = c(0, NA)) +
+  facet_wrap(~ area, scales = "free_y", ncol = 3) +
+  labs(x = "Year",
+       y = bquote("Spawning Potential (" * 10^3 * " MT)")) +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(size = 10, face = "bold")
+  )
+
+# =============================================================================
+# Extract legends
+# =============================================================================
+
+# Extract scenario color legend
+scenario_legend <- cowplot::get_legend(
+  ggplot(bio_combined, aes(x = year, y = data, color = scenario)) +
+    geom_line(linewidth = 2) +
+    scale_color_manual(values = scenario_colors) +
+    theme_bw() +
+    theme(
+      legend.position = "right",
+      legend.title = element_text(face = "bold"),
+      legend.key.width = unit(1.5, "cm")
+    ) +
+    labs(color = "Scenario") +
+    guides(color = guide_legend(override.aes = list(linewidth = 2)))
+)
+
+# Extract status linetype legend
+status_legend <- cowplot::get_legend(
+  ggplot(bio_combined, aes(x = year, y = data, linetype = type)) +
+    geom_line(linewidth = 2) +
+    scale_linetype_manual(name = "Status",
+                         values = c("No fishing" = "dashed", "Fished" = "solid")) +
+    guides(linetype = guide_legend(override.aes = list(linewidth = 1.5))) +
+    theme_bw() +
+    theme(
+      legend.position = "right",
+      legend.title = element_text(face = "bold"),
+      legend.key.width = unit(2.5, "cm")
+    )
+)
+
+# Combine legends vertically
+combined_legend <- cowplot::plot_grid(
+  scenario_legend, status_legend,
+  ncol = 1
+)
+
+# =============================================================================
+# Combine plot and legends
+# =============================================================================
+
+final_plot <- cowplot::plot_grid(
+  bio_plot, combined_legend,
+  ncol = 2, rel_widths = c(4, 1)
+)
+
+print(final_plot)
+
+```
+
 
 ## Total Biomass (with and without fishing)
 
