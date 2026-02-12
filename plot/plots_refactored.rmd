@@ -64,14 +64,14 @@ RUN_CHUNKS <- list(
   model_summary      = TRUE,   # Model summary table
   bound_hit          = TRUE,   # Bound hit parameter analysis
   spawning_depletion = TRUE,   # SB/SBF0 and recruitment plots
-  jitter_analysis    = TRUE,   # Jitter analysis plots
-  lik_profile        = TRUE,   # Likelihood profile by component
+  jitter_analysis    = FALSE,   # Jitter analysis plots
+  lik_profile        = FALSE,   # Likelihood profile by component
   piner_lfs          = TRUE,   # Piner plot: Length frequencies
 
-  piner_wfs          = TRUE,   # Piner plot: Weight frequencies
-  piner_tag          = TRUE,   # Piner plot: Tagging
-  piner_cal_fishery  = TRUE,   # Piner plot: CAL by fishery
-  piner_cal_year     = TRUE,   # Piner plot: CAL by year
+  piner_wfs          = FALSE,   # Piner plot: Weight frequencies
+  piner_tag          = FALSE,   # Piner plot: Tagging
+  piner_cal_fishery  = FALSE,   # Piner plot: CAL by fishery
+  piner_cal_year     = FALSE,   # Piner plot: CAL by year
   cpue_by_scenario   = TRUE,   # CPUE fits by scenario
   cpue_overlay       = FALSE,  # CPUE overlay (interactive)
   lf_overlay         = FALSE,  # LF overlay all scenarios
@@ -672,13 +672,14 @@ Rec <- rec_total %>%
   rename(Year = year, Quant = data, Scenario = scenario)
 
 # =============================================================================
-# Calculate Juvenile vs Adult Fishing Mortality
+# Calculate Instantaneous Juvenile vs Adult Fishing Mortality
 # =============================================================================
 
-# Initialize data frames for FM, maturity, and population
+# Initialize data frames for FM, maturity, population, and natural mortality
 fm_all <- data.frame()
 mat_all <- data.frame()
 popn_all <- data.frame()
+m_all <- data.frame()
 
 # Extract data from each scenario
 for (i in seq_along(RepOut_list)) {
@@ -702,35 +703,46 @@ for (i in seq_along(RepOut_list)) {
     select(age = age_new, maturity = data, scenario)
   
   mat_all <- bind_rows(mat_all, mat_temp)
+  
+  # Extract natural mortality and stack by age then season to get age 1-40
+  m_temp <- as.data.frame(RepOut_list[[i]]@m_at_age) %>%
+    arrange(age, season) %>%
+    mutate(scenario = scenarios_name[i],
+           age_new = row_number()) %>%
+    select(age = age_new, M = data, scenario)
+  
+  m_all <- bind_rows(m_all, m_temp)
 }
 
-# Calculate juvenile and adult fishing mortality
+# Calculate instantaneous juvenile and adult fishing mortality
 fm_juv_adult <- fm_all %>%
   left_join(popn_all, by = c("age", "year", "unit", "season", "area", "iter", "scenario")) %>%
   mutate(age_num = as.numeric(as.character(age))) %>%
   left_join(mat_all, by = c("age_num" = "age", "scenario")) %>%
+  left_join(m_all, by = c("age_num" = "age", "scenario")) %>%
   mutate(
     juv = (1 - maturity) * N,        # Juvenile population
     adult = maturity * N,             # Adult population
-    dead.juv = data * juv,            # Juvenile deaths
-    dead.adult = data * adult         # Adult deaths
+    catch.juv = data * juv,           # Juvenile catch
+    catch.adult = data * adult        # Adult catch
   ) %>%
   group_by(year, season, scenario) %>%
   summarise(
-    dead.juv = sum(dead.juv, na.rm = TRUE),
+    catch.juv = sum(catch.juv, na.rm = TRUE),
     juv = sum(juv, na.rm = TRUE),
-    dead.adult = sum(dead.adult, na.rm = TRUE),
+    catch.adult = sum(catch.adult, na.rm = TRUE),
     adult = sum(adult, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   mutate(
-    F.juv = dead.juv / juv,           # Juvenile F
-    F.adult = dead.adult / adult      # Adult F
+    # Instantaneous F from catch equation: F = -log(1 - C/N)
+    F.juv = -log(1 - pmin(catch.juv / juv, 0.99)),      # Cap at 0.99 to avoid log(0)
+    F.adult = -log(1 - pmin(catch.adult / adult, 0.99))
   ) %>%
   group_by(year, scenario) %>%
   summarise(
-    F.juv = mean(F.juv, na.rm = TRUE) * 4,    # Annual juvenile F
-    F.adult = mean(F.adult, na.rm = TRUE) * 4, # Annual adult F
+    F.juv = sum(F.juv, na.rm = TRUE),    # Annual instantaneous juvenile F
+    F.adult = sum(F.adult, na.rm = TRUE), # Annual instantaneous adult F
     .groups = "drop"
   )
 
@@ -784,7 +796,7 @@ FMJuvAdultPlot <- ggplot(fm_plot_data, aes(x = year, y = F, color = scenario, li
   scale_color_manual(values = scenario_colors) +
   scale_linetype_manual(name = "Life Stage", 
                        values = c("Juvenile F" = "dashed", "Adult F" = "solid")) +
-  labs(x = "Year", y = "Annual Average F") +
+  labs(x = "Year", y = "Annual Instantaneous F") +
   coord_cartesian(ylim = c(0, NA)) +
   common_theme
 
@@ -845,7 +857,6 @@ final_plot <- cowplot::plot_grid(
 )
 
 print(final_plot)
-
 
 ```
 
@@ -1068,20 +1079,21 @@ print(final_plot)
 
 ```
 
-## Juvenile and Adult Fishing Mortality by Area
+## Juvenile and Adult Fishing Mortality by Area (Instantaneous F)
 
-```{r model_fm_juv_adult_area, echo=FALSE, message=F, fig.dim=c(10,8)}
+```{r model_fm_juv_adult_area_inst, echo=FALSE, message=F, fig.dim=c(10,8)}
 
 # =============================================================================
-# Calculate Juvenile vs Adult Fishing Mortality by Area
+# Calculate Instantaneous Juvenile vs Adult Fishing Mortality by Area
 # =============================================================================
 
 scenarios_name <- names(RepOut_list)
 
-# Initialize data frames for FM, maturity, and population
+# Initialize data frames for FM, maturity, population, and natural mortality
 fm_all <- data.frame()
 mat_all <- data.frame()
 popn_all <- data.frame()
+m_all <- data.frame()
 
 # Extract data from each scenario
 for (i in seq_along(RepOut_list)) {
@@ -1105,35 +1117,49 @@ for (i in seq_along(RepOut_list)) {
     select(age = age_new, maturity = data, scenario)
   
   mat_all <- bind_rows(mat_all, mat_temp)
+  
+  # Extract natural mortality and stack by age then season to get age 1-40
+  # Age 0 season 1-4 -> ages 1-4, Age 1 season 1-4 -> ages 5-8, etc.
+  m_temp <- as.data.frame(RepOut_list[[i]]@m_at_age) %>%
+    arrange(age, season) %>%
+    mutate(scenario = scenarios_name[i],
+           age_new = row_number()) %>%
+    select(age = age_new, M = data, scenario)
+  
+  m_all <- bind_rows(m_all, m_temp)
 }
 
-# Calculate juvenile and adult fishing mortality by area
+# Calculate instantaneous juvenile and adult fishing mortality by area
 fm_juv_adult_area <- fm_all %>%
   left_join(popn_all, by = c("age", "year", "unit", "season", "area", "iter", "scenario")) %>%
   mutate(age_num = as.numeric(as.character(age))) %>%
   left_join(mat_all, by = c("age_num" = "age", "scenario")) %>%
+  left_join(m_all, by = c("age_num" = "age", "scenario")) %>%
   mutate(
     juv = (1 - maturity) * N,        # Juvenile population
     adult = maturity * N,             # Adult population
-    dead.juv = data * juv,            # Juvenile deaths
-    dead.adult = data * adult         # Adult deaths
+    catch.juv = data * juv,           # Juvenile catch
+    catch.adult = data * adult,       # Adult catch
+    Z.juv = data + M,                 # Total mortality for juveniles
+    Z.adult = data + M                # Total mortality for adults
   ) %>%
   group_by(year, season, area, scenario) %>%
   summarise(
-    dead.juv = sum(dead.juv, na.rm = TRUE),
+    catch.juv = sum(catch.juv, na.rm = TRUE),
     juv = sum(juv, na.rm = TRUE),
-    dead.adult = sum(dead.adult, na.rm = TRUE),
+    catch.adult = sum(catch.adult, na.rm = TRUE),
     adult = sum(adult, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   mutate(
-    F.juv = dead.juv / juv,           # Juvenile F
-    F.adult = dead.adult / adult      # Adult F
+    # Instantaneous F from catch equation: F = -log(1 - C/N)
+    F.juv = -log(1 - pmin(catch.juv / juv, 0.99)),      # Cap at 0.99 to avoid log(0)
+    F.adult = -log(1 - pmin(catch.adult / adult, 0.99))
   ) %>%
   group_by(year, area, scenario) %>%
   summarise(
-    F.juv = mean(F.juv, na.rm = TRUE) * 4,    # Annual juvenile F
-    F.adult = mean(F.adult, na.rm = TRUE) * 4, # Annual adult F
+    F.juv = sum(F.juv, na.rm = TRUE),    # Annual instantaneous juvenile F
+    F.adult = sum(F.adult, na.rm = TRUE), # Annual instantaneous adult F
     .groups = "drop"
   )
 
@@ -1142,28 +1168,29 @@ fm_juv_adult_all <- fm_all %>%
   left_join(popn_all, by = c("age", "year", "unit", "season", "area", "iter", "scenario")) %>%
   mutate(age_num = as.numeric(as.character(age))) %>%
   left_join(mat_all, by = c("age_num" = "age", "scenario")) %>%
+  left_join(m_all, by = c("age_num" = "age", "scenario")) %>%
   mutate(
     juv = (1 - maturity) * N,
     adult = maturity * N,
-    dead.juv = data * juv,
-    dead.adult = data * adult
+    catch.juv = data * juv,
+    catch.adult = data * adult
   ) %>%
   group_by(year, season, scenario) %>%
   summarise(
-    dead.juv = sum(dead.juv, na.rm = TRUE),
+    catch.juv = sum(catch.juv, na.rm = TRUE),
     juv = sum(juv, na.rm = TRUE),
-    dead.adult = sum(dead.adult, na.rm = TRUE),
+    catch.adult = sum(catch.adult, na.rm = TRUE),
     adult = sum(adult, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   mutate(
-    F.juv = dead.juv / juv,
-    F.adult = dead.adult / adult
+    F.juv = -log(1 - pmin(catch.juv / juv, 0.99)),
+    F.adult = -log(1 - pmin(catch.adult / adult, 0.99))
   ) %>%
   group_by(year, scenario) %>%
   summarise(
-    F.juv = mean(F.juv, na.rm = TRUE) * 4,
-    F.adult = mean(F.adult, na.rm = TRUE) * 4,
+    F.juv = sum(F.juv, na.rm = TRUE),
+    F.adult = sum(F.adult, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   mutate(area = "All")
@@ -1200,7 +1227,7 @@ fm_area_plot <- ggplot(fm_plot_data, aes(x = year, y = F, color = scenario, line
   coord_cartesian(ylim = c(0, NA)) +
   facet_wrap(~ area, scales = "free_y", ncol = 3) +
   labs(x = "Year",
-       y = "Annual Average F") +
+       y = "Annual Instantaneous F") +
   theme_bw() +
   theme(
     legend.position = "none",
@@ -1259,7 +1286,6 @@ final_plot <- cowplot::plot_grid(
 print(final_plot)
 
 ```
-
 
 ## Total Biomass (with and without fishing)
 
