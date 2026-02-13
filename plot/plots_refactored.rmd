@@ -308,6 +308,10 @@ results <- setNames(lapply(model_folders, function(folder) {
   
   # Read core model outputs
   par_out <- read.MFCLPar(finalPar(folder))
+  tagrep_out <- read.MFCLTagRep(finalPar(folder))
+  
+  tagtemp_out <- read.temporary_tag_report(file.path(folder,"temporary_tag_report"), year1 = 1952)
+  
   rep_out <- read.MFCLRep(finalRep(folder))
   len_out <- read.MFCLLenFit(file.path(folder, "length.fit"))
   wgt_out <- read.MFCLWgtFit(file.path(folder, "weight.fit"))
@@ -392,7 +396,7 @@ results <- setNames(lapply(model_folders, function(folder) {
   }
   
   list(
-    ParOut = par_out, RepOut = rep_out, LengOut = len_out, WeightOut = wgt_out,
+    ParOut = par_out, RepOut = rep_out, LengOut = len_out, WeightOut = wgt_out, TagRepOut=tagrep_out, TagtempOut=tagtemp_out,
     TagOut = tag_out, AgeOut = age_out, LikOut = lik_out, LikRawOut = lik_raw,
     scales = existing_scales, IndepOut = indep_out, info = info,
     JitterPars = jitter_pars, JitterInfos = jitter_infos
@@ -408,6 +412,8 @@ RepOut_list <- map(results, "RepOut")
 LengOut_list <- map(results, "LengOut")
 WeightOut_list <- map(results, "WeightOut")
 TagOut_list <- map(results, "TagOut")
+TagRepOut_list <- map(results, "TagRepOut")
+TagTempOut_list <- map(results, "TagtempOut")
 AgeOut_list <- map(results, "AgeOut")
 IndepOut_list <- map(results, "IndepOut")
 Info_list <- map(results, "info")
@@ -909,7 +915,7 @@ depletion_combined$scenario <- factor(depletion_combined$scenario, levels = scen
 # =============================================================================
 
 depletion_plot <- ggplot(depletion_combined, aes(x = year, y = depletion, color = scenario)) +
-  geom_line(linewidth = linewidth, alpha = alpha) +
+  geom_line(linewidth = config$linewidth, alpha = config$alpha) +
   geom_hline(yintercept = 0.2, linetype = "dashed", color = "darkred") +
   geom_hline(yintercept = 0.5, linetype = "dashed", color = "darkgreen") +
   scale_color_manual(values = scenario_colors) +
@@ -1006,7 +1012,7 @@ rec_combined$scenario <- factor(rec_combined$scenario, levels = scenario_levels)
 # =============================================================================
 
 rec_plot <- ggplot(rec_combined, aes(x = year, y = data, color = scenario)) +
-  geom_line(linewidth = linewidth, alpha = alpha) + 
+  geom_line(linewidth = config$linewidth, alpha = config$alpha) + 
   scale_color_manual(values = scenario_colors) +
   coord_cartesian(ylim = c(0, NA)) +
   facet_wrap(~ area, scales = "free_y", ncol = 3) +
@@ -1181,7 +1187,7 @@ fm_plot_data$scenario <- factor(fm_plot_data$scenario, levels = scenario_levels)
 # =============================================================================
 
 fm_area_plot <- ggplot(fm_plot_data, aes(x = year, y = F, color = scenario, linetype = type)) +
-  geom_line(linewidth = linewidth, alpha = alpha) +
+  geom_line(linewidth = config$linewidth, alpha = config$alpha) +
   scale_color_manual(values = scenario_colors) +
   scale_linetype_manual(name = "Life Stage", 
                        values = c("Juvenile F" = "dashed", "Adult F" = "solid")) +
@@ -1401,9 +1407,6 @@ print(contribution_plot)
 # Extract spawning potential with and without fishing
 # =============================================================================
 
-linewidth <- config$linewidth
-alpha <- config$alpha
-
 # Make sure the scenario names are in the same order as RepOut_list
 scenarios_name <- names(RepOut_list)
 
@@ -1480,7 +1483,7 @@ bio_combined$type <- factor(bio_combined$type,
 # =============================================================================
 
 bio_plot <- ggplot(bio_combined, aes(x = year, y = data, color = scenario, linetype = type)) +
-  geom_line(linewidth = linewidth, alpha = alpha) + 
+  geom_line(linewidth = config$linewidth, alpha = config$alpha) + 
   scale_color_manual(values = scenario_colors) +
   scale_linetype_manual(name = "Status",
                        values = c("No fishing" = "dashed", "Fished" = "solid")) +
@@ -1556,8 +1559,6 @@ print(final_plot)
 # Extract total biomass with and without fishing
 # =============================================================================
 
-linewidth <- config$linewidth
-alpha <- config$alpha
 
 # Make sure the scenario names are in the same order as RepOut_list
 scenarios_name <- names(RepOut_list)
@@ -1635,14 +1636,14 @@ bio_combined$type <- factor(bio_combined$type,
 # =============================================================================
 
 bio_plot <- ggplot(bio_combined, aes(x = year, y = data, color = scenario, linetype = type)) +
-  geom_line(linewidth = linewidth, alpha = alpha) + 
+  geom_line(linewidth = config$linewidth, alpha = config$alpha) + 
   scale_color_manual(values = scenario_colors) +
   scale_linetype_manual(name = "Status",
                        values = c("No fishing" = "dashed", "Fished" = "solid")) +
   coord_cartesian(ylim = c(0, NA)) +
   facet_wrap(~ area, scales = "free_y", ncol = 3) +
   labs(x = "Year",
-       y = bquote("Biomass (" * 10^3 * " MT)")) +
+       y = bquote("Total Biomass (" * 10^3 * " MT)")) +
   theme_bw() +
   theme(
     legend.position = "none",
@@ -2202,6 +2203,8 @@ print(create_piner_plot(lik_change, "year", "CAL"))
 ```
 
 
+
+
 # CPUE plots {.tabset}
 
 ## Observed vs Fitted CPUE by scenario {.tabset .tabset-pills}
@@ -2466,52 +2469,705 @@ for (scenario_name in all_scenarios) {
 
 
 
-#### Recruitment
 
-```{r model_rec, echo=FALSE, message=F, fig.dim=c(10,8)}
+# Tag plots {.tabset}
 
-# Initialize an empty data frame
-rec_all <- data.frame()
+## Observed vs Fitted tag recaptures by scenario {.tabset .tabset-pills}
 
-## make sure the scenario names are in the same order as RepOut_list
-scenarios_name<-names(RepOut_list)
+```{r tag-by-scenario, echo=FALSE, message=FALSE, warning=FALSE, results='asis', fig.dim=c(8,8), eval=RUN_CHUNKS$tag_by_scenario}
 
-# Extract data from each list element and assign scenario names
-for (i in seq_along(RepOut_list)) {
-  rec_temp <- as.data.frame(RepOut_list[[i]]@rec_region) %>%
-    mutate(scenario = scenarios_name[i])
+xx=FLR4MFCL::read.MFCLTagRep("12.par")
 
-  rec_all <- bind_rows(rec_all, rec_temp)
+
+
+```
+
+## Overlay all scenarios (Interactive)
+
+```{r cpue-overlay, echo=FALSE, message=FALSE, fig.dim=c(10,8), eval=RUN_CHUNKS$cpue_overlay}
+# =============================================================================
+# CPUE FITS - ALL SCENARIOS OVERLAID (Interactive)
+# =============================================================================
+
+library(plotly)
+
+overlay_plot <- create_overlay_cpue_plot(
+  RepOut_list = RepOut_list,
+  fisheries = INDEX_FISHERIES,
+  fisheries_mapping = INDEX_FISHERIES_MAP,
+  viridis_option = "viridis",
+  custom_config = list(predicted_colors = NULL)
+)
+
+interactive_plot <- ggplotly(overlay_plot, tooltip = c("x", "y", "colour")) %>%
+  layout(
+    legend = list(
+      orientation = "v", x = 1.02, y = 1,
+      xanchor = "left", yanchor = "top"
+    )
+  )
+
+interactive_plot
+```
+
+
+
+
+
+## Tag Attrition by Tagging Program
+
+```{r tag_attrition, echo=FALSE, message=FALSE, fig.dim=c(10,8)}
+
+# =============================================================================
+# Prepare tagging data for plotting
+# =============================================================================
+
+scenarios_name <- names(TagRepOut_list)
+
+# Initialize list to store tagging data
+tagdat_list <- list()
+
+# Extract and prepare tagging data from each scenario
+for (i in seq_along(TagRepOut_list)) {
+  # Extract predicted recaptures from TagRepOut_list
+  pred_temp <- as.data.frame(TagRepOut_list[[i]]@recaptures) %>%
+    select(period, rel.group, pred) %>%
+    rename(recap.pred = pred)
+  
+  # Extract observed recaptures from TagOut_list
+  obs_temp <- as.data.frame(TagOut_list[[i]]@recaptures) %>%
+    select(period, rel.group, obs) %>%
+    rename(recap.obs = obs)
+  
+  # Merge observed and predicted
+  tag_temp <- full_join(obs_temp, pred_temp, by = c("period", "rel.group")) %>%
+    mutate(
+      scenario = scenarios_name[i],
+      period_at_liberty = as.numeric(period),
+      program = rel.group
+    )
+  
+  tagdat_list[[scenarios_name[i]]] <- tag_temp
 }
 
-# Aggregate recruitment data by year and area for each scenario
-rec_yearly <- rec_all %>%
-  group_by(year, area, scenario) %>%
-  summarise(data = sum(data) / 1e6, .groups = "drop")  # Sum all seasons (in thousands)
+# Combine all scenarios into single data frame
+tagdat_all <- bind_rows(tagdat_list, .id = "Model")
 
-# Create a dataset for total recruitment across all regions
-rec_total <- rec_all %>%
-  group_by(year, scenario) %>%
-  summarise(data = sum(data) / 1e6, .groups = "drop") %>%  # Sum all regions and seasons
-  mutate(area = "All")  # Label this dataset as 'All' to represent all regions
+# =============================================================================
+# Calculate differences between observed and predicted
+# =============================================================================
 
-# Combine the original dataset with the total recruitment dataset
-rec_combined <- bind_rows(rec_yearly, rec_total)
+# Sum recaptures by period at liberty and program
+pdat <- tagdat_all %>%
+  group_by(Model, period_at_liberty, program) %>%
+  summarise(
+    recap.obs = sum(recap.obs, na.rm = TRUE),
+    recap.pred = sum(recap.pred, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(diff = recap.obs - recap.pred)
 
-# Plot recruitment trends by year, area, and scenario
-ggplot(rec_combined, aes(x = year, y = data, color = scenario)) +
-    geom_line(linewidth = linewidth, alpha = alpha) + 
-  scale_color_viridis_d(name = "Scenario") +
-  facet_wrap(~ area, scales = "free_y", ncol = 3) +  # Separate plots for each area, including "Across Region"
-  labs(#title = "Recruitment by year and region",
-       x = "Year",
-       y = "Recruitment (Millions)",
-       color = "Model Scenario") +
-    theme(
+# Scale differences by mean observed recaptures per program
+mean_recaptured <- pdat %>%
+  group_by(Model, program) %>%
+  summarise(mean_obs_recap = mean(recap.obs, na.rm = TRUE), .groups = "drop")
+
+pdat <- pdat %>%
+  left_join(mean_recaptured, by = c("Model", "program")) %>%
+  mutate(diff_scaled = diff / mean_obs_recap)
+
+# Pad time series to avoid gaps
+padts <- expand.grid(
+  period_at_liberty = seq(from = min(pdat$period_at_liberty), 
+                         to = max(pdat$period_at_liberty), 
+                         by = 1),
+  program = sort(unique(pdat$program)),
+  Model = scenarios_name
+)
+
+pdat <- pdat %>%
+  right_join(padts, by = c("period_at_liberty", "program", "Model"))
+
+# Convert Model to factor with original order
+pdat$Model <- factor(pdat$Model, levels = scenarios_name)
+
+# =============================================================================
+# Define color palette
+# =============================================================================
+
+scenario_levels <- scenarios_name
+scenario_colors <- get_scenario_colors(scenario_levels)
+
+# =============================================================================
+# Create residual plot with loess smoother
+# =============================================================================
+
+# Calculate symmetric y-axis limits per program
+dummydat <- pdat %>%
+  group_by(program) %>%
+  summarise(
+    y = c(max(abs(diff_scaled), na.rm = TRUE), 
+          -max(abs(diff_scaled), na.rm = TRUE)),
+    x = rep(c(min(period_at_liberty, na.rm = TRUE), 
+              max(period_at_liberty, na.rm = TRUE)), 1),
+    .groups = "drop"
+  )
+
+attrition_plot <- ggplot(pdat, aes(x = period_at_liberty, y = diff_scaled)) +
+  geom_blank(data = dummydat, aes(x = x, y = y)) +
+  geom_smooth(aes(color = Model), method = "loess", formula = y ~ x, 
+              se = FALSE, na.rm = TRUE, linewidth = 1.2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  scale_color_manual("Scenario", values = scenario_colors) +
+  facet_wrap(~ program, scales = "free") +
+  labs(x = "Periods at liberty (quarters)",
+       y = "Obs. - pred. recaptures (scaled)") +
+  theme_bw() +
+  theme(
     legend.position = "bottom",
     legend.title = element_text(face = "bold"),
     strip.text = element_text(size = 10, face = "bold")
-  )
+  ) +
+  guides(color = guide_legend(override.aes = list(linewidth = 2)))
+
+print(attrition_plot)
+
+
+
+
+plot.tag.reporting.rates = function(par, grp.names = NULL, save.dir, save.name)
+{
+    if (class(par) != "MFCLPar"){
+    stop("par argument must of type of type 'MFCLPar'.")
+  }
+
+  tag.dt = unique(cbind(c(tag_fish_rep_grp(par)),c(tag_fish_rep_rate(par)),c(tag_fish_rep_target(par)/100),c(1/(2*sqrt(tag_fish_rep_pen(par))))))
+  colnames(tag.dt) = c("group","rr","prior_mean","prior_cv")
+  upper.bound = subset(flags(par),flagtype==1&flag==33)$value/100
+  tag.dt = data.table::as.data.table(tag.dt) %>% .[order(group)] %>% .[,ub:=prior_mean+1.96*prior_mean*prior_cv] %>%
+           .[,lb:=prior_mean-1.96*prior_mean*prior_cv] %>%
+           .[,lb:=ifelse(lb<0,0,lb)] %>% .[,ub:=ifelse(ub>1,1,ub)]
+
+
+  if(is.null(grp.names))
+  {
+    tag.dt$names = paste0("G",1:nrow(tag.dt))
+  } else {
+    if(length(grp.names)==nrow(tag.dt))
+    {
+      tag.dt$names = grp.names
+    } else {
+      stop("Length of grp.names needs to match the number of reporting rate groups.")
+    }
+  }
+
+  tag.dt$names = factor(tag.dt$names,levels=tag.dt$names)
+
+
+        g = tag.dt %>% 
+        ggplot2::ggplot() + ggthemes::theme_few() + ggplot2::coord_cartesian(xlim=c(0.9,1.1),ylim=c(0,1)) +
+        ggplot2::theme(axis.title.x=ggplot2::element_blank(),axis.text.x=ggplot2::element_blank(),axis.ticks.x=ggplot2::element_blank()) +
+        ggplot2::xlab("Tag return group") + ggplot2::ylab("Reporting rate") + ggplot2::facet_wrap(~names) +
+        ggplot2::ggtitle("Estimated tag reporting rate by group") +
+        ggplot2::geom_crossbar(ggplot2::aes(x=1,y=prior_mean,ymin=lb,ymax=ub),fill="gray90",col="gray75",width = 0.1) +
+        ggplot2::geom_hline(yintercept = upper.bound,col="red",size=2) +
+        ggplot2::geom_point(ggplot2::aes(x=1,y=rr),col="blue",size=2,shape=16)
+
+    
+  save_plot(save.dir, save.name, plot=g)
+  
+  return(g)
+}
+
+
+
+plot.tag.reporting.rates(par=ParOut_list$base, save.dir = ".", save.name = "xx.png")
+
+
 
 ```
+
+
+## Tag Reporting Rates by Group
+
+```{r tag_reporting_rates, echo=FALSE, message=FALSE, fig.dim=c(10,12)}
+
+# =============================================================================
+# Extract tag reporting rate data from all scenarios
+# =============================================================================
+
+scenarios_name <- names(ParOut_list)
+
+# Initialize list to store reporting rate data
+tag_rr_list <- list()
+
+# Extract reporting rate data from each scenario
+for (i in seq_along(ParOut_list)) {
+  
+  # Extract upper bound for this scenario
+  upper.bound <- subset(flags(ParOut_list[[i]]), flagtype == 1 & flag == 33)$value / 100
+  
+  # Extract tag reporting rate parameters
+  tag_dt <- data.frame(
+    group = c(tag_fish_rep_grp(ParOut_list[[i]])),
+    rr = c(tag_fish_rep_rate(ParOut_list[[i]])),
+    prior_mean = c(tag_fish_rep_target(ParOut_list[[i]]) / 100),
+    prior_sd = c(sqrt(1 / (2 * tag_fish_rep_pen(ParOut_list[[i]]) )))
+  ) %>%
+    unique() %>%
+    arrange(group) %>%
+    filter(rr > 0) %>%  # Exclude fixed values (rr = 0)
+    mutate(
+      scenario = scenarios_name[i],
+      upper_bound = upper.bound
+    )
+  
+  # Add group names
+  tag_dt$names <- paste0("G", tag_dt$group)
+  
+  tag_rr_list[[scenarios_name[i]]] <- tag_dt
+}
+
+# Combine all scenarios
+tag_rr_all <- bind_rows(tag_rr_list, .id = "Model")
+
+# Generate prior distribution curves (normal distribution)
+x_seq <- seq(0, 1, length.out = 500)
+prior_curve_list <- list()
+
+for (i in 1:nrow(tag_rr_all)) {
+  mean_val <- tag_rr_all$prior_mean[i]
+  sd_val <- tag_rr_all$prior_sd[i]
+  
+  # Calculate normal distribution PDF
+  pdf_vals <- dnorm(x_seq, mean = mean_val, sd = sd_val)
+  
+  prior_curve_list[[i]] <- data.frame(
+    Model = tag_rr_all$Model[i],
+    names = tag_rr_all$names[i],
+    x = x_seq,
+    density = pdf_vals
+  )
+}
+
+# Combine prior distribution curves
+prior_curve <- bind_rows(prior_curve_list)
+
+# Convert to factor for proper ordering
+tag_rr_all$names <- factor(tag_rr_all$names, levels = unique(tag_rr_all$names))
+tag_rr_all$Model <- factor(tag_rr_all$Model, levels = scenarios_name)
+prior_curve$names <- factor(prior_curve$names, levels = unique(prior_curve$names))
+prior_curve$Model <- factor(prior_curve$Model, levels = scenarios_name)
+
+# =============================================================================
+# Define color palette
+# =============================================================================
+
+scenario_colors <- get_scenario_colors(scenarios_name)
+
+# =============================================================================
+# Create separate plots for each model
+# =============================================================================
+
+plot_list <- list()
+
+for (model in scenarios_name) {
+  
+  # Filter data for this model
+  tag_rr_model <- tag_rr_all %>% filter(Model == model)
+  prior_curve_model <- prior_curve %>% filter(Model == model)
+  
+  # Create plot for this model
+  p <- ggplot() +
+    # Prior distribution curve (black line)
+    geom_line(data = prior_curve_model, aes(x = x, y = density), 
+              color = "black", linewidth = 1) +
+    # Estimated reporting rate (colored solid line)
+    geom_vline(data = tag_rr_model, aes(xintercept = rr), 
+               color = scenario_colors[model], linewidth = 1.5) +
+    # Upper bound (blue dashed line)
+    geom_vline(data = tag_rr_model, aes(xintercept = upper_bound), 
+               color = "blue", linewidth = 1, linetype = "dashed") +
+    coord_cartesian(xlim = c(0, 1)) +
+    coord_cartesian(ylim = c(0, NA)) +
+    facet_wrap(~ names, ncol = 4, scales = "free_y") +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+    labs(x = "Tag group",
+         y = "Density",
+         title = paste("Tag Reporting Rates -", model)) +
+    theme_bw() +
+    theme(
+      strip.text = element_text(size = 10, face = "bold"),
+      strip.background = element_rect(fill = "gray90"),
+      panel.grid.minor = element_blank()
+    )
+  
+  plot_list[[model]] <- p
+}
+
+# Print all plots
+for (model in scenarios_name) {
+  print(plot_list[[model]])
+  cat("\n\n")
+}
+
+```
+
+
+
+## Tag Attrition - All Fisheries Combined
+
+```{r tag_attrition_combined, echo=FALSE, message=FALSE, fig.width=12, fig.height=8}
+
+# =============================================================================
+# Create fishery name mapping
+# =============================================================================
+
+fishery_names <- setNames(
+  as.character(ALL_FISHERIES_MAP),
+  names(ALL_FISHERIES_MAP)
+)
+
+# =============================================================================
+# Process tag data from TagTempOut_list
+# =============================================================================
+
+scenarios_name <- names(TagTempOut_list)
+
+tag_all <- bind_rows(TagTempOut_list, .id = "Model")
+
+tag_all <- tag_all %>%
+  group_by(Model, rel.group) %>%
+  mutate(
+    min_year = min(recap.year),
+    min_month = min(recap.month),
+    recap_quarter = (recap.year - min_year) * 4 + ceiling(recap.month / 3),
+    period_at_liberty = recap_quarter
+  ) %>%
+  ungroup()
+
+# =============================================================================
+# Aggregate by period at liberty (all fisheries combined)
+# =============================================================================
+
+tag_summary <- tag_all %>%
+  group_by(Model, period_at_liberty) %>%
+  summarise(recap_obs = sum(recap.obs, na.rm = TRUE), recap_pred = sum(recap.pred, na.rm = TRUE), .groups = "drop")
+
+scenario_colors <- get_scenario_colors(scenarios_name)
+
+# =============================================================================
+# Create combined attrition plot
+# =============================================================================
+
+first_model <- scenarios_name[1]
+tag_obs_only <- tag_summary %>% filter(Model == first_model) %>% select(period_at_liberty, recap_obs)
+
+p <- ggplot(tag_summary, aes(x = period_at_liberty)) +
+  geom_point(data = tag_obs_only, aes(y = recap_obs), color = "red", fill = "red", na.rm = TRUE, size = 2, alpha = 0.7, shape = 21) +
+  geom_line(aes(y = recap_pred, color = Model), na.rm = TRUE, linewidth = 1) +
+  scale_color_manual("Model", values = scenario_colors) +
+  labs(x = "Periods at liberty (quarters)", y = "Tag recaptures (all fisheries combined)", title = "Tag Attrition - All Fisheries Combined") +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank(), panel.grid.major = element_line(linewidth = 0.25, color = "gray85"), legend.position = "bottom", legend.title = element_text(face = "bold"))
+
+print(p)
+
+```
+
+
+## Tag Attrition by Fishery
+
+```{r tag_attrition, echo=FALSE, message=FALSE, fig.width=12, fig.height=10}
+
+# =============================================================================
+# Create fishery name mapping
+# =============================================================================
+
+fishery_names <- setNames(
+  as.character(ALL_FISHERIES_MAP),
+  names(ALL_FISHERIES_MAP)
+)
+
+# =============================================================================
+# Process tag data from TagTempOut_list
+# =============================================================================
+
+scenarios_name <- names(TagTempOut_list)
+
+tag_all <- bind_rows(TagTempOut_list, .id = "Model")
+
+tag_all <- tag_all %>%
+  group_by(Model, rel.group) %>%
+  mutate(
+    min_year = min(recap.year),
+    min_month = min(recap.month),
+    recap_quarter = (recap.year - min_year) * 4 + ceiling(recap.month / 3),
+    period_at_liberty = recap_quarter
+  ) %>%
+  ungroup()
+
+# =============================================================================
+# Aggregate by fishery and period at liberty
+# =============================================================================
+
+tag_summary <- tag_all %>%
+  group_by(Model, recap.fishery, period_at_liberty) %>%
+  summarise(recap_obs = sum(recap.obs, na.rm = TRUE), recap_pred = sum(recap.pred, na.rm = TRUE), .groups = "drop") %>%
+  mutate(fishery_name = sapply(recap.fishery, function(x) {name <- fishery_names[as.character(x)]; if (is.na(name)) return(paste0("F", x)); return(name)}))
+
+# =============================================================================
+# Filter to fisheries with sufficient data
+# =============================================================================
+
+fisheries_with_data <- tag_summary %>%
+  group_by(recap.fishery) %>%
+  summarise(total_obs = sum(recap_obs, na.rm = TRUE), .groups = "drop") %>%
+  filter(total_obs > 10) %>%
+  pull(recap.fishery) %>%
+  unique()
+
+tag_plot <- tag_summary %>% filter(recap.fishery %in% fisheries_with_data)
+
+scenario_colors <- get_scenario_colors(scenarios_name)
+
+# =============================================================================
+# Create attrition plots
+# =============================================================================
+
+first_model <- scenarios_name[1]
+tag_obs_only <- tag_plot %>% filter(Model == first_model) %>% select(recap.fishery, fishery_name, period_at_liberty, recap_obs)
+
+p <- ggplot(tag_plot, aes(x = period_at_liberty)) +
+  geom_point(data = tag_obs_only, aes(y = recap_obs), color = "red", fill = "red", na.rm = TRUE, size = 1.5, alpha = 0.7, shape = 21) +
+  geom_line(aes(y = recap_pred, color = Model), na.rm = TRUE, linewidth = 0.8) +
+  scale_color_manual("Model", values = scenario_colors) +
+  facet_wrap(~ fishery_name, scales = "free_y", ncol = 4) +
+  labs(x = "Periods at liberty (quarters)", y = "Tag recaptures", title = "Tag Attrition by Recapture Fishery") +
+  theme_bw() +
+  theme(strip.text = element_text(size = 9, face = "bold"), strip.background = element_rect(fill = "gray90"), panel.grid.minor = element_blank(), panel.grid.major = element_line(linewidth = 0.25, color = "gray85"), legend.position = "bottom")
+
+print(p)
+
+
+```
+
+
+
+## Tag Returns Over Time - All Tags Combined (by Model)
+
+```{r tag_returns_all_combined, echo=FALSE, message=FALSE, fig.width=12, fig.height=10}
+
+
+# =============================================================================
+# Define mixing period by model (in quarters)
+# =============================================================================
+
+scenarios_name <- names(TagTempOut_list)
+
+# Set mixing period for each model (can be different per model)
+mixing_periods <- setNames(rep(2, length(scenarios_name)), scenarios_name)
+
+# Alternative: set different mixing periods per model
+# mixing_periods <- c(
+#   "Model1" = 2,
+#   "Model2" = 1,
+#   "Model3" = 2
+# )
+
+# =============================================================================
+# Create fishery name mapping
+# =============================================================================
+
+fishery_names <- setNames(
+  as.character(ALL_FISHERIES_MAP),
+  names(ALL_FISHERIES_MAP)
+)
+
+# =============================================================================
+# Process tag data from all models
+# =============================================================================
+
+tag_all <- bind_rows(TagTempOut_list, .id = "Model")
+
+# =============================================================================
+# Apply mixing period by release group and model
+# =============================================================================
+
+tag_all <- tag_all %>%
+  mutate(recap_ts = recap.year + (recap.month - 1.5) / 12) %>%
+  group_by(Model, rel.group) %>%
+  mutate(first_recap_ts = min(recap_ts[recap.obs > 0 | recap.pred > 0], na.rm = TRUE)) %>%
+  ungroup() %>%
+  left_join(data.frame(Model = names(mixing_periods), mixing_period = mixing_periods), by = "Model") %>%
+  mutate(min_allowed_ts = first_recap_ts + (mixing_period / 4)) %>%
+  filter(recap_ts >= min_allowed_ts | is.infinite(min_allowed_ts))
+
+# =============================================================================
+# Aggregate by model and time (all fisheries combined)
+# =============================================================================
+
+tag_summary <- tag_all %>%
+  group_by(Model, recap_ts) %>%
+  summarise(recap_obs = sum(recap.obs, na.rm = TRUE), recap_pred = sum(recap.pred, na.rm = TRUE), mixing_period = first(mixing_period), .groups = "drop")
+
+# =============================================================================
+# Pad time series to include all time steps
+# =============================================================================
+
+min_ts <- min(tag_summary$recap_ts, na.rm = TRUE)
+max_ts <- max(tag_summary$recap_ts, na.rm = TRUE)
+no_seasons <- 4
+all_ts <- seq(min_ts, max_ts, by = 1/no_seasons)
+expand_grid_data <- expand.grid(Model = scenarios_name, recap_ts = all_ts, stringsAsFactors = FALSE)
+
+tag_summary <- tag_summary %>%
+  right_join(expand_grid_data, by = c("Model", "recap_ts")) %>%
+  left_join(data.frame(Model = names(mixing_periods), mixing_period = mixing_periods), by = "Model") %>%
+  mutate(recap_obs = replace_na(recap_obs, 0), recap_pred = replace_na(recap_pred, 0), Model = factor(Model, levels = scenarios_name))
+
+# =============================================================================
+# Define color palette
+# =============================================================================
+
+scenario_colors <- get_scenario_colors(scenarios_name)
+
+# =============================================================================
+# Create faceted plot by model
+# =============================================================================
+
+p <- ggplot(tag_summary, aes(x = recap_ts)) +
+  geom_point(aes(y = recap_obs), color = "red", fill = "red", na.rm = TRUE, size = 1.5, alpha = 0.7, shape = 21) +
+  geom_line(aes(y = recap_pred, color = Model), na.rm = TRUE, linewidth = 0.8) +
+  facet_wrap(~ Model, ncol = 1, scales = "free_y") +
+  scale_color_manual("Model", values = scenario_colors) +
+  labs(x = "Time (year)", y = "Tag recaptures (all fisheries combined)", title = "Tag Returns Over Time - All Fisheries Combined (by Model)") +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank(), panel.grid.major = element_line(linewidth = 0.25, color = "gray85"), legend.position = "bottom", legend.title = element_text(face = "bold"), strip.background = element_rect(fill = "gray90"), strip.text = element_text(face = "bold", size = 10))
+
+print(p)
+
+```
+
+
+
+
+
+## Tag Returns Over Time - By Fishery
+
+```{r tag_returns_by_fishery, echo=FALSE, message=FALSE, fig.width=12, fig.height=14, results='asis'}
+
+# =============================================================================
+# Define mixing period by model (in quarters)
+# =============================================================================
+
+scenarios_name <- names(TagTempOut_list)
+
+# Set mixing period for each model (can be different per model)
+mixing_periods <- setNames(rep(2, length(scenarios_name)), scenarios_name)
+
+# =============================================================================
+# Create fishery name mapping
+# =============================================================================
+
+fishery_names <- setNames(
+  as.character(ALL_FISHERIES_MAP),
+  names(ALL_FISHERIES_MAP)
+)
+
+# =============================================================================
+# Process tag data from all models
+# =============================================================================
+
+tag_all <- bind_rows(TagTempOut_list, .id = "Model")
+
+# =============================================================================
+# Apply mixing period by release group and model
+# =============================================================================
+
+tag_all <- tag_all %>%
+  mutate(recap_ts = recap.year + (recap.month - 1.5) / 12) %>%
+  group_by(Model, rel.group) %>%
+  mutate(first_recap_ts = min(recap_ts[recap.obs > 0 | recap.pred > 0], na.rm = TRUE)) %>%
+  ungroup() %>%
+  left_join(data.frame(Model = names(mixing_periods), mixing_period = mixing_periods), by = "Model") %>%
+  mutate(min_allowed_ts = first_recap_ts + (mixing_period / 4)) %>%
+  filter(recap_ts >= min_allowed_ts | is.infinite(min_allowed_ts))
+
+# =============================================================================
+# Add fishery names
+# =============================================================================
+
+tag_all <- tag_all %>%
+  mutate(fishery_name = fishery_names[as.character(recap.fishery)])
+
+# =============================================================================
+# Aggregate by model, fishery, and time
+# =============================================================================
+
+tag_summary <- tag_all %>%
+  group_by(Model, recap.fishery, fishery_name, recap_ts) %>%
+  summarise(recap_obs = sum(recap.obs, na.rm = TRUE), recap_pred = sum(recap.pred, na.rm = TRUE), .groups = "drop")
+
+# =============================================================================
+# Filter out fisheries with all zero predictions
+# =============================================================================
+
+fisheries_with_data <- tag_summary %>%
+  group_by(recap.fishery) %>%
+  summarise(total_pred = sum(recap_pred, na.rm = TRUE)) %>%
+  filter(total_pred > 0) %>%
+  pull(recap.fishery)
+
+tag_summary <- tag_summary %>%
+  filter(recap.fishery %in% fisheries_with_data)
+
+# =============================================================================
+# Pad time series to include all time steps
+# =============================================================================
+
+min_ts <- min(tag_summary$recap_ts, na.rm = TRUE)
+max_ts <- max(tag_summary$recap_ts, na.rm = TRUE)
+no_seasons <- 4
+all_ts <- seq(min_ts, max_ts, by = 1/no_seasons)
+
+all_fisheries <- unique(tag_summary$recap.fishery)
+expand_grid_data <- expand.grid(Model = scenarios_name, recap.fishery = all_fisheries, recap_ts = all_ts, stringsAsFactors = FALSE)
+
+tag_summary <- tag_summary %>%
+  right_join(expand_grid_data, by = c("Model", "recap.fishery", "recap_ts")) %>%
+  left_join(tag_summary %>% select(recap.fishery, fishery_name) %>% distinct(), by = "recap.fishery") %>%
+  mutate(recap_obs = replace_na(recap_obs, 0), recap_pred = replace_na(recap_pred, 0), Model = factor(Model, levels = scenarios_name), fishery_label = paste0("F", recap.fishery, ": ", fishery_name))
+
+# =============================================================================
+# Define color palette
+# =============================================================================
+
+scenario_colors <- get_scenario_colors(scenarios_name)
+
+# =============================================================================
+# Create separate plot for each model
+# =============================================================================
+
+for (model_name in scenarios_name) {
+  
+  cat("\n\n### ", model_name, "\n\n")
+  
+  tag_summary_model <- tag_summary %>% filter(Model == model_name)
+  
+  p <- ggplot(tag_summary_model, aes(x = recap_ts)) +
+    geom_point(aes(y = recap_obs), color = "red", fill = "red", na.rm = TRUE, size = 1, alpha = 0.7, shape = 21) +
+    geom_line(aes(y = recap_pred), color = scenario_colors[model_name], na.rm = TRUE, linewidth = 0.6) +
+    facet_wrap(~ fishery_label, ncol = 3, scales = "free_y") +
+    labs(x = "Time (year)", y = "Tag recaptures", title = paste0("Tag Returns Over Time - By Fishery (", model_name, ")")) +
+    theme_bw() +
+    theme(panel.grid.minor = element_blank(), panel.grid.major = element_line(linewidth = 0.25, color = "gray85"), strip.background = element_rect(fill = "gray90"), strip.text = element_text(face = "bold", size = 9))
+  
+  print(p)
+  
+}
+
+
+```
+
 
