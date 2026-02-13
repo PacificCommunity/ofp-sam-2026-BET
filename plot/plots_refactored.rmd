@@ -3652,7 +3652,78 @@ print(p_m_age)
 
 ```
 
+## Growth Curve
 
+```{r growth_plot, echo=FALSE, message=FALSE, fig.width=16, fig.height=10}
+
+# =============================================================================
+# Extract growth data from all models
+# =============================================================================
+
+scenarios_name <- names(RepOut_list)
+
+growth_list <- lapply(seq_along(RepOut_list), function(i) {
+  tmp_rep <- RepOut_list[[i]]
+  model_name <- names(RepOut_list)[i]
+  
+  # Get mean length at age and SD
+  tmp_laa <- c(aperm(mean_laa(tmp_rep), c(4, 1, 2, 3, 5, 6)))
+  tmp_sd_laa <- c(aperm(sd_laa(tmp_rep), c(4, 1, 2, 3, 5, 6)))
+  
+  # Calculate confidence intervals (only if single model, otherwise just use mean)
+  if(length(RepOut_list) == 1) {
+    tmp_lower <- tmp_laa - 1.96 * tmp_sd_laa
+    tmp_upper <- tmp_laa + 1.96 * tmp_sd_laa
+  } else {
+    tmp_lower <- tmp_laa
+    tmp_upper <- tmp_laa
+  }
+  
+  growth_df <- data.frame(
+    Model = model_name,
+    age = 1:length(tmp_laa),
+    length = tmp_laa,
+    lower = tmp_lower,
+    upper = tmp_upper
+  )
+  
+  return(growth_df)
+})
+
+growth_data <- bind_rows(growth_list) %>%
+  mutate(Model = factor(Model, levels = scenarios_name))
+
+# =============================================================================
+# Define color palette
+# =============================================================================
+
+scenario_colors <- get_scenario_colors(scenarios_name)
+
+# =============================================================================
+# Create growth plot
+# =============================================================================
+
+p_growth <- ggplot(growth_data, aes(x = age, y = length, color = Model, fill = Model)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = NA) +
+  geom_line(linewidth = 1.5) +
+  scale_color_manual("Model", values = scenario_colors) +
+  scale_fill_manual("Model", values = scenario_colors) +
+  labs(
+    x = "Age class",
+    y = "Length (cm)",
+    title = "Model Growth Curve"
+  ) +
+  theme_bw() +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(linewidth = 0.25, color = "gray85"),
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold")
+  )
+
+print(p_growth)
+
+```
 
 ## Composite Catch-at-Length by Fishery
 
