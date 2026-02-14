@@ -8,22 +8,43 @@ GetQuantSimple <- function(calc_function, RepOut_list, minYear, maxYear, scale_f
   if (!is.function(calc_function)) {
     stop("The provided calc_function must be a valid function.")
   }
+  if (length(RepOut_list) == 0) {
+    stop("RepOut_list must not be empty")
+  }
   
-  # Calculate the quantity of interest using the provided function
-  QuantInterest <- do.call(rbind, lapply(RepOut_list, calc_function))
-  colnames(QuantInterest) <- minYear:maxYear
+  has_year_args <- !missing(minYear) && !missing(maxYear) &&
+    is.numeric(minYear) && is.numeric(maxYear)
   
-  # Melt to long format
-  QuantInterest <- reshape2::melt(QuantInterest)
-  colnames(QuantInterest) <- c("Scenario", "Year", "Quant")
+  # Build long-format output per scenario to handle mismatched model year ranges.
+  out <- purrr::imap_dfr(RepOut_list, function(rep_obj, scenario_name) {
+    vals <- calc_function(rep_obj)
+    vals <- as.numeric(vals)
+    
+    # Prefer year labels from the vector itself. Fall back to a sequential index.
+    yr_names <- suppressWarnings(as.numeric(names(vals)))
+    if (length(yr_names) != length(vals) || all(is.na(yr_names))) {
+      if (has_year_args) {
+        fallback_years <- minYear:maxYear
+        if (length(fallback_years) >= length(vals)) {
+          years <- fallback_years[seq_along(vals)]
+        } else {
+          years <- seq_len(length(vals))
+        }
+      } else {
+        years <- seq_len(length(vals))
+      }
+    } else {
+      years <- yr_names
+    }
+    
+    data.frame(
+      Scenario = sub("^skj_", "", scenario_name),
+      Year = years,
+      Quant = vals * scale_factor
+    )
+  })
   
-  # Apply scaling
-  QuantInterest$Quant <- QuantInterest$Quant * scale_factor
-  
-  # Rename scenarios
-  QuantInterest[, 1] <- sub("^skj_", "", QuantInterest[, 1])
-  
-  return(QuantInterest)
+  out
 }
 
 
@@ -221,11 +242,11 @@ create_overlay_cpue_plot <- function(RepOut_list,
   # Combine all scenarios
   combined_cpue <- bind_rows(all_cpue)
   
-  # Get observed data (same across scenarios, take from first)
+  # Build a robust observed reference from all scenarios.
+  # This avoids assuming the first scenario always has valid/full obs.
   obs_data <- combined_cpue %>%
-    filter(scenario == scenario_names[1]) %>%
-    select(unit, year_season, obs) %>%
-    distinct()
+    group_by(unit, year_season) %>%
+    summarise(obs = median(obs, na.rm = TRUE), .groups = "drop")
   
   # Build color palette for scenarios
   if (!is.null(cfg$predicted_colors)) {
@@ -282,5 +303,3 @@ create_overlay_cpue_plot <- function(RepOut_list,
   
   return(p)
 }
-
-
