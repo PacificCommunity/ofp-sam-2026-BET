@@ -64,20 +64,20 @@ RUN_CHUNKS <- list(
   model_summary      = TRUE,   # Model summary table
   bound_hit          = TRUE,   # Bound hit parameter analysis
   spawning_depletion = TRUE,   # SB/SBF0 and recruitment plots
-  jitter_analysis    = FALSE,   # Jitter analysis plots
-  lik_profile        = FALSE,   # Likelihood profile by component
+  jitter_analysis    = TRUE,   # Jitter analysis plots
+  lik_profile        = TRUE,   # Likelihood profile by component
   piner_lfs          = TRUE,   # Piner plot: Length frequencies
 
-  piner_wfs          = FALSE,   # Piner plot: Weight frequencies
-  piner_tag          = FALSE,   # Piner plot: Tagging
-  piner_cal_fishery  = FALSE,   # Piner plot: CAL by fishery
-  piner_cal_year     = FALSE,   # Piner plot: CAL by year
+  piner_wfs          = TRUE,   # Piner plot: Weight frequencies
+  piner_tag          = TRUE,   # Piner plot: Tagging
+  piner_cal_fishery  = TRUE,   # Piner plot: CAL by fishery
+  piner_cal_year     = TRUE,   # Piner plot: CAL by year
   cpue_by_scenario   = TRUE,   # CPUE fits by scenario
-  cpue_overlay       = FALSE,  # CPUE overlay (interactive)
-  lf_overlay         = FALSE,  # LF overlay all scenarios
-  lf_by_scenario     = FALSE,  # LF by scenario
-  wf_overlay         = FALSE,  # WF overlay all scenarios
-  wf_by_scenario     = FALSE   # WF by scenario
+  cpue_overlay       = TRUE,  # CPUE overlay (interactive)
+  lf_overlay         = TRUE,  # LF overlay all scenarios
+  lf_by_scenario     = TRUE,  # LF by scenario
+  wf_overlay         = TRUE,  # WF overlay all scenarios
+  wf_by_scenario     = TRUE   # WF by scenario
 )
 
 # -----------------------------------------------------------------------------
@@ -410,7 +410,7 @@ parse_indepvar <- function(lines) {
 }
 
 #' Get fishery name from number
-get_fishery_name <- function(fishery_num, mapping = ALL_FISHERIES_MAP) {
+get_fishery_name <- function(fishery_num, mapping = fishery_map  %>% with(setNames(fishery_name, fishery))) {
   name <- mapping[as.character(fishery_num)]
   if (is.na(name)) paste("Fishery", fishery_num) else name
 }
@@ -1979,53 +1979,64 @@ if (length(scenarios_with_jitter) > 0) {
 # =============================================================================
 
 # Get scenarios with profiling enabled
+# Get scenarios with profiling enabled
 scenarios_prof <- get_prof_scenarios(Info_list, ProfLikOut_list)
 
 if (length(scenarios_prof) > 0) {
-  
+
   # Get average biomass for scaling
   avg_bio <- get_avg_bio(scenarios_prof)
-  
-  # Get scales from first result (assumes same across all)
-  scales <- results[[scenarios_prof[1]]]$scales
-  
+
+  # --- scales can differ by scenario ---
+  scales_by_sc <- purrr::map(scenarios_prof, ~ results[[.x]]$scales)
+  scales <- Reduce(union, scales_by_sc)   # <- use intersect for common-only
+
   # Extract likelihood components for each scale
-  Likes <- map(scales, function(scl) {
-    # Extract components for each scenario
+  Likes <- purrr::map(scales, function(scl) {
+
     mat <- sapply(scenarios_prof, function(sc) {
+
+      # If this scale is missing in this scenario, return NA vector
+      if (is.null(ProfLikOut_list[[sc]][[scl]]) || is.null(ProfLikOutRaw_list[[sc]][[scl]])) {
+        return(c(Indices = NA_real_, LFs = NA_real_, Penalties = NA_real_,
+                 WFs = NA_real_, Age = NA_real_, Tags = NA_real_))
+      }
+
       lik <- ProfLikOut_list[[sc]][[scl]]
       raw <- ProfLikOutRaw_list[[sc]][[scl]]
-      
+
       c(
-        Indices = sum(lik@survey_index),
-        LFs = sum(lik@total_length_fish),
+        Indices   = sum(lik@survey_index, na.rm = TRUE),
+        LFs       = sum(lik@total_length_fish, na.rm = TRUE),
         Penalties = as.numeric(raw[6]),
-        WFs = sum(lik@total_weight_fish),
-        Age = sum(lik@age_length),
-        Tags = sum(unlist(lik@tag_rel_fish, recursive = TRUE))
+        WFs       = sum(lik@total_weight_fish, na.rm = TRUE),
+        Age       = sum(lik@age_length, na.rm = TRUE),
+        Tags      = sum(unlist(lik@tag_rel_fish, recursive = TRUE), na.rm = TRUE)
       )
     })
-    
-    # Add Total row
-    rbind(mat, Total = colSums(mat))
+
+    rbind(mat, Total = colSums(mat, na.rm = TRUE))
   })
   names(Likes) <- scales
-  
+
   # Convert to long format
-  Likes_long <- imap_dfr(Likes, function(mat, scl) {
+  Likes_long <- purrr::imap_dfr(Likes, function(mat, scl) {
     as.data.frame(mat) %>%
       tibble::rownames_to_column("Likelihood") %>%
       mutate(scaler = scl)
   }) %>%
-    pivot_longer(cols = all_of(scenarios_prof), names_to = "scenario", values_to = "value") %>%
+    tidyr::pivot_longer(cols = all_of(scenarios_prof),
+                        names_to = "scenario",
+                        values_to = "value") %>%
     mutate(scaler = scale_to_biomass(scaler, scenario, avg_bio))
-  
+
   # Calculate change from minimum
   Likes_change <- calc_lik_change(Likes_long, "Likelihood")
-  
+
   # Create plot
   print(create_piner_plot(Likes_change, "Likelihood"))
 }
+
 ```
 
 
@@ -2036,6 +2047,7 @@ if (length(scenarios_prof) > 0) {
 # =============================================================================
 # PINER PLOT: INDEX CPUE LIKELIHOODS BY FISHERY
 # =============================================================================
+
 
 scenarios_prof <- get_prof_scenarios(Info_list, ProfLikOut_list)
 
@@ -2051,7 +2063,7 @@ if (length(scenarios_prof) > 0) {
         unlist() %>% 
         as.numeric() %>%
         na.omit()
-      names(cpue_vec) <- INDEX_FISHERIES_MAP[as.character(seq_along(cpue_vec))]
+      names(cpue_vec) <- (fishery_map %>% dplyr::filter(group == "Index") %>% with(setNames(fishery_name, fishery)))[as.character(seq_along(cpue_vec))]
       cpue_vec
     })
     
@@ -2085,6 +2097,7 @@ if (length(scenarios_prof) > 0) {
 # PINER PLOT: LENGTH FREQUENCY LIKELIHOODS BY FISHERY
 # =============================================================================
 
+
 scenarios_prof <- get_prof_scenarios(Info_list, ProfLikOut_list)
 
 if (length(scenarios_prof) > 0) {
@@ -2096,7 +2109,7 @@ if (length(scenarios_prof) > 0) {
   Likes <- map(scales, function(scl) {
     mat <- sapply(scenarios_prof, function(sc) {
       lf_vec <- ProfLikOut_list[[sc]][[scl]]@total_length_fish
-      names(lf_vec) <- ALL_FISHERIES_MAP[as.character(seq_along(lf_vec))]
+names(lf_vec) <- (fishery_map  %>% with(setNames(fishery_name, fishery)))[as.character(seq_along(lf_vec))]
       lf_vec
     })
     
@@ -2139,7 +2152,9 @@ if (length(scenarios_prof) > 0) {
   Likes <- map(scales, function(scl) {
     mat <- sapply(scenarios_prof, function(sc) {
       wf_vec <- ProfLikOut_list[[sc]][[scl]]@total_weight_fish
-      names(wf_vec) <- ALL_FISHERIES_MAP[as.character(seq_along(wf_vec))]
+      names(wf_vec) <-fishery_map  %>%
+  with(setNames(fishery_name, fishery)) 
+
       wf_vec
     })
     
@@ -2249,7 +2264,7 @@ age_lik_data <- map_dfr(scenarios_prof, function(sc) {
 
 # Map fishery numbers to names
 age_lik_data <- age_lik_data %>%
-  mutate(fishery = ALL_FISHERIES_MAP[as.character(fishery)])
+  dplyr::mutate(fishery = (fishery_map %>% with(setNames(fishery_name, fishery)))[as.character(fishery)])
 
 # Sum by fishery
 lik_by_fishery <- age_lik_data %>%
@@ -2345,8 +2360,8 @@ print(create_piner_plot(lik_change, "year", "CAL"))
 # Create plots using utility function
 scenario_plots <- create_cpue_plots(
   RepOut_list = RepOut_list,
-  fisheries = INDEX_FISHERIES,
-  fisheries_mapping = INDEX_FISHERIES_MAP,
+  fisheries =fishery_map  %>% filter(group == "Index") %>% select("fishery") %>% unlist(),
+  fisheries_mapping = fishery_map  %>% filter(group == "Index") %>% with(setNames(fishery_name, fishery)),
   viridis_option = "viridis"
 )
 
@@ -2369,8 +2384,8 @@ library(plotly)
 
 overlay_plot <- create_overlay_cpue_plot(
   RepOut_list = RepOut_list,
-  fisheries = INDEX_FISHERIES,
-  fisheries_mapping = INDEX_FISHERIES_MAP,
+  fisheries = fishery_map %>% filter(group == "Index") %>% select(fishery) %>% unlist(),
+  fisheries_mapping = fishery_map %>% filter(group == "Index") %>% with(setNames(fishery_name, fishery)),
   viridis_option = "viridis",
   custom_config = list(predicted_colors = NULL)
 )
@@ -2388,6 +2403,115 @@ interactive_plot
 
 
 # LF plots {.tabset}
+
+
+## Composite Catch-at-Length by Fishery {.tabset .tabset-pills}
+
+```{r composite_length_fit, echo=FALSE, message=FALSE, fig.width=16, fig.height=12, results='asis'}
+
+# =============================================================================
+# Prepare length fit data from LengOut_list (composite over time)
+# =============================================================================
+
+scenarios_name <- names(LengOut_list)
+
+# Extract and aggregate length.fit data for each model from LengOut_list
+lfit_data_list <- list()
+
+for(model_name in scenarios_name) {
+  
+  if(!is.null(LengOut_list[[model_name]])) {
+    tryCatch({
+      # Extract data from MFCLLenFit object - lenfits slot contains the time series data
+      tmp_lfit <- LengOut_list[[model_name]]
+      
+      # Get the data.frame from lenfits slot
+      lfit_df <- tmp_lfit@lenfits
+      
+      # Aggregate to composite (sum over years/months) - this matches length.fit.preparation() output
+      # This creates the "totals" that appear at the bottom of length.fit file
+      lfit_composite <- lfit_df %>%
+        group_by(fishery, length) %>%
+        summarise(
+          obs = sum(obs * sample_size, na.rm = TRUE),   # Weight by sample size
+          pred = sum(pred * sample_size, na.rm = TRUE), # Weight by sample size
+          .groups = "drop"
+        )
+      
+      lfit_data_list[[model_name]] <- lfit_composite
+      cat("Successfully loaded length.fit for", model_name, "\n")
+    }, error = function(e) {
+      cat("Error extracting length.fit for", model_name, ":", e$message, "\n")
+    })
+  } else {
+    cat("Warning: LengOut not available for", model_name, "\n")
+  }
+}
+
+# =============================================================================
+# Get fisheries to plot
+# =============================================================================
+
+fisheries_to_plot <- fishery_map %>%
+  filter(group != "Index") %>%
+  pull(fishery) %>%
+  unique()
+
+# =============================================================================
+# Create separate plot for each model
+# =============================================================================
+
+if(length(lfit_data_list) > 0) {
+  
+  for(model_name in names(lfit_data_list)) {
+    
+    cat("\n\n### ", model_name, "\n\n")
+    
+    lfit_model <- lfit_data_list[[model_name]]
+    
+    # Add fishery names
+    pdat_model <- lfit_model %>%
+      left_join(fishery_map[, c("fishery", "fishery_name")], by = "fishery") %>%
+      filter(fishery %in% fisheries_to_plot)
+    
+    # Calculate bar width
+    if(nrow(pdat_model) > 1) {
+      bar_width <- unique(diff(sort(unique(pdat_model$length))))
+      if(length(bar_width) == 0 || is.na(bar_width)) bar_width <- 2
+    } else {
+      bar_width <- 2
+    }
+    
+    # Create plot
+    p_model <- ggplot(pdat_model, aes(x = length)) +
+      geom_bar(aes(y = obs), fill = "blue", colour = "blue", stat = "identity", width = bar_width, alpha = 0.7) +
+      geom_line(aes(y = pred), colour = "red", linewidth = 1.2) +
+      facet_wrap(~ fishery_name, scales = "free", ncol = 4) +
+      scale_y_continuous(expand = c(0, 0)) +
+      labs(
+        x = "Length (cm)",
+        y = "Samples",
+        title = paste0("Composite Catch-at-Length Fit - ", model_name)
+      ) +
+      theme_bw() +
+      theme(
+        panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_blank(),
+        strip.background = element_rect(fill = "gray90"),
+        strip.text = element_text(face = "bold", size = 9)
+      )
+    
+    print(p_model)
+    
+  }
+  
+} else {
+  cat("No length.fit data available.\n")
+}
+
+
+```
+
 
 ## Overlay all scenarios {.tabset .tabset-pills}
 
@@ -2494,6 +2618,124 @@ for (scenario_name in all_scenarios) {
 
 # WF plots {.tabset}
 
+## Composite Catch-at-Weight by Fishery  {.tabset .tabset-pills}
+
+```{r composite_weight_fit, echo=FALSE, message=FALSE, fig.width=16, fig.height=12, results='asis'}
+
+# =============================================================================
+# Prepare weight fit data from WeightOut_list (composite over time)
+# =============================================================================
+
+# Check if WeightOut_list exists
+if(exists("WeightOut_list")) {
+  
+  scenarios_name <- names(WeightOut_list)
+  
+  # Extract and aggregate weight.fit data for each model from WeightOut_list
+  wfit_data_list <- list()
+  
+  for(model_name in scenarios_name) {
+    
+    if(!is.null(WeightOut_list[[model_name]])) {
+      tryCatch({
+        # Extract data from MFCLWgtFit object - similar structure to LenFit
+        tmp_wfit <- WeightOut_list[[model_name]]
+        
+        # Get the data.frame from wgtfits slot (similar to lenfits)
+        wfit_df <- tmp_wfit@wgtfits
+        
+        # Aggregate to composite (sum over years/months)
+        wfit_composite <- wfit_df %>%
+          group_by(fishery, weight) %>%
+          summarise(
+            obs = sum(obs * sample_size, na.rm = TRUE),   # Weight by sample size
+            pred = sum(pred * sample_size, na.rm = TRUE), # Weight by sample size
+            .groups = "drop"
+          )
+        
+        wfit_data_list[[model_name]] <- wfit_composite
+        cat("Successfully loaded weight.fit for", model_name, "\n")
+      }, error = function(e) {
+        cat("Error extracting weight.fit for", model_name, ":", e$message, "\n")
+      })
+    } else {
+      cat("Warning: WeightOut not available for", model_name, "\n")
+    }
+  }
+  
+  # =============================================================================
+  # Get fisheries to plot
+  # =============================================================================
+  
+  fisheries_to_plot <- fishery_map %>%
+    filter(group != "Index") %>%
+    pull(fishery) %>%
+    unique()
+  
+  # =============================================================================
+  # Create separate plot for each model
+  # =============================================================================
+  
+  if(length(wfit_data_list) > 0) {
+    
+    for(model_name in names(wfit_data_list)) {
+      
+      cat("\n\n### ", model_name, "\n\n")
+      
+      wfit_model <- wfit_data_list[[model_name]]
+      
+      # Add fishery names
+      pdat_model <- wfit_model %>%
+        left_join(fishery_map[, c("fishery", "fishery_name")], by = "fishery") %>%
+        filter(fishery %in% fisheries_to_plot)
+      
+      # Calculate bar width
+      if(nrow(pdat_model) > 1) {
+        bar_width <- unique(diff(sort(unique(pdat_model$weight))))
+        if(length(bar_width) == 0 || is.na(bar_width)) bar_width <- 0.5
+      } else {
+        bar_width <- 0.5
+      }
+      
+      # Create plot
+      p_model <- ggplot(pdat_model, aes(x = weight)) +
+        geom_bar(aes(y = obs), fill = "blue", colour = "blue", stat = "identity", width = bar_width, alpha = 0.7) +
+        geom_line(aes(y = pred), colour = "red", linewidth = 1.2) +
+        facet_wrap(~ fishery_name, scales = "free", ncol = 4) +
+        scale_y_continuous(expand = c(0, 0)) +
+        labs(
+          x = "Weight (kg)",
+          y = "Samples",
+          title = paste0("Composite Catch-at-Weight Fit - ", model_name)
+        ) +
+        theme_bw() +
+        theme(
+          panel.grid.minor = element_blank(),
+          panel.grid.major.x = element_blank(),
+          strip.background = element_rect(fill = "gray90"),
+          strip.text = element_text(face = "bold", size = 9)
+        )
+      
+      print(p_model)
+      
+    }
+    
+  } else {
+    cat("No weight.fit data available.\n")
+  }
+  
+} else {
+  cat("WeightOut_list not found. Skipping weight composition plots.\n")
+}
+
+
+
+```
+
+
+
+
+
 ## Overlay all scenarios {.tabset .tabset-pills}
 
 ```{r wf-overlay, echo=FALSE, message=FALSE, fig.dim=c(8,12), warning=FALSE, results='asis', eval=RUN_CHUNKS$wf_overlay}
@@ -2598,49 +2840,6 @@ for (scenario_name in all_scenarios) {
 
 
 # Tag plots {.tabset}
-
-## Observed vs Fitted tag recaptures by scenario {.tabset .tabset-pills}
-
-```{r tag-by-scenario, echo=FALSE, message=FALSE, warning=FALSE, results='asis', fig.dim=c(8,8), eval=RUN_CHUNKS$tag_by_scenario}
-
-xx=FLR4MFCL::read.MFCLTagRep("12.par")
-
-
-
-```
-
-## Overlay all scenarios (Interactive)
-
-```{r cpue-overlay, echo=FALSE, message=FALSE, fig.dim=c(10,8), eval=RUN_CHUNKS$cpue_overlay}
-# =============================================================================
-# CPUE FITS - ALL SCENARIOS OVERLAID (Interactive)
-# =============================================================================
-
-library(plotly)
-
-overlay_plot <- create_overlay_cpue_plot(
-  RepOut_list = RepOut_list,
-  fisheries = INDEX_FISHERIES,
-  fisheries_mapping = INDEX_FISHERIES_MAP,
-  viridis_option = "viridis",
-  custom_config = list(predicted_colors = NULL)
-)
-
-interactive_plot <- ggplotly(overlay_plot, tooltip = c("x", "y", "colour")) %>%
-  layout(
-    legend = list(
-      orientation = "v", x = 1.02, y = 1,
-      xanchor = "left", yanchor = "top"
-    )
-  )
-
-interactive_plot
-
-```
-
-
-
-
 
 ## Tag Reporting Rates by Group
 
@@ -2794,10 +2993,9 @@ mixing_periods <- setNames(rep(2, length(scenarios_name)), scenarios_name)
 # Create fishery name mapping
 # =============================================================================
 
-fishery_names <- setNames(
-  as.character(ALL_FISHERIES_MAP),
-  names(ALL_FISHERIES_MAP)
-)
+
+fishery_names <- with(fishery_map, setNames(as.character(fishery_name), fishery))
+
 
 # =============================================================================
 # Process tag data from all models
@@ -2996,10 +3194,9 @@ mixing_periods <- setNames(rep(2, length(scenarios_name)), scenarios_name)
 # Create fishery name mapping
 # =============================================================================
 
-fishery_names <- setNames(
-  as.character(ALL_FISHERIES_MAP),
-  names(ALL_FISHERIES_MAP)
-)
+
+fishery_names <- with(fishery_map, setNames(as.character(fishery_name), fishery))
+
 
 # =============================================================================
 # Get release information from TagOut_list
@@ -3265,6 +3462,9 @@ p <- ggplot(tag_summary_region, aes(x = period_at_liberty)) +
 print(p)
 
 ```
+
+
+# Biological Parameters {.tabset}
 
 
 ## Selectivity by Fishery
@@ -3851,226 +4051,4 @@ p_growth <- ggplot(growth_data, aes(x = age, y = length, color = Model, fill = M
 print(p_growth)
 
 ```
-
-## Composite Catch-at-Length by Fishery
-
-```{r composite_length_fit, echo=FALSE, message=FALSE, fig.width=16, fig.height=12, results='asis'}
-
-# =============================================================================
-# Prepare length fit data from LengOut_list (composite over time)
-# =============================================================================
-
-scenarios_name <- names(LengOut_list)
-
-# Extract and aggregate length.fit data for each model from LengOut_list
-lfit_data_list <- list()
-
-for(model_name in scenarios_name) {
-  
-  if(!is.null(LengOut_list[[model_name]])) {
-    tryCatch({
-      # Extract data from MFCLLenFit object - lenfits slot contains the time series data
-      tmp_lfit <- LengOut_list[[model_name]]
-      
-      # Get the data.frame from lenfits slot
-      lfit_df <- tmp_lfit@lenfits
-      
-      # Aggregate to composite (sum over years/months) - this matches length.fit.preparation() output
-      # This creates the "totals" that appear at the bottom of length.fit file
-      lfit_composite <- lfit_df %>%
-        group_by(fishery, length) %>%
-        summarise(
-          obs = sum(obs * sample_size, na.rm = TRUE),   # Weight by sample size
-          pred = sum(pred * sample_size, na.rm = TRUE), # Weight by sample size
-          .groups = "drop"
-        )
-      
-      lfit_data_list[[model_name]] <- lfit_composite
-      cat("Successfully loaded length.fit for", model_name, "\n")
-    }, error = function(e) {
-      cat("Error extracting length.fit for", model_name, ":", e$message, "\n")
-    })
-  } else {
-    cat("Warning: LengOut not available for", model_name, "\n")
-  }
-}
-
-# =============================================================================
-# Get fisheries to plot
-# =============================================================================
-
-fisheries_to_plot <- fishery_map %>%
-  filter(group != "Index") %>%
-  pull(fishery) %>%
-  unique()
-
-# =============================================================================
-# Create separate plot for each model
-# =============================================================================
-
-if(length(lfit_data_list) > 0) {
-  
-  for(model_name in names(lfit_data_list)) {
-    
-    cat("\n\n### ", model_name, "\n\n")
-    
-    lfit_model <- lfit_data_list[[model_name]]
-    
-    # Add fishery names
-    pdat_model <- lfit_model %>%
-      left_join(fishery_map[, c("fishery", "fishery_name")], by = "fishery") %>%
-      filter(fishery %in% fisheries_to_plot)
-    
-    # Calculate bar width
-    if(nrow(pdat_model) > 1) {
-      bar_width <- unique(diff(sort(unique(pdat_model$length))))
-      if(length(bar_width) == 0 || is.na(bar_width)) bar_width <- 2
-    } else {
-      bar_width <- 2
-    }
-    
-    # Create plot
-    p_model <- ggplot(pdat_model, aes(x = length)) +
-      geom_bar(aes(y = obs), fill = "blue", colour = "blue", stat = "identity", width = bar_width, alpha = 0.7) +
-      geom_line(aes(y = pred), colour = "red", linewidth = 1.2) +
-      facet_wrap(~ fishery_name, scales = "free", ncol = 4) +
-      scale_y_continuous(expand = c(0, 0)) +
-      labs(
-        x = "Length (cm)",
-        y = "Samples",
-        title = paste0("Composite Catch-at-Length Fit - ", model_name)
-      ) +
-      theme_bw() +
-      theme(
-        panel.grid.minor = element_blank(),
-        panel.grid.major.x = element_blank(),
-        strip.background = element_rect(fill = "gray90"),
-        strip.text = element_text(face = "bold", size = 9)
-      )
-    
-    print(p_model)
-    
-  }
-  
-} else {
-  cat("No length.fit data available.\n")
-}
-
-
-```
-
-## Composite Catch-at-Weight by Fishery
-
-```{r composite_weight_fit, echo=FALSE, message=FALSE, fig.width=16, fig.height=12, results='asis'}
-
-# =============================================================================
-# Prepare weight fit data from WeightOut_list (composite over time)
-# =============================================================================
-
-# Check if WeightOut_list exists
-if(exists("WeightOut_list")) {
-  
-  scenarios_name <- names(WeightOut_list)
-  
-  # Extract and aggregate weight.fit data for each model from WeightOut_list
-  wfit_data_list <- list()
-  
-  for(model_name in scenarios_name) {
-    
-    if(!is.null(WeightOut_list[[model_name]])) {
-      tryCatch({
-        # Extract data from MFCLWgtFit object - similar structure to LenFit
-        tmp_wfit <- WeightOut_list[[model_name]]
-        
-        # Get the data.frame from wgtfits slot (similar to lenfits)
-        wfit_df <- tmp_wfit@wgtfits
-        
-        # Aggregate to composite (sum over years/months)
-        wfit_composite <- wfit_df %>%
-          group_by(fishery, weight) %>%
-          summarise(
-            obs = sum(obs * sample_size, na.rm = TRUE),   # Weight by sample size
-            pred = sum(pred * sample_size, na.rm = TRUE), # Weight by sample size
-            .groups = "drop"
-          )
-        
-        wfit_data_list[[model_name]] <- wfit_composite
-        cat("Successfully loaded weight.fit for", model_name, "\n")
-      }, error = function(e) {
-        cat("Error extracting weight.fit for", model_name, ":", e$message, "\n")
-      })
-    } else {
-      cat("Warning: WeightOut not available for", model_name, "\n")
-    }
-  }
-  
-  # =============================================================================
-  # Get fisheries to plot
-  # =============================================================================
-  
-  fisheries_to_plot <- fishery_map %>%
-    filter(group != "Index") %>%
-    pull(fishery) %>%
-    unique()
-  
-  # =============================================================================
-  # Create separate plot for each model
-  # =============================================================================
-  
-  if(length(wfit_data_list) > 0) {
-    
-    for(model_name in names(wfit_data_list)) {
-      
-      cat("\n\n### ", model_name, "\n\n")
-      
-      wfit_model <- wfit_data_list[[model_name]]
-      
-      # Add fishery names
-      pdat_model <- wfit_model %>%
-        left_join(fishery_map[, c("fishery", "fishery_name")], by = "fishery") %>%
-        filter(fishery %in% fisheries_to_plot)
-      
-      # Calculate bar width
-      if(nrow(pdat_model) > 1) {
-        bar_width <- unique(diff(sort(unique(pdat_model$weight))))
-        if(length(bar_width) == 0 || is.na(bar_width)) bar_width <- 0.5
-      } else {
-        bar_width <- 0.5
-      }
-      
-      # Create plot
-      p_model <- ggplot(pdat_model, aes(x = weight)) +
-        geom_bar(aes(y = obs), fill = "blue", colour = "blue", stat = "identity", width = bar_width, alpha = 0.7) +
-        geom_line(aes(y = pred), colour = "red", linewidth = 1.2) +
-        facet_wrap(~ fishery_name, scales = "free", ncol = 4) +
-        scale_y_continuous(expand = c(0, 0)) +
-        labs(
-          x = "Weight (kg)",
-          y = "Samples",
-          title = paste0("Composite Catch-at-Weight Fit - ", model_name)
-        ) +
-        theme_bw() +
-        theme(
-          panel.grid.minor = element_blank(),
-          panel.grid.major.x = element_blank(),
-          strip.background = element_rect(fill = "gray90"),
-          strip.text = element_text(face = "bold", size = 9)
-        )
-      
-      print(p_model)
-      
-    }
-    
-  } else {
-    cat("No weight.fit data available.\n")
-  }
-  
-} else {
-  cat("WeightOut_list not found. Skipping weight composition plots.\n")
-}
-
-
-
-```
-
 
