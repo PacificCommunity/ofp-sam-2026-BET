@@ -58,30 +58,13 @@ find_fishery_map_script <- function(model_path) {
 load_fishery_map_from_r <- function(map_r_path) {
   if (is.null(map_r_path) || !file.exists(map_r_path)) return(NULL)
 
-  exprs <- tryCatch(parse(file = map_r_path), error = function(e) NULL)
-  if (is.null(exprs) || length(exprs) == 0) return(NULL)
-
-  env <- new.env(parent = baseenv())
-  for (expr in exprs) {
-    if (!is.call(expr) || length(expr) < 2) next
-    fun <- as.character(expr[[1]])
-
-    if (fun %in% c("<-", "=") && length(expr) >= 3) {
-      lhs <- expr[[2]]
-      if (is.symbol(lhs) && identical(as.character(lhs), "fishery_map")) {
-        try(eval(expr, envir = env), silent = TRUE)
-      }
-      next
-    }
-
-    if (fun == "$<-" && length(expr) >= 4) {
-      obj <- expr[[2]]
-      if (is.symbol(obj) && identical(as.character(obj), "fishery_map")) {
-        try(eval(expr, envir = env), silent = TRUE)
-      }
-      next
-    }
-  }
+  env <- new.env(parent = globalenv())
+  env$save <- function(...) invisible(NULL)
+  ok <- tryCatch({
+    sys.source(map_r_path, envir = env, keep.source = FALSE)
+    TRUE
+  }, error = function(e) FALSE)
+  if (!ok) return(NULL)
 
   if (!exists("fishery_map", envir = env, inherits = FALSE)) return(NULL)
   map_df <- get("fishery_map", envir = env, inherits = FALSE)
