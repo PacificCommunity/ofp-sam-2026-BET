@@ -282,10 +282,10 @@ server_data_load <- function(input, output, session, rv) {
 
         if (isTRUE(rv$fishery_map_required) && length(missing_or_invalid_models) > 0) {
           showNotification(
-            HTML(paste0(
+              HTML(paste0(
               "<strong>⚠ fishery_map.R is required and missing/invalid</strong><br/>",
               "Affected models: ", paste(missing_or_invalid_models, collapse = ", "), "<br/>",
-              "Only non-fishery-map plots are available (Summary, Bound Hits, Key Quantities, Population Biology)."
+              "Models with valid fishery_map.R remain available in fishery-map dependent tabs."
             )),
             type = "warning",
             duration = 12
@@ -332,21 +332,24 @@ server_data_load <- function(input, output, session, rv) {
       
         updateSelectInput(session, "bound_model", choices = names(results_named))
       
+        available_map_models <- names(rv$FISHERY_MAPS)[!vapply(rv$FISHERY_MAPS, is.null, logical(1))]
+
         # Update scenario pickers for all tabs (select all by default)
         updatePickerInput(session, "stock_scenarios", 
                           choices = names(results_named), 
                           selected = names(results_named))
         updatePickerInput(session, "cpue_scenarios", 
-                          choices = names(results_named), 
-                          selected = names(results_named))
+                          choices = available_map_models, 
+                          selected = available_map_models)
       
         # Update model selectors for LF/WF tabs (single selection)
+        map_selected <- if (length(available_map_models) > 0) available_map_models[1] else character(0)
         updateSelectInput(session, "lf_model", 
-                          choices = names(results_named),
-                          selected = names(results_named)[1])
+                          choices = available_map_models,
+                          selected = map_selected)
         updateSelectInput(session, "wf_model", 
-                          choices = names(results_named),
-                          selected = names(results_named)[1])
+                          choices = available_map_models,
+                          selected = map_selected)
       
         # Update fishery names model selector
         updateSelectInput(session, "fishery_names_model",

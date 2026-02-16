@@ -506,9 +506,10 @@ mod_tagging_ui <- function() {
 
 mod_tagging_server <- function(input, output, session, rv) {
   observeEvent(rv$data_loaded, {
-    sc <- names(rv$ParOut_list)
+    sc <- names(rv$FISHERY_MAPS)[!vapply(rv$FISHERY_MAPS, is.null, logical(1))]
     updatePickerInput(session, "tag_scenarios", choices = sc, selected = sc)
-    updateSelectInput(session, "tag_model_single", choices = sc, selected = sc[1])
+    sel <- if (length(sc) > 0) sc[1] else character(0)
+    updateSelectInput(session, "tag_model_single", choices = sc, selected = sel)
   }, ignoreInit = TRUE)
 
   observeEvent(input$tag_scenarios, {
@@ -1018,7 +1019,7 @@ mod_fishery_process_ui <- function() {
 
 mod_fishery_process_server <- function(input, output, session, rv) {
   observeEvent(rv$data_loaded, {
-    sc <- names(rv$ParOut_list)
+    sc <- names(rv$FISHERY_MAPS)[!vapply(rv$FISHERY_MAPS, is.null, logical(1))]
     updatePickerInput(session, "fishery_process_scenarios", choices = sc, selected = sc)
   }, ignoreInit = TRUE)
 

@@ -94,14 +94,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
   # Update scenario choices when data is loaded
   observeEvent(rv$data_loaded, {
     req(rv$ParOut_list)
-    current_selection <- isolate(input$scenarios)
-    if (is.null(current_selection) || length(current_selection) == 0) {
-      current_selection <- names(rv$ParOut_list)
-    }
+    map_models <- names(rv$FISHERY_MAPS)[!vapply(rv$FISHERY_MAPS, is.null, logical(1))]
+    current_selection <- isolate(input$lik_scenarios)
+    if (is.null(current_selection) || length(current_selection) == 0) current_selection <- map_models
+    current_selection <- intersect(current_selection, map_models)
+    if (length(current_selection) == 0) current_selection <- map_models
     updatePickerInput(
       session,
       "lik_scenarios",
-      choices = names(rv$ParOut_list),
+      choices = map_models,
       selected = current_selection
     )
   }, ignoreInit = TRUE)

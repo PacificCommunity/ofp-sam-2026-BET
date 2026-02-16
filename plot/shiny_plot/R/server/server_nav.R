@@ -1,29 +1,4 @@
 server_nav <- function(input, output, session, rv) {
-    blocked_tabs_without_map <- c(
-      "cpue", "lf", "wf", "diagnostics", "tagging", "fishery_process"
-    )
-
-    observeEvent(input$tabs, {
-      req(rv$data_loaded)
-      missing_map <- isTRUE(rv$fishery_map_required) &&
-        !is.null(rv$fishery_map_missing_models) &&
-        length(rv$fishery_map_missing_models) > 0
-      if (!missing_map) return()
-
-      if (input$tabs %in% blocked_tabs_without_map) {
-        showNotification(
-          HTML(paste0(
-            "<strong>fishery_map.R required</strong><br/>",
-            "Please add fishery_map.R in each model folder and reload data.<br/>",
-            "Allowed tabs now: Summary, Bound Hits, Key Quantities, Population Biology."
-          )),
-          type = "warning",
-          duration = 6
-        )
-        updateTabItems(session, "tabs", selected = "summary")
-      }
-    }, ignoreInit = TRUE)
-
     # FISHERY NAVIGATION BUTTONS
     # ===========================================================================
   
