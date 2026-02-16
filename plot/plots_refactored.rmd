@@ -325,6 +325,35 @@ fishery_map <- pm_load_or_build_fishery_map(
   tagtemp_list = TagTempOut_list
 )
 
+# Build model-specific fishery maps strictly from each scenario's fishery_map.R.
+load_model_fishery_map <- function(model_name) {
+  map_r <- file.path(MODEL_DIR, model_name, "fishery_map.R")
+  if (!file.exists(map_r)) {
+    stop(sprintf("fishery_map.R not found for model '%s': %s", model_name, map_r))
+  }
+
+  env <- new.env(parent = globalenv())
+  env$save <- function(...) invisible(NULL)
+  ok <- tryCatch({
+    sys.source(map_r, envir = env, keep.source = FALSE)
+    TRUE
+  }, error = function(e) {
+    stop(sprintf("Failed to source %s: %s", map_r, e$message))
+  })
+  if (!ok || !exists("fishery_map", envir = env, inherits = FALSE)) {
+    stop(sprintf("No fishery_map object defined in %s", map_r))
+  }
+
+  model_map <- get("fishery_map", envir = env, inherits = FALSE)
+  if (!is.data.frame(model_map)) {
+    stop(sprintf("fishery_map in %s is not a data.frame", map_r))
+  }
+
+  pm_normalize_fishery_map(model_map)
+}
+
+FISHERY_MAPS <- setNames(lapply(names(ParOut_list), load_model_fishery_map), names(ParOut_list))
+
 # Create tag program mapping for each model
 tag_program_maps <- pm_build_tag_program_maps(TagOut_list)
 
@@ -2970,8 +2999,25 @@ scenarios_name <- names(ParOut_list)
 # Initialize list to store reporting rate data
 tag_rr_list <- list()
 
+# Build per-model reporting-group labels from model fishery maps
+get_reporting_group_labels <- function(model_name) {
+  fmap <- FISHERY_MAPS[[model_name]]
+  if (is.null(fmap) || !is.data.frame(fmap)) {
+    return(data.frame(group = numeric(0), group_name = character(0), stringsAsFactors = FALSE))
+  }
+
+  fmap %>%
+    filter(!is.na(tag_recapture_group), !is.na(tag_recapture_name), nzchar(tag_recapture_name)) %>%
+    mutate(group = as.numeric(tag_recapture_group), group_name = as.character(tag_recapture_name)) %>%
+    filter(is.finite(group)) %>%
+    group_by(group) %>%
+    summarise(group_name = first(group_name), .groups = "drop")
+}
+
 # Extract reporting rate data from each scenario
 for (i in seq_along(ParOut_list)) {
+  model_name <- scenarios_name[i]
+  group_labels <- get_reporting_group_labels(model_name)
   
   # Extract upper bound for this scenario
   upper.bound <- subset(flags(ParOut_list[[i]]), flagtype == 1 & flag == 33)$value / 100
@@ -2986,15 +3032,15 @@ for (i in seq_along(ParOut_list)) {
     unique() %>%
     arrange(group) %>%
     filter(rr > 0) %>%  # Exclude fixed values (rr = 0)
+    left_join(group_labels, by = "group") %>%
     mutate(
-      scenario = scenarios_name[i],
-      upper_bound = upper.bound
-    )
+      scenario = model_name,
+      upper_bound = upper.bound,
+      names = if_else(!is.na(group_name) & nzchar(group_name), group_name, paste0("G", group))
+    ) %>%
+    select(-group_name)
   
-  # Add group names
-  tag_dt$names <- paste0("G", tag_dt$group)
-  
-  tag_rr_list[[scenarios_name[i]]] <- tag_dt
+  tag_rr_list[[model_name]] <- tag_dt
 }
 
 # Combine all scenarios
@@ -3106,14 +3152,6 @@ mixing_periods <- pm_default_mixing_periods(scenarios_name, default_steps = 2)
 # )
 
 # =============================================================================
-# Create fishery name mapping
-# =============================================================================
-
-
-fishery_names <- with(fishery_map, setNames(as.character(fishery_name), fishery))
-
-
-# =============================================================================
 # Process tag data from all models
 # =============================================================================
 
@@ -3183,10 +3221,13 @@ scenarios_name <- names(TagTempOut_list)
 mixing_periods <- pm_default_mixing_periods(scenarios_name, default_steps = 2)
 
 # =============================================================================
-# Create tag recapture group mapping from fishery_map (excluding Index fisheries)
+# Create model-specific tag recapture group mapping (excluding Index fisheries)
 # =============================================================================
 
-tag_recapture_map <- pm_build_tag_recapture_map(fishery_map, include_index = FALSE)
+tag_recapture_map <- bind_rows(lapply(scenarios_name, function(m) {
+  pm_build_tag_recapture_map(FISHERY_MAPS[[m]], include_index = FALSE) %>%
+    mutate(Model = m)
+}))
 
 # =============================================================================
 # Process tag data from all models
@@ -3203,7 +3244,7 @@ tag_all <- pm_apply_mixing_filter(
 # =============================================================================
 
 tag_all <- tag_all %>%
-  left_join(tag_recapture_map, by = c("recap.fishery" = "fishery"))
+  left_join(tag_recapture_map, by = c("Model", "recap.fishery" = "fishery"))
 
 # =============================================================================
 # Aggregate by model, tag recapture group, and time
@@ -3227,12 +3268,12 @@ time_grid <- pm_pad_model_time(
 )
 
 all_groups <- unique(tag_summary$tag_recapture_group)
-all_names <- tag_recapture_map %>% select(tag_recapture_group, tag_recapture_name) %>% distinct()
+all_names <- tag_recapture_map %>% select(Model, tag_recapture_group, tag_recapture_name) %>% distinct()
 
 tag_summary <- time_grid %>%
   dplyr::select(Model, recap_ts) %>%
   tidyr::crossing(tag_recapture_group = all_groups) %>%
-  left_join(all_names, by = "tag_recapture_group") %>%
+  left_join(all_names, by = c("Model", "tag_recapture_group")) %>%
   left_join(tag_summary, by = c("Model", "tag_recapture_group", "tag_recapture_name", "recap_ts")) %>%
   mutate(
     recap_obs = replace_na(recap_obs, 0),
@@ -3285,14 +3326,6 @@ scenarios_name <- names(TagTempOut_list)
 
 # Set mixing period for each model (in model time-steps, default = 2)
 mixing_periods <- pm_default_mixing_periods(scenarios_name, default_steps = 2)
-
-# =============================================================================
-# Create fishery name mapping
-# =============================================================================
-
-
-fishery_names <- with(fishery_map, setNames(as.character(fishery_name), fishery))
-
 
 # =============================================================================
 # Get release information from TagOut_list
@@ -3441,9 +3474,13 @@ tag_releases <- pm_get_tag_releases(TagOut_list)
 
 tag_all <- bind_rows(TagTempOut_list, .id = "Model")
 
-# Add recapture region from fishery map
+# Add recapture region from model-specific fishery maps
+region_map <- bind_rows(lapply(scenarios_name, function(m) {
+  FISHERY_MAPS[[m]][, c("fishery", "region")] %>% mutate(Model = m)
+}))
+
 tag_all <- tag_all %>%
-  left_join(fishery_map[,c("fishery", "region")], by = c("recap.fishery" = "fishery")) %>%
+  left_join(region_map, by = c("Model", "recap.fishery" = "fishery")) %>%
   rename(recap.region = region)
 
 tag_all <- pm_add_period_at_liberty(
@@ -3535,8 +3572,12 @@ sel_data <- bind_rows(sel_list)
 # Add fishery names from fishery_map
 # =============================================================================
 
+fishery_map_by_model <- bind_rows(lapply(scenarios_name, function(m) {
+  FISHERY_MAPS[[m]][, c("fishery", "fishery_name", "group")] %>% mutate(Model = m)
+}))
+
 sel_data <- sel_data %>%
-  left_join(fishery_map[, c("fishery", "fishery_name", "group")], by = "fishery") %>%
+  left_join(fishery_map_by_model, by = c("Model", "fishery")) %>%
   mutate(Model = factor(Model, levels = scenarios_name))
 
 # =============================================================================
@@ -3602,7 +3643,7 @@ sel_len_data <- bind_rows(sel_len_list)
 # =============================================================================
 
 sel_len_data <- sel_len_data %>%
-  left_join(fishery_map[, c("fishery", "fishery_name", "group")], by = "fishery") %>%
+  left_join(fishery_map_by_model, by = c("Model", "fishery")) %>%
   mutate(Model = factor(Model, levels = scenarios_name))
 
 # =============================================================================
@@ -3662,7 +3703,7 @@ sel_wt_data <- bind_rows(sel_wt_list)
 # =============================================================================
 
 sel_wt_data <- sel_wt_data %>%
-  left_join(fishery_map[, c("fishery", "fishery_name", "group")], by = "fishery") %>%
+  left_join(fishery_map_by_model, by = c("Model", "fishery")) %>%
   mutate(Model = factor(Model, levels = scenarios_name))
 
 # =============================================================================
