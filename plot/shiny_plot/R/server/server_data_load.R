@@ -254,8 +254,9 @@ server_data_load <- function(input, output, session, rv) {
         map_status <- setNames(rep("ok", length(names(results_named))), names(results_named))
 
         rv$FISHERY_MAPS <- lapply(names(results_named), function(sc) {
-          scenario_map_r <- file.path(MODEL_DIR, sc, "fishery_map.R")
-          if (!file.exists(scenario_map_r)) {
+          scenario_dir <- file.path(MODEL_DIR, sc)
+          scenario_map_r <- find_fishery_map_script(scenario_dir)
+          if (is.null(scenario_map_r) || !file.exists(scenario_map_r)) {
             map_status[[sc]] <<- "missing"
             return(NULL)
           }
@@ -283,9 +284,9 @@ server_data_load <- function(input, output, session, rv) {
         if (isTRUE(rv$fishery_map_required) && length(missing_or_invalid_models) > 0) {
           showNotification(
               HTML(paste0(
-              "<strong>⚠ fishery_map.R is required and missing/invalid</strong><br/>",
+              "<strong>⚠ fishery_map.R / fishery_map.r is required and missing/invalid</strong><br/>",
               "Affected models: ", paste(missing_or_invalid_models, collapse = ", "), "<br/>",
-              "Models with valid fishery_map.R remain available in fishery-map dependent tabs."
+              "Models with valid fishery_map.R or fishery_map.r remain available in fishery-map dependent tabs."
             )),
             type = "warning",
             duration = 12

@@ -1,7 +1,7 @@
 mod_fishery_names_ui <- function() {
   tabItem(
     tabName = "fishery_names",
-    h2("Fishery Names (from fishery_map.R)", style = "color: #17a2b8;"),
+    h2("Fishery Names (from fishery_map.R/.r)", style = "color: #17a2b8;"),
 
     fluidRow(
       box(
@@ -14,7 +14,7 @@ mod_fishery_names_ui <- function() {
               <li>🎯 <strong>Select Model:</strong> Choose which model fishery map to edit</li>
               <li>📝 <strong>Edit names:</strong> Edit the <code>fishery_name</code> column directly</li>
               <li>💾 <strong>Apply changes:</strong> Save edits to the currently loaded model map in app memory</li>
-              <li>⚠ <strong>Required:</strong> <code>fishery_map.R</code> must exist in each model folder when loading models</li>
+              <li>⚠ <strong>Required:</strong> <code>fishery_map.R</code> or <code>fishery_map.r</code> must exist in each model folder when loading models</li>
             </ul>")
       )
     ),
@@ -74,9 +74,9 @@ mod_fishery_names_server <- function(input, output, session, rv) {
     if (!fishery_map_missing_for_selected()) return()
     showNotification(
       HTML(paste0(
-        "<strong>fishery_map.R not found</strong><br/>",
+        "<strong>fishery_map.R / fishery_map.r not found</strong><br/>",
         "Model: ", input$fishery_names_model, "<br/>",
-        "Please provide a valid fishery_map.R and reload model data."
+        "Please provide a valid fishery_map.R or fishery_map.r and reload model data."
       )),
       type = "warning",
       duration = 8
@@ -90,9 +90,9 @@ mod_fishery_names_server <- function(input, output, session, rv) {
       class = "alert alert-warning",
       style = "margin-bottom: 15px;",
       HTML(paste0(
-        "<strong>fishery_map.R is missing/invalid for selected model.</strong><br/>",
+        "<strong>fishery_map.R / fishery_map.r is missing/invalid for selected model.</strong><br/>",
         "Model: ", input$fishery_names_model, "<br/>",
-        "Provide a valid fishery_map.R in each model folder and click <strong>Load Data</strong> again."
+        "Provide a valid fishery_map.R or fishery_map.r in each model folder and click <strong>Load Data</strong> again."
       ))
     )
   })
@@ -152,7 +152,7 @@ mod_fishery_names_server <- function(input, output, session, rv) {
 
   output$fishery_count_text <- renderText({
     req(input$fishery_names_model, rv$fishery_names_dfs)
-    if (fishery_map_missing_for_selected()) return("⚠ fishery_map.R missing/invalid for selected model")
+    if (fishery_map_missing_for_selected()) return("⚠ fishery_map.R/.r missing/invalid for selected model")
     paste0("📊 Total fisheries in this model: ", nrow(rv$fishery_names_dfs[[input$fishery_names_model]]))
   })
 
@@ -161,7 +161,7 @@ mod_fishery_names_server <- function(input, output, session, rv) {
     if (fishery_map_missing_for_selected()) {
       return(
         datatable(
-          data.frame(Message = paste0("fishery_map.R missing/invalid for model: ", input$fishery_names_model, ". Provide it and reload data.")),
+          data.frame(Message = paste0("fishery_map.R/.r missing/invalid for model: ", input$fishery_names_model, ". Provide it and reload data.")),
           options = list(dom = "t", paging = FALSE),
           rownames = FALSE
         )
@@ -194,7 +194,7 @@ mod_fishery_names_server <- function(input, output, session, rv) {
 
   observeEvent(input$apply_fishery_names, {
     if (fishery_map_missing_for_selected()) {
-      showNotification("fishery_map.R is missing/invalid for selected model. Provide it and reload data first.", type = "warning", duration = 5)
+      showNotification("fishery_map.R/.r is missing/invalid for selected model. Provide it and reload data first.", type = "warning", duration = 5)
       return()
     }
     req(input$fishery_names_model, rv$fishery_names_dfs)

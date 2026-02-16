@@ -41,6 +41,18 @@ get_fishery_map_path <- function() {
   resolve_existing_path(candidates)
 }
 
+find_fishery_map_script <- function(model_path) {
+  if (is.null(model_path) || !dir.exists(model_path)) return(NULL)
+  cands <- list.files(
+    model_path,
+    pattern = "^fishery_map\\.[Rr]$",
+    full.names = TRUE,
+    ignore.case = TRUE
+  )
+  if (length(cands) == 0) return(NULL)
+  cands[1]
+}
+
 # Safely load fishery_map from an R script without executing unrelated side effects.
 # Supported patterns are assignments to `fishery_map` and updates via `$<-`.
 load_fishery_map_from_r <- function(map_r_path) {
