@@ -1809,7 +1809,19 @@ if (nrow(retro_df) > 0) {
   
   peel_levels <- sort(unique(retro_df$peel))
   peel_levels_chr <- as.character(peel_levels)
-  peel_labels <- setNames(peel_levels_chr, peel_levels_chr)
+  terminal_by_peel <- retro_df %>%
+    group_by(scenario, peel) %>%
+    summarise(terminal_year = max(year, na.rm = TRUE), .groups = "drop") %>%
+    group_by(peel) %>%
+    summarise(
+      terminal_year = ifelse(n_distinct(terminal_year) == 1,
+                             dplyr::first(terminal_year),
+                             max(terminal_year, na.rm = TRUE)),
+      .groups = "drop"
+    ) %>%
+    arrange(peel)
+  
+  peel_labels <- setNames(as.character(terminal_by_peel$terminal_year), as.character(terminal_by_peel$peel))
   
   peel_colors <- if (length(peel_levels) == 1) {
     c("0" = "black")
@@ -1925,22 +1937,6 @@ if (nrow(retro_df) > 0) {
   
   print(cowplot::plot_grid(dep_plot, sp_plot, ncol = 1, align = "v"))
   
-  mohn_summary <- mohn_summary_num %>%
-    mutate(
-      mohn_rho_depletion = sprintf("%.3f", mohn_rho_depletion),
-      mohn_rho_spawning_potential = sprintf("%.3f", mohn_rho_spawning_potential)
-    )
-  
-  cat("\\n\\n### Mohn's rho Summary\\n\\n")
-  print(
-    kable(
-      mohn_summary,
-      col.names = c("Scenario", "N peels (Dep)", "N peels (SP)", "Mohn's rho (Depletion)", "Mohn's rho (Spawning Potential)"),
-      align = c("l", "r", "r", "r", "r")
-    ) %>%
-      kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE) %>%
-      row_spec(0, bold = TRUE, background = "#1565C0", color = "white")
-  )
 } else {
   cat("*No retrospective outputs found (`retro/peel_*`) in model folders.*\\n\\n")
 }
