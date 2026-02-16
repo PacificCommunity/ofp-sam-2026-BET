@@ -1809,7 +1809,7 @@ if (nrow(retro_df) > 0) {
   
   peel_levels <- sort(unique(retro_df$peel))
   peel_levels_chr <- as.character(peel_levels)
-  peel_labels <- setNames(ifelse(peel_levels == 0, "0 (base)", peel_levels_chr), peel_levels_chr)
+  peel_labels <- setNames(peel_levels_chr, peel_levels_chr)
   
   peel_colors <- if (length(peel_levels) == 1) {
     c("0" = "black")
@@ -1822,51 +1822,6 @@ if (nrow(retro_df) > 0) {
       )
     )
   }
-  
-  dep_plot <- ggplot(
-    retro_df,
-    aes(
-      x = year,
-      y = depletion,
-      color = factor(peel, levels = peel_levels_chr),
-      group = interaction(scenario, peel)
-    )
-  ) +
-    geom_line(linewidth = 1.1, alpha = 0.9) +
-    facet_wrap(~scenario, scales = "free_x", ncol = 2) +
-    scale_color_manual(values = peel_colors, breaks = peel_levels_chr, labels = peel_labels) +
-    geom_hline(yintercept = 0.2, linetype = "dashed", color = "darkred") +
-    geom_hline(yintercept = 0.5, linetype = "dashed", color = "darkgreen") +
-    labs(
-      x = "Year",
-      y = bquote(SB/SB["F=0"]),
-      color = "Peel",
-      title = "Retrospective Depletion"
-    ) +
-    coord_cartesian(ylim = c(0, 1.1)) +
-    theme_bw()
-  
-  sp_plot <- ggplot(
-    retro_df,
-    aes(
-      x = year,
-      y = spawning_potential,
-      color = factor(peel, levels = peel_levels_chr),
-      group = interaction(scenario, peel)
-    )
-  ) +
-    geom_line(linewidth = 1.1, alpha = 0.9) +
-    facet_wrap(~scenario, scales = "free_x", ncol = 2) +
-    scale_color_manual(values = peel_colors, breaks = peel_levels_chr, labels = peel_labels) +
-    labs(
-      x = "Year",
-      y = bquote("Spawning Potential (" * 10^3 * " MT)"),
-      color = "Peel",
-      title = "Retrospective Spawning Potential"
-    ) +
-    theme_bw()
-  
-  print(cowplot::plot_grid(dep_plot, sp_plot, ncol = 1, align = "v"))
   
   # Mohn's rho (scenario-wise): mean relative deviation at each peel terminal year
   eps <- .Machine$double.eps
@@ -1896,7 +1851,7 @@ if (nrow(retro_df) > 0) {
       rho_sp_component = (spawning_potential_peel - spawning_potential_base) / pmax(abs(spawning_potential_base), eps)
     )
   
-  mohn_summary <- mohn_components %>%
+  mohn_summary_num <- mohn_components %>%
     group_by(scenario) %>%
     summarise(
       n_peels_dep = sum(!is.na(rho_dep_component)),
@@ -1905,11 +1860,76 @@ if (nrow(retro_df) > 0) {
       mohn_rho_spawning_potential = ifelse(n_peels_sp > 0, mean(rho_sp_component, na.rm = TRUE), NA_real_),
       .groups = "drop"
     ) %>%
+    arrange(scenario)
+  
+  dep_anno <- mohn_summary_num %>%
+    transmute(scenario, label = sprintf("Mohn's rho: %.3f", mohn_rho_depletion))
+  
+  sp_anno <- mohn_summary_num %>%
+    transmute(scenario, label = sprintf("Mohn's rho: %.3f", mohn_rho_spawning_potential))
+  
+  dep_plot <- ggplot(
+    retro_df,
+    aes(
+      x = year,
+      y = depletion,
+      color = factor(peel, levels = peel_levels_chr),
+      group = interaction(scenario, peel)
+    )
+  ) +
+    geom_line(linewidth = 1.1, alpha = 0.9) +
+    geom_text(
+      data = dep_anno,
+      aes(x = Inf, y = Inf, label = label),
+      inherit.aes = FALSE,
+      hjust = 1.05, vjust = 1.2, size = 3.4, fontface = "bold", color = "black"
+    ) +
+    facet_wrap(~scenario, scales = "free_x", ncol = 2) +
+    scale_color_manual(values = peel_colors, breaks = peel_levels_chr, labels = peel_labels) +
+    geom_hline(yintercept = 0.2, linetype = "dashed", color = "darkred") +
+    geom_hline(yintercept = 0.5, linetype = "dashed", color = "darkgreen") +
+    labs(
+      x = "Year",
+      y = bquote(SB/SB["F=0"]),
+      color = "Peel",
+      title = "Retrospective Depletion"
+    ) +
+    coord_cartesian(ylim = c(0, 1.1)) +
+    theme_bw()
+  
+  sp_plot <- ggplot(
+    retro_df,
+    aes(
+      x = year,
+      y = spawning_potential,
+      color = factor(peel, levels = peel_levels_chr),
+      group = interaction(scenario, peel)
+    )
+  ) +
+    geom_line(linewidth = 1.1, alpha = 0.9) +
+    geom_text(
+      data = sp_anno,
+      aes(x = Inf, y = Inf, label = label),
+      inherit.aes = FALSE,
+      hjust = 1.05, vjust = 1.2, size = 3.4, fontface = "bold", color = "black"
+    ) +
+    facet_wrap(~scenario, scales = "free_x", ncol = 2) +
+    scale_color_manual(values = peel_colors, breaks = peel_levels_chr, labels = peel_labels) +
+    labs(
+      x = "Year",
+      y = bquote("Spawning Potential (" * 10^3 * " MT)"),
+      color = "Peel",
+      title = "Retrospective Spawning Potential"
+    ) +
+    theme_bw()
+  
+  print(cowplot::plot_grid(dep_plot, sp_plot, ncol = 1, align = "v"))
+  
+  mohn_summary <- mohn_summary_num %>%
     mutate(
       mohn_rho_depletion = sprintf("%.3f", mohn_rho_depletion),
       mohn_rho_spawning_potential = sprintf("%.3f", mohn_rho_spawning_potential)
-    ) %>%
-    arrange(scenario)
+    )
   
   cat("\\n\\n### Mohn's rho Summary\\n\\n")
   print(
