@@ -94,6 +94,41 @@ mod_likelihood_ui <- function() {
 }
 
 mod_likelihood_server <- function(input, output, session, rv) {
+  heavy_cache <- reactiveValues(
+    retro = list(),
+    hessian = list()
+  )
+
+  scenario_cache_key <- function(model_dir, scenario) {
+    paste(
+      normalizePath(model_dir, winslash = "/", mustWork = FALSE),
+      as.character(scenario),
+      sep = "::"
+    )
+  }
+
+  get_cached_heavy <- function(bucket, key, builder) {
+    store <- heavy_cache[[bucket]]
+    if (!is.null(store[[key]])) return(store[[key]])
+    value <- builder()
+    store[[key]] <- value
+    heavy_cache[[bucket]] <- store
+    value
+  }
+
+  clear_heavy_cache <- function() {
+    heavy_cache$retro <- list()
+    heavy_cache$hessian <- list()
+  }
+
+  observeEvent(input$model_dir, {
+    clear_heavy_cache()
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$load_data, {
+    clear_heavy_cache()
+  }, ignoreInit = TRUE)
+
   # Update scenario choices when data is loaded
   observeEvent(rv$data_loaded, {
     req(rv$ParOut_list)
@@ -482,7 +517,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     bind_rows(rows)
   }
   
-  build_retro_data <- function(scenarios, model_dir, rep_out_list) {
+  build_retro_data_for_scenario <- function(scenario, model_dir, rep_obj) {
     extract_retro_metrics <- function(rep_obj, scenario, peel) {
       bio_fish <- safe_array_to_df(rep_obj@adultBiomass) %>%
         mutate(year = suppressWarnings(as.numeric(year)), season = suppressWarnings(as.numeric(season)), data = suppressWarnings(as.numeric(data))) %>%
@@ -521,39 +556,36 @@ mod_likelihood_server <- function(input, output, session, rv) {
         ) %>%
         filter(is.finite(year), is.finite(depletion), is.finite(spawning_potential))
     }
-    
+
     retro_rows <- list()
-    for (sc in scenarios) {
-      if (!is.null(rep_out_list[[sc]])) {
-        retro_rows[[paste0(sc, "_peel_0")]] <- extract_retro_metrics(rep_out_list[[sc]], sc, 0)
-      }
-      
-      retro_dir <- file.path(model_dir, sc, "retro")
-      peel_dirs <- list.dirs(retro_dir, recursive = FALSE, full.names = TRUE)
-      peel_dirs <- peel_dirs[grepl("peel_\\d+$", peel_dirs)]
-      
-      for (pd in peel_dirs) {
-        peel_num <- suppressWarnings(as.integer(stringr::str_extract(basename(pd), "\\d+$")))
-        if (!is.finite(peel_num)) next
-        
-        rep_path <- tryCatch(finalRep(pd), error = function(e) NULL)
-        if (is.null(rep_path) || !file.exists(rep_path)) next
-        
-        rep_obj <- tryCatch(read.MFCLRep(rep_path), error = function(e) NULL)
-        if (is.null(rep_obj)) next
-        
-        retro_rows[[paste0(sc, "_peel_", peel_num)]] <- extract_retro_metrics(rep_obj, sc, peel_num)
-      }
+    if (!is.null(rep_obj)) {
+      retro_rows[[paste0(scenario, "_peel_0")]] <- extract_retro_metrics(rep_obj, scenario, 0)
     }
-    
+
+    retro_dir <- file.path(model_dir, scenario, "retro")
+    peel_dirs <- list.dirs(retro_dir, recursive = FALSE, full.names = TRUE)
+    peel_dirs <- peel_dirs[grepl("peel_\\d+$", peel_dirs)]
+
+    for (pd in peel_dirs) {
+      peel_num <- suppressWarnings(as.integer(stringr::str_extract(basename(pd), "\\d+$")))
+      if (!is.finite(peel_num)) next
+
+      rep_path <- tryCatch(finalRep(pd), error = function(e) NULL)
+      if (is.null(rep_path) || !file.exists(rep_path)) next
+
+      peel_rep_obj <- tryCatch(read.MFCLRep(rep_path), error = function(e) NULL)
+      if (is.null(peel_rep_obj)) next
+
+      retro_rows[[paste0(scenario, "_peel_", peel_num)]] <- extract_retro_metrics(peel_rep_obj, scenario, peel_num)
+    }
+
     bind_rows(retro_rows)
   }
-  
-  build_hessian_data <- function(scenarios, model_dir) {
-    rows <- lapply(scenarios, function(sc) {
-      hfile <- file.path(model_dir, sc, "hessian", "hessian_info.rds")
+
+  build_hessian_data_for_scenario <- function(scenario, model_dir) {
+      hfile <- file.path(model_dir, scenario, "hessian", "hessian_info.rds")
       part_files <- list.files(
-        file.path(model_dir, sc, "hessian"),
+        file.path(model_dir, scenario, "hessian"),
         pattern = "^part_\\d+/hessian_info\\.rds$",
         full.names = TRUE,
         recursive = TRUE
@@ -561,7 +593,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       
       if (!file.exists(hfile)) {
         return(data.frame(
-          Scenario = sc,
+          Scenario = scenario,
           Hessian_File = "Missing",
           PDH = NA_character_,
           `SPD (positivised cov)` = NA_character_,
@@ -577,7 +609,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       info <- tryCatch(readRDS(hfile), error = function(e) NULL)
       if (is.null(info)) {
         return(data.frame(
-          Scenario = sc,
+          Scenario = scenario,
           Hessian_File = "Read error",
           PDH = NA_character_,
           `SPD (positivised cov)` = NA_character_,
@@ -600,7 +632,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       n_parts_expected <- tryCatch(info$stitch$n_parts, error = function(e) NA)
       
       data.frame(
-        Scenario = sc,
+        Scenario = scenario,
         Hessian_File = "OK",
         PDH = dplyr::case_when(
           isTRUE(is_pdh) ~ "PDH",
@@ -631,9 +663,6 @@ mod_likelihood_server <- function(input, output, session, rv) {
         ),
         stringsAsFactors = FALSE
       )
-    })
-    
-    bind_rows(rows)
   }
 
   profile_data_reactive <- reactive({
@@ -656,7 +685,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
     
     if (type == "retro") {
       req(input$model_dir)
-      data <- build_retro_data(selected, input$model_dir, rv$RepOut_list)
+      data <- bind_rows(lapply(selected, function(sc) {
+        k <- scenario_cache_key(input$model_dir, sc)
+        get_cached_heavy(
+          "retro",
+          k,
+          function() build_retro_data_for_scenario(sc, input$model_dir, rv$RepOut_list[[sc]])
+        )
+      }))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No retrospective outputs found", plot_kind = "retro"))
       }
@@ -713,7 +749,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
     
     if (type == "hessian") {
       req(input$model_dir)
-      data <- build_hessian_data(selected, input$model_dir)
+      data <- bind_rows(lapply(selected, function(sc) {
+        k <- scenario_cache_key(input$model_dir, sc)
+        get_cached_heavy(
+          "hessian",
+          k,
+          function() build_hessian_data_for_scenario(sc, input$model_dir)
+        )
+      }))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No Hessian diagnostics found", plot_kind = "hessian"))
       }
