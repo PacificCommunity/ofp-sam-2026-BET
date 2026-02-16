@@ -32,7 +32,9 @@ server <- function(input, output, session) {
     FISHERY_MAPS = NULL,              # Fishery name mappings
     INDEX_FISHERIES_MAPS = NULL,      # Index fishery identifiers
     YearRanges = NULL,                # Year ranges for each scenario
-    fishery_names_dfs = NULL          # List of fishery names dataframes (one per model)
+    fishery_names_dfs = NULL,         # List of fishery names dataframes (one per model)
+    fishery_map_required = TRUE,      # Require fishery_map.R to enable map-dependent tabs
+    fishery_map_missing_models = NULL # Models missing fishery_map.R
   )
 
   server_dir_detection(input, output, session, rv)

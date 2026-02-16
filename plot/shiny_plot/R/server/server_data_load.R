@@ -14,6 +14,7 @@ server_data_load <- function(input, output, session, rv) {
       }
     
       MODEL_DIR <- input$model_dir
+      rv$fishery_map_missing_models <- NULL
     
       # Validate directory exists
       if (!dir.exists(MODEL_DIR)) {
@@ -248,40 +249,26 @@ server_data_load <- function(input, output, session, rv) {
         rv$JitterPars_list <- map(results_named, "JitterPars")
         rv$JitterInfos_list <- map(results_named, "JitterInfos")
       
-        # Build fishery map (plots_refactored style: fishery, fishery_name, group, ...)
-        default_map <- if (exists("pm_default_fishery_map", mode = "function")) {
-          pm_default_fishery_map()
-        } else {
-          data.frame(
-            fishery = seq_len(max(1, max(sapply(rv$ParOut_list, function(p) as.numeric(p@dimensions["fisheries"])), na.rm = TRUE))),
-            fishery_name = paste("Fishery", seq_len(max(1, max(sapply(rv$ParOut_list, function(p) as.numeric(p@dimensions["fisheries"])), na.rm = TRUE)))),
-            region = NA_real_,
-            group = "Unknown",
-            tag_recapture_group = seq_len(max(1, max(sapply(rv$ParOut_list, function(p) as.numeric(p@dimensions["fisheries"])), na.rm = TRUE))),
-            tag_recapture_name = paste("Fishery", seq_len(max(1, max(sapply(rv$ParOut_list, function(p) as.numeric(p@dimensions["fisheries"])), na.rm = TRUE)))),
-            stringsAsFactors = FALSE
-          )
-        }
+        # Create model-specific fishery maps from fishery_map.R only.
+        # Required: scenario_dir/fishery_map.R only (no root fallback).
+        map_status <- setNames(rep("ok", length(names(results_named))), names(results_named))
 
-        base_map <- if (exists("pm_load_or_build_fishery_map", mode = "function")) {
-          fishery_map_path <- if (exists("get_fishery_map_path", mode = "function")) get_fishery_map_path() else "config/fishery_map.csv"
-          pm_load_or_build_fishery_map(
-            default_map = default_map,
-            map_path = fishery_map_path,
-            rep_list = rv$RepOut_list,
-            len_list = rv$LengOut_list,
-            wgt_list = rv$WeightOut_list,
-            tagtemp_list = rv$TagTempOut_list
-          )
-        } else {
-          default_map
-        }
-
-        # Create model-specific fishery maps with same schema as plots_refactored.rmd
         rv$FISHERY_MAPS <- lapply(names(results_named), function(sc) {
+          scenario_map_r <- file.path(MODEL_DIR, sc, "fishery_map.R")
+          if (!file.exists(scenario_map_r)) {
+            map_status[[sc]] <<- "missing"
+            return(NULL)
+          }
+
+          map_from_r <- load_fishery_map_from_r(scenario_map_r)
+          if (is.null(map_from_r)) {
+            map_status[[sc]] <<- "invalid"
+            return(NULL)
+          }
+
           build_model_fishery_map(
             par_obj = rv$ParOut_list[[sc]],
-            base_map = base_map,
+            base_map = map_from_r,
             rep_obj = rv$RepOut_list[[sc]],
             len_obj = rv$LengOut_list[[sc]],
             wgt_obj = rv$WeightOut_list[[sc]],
@@ -289,6 +276,21 @@ server_data_load <- function(input, output, session, rv) {
           )
         })
         names(rv$FISHERY_MAPS) <- names(results_named)
+
+        missing_or_invalid_models <- names(map_status)[map_status != "ok"]
+        rv$fishery_map_missing_models <- missing_or_invalid_models
+
+        if (isTRUE(rv$fishery_map_required) && length(missing_or_invalid_models) > 0) {
+          showNotification(
+            HTML(paste0(
+              "<strong>⚠ fishery_map.R is required and missing/invalid</strong><br/>",
+              "Affected models: ", paste(missing_or_invalid_models, collapse = ", "), "<br/>",
+              "Only non-fishery-map plots are available (Summary, Bound Hits, Key Quantities, Population Biology)."
+            )),
+            type = "warning",
+            duration = 12
+          )
+        }
       
         # Detect index fisheries
         rv$INDEX_FISHERIES_MAPS <- lapply(rv$FISHERY_MAPS, detect_index_fisheries)
@@ -301,8 +303,20 @@ server_data_load <- function(input, output, session, rv) {
         # Initialize fishery names dataframes (one per model)
         rv$fishery_names_dfs <- lapply(names(rv$FISHERY_MAPS), function(model_name) {
           fishery_map <- rv$FISHERY_MAPS[[model_name]]
-          fishery_map[, c("fishery", "fishery_name", "group", "region",
-                          "tag_recapture_group", "tag_recapture_name")]
+          if (is.null(fishery_map)) {
+            data.frame(
+              fishery = numeric(0),
+              fishery_name = character(0),
+              group = character(0),
+              region = numeric(0),
+              tag_recapture_group = numeric(0),
+              tag_recapture_name = character(0),
+              stringsAsFactors = FALSE
+            )
+          } else {
+            fishery_map[, c("fishery", "fishery_name", "group", "region",
+                            "tag_recapture_group", "tag_recapture_name")]
+          }
         })
         names(rv$fishery_names_dfs) <- names(rv$FISHERY_MAPS)
       

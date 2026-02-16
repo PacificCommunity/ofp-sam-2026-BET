@@ -1,7 +1,7 @@
 mod_fishery_names_ui <- function() {
   tabItem(
     tabName = "fishery_names",
-    h2("Fishery Names Manager", style = "color: #17a2b8;"),
+    h2("Fishery Names (from fishery_map.R)", style = "color: #17a2b8;"),
 
     fluidRow(
       box(
@@ -13,10 +13,8 @@ mod_fishery_names_ui <- function() {
         HTML("<ul>
               <li>🎯 <strong>Select Model:</strong> Choose which model fishery map to edit</li>
               <li>📝 <strong>Edit names:</strong> Edit the <code>fishery_name</code> column directly</li>
-              <li>💾 <strong>Apply changes:</strong> Update selected model mapping</li>
-              <li>🔄 <strong>Apply to all:</strong> Copy <code>fishery_name</code> by fishery id to all models</li>
-              <li>📥 <strong>CSV:</strong> Download / upload fishery map table</li>
-              <li>↩️ <strong>Reset:</strong> Reset to default fishery map logic from plots_refactored modules</li>
+              <li>💾 <strong>Apply changes:</strong> Save edits to the currently loaded model map in app memory</li>
+              <li>⚠ <strong>Required:</strong> <code>fishery_map.R</code> must exist in each model folder (or model root) when loading models</li>
             </ul>")
       )
     ),
@@ -49,16 +47,11 @@ mod_fishery_names_ui <- function() {
 
         shiny::hr(),
 
+        uiOutput("fishery_map_warning"),
+
         div(
           style = "margin-bottom: 15px;",
-          actionButton("apply_fishery_names", "💾 Apply Changes to This Model", class = "btn-success", icon = icon("check")),
-          actionButton("apply_to_all_models", "🔄 Apply to All Models", class = "btn-warning", icon = icon("copy")),
-          actionButton("reset_fishery_names", "↩️ Reset to Default", class = "btn-danger", icon = icon("undo")),
-          downloadButton("download_fishery_names", "📥 Download CSV", class = "btn-info"),
-          tags$div(
-            style = "display: inline-block; margin-left: 10px;",
-            fileInput("upload_fishery_names", "📤 Upload CSV", accept = ".csv", buttonLabel = "Browse...", width = "280px")
-          )
+          actionButton("apply_fishery_names", "💾 Apply Changes", class = "btn-success", icon = icon("check"))
         ),
 
         DTOutput("fishery_names_table")
@@ -68,6 +61,41 @@ mod_fishery_names_ui <- function() {
 }
 
 mod_fishery_names_server <- function(input, output, session, rv) {
+  fishery_map_missing <- reactive({
+    isTRUE(rv$fishery_map_required) &&
+      !is.null(rv$fishery_map_missing_models) &&
+      length(rv$fishery_map_missing_models) > 0
+  })
+
+  observeEvent(list(input$tabs, rv$fishery_map_missing_models, rv$data_loaded), {
+    req(rv$data_loaded)
+    if (!identical(input$tabs, "fishery_names")) return()
+    if (!fishery_map_missing()) return()
+    showNotification(
+      HTML(paste0(
+        "<strong>fishery_map.R not found</strong><br/>",
+        "Missing models: ", paste(rv$fishery_map_missing_models, collapse = ", "), "<br/>",
+        "Please provide a valid fishery_map.R and reload model data."
+      )),
+      type = "warning",
+      duration = 8
+    )
+  }, ignoreInit = TRUE)
+
+  output$fishery_map_warning <- renderUI({
+    req(rv$data_loaded)
+    if (!fishery_map_missing()) return(NULL)
+    tags$div(
+      class = "alert alert-warning",
+      style = "margin-bottom: 15px;",
+      HTML(paste0(
+        "<strong>fishery_map.R is missing.</strong><br/>",
+        "Missing models: ", paste(rv$fishery_map_missing_models, collapse = ", "), "<br/>",
+        "Provide a valid fishery_map.R in each model folder and click <strong>Load Data</strong> again."
+      ))
+    )
+  })
+
   refresh_cpue_choices <- function() {
     if (is.null(input$cpue_scenarios) || length(input$cpue_scenarios) == 0) return()
     all_index_fish <- unique(unlist(rv$INDEX_FISHERIES_MAPS[input$cpue_scenarios]))
@@ -123,11 +151,21 @@ mod_fishery_names_server <- function(input, output, session, rv) {
 
   output$fishery_count_text <- renderText({
     req(input$fishery_names_model, rv$fishery_names_dfs)
+    if (fishery_map_missing()) return("⚠ fishery_map.R missing")
     paste0("📊 Total fisheries in this model: ", nrow(rv$fishery_names_dfs[[input$fishery_names_model]]))
   })
 
   output$fishery_names_table <- renderDT({
     req(rv$data_loaded, input$fishery_names_model, rv$fishery_names_dfs)
+    if (fishery_map_missing()) {
+      return(
+        datatable(
+          data.frame(Message = "fishery_map.R is missing. Provide it and reload data."),
+          options = list(dom = "t", paging = FALSE),
+          rownames = FALSE
+        )
+      )
+    }
     df <- rv$fishery_names_dfs[[input$fishery_names_model]]
 
     datatable(
@@ -147,12 +185,17 @@ mod_fishery_names_server <- function(input, output, session, rv) {
   })
 
   observeEvent(input$fishery_names_table_cell_edit, {
+    if (fishery_map_missing()) return()
     req(input$fishery_names_model)
     info <- input$fishery_names_table_cell_edit
     rv$fishery_names_dfs[[input$fishery_names_model]][info$row, info$col + 1] <- info$value
   })
 
   observeEvent(input$apply_fishery_names, {
+    if (fishery_map_missing()) {
+      showNotification("fishery_map.R is missing. Provide it and reload data first.", type = "warning", duration = 5)
+      return()
+    }
     req(input$fishery_names_model, rv$fishery_names_dfs)
     model_name <- input$fishery_names_model
 
@@ -165,114 +208,5 @@ mod_fishery_names_server <- function(input, output, session, rv) {
     refresh_dependents()
 
     showNotification(HTML(paste0("✓ Fishery names updated for model: <strong>", model_name, "</strong>")), type = "message", duration = 3)
-  })
-
-  observeEvent(input$apply_to_all_models, {
-    req(input$fishery_names_model, rv$fishery_names_dfs)
-    source_model <- input$fishery_names_model
-    source_df <- rv$fishery_names_dfs[[source_model]][, c("fishery", "fishery_name")]
-
-    n_updated <- 0
-    for (model_name in names(rv$FISHERY_MAPS)) {
-      model_df <- rv$FISHERY_MAPS[[model_name]]
-      m <- match(source_df$fishery, model_df$fishery)
-      hit <- which(!is.na(m))
-      if (length(hit) > 0) {
-        model_df$fishery_name[m[hit]] <- as.character(source_df$fishery_name[hit])
-        apply_map_df_to_model(model_name, model_df)
-        n_updated <- n_updated + 1
-      }
-    }
-
-    refresh_dependents()
-    showNotification(HTML(paste0("✓ Applied fishery_name updates to <strong>", n_updated, " model(s)</strong>.")), type = "message", duration = 4)
-  })
-
-  observeEvent(input$reset_fishery_names, {
-    req(rv$ParOut_list)
-
-    default_map <- if (exists("pm_default_fishery_map", mode = "function")) {
-      pm_default_fishery_map()
-    } else {
-      data.frame(
-        fishery = 1:50,
-        fishery_name = paste("Fishery", 1:50),
-        region = NA_real_,
-        group = "Unknown",
-        tag_recapture_group = 1:50,
-        tag_recapture_name = paste("Fishery", 1:50),
-        stringsAsFactors = FALSE
-      )
-    }
-
-    base_map <- if (exists("pm_load_or_build_fishery_map", mode = "function")) {
-      fishery_map_path <- if (exists("get_fishery_map_path", mode = "function")) get_fishery_map_path() else "config/fishery_map.csv"
-      pm_load_or_build_fishery_map(
-        default_map = default_map,
-        map_path = fishery_map_path,
-        rep_list = rv$RepOut_list,
-        len_list = rv$LengOut_list,
-        wgt_list = rv$WeightOut_list,
-        tagtemp_list = rv$TagTempOut_list
-      )
-    } else {
-      default_map
-    }
-
-    for (model_name in names(rv$ParOut_list)) {
-      map_df <- build_model_fishery_map(
-        par_obj = rv$ParOut_list[[model_name]],
-        base_map = base_map,
-        rep_obj = rv$RepOut_list[[model_name]],
-        len_obj = rv$LengOut_list[[model_name]],
-        wgt_obj = rv$WeightOut_list[[model_name]],
-        tagtemp_obj = rv$TagTempOut_list[[model_name]]
-      )
-      apply_map_df_to_model(model_name, map_df)
-    }
-
-    refresh_dependents()
-    showNotification("✓ Fishery maps reset to default fishery_name mapping.", type = "message", duration = 4)
-  })
-
-  output$download_fishery_names <- downloadHandler(
-    filename = function() {
-      model_name <- input$fishery_names_model
-      paste0("fishery_map_", model_name, "_", Sys.Date(), ".csv")
-    },
-    content = function(file) {
-      req(input$fishery_names_model, rv$fishery_names_dfs)
-      write.csv(rv$fishery_names_dfs[[input$fishery_names_model]], file, row.names = FALSE)
-    }
-  )
-
-  observeEvent(input$upload_fishery_names, {
-    req(input$fishery_names_model, input$upload_fishery_names)
-    model_name <- input$fishery_names_model
-
-    uploaded <- tryCatch(read.csv(input$upload_fishery_names$datapath, stringsAsFactors = FALSE), error = function(e) NULL)
-    if (is.null(uploaded)) {
-      showNotification("❌ Failed to read CSV file", type = "error", duration = 4)
-      return()
-    }
-
-    if (!all(c("fishery", "fishery_name") %in% names(uploaded))) {
-      showNotification("❌ CSV must have columns: fishery, fishery_name", type = "error", duration = 5)
-      return()
-    }
-
-    current <- rv$fishery_names_dfs[[model_name]]
-    m <- match(uploaded$fishery, current$fishery)
-    hit <- which(!is.na(m))
-
-    if (length(hit) == 0) {
-      showNotification("⚠️ No matching fishery IDs found in uploaded CSV", type = "warning", duration = 4)
-      return()
-    }
-
-    current$fishery_name[m[hit]] <- as.character(uploaded$fishery_name[hit])
-    rv$fishery_names_dfs[[model_name]] <- current
-
-    showNotification(HTML(paste0("✓ Uploaded fishery_name updates: <strong>", length(hit), " rows</strong>. Click 'Apply Changes'.")), type = "message", duration = 5)
   })
 }

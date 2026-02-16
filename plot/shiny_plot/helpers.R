@@ -41,6 +41,56 @@ get_fishery_map_path <- function() {
   resolve_existing_path(candidates)
 }
 
+# Safely load fishery_map from an R script without executing unrelated side effects.
+# Supported patterns are assignments to `fishery_map` and updates via `$<-`.
+load_fishery_map_from_r <- function(map_r_path) {
+  if (is.null(map_r_path) || !file.exists(map_r_path)) return(NULL)
+
+  exprs <- tryCatch(parse(file = map_r_path), error = function(e) NULL)
+  if (is.null(exprs) || length(exprs) == 0) return(NULL)
+
+  env <- new.env(parent = baseenv())
+  for (expr in exprs) {
+    if (!is.call(expr) || length(expr) < 2) next
+    fun <- as.character(expr[[1]])
+
+    if (fun %in% c("<-", "=") && length(expr) >= 3) {
+      lhs <- expr[[2]]
+      if (is.symbol(lhs) && identical(as.character(lhs), "fishery_map")) {
+        try(eval(expr, envir = env), silent = TRUE)
+      }
+      next
+    }
+
+    if (fun == "$<-" && length(expr) >= 4) {
+      obj <- expr[[2]]
+      if (is.symbol(obj) && identical(as.character(obj), "fishery_map")) {
+        try(eval(expr, envir = env), silent = TRUE)
+      }
+      next
+    }
+  }
+
+  if (!exists("fishery_map", envir = env, inherits = FALSE)) return(NULL)
+  map_df <- get("fishery_map", envir = env, inherits = FALSE)
+  if (!is.data.frame(map_df)) return(NULL)
+
+  required_cols <- c("fishery", "fishery_name", "region", "group", "tag_recapture_group", "tag_recapture_name")
+  if (!all(required_cols %in% names(map_df))) return(NULL)
+
+  out <- map_df[, required_cols, drop = FALSE]
+  out$fishery <- suppressWarnings(as.numeric(out$fishery))
+  out$fishery_name <- as.character(out$fishery_name)
+  out$region <- suppressWarnings(as.numeric(out$region))
+  out$group <- as.character(out$group)
+  out$tag_recapture_group <- suppressWarnings(as.numeric(out$tag_recapture_group))
+  out$tag_recapture_name <- as.character(out$tag_recapture_name)
+  out <- out[is.finite(out$fishery), , drop = FALSE]
+  out <- out[order(out$fishery), , drop = FALSE]
+  rownames(out) <- NULL
+  out
+}
+
 as_named_fishery_lookup <- function(mapping) {
   if (is.data.frame(mapping) && all(c("fishery", "fishery_name") %in% names(mapping))) {
     return(with(mapping, setNames(as.character(fishery_name), as.character(fishery))))
@@ -51,43 +101,8 @@ as_named_fishery_lookup <- function(mapping) {
 }
 
 build_model_fishery_map <- function(par_obj, base_map, rep_obj = NULL, len_obj = NULL, wgt_obj = NULL, tagtemp_obj = NULL) {
-  n_fisheries <- suppressWarnings(as.integer(par_obj@dimensions["fisheries"]))
-  if (!is.finite(n_fisheries) || n_fisheries <= 0) n_fisheries <- 1
-
-  present_ids <- seq_len(n_fisheries)
-
-  add_from <- function(x) {
-    if (is.null(x)) return(numeric(0))
-    unique(suppressWarnings(as.numeric(x)))
-  }
-
-  present_ids <- unique(c(
-    present_ids,
-    add_from(tryCatch(cpue_obs(rep_obj)$unit, error = function(e) NULL)),
-    add_from(tryCatch(len_obj@lenfits$fishery, error = function(e) NULL)),
-    add_from(tryCatch(wgt_obj@wgtfits$fishery, error = function(e) NULL)),
-    add_from(tryCatch(tagtemp_obj$recap.fishery, error = function(e) NULL))
-  ))
-  present_ids <- sort(present_ids[is.finite(present_ids) & present_ids > 0])
-
-  # Keep full base mapping (plots_refactored behavior), then append unseen IDs.
-  map <- base_map
-
-  missing_ids <- setdiff(present_ids, map$fishery)
-  if (length(missing_ids) > 0) {
-    add_df <- data.frame(
-      fishery = missing_ids,
-      fishery_name = paste("Fishery", missing_ids),
-      region = NA_real_,
-      group = "Unknown",
-      tag_recapture_group = missing_ids,
-      tag_recapture_name = paste("Fishery", missing_ids),
-      stringsAsFactors = FALSE
-    )
-    map <- rbind(map, add_df)
-  }
-
-  map <- map[order(map$fishery), , drop = FALSE]
+  if (is.null(base_map) || !is.data.frame(base_map)) return(NULL)
+  map <- base_map[order(base_map$fishery), , drop = FALSE]
   rownames(map) <- NULL
   map
 }
@@ -98,12 +113,12 @@ get_fishery_name <- function(fishery_num, mapping = NULL) {
   if (is.data.frame(mapping) && all(c("fishery", "fishery_name") %in% names(mapping))) {
     idx <- which(as.character(mapping$fishery) == key)
     if (length(idx) > 0) return(as.character(mapping$fishery_name[idx[1]]))
-    return(paste0("Fishery-", fishery_num))
+    return(as.character(fishery_num))
   }
 
-  if (is.null(mapping)) return(paste0("Fishery-", fishery_num))
+  if (is.null(mapping)) return(as.character(fishery_num))
   name <- mapping[key]
-  if (is.na(name) || is.null(name)) paste0("Fishery-", fishery_num) else unname(name)
+  if (is.na(name) || is.null(name)) as.character(fishery_num) else unname(name)
 }
 
 detect_index_fisheries <- function(fishery_map) {
