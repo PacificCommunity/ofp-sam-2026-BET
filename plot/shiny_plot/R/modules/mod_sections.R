@@ -654,8 +654,24 @@ mod_tagging_server <- function(input, output, session, rv) {
     }
 
     if (mode == "report") {
+      get_reporting_group_labels <- function(model_name) {
+        fmap <- rv$FISHERY_MAPS[[model_name]]
+        if (is.null(fmap) || !is.data.frame(fmap)) {
+          return(data.frame(group = numeric(0), group_name = character(0), stringsAsFactors = FALSE))
+        }
+
+        fmap %>%
+          filter(!is.na(tag_recapture_group), !is.na(tag_recapture_name), nzchar(tag_recapture_name)) %>%
+          mutate(group = as.numeric(tag_recapture_group), group_name = as.character(tag_recapture_name)) %>%
+          filter(is.finite(group)) %>%
+          group_by(group) %>%
+          summarise(group_name = first(group_name), .groups = "drop")
+      }
+
       tag_rr_list <- list()
       for (i in seq_along(ParOut_list)) {
+        model_name <- selected_models[i]
+        group_labels <- get_reporting_group_labels(model_name)
         upper.bound <- tryCatch(subset(flags(ParOut_list[[i]]), flagtype == 1 & flag == 33)$value[1] / 100, error = function(e) 1)
         tag_dt <- data.frame(
           group = c(tag_fish_rep_grp(ParOut_list[[i]])),
@@ -663,8 +679,14 @@ mod_tagging_server <- function(input, output, session, rv) {
           prior_mean = c(tag_fish_rep_target(ParOut_list[[i]]) / 100),
           prior_sd = c(sqrt(1 / (2 * tag_fish_rep_pen(ParOut_list[[i]]))))
         ) %>% unique() %>% arrange(group) %>% filter(rr > 0) %>%
-          mutate(scenario = selected_models[i], upper_bound = upper.bound, names = paste0("G", group))
-        tag_rr_list[[selected_models[i]]] <- tag_dt
+          left_join(group_labels, by = "group") %>%
+          mutate(
+            scenario = model_name,
+            upper_bound = upper.bound,
+            names = if_else(!is.na(group_name) & nzchar(group_name), group_name, paste0("G", group))
+          ) %>%
+          select(-group_name)
+        tag_rr_list[[model_name]] <- tag_dt
       }
 
       tag_rr_all <- bind_rows(tag_rr_list, .id = "Model")
