@@ -1,6 +1,7 @@
 ## load libraries
 library(FLR4MFCL)
 library(CondorBox)
+source("tools/model_payload.R")
 
 ## environment variables
 program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_02_04_vsn2278")
@@ -74,5 +75,27 @@ saveRDS(
   file = file.path(model_dir, "model_info.rds"),
   compress = "xz"
 )
+
+payload <- mp_build_model_payload(model_dir, tag_report_year1 = 1952)
+saveRDS(
+  payload,
+  file = file.path(model_dir, "model_payload.rds"),
+  compress = "xz"
+)
+
+# Keep only core artifacts at top level; downstream folders (jitter/prof/retro/hessian) are untouched.
+keep_top <- c(
+  "model_payload.rds",
+  "model_info.rds",
+  "fishery_map.R",
+  "fishery_map.r"
+)
+
+if (!is.null(payload$files$par) && file.exists(payload$files$par)) {
+  keep_top <- c(keep_top, basename(payload$files$par))
+}
+
+deleted_n <- mp_cleanup_files(model_dir, keep = keep_top, recursive = FALSE)
+cat("Cleanup removed", deleted_n, "non-core top-level files in", model_dir, "\n")
 
 cat("✅ Model run completed for", basename(model_dir), "\n")

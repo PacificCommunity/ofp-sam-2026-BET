@@ -3,13 +3,14 @@ library(FLR4MFCL)
 library(CondorBox)
 
 source("tools/jitter.R")
+source("tools/model_payload.R")
 
 
 ## environment variables
 program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_02_04_vsn2278")
 Sys.setenv("PROGRAM_PATH" = paste0("../../", program_path))
 base_dir <- Sys.getenv("base_dir", "mfcl/inputs/2023_rep")
-model_dir <- Sys.getenv("model_dir", "model/base")
+model_dir <- Sys.getenv("model_dir", "model/base2")
 
 ## Convert to absolute paths using getwd() (assumes script runs from project root)
 project_root <- getwd()
@@ -82,7 +83,7 @@ cat("Jittered par file written:", jittered_par_name, "\n")
 ##############
 
 defaultswitch <- paste("-switch 1",
-                       "1 1 5000",
+                       "1 1 2",
                        sep=" ")
 
 output_par_name <- paste0("jittered_out_", jitter_seed, ".par")
@@ -114,5 +115,19 @@ saveRDS(
   file = file.path(seed_dir, "jitter_info.rds"),
   compress = "xz"
 )
+
+jitter_payload <- mp_build_jitter_payload(seed_dir, jitter_seed)
+saveRDS(
+  jitter_payload,
+  file = file.path(seed_dir, "jitter_result.rds"),
+  compress = "xz"
+)
+
+deleted_n <- mp_cleanup_files(
+  seed_dir,
+  keep = c("jitter_result.rds", "jitter_info.rds"),
+  recursive = TRUE
+)
+cat("Cleanup removed", deleted_n, "non-core files in", seed_dir, "\n")
 
 cat("✅ Jitter run completed for seed", jitter_seed, "\n")

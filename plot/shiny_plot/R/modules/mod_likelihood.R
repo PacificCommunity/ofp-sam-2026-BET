@@ -180,18 +180,39 @@ mod_likelihood_server <- function(input, output, session, rv) {
     scaler_dirs <- grep("scaler_\\d+$", scaler_dirs, value = TRUE)
 
     if (length(scaler_dirs) > 0) {
-      scales <- basename(scaler_dirs) %>% str_extract("\\d+$")
-      output_files <- file.path(scaler_dirs, "test_plot_output")
-      existing_files <- output_files[file.exists(output_files)]
-      existing_scales <- scales[file.exists(output_files)]
+      payload_files <- file.path(scaler_dirs, "profile_payload.rds")
+      has_payload <- file.exists(payload_files)
 
-      if (length(existing_files) > 0) {
-        lik_out <- setNames(map(existing_files, read.MFCLLikelihood), existing_scales)
-        lik_raw <- setNames(map(existing_files, readLines), existing_scales)
+      if (any(has_payload)) {
+        payloads <- map(payload_files[has_payload], ~ tryCatch(readRDS(.x), error = function(e) NULL))
+        payloads <- payloads[!vapply(payloads, is.null, logical(1))]
+
+        if (length(payloads) > 0) {
+          existing_scales <- as.character(vapply(payloads, function(x) as.numeric(x$scaler), numeric(1)))
+          lik_out <- setNames(map(payloads, "lik_out"), existing_scales)
+          lik_raw <- setNames(map(payloads, "lik_raw"), existing_scales)
+          avg_bio_payload <- suppressWarnings(as.numeric(payloads[[1]]$avg_bio))
+        } else {
+          lik_out <- list()
+          lik_raw <- list()
+          existing_scales <- character(0)
+          avg_bio_payload <- NA_real_
+        }
       } else {
-        lik_out <- list()
-        lik_raw <- list()
-        existing_scales <- character(0)
+        scales <- basename(scaler_dirs) %>% str_extract("\\d+$")
+        output_files <- file.path(scaler_dirs, "test_plot_output")
+        existing_files <- output_files[file.exists(output_files)]
+        existing_scales <- scales[file.exists(output_files)]
+
+        if (length(existing_files) > 0) {
+          lik_out <- setNames(map(existing_files, read.MFCLLikelihood), existing_scales)
+          lik_raw <- setNames(map(existing_files, readLines), existing_scales)
+        } else {
+          lik_out <- list()
+          lik_raw <- list()
+          existing_scales <- character(0)
+        }
+        avg_bio_payload <- NA_real_
       }
     } else {
       output_files <- list.files(folder, pattern = "^test_plot_output_\\d+$", full.names = TRUE)
@@ -206,13 +227,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
         lik_raw <- list()
         existing_scales <- character(0)
       }
+      avg_bio_payload <- NA_real_
     }
 
     list(
       scales = existing_scales,
       lik_out = lik_out,
       lik_raw = lik_raw,
-      avg_bio = read_avg_bio(model_dir, scenario)
+      avg_bio = if (is.finite(avg_bio_payload)) avg_bio_payload else read_avg_bio(model_dir, scenario)
     )
   }
 
@@ -491,8 +513,16 @@ mod_likelihood_server <- function(input, output, session, rv) {
         seeds <- as.character(seq_along(jit_list))
       }
 
-      obj_vals <- sapply(jit_list, function(p) suppressWarnings(as.numeric(p@obj_fun)))
-      grad_vals <- sapply(jit_list, function(p) suppressWarnings(as.numeric(p@max_grad)))
+      extract_jitter_obj <- function(p) {
+        if (is.list(p) && !is.null(p$obj_fun)) return(suppressWarnings(as.numeric(p$obj_fun)))
+        suppressWarnings(tryCatch(as.numeric(p@obj_fun), error = function(e) NA_real_))
+      }
+      extract_jitter_grad <- function(p) {
+        if (is.list(p) && !is.null(p$max_grad)) return(suppressWarnings(as.numeric(p$max_grad)))
+        suppressWarnings(tryCatch(as.numeric(p@max_grad), error = function(e) NA_real_))
+      }
+      obj_vals <- sapply(jit_list, extract_jitter_obj)
+      grad_vals <- sapply(jit_list, extract_jitter_grad)
       keep <- is.finite(obj_vals) & is.finite(grad_vals)
       if (!any(keep)) next
 
@@ -570,6 +600,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
       peel_num <- suppressWarnings(as.integer(stringr::str_extract(basename(pd), "\\d+$")))
       if (!is.finite(peel_num)) next
 
+      metrics_file <- file.path(pd, "retro_metrics.rds")
+      if (file.exists(metrics_file)) {
+        m <- tryCatch(readRDS(metrics_file), error = function(e) NULL)
+        if (!is.null(m) && nrow(m) > 0) {
+          retro_rows[[paste0(scenario, "_peel_", peel_num)]] <- m
+          next
+        }
+      }
+
       rep_path <- tryCatch(finalRep(pd), error = function(e) NULL)
       if (is.null(rep_path) || !file.exists(rep_path)) next
 
@@ -630,6 +669,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       reliability <- tryCatch(info$eigen$reliability, error = function(e) NA_character_)
       stitch_complete <- tryCatch(info$stitch$is_complete, error = function(e) NA)
       n_parts_expected <- tryCatch(info$stitch$n_parts, error = function(e) NA)
+      found_parts <- if (length(part_files) > 0) length(part_files) else as.integer(n_parts_expected)
       
       data.frame(
         Scenario = scenario,
@@ -658,8 +698,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
         ),
         `Parts (found/expected)` = ifelse(
           is.na(n_parts_expected),
-          as.character(length(part_files)),
-          sprintf("%d / %d", length(part_files), as.integer(n_parts_expected))
+          as.character(found_parts),
+          sprintf("%d / %d", as.integer(found_parts), as.integer(n_parts_expected))
         ),
         stringsAsFactors = FALSE
       )

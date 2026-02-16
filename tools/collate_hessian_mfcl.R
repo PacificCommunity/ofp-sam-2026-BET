@@ -812,6 +812,33 @@ if(length(hes_components) > 0) {
   cat("✓ Removed component files:", length(hes_components), "\n")
 }
 
+## Optional compact cleanup: keep only compact artifacts after successful stitch
+compact_cleanup <- tolower(Sys.getenv("hessian_compact_cleanup", "true")) %in% c("1", "true", "yes", "y")
+if (isTRUE(compact_cleanup)) {
+  keep_top <- c(
+    "hessian_info.rds",
+    "stitch_info.rds",
+    basename(log_file),
+    basename(eval_log_file),
+    "hessian_cal_build.log"
+  )
+
+  ## Remove raw part directories once hessian_info.rds has been created.
+  if (length(part_dirs) > 0) {
+    unlink(part_dirs, recursive = TRUE, force = TRUE)
+  }
+
+  top_files <- list.files(hessian_dir, full.names = TRUE, recursive = FALSE, all.files = FALSE, no.. = TRUE)
+  top_files <- top_files[file.info(top_files)$isdir %in% FALSE]
+  keep_paths <- normalizePath(file.path(hessian_dir, keep_top), winslash = "/", mustWork = FALSE)
+  top_paths <- normalizePath(top_files, winslash = "/", mustWork = FALSE)
+  rm_files <- top_files[!(top_paths %in% keep_paths)]
+  if (length(rm_files) > 0) {
+    file.remove(rm_files)
+  }
+  cat("✓ Compact cleanup complete in hessian directory\n")
+}
+
 ## Return to original directory
 setwd(old_wd)
 

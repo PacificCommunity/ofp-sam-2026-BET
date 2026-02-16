@@ -660,10 +660,19 @@ mod_tagging_server <- function(input, output, session, rv) {
           return(data.frame(group = numeric(0), group_name = character(0), stringsAsFactors = FALSE))
         }
 
-        fmap %>%
+        by_recapture <- fmap %>%
           filter(!is.na(tag_recapture_group), !is.na(tag_recapture_name), nzchar(tag_recapture_name)) %>%
           mutate(group = as.numeric(tag_recapture_group), group_name = as.character(tag_recapture_name)) %>%
+          mutate(priority = 1)
+
+        by_fishery <- fmap %>%
+          filter(!is.na(fishery), !is.na(fishery_name), nzchar(fishery_name)) %>%
+          mutate(group = as.numeric(fishery), group_name = as.character(fishery_name)) %>%
+          mutate(priority = 2)
+
+        bind_rows(by_recapture, by_fishery) %>%
           filter(is.finite(group)) %>%
+          arrange(priority) %>%
           group_by(group) %>%
           summarise(group_name = first(group_name), .groups = "drop")
       }
@@ -685,6 +694,9 @@ mod_tagging_server <- function(input, output, session, rv) {
             upper_bound = upper.bound,
             names = if_else(!is.na(group_name) & nzchar(group_name), group_name, paste0("G", group))
           ) %>%
+          mutate(name_duplicated = duplicated(names) | duplicated(names, fromLast = TRUE)) %>%
+          mutate(names = if_else(name_duplicated, paste0(names, " [G", group, "]"), names)) %>%
+          select(-name_duplicated) %>%
           select(-group_name)
         tag_rr_list[[model_name]] <- tag_dt
       }

@@ -3,6 +3,7 @@ library(FLR4MFCL)
 library(CondorBox)
 
 source("tools/ProfLike_utils.R")
+source("tools/model_payload.R")
 
 ## environment variables
 program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_02_04_vsn2278")
@@ -17,7 +18,7 @@ base_dir_abs <- file.path(project_root, base_dir)
 
 ## Profile likelihood settings
 ## Single scaler value for parallel execution via condor
-scaler <- as.numeric(Sys.getenv("scaler", "100"))
+scaler <- as.numeric(Sys.getenv("scaler", "90"))
 Reps <- as.integer(unlist(strsplit(Sys.getenv("Reps", "1 1 1 1 1 1"), "\\s+")))
 names(Reps) <- paste0("Reps", 1:length(Reps))
 
@@ -87,5 +88,19 @@ saveRDS(
   file = file.path(scaler_dir, "info.rds"),
   compress = "xz"
 )
+
+profile_payload <- mp_build_profile_payload(scaler_dir)
+saveRDS(
+  profile_payload,
+  file = file.path(scaler_dir, "profile_payload.rds"),
+  compress = "xz"
+)
+
+deleted_n <- mp_cleanup_files(
+  scaler_dir,
+  keep = c("profile_payload.rds", "info.rds"),
+  recursive = TRUE
+)
+cat("Cleanup removed", deleted_n, "non-core files in", scaler_dir, "\n")
 
 cat("✅ Profile likelihood completed for scaler", scaler, "\n")

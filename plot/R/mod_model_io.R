@@ -14,6 +14,14 @@ pm_discover_model_folders <- function(model_dir) {
   list.dirs(model_dir, full.names = TRUE, recursive = FALSE)
 }
 
+pm_read_model_payload <- function(folder, debug = FALSE) {
+  payload_file <- file.path(folder, "model_payload.rds")
+  if (!file.exists(payload_file)) return(NULL)
+  payload <- pm_safe_eval(quote(readRDS(payload_file)), label = "model_payload", debug = debug)
+  if (is.null(payload) || is.null(payload$data)) return(NULL)
+  payload$data
+}
+
 # Read likelihood profile outputs from either new or legacy layout.
 pm_read_likelihood_profiles <- function(folder, debug = FALSE) {
   prof_dir <- file.path(folder, "prof")
@@ -22,17 +30,35 @@ pm_read_likelihood_profiles <- function(folder, debug = FALSE) {
   
   if (length(scaler_dirs) > 0) {
     scales <- basename(scaler_dirs) %>% stringr::str_extract("\\d+$")
-    output_files <- file.path(scaler_dirs, "test_plot_output")
-    existing_files <- output_files[file.exists(output_files)]
-    existing_scales <- scales[file.exists(output_files)]
+    profile_payload_files <- file.path(scaler_dirs, "profile_payload.rds")
+    has_payload <- file.exists(profile_payload_files)
     
-    if (length(existing_files) > 0) {
-      lik_out <- setNames(purrr::map(existing_files, ~ pm_safe_eval(quote(read.MFCLLikelihood(.x)), label = "LikOut", debug = debug)), existing_scales)
-      lik_raw <- setNames(purrr::map(existing_files, ~ pm_safe_eval(quote(readLines(.x)), label = "LikRawOut", debug = debug)), existing_scales)
+    if (any(has_payload)) {
+      payloads <- purrr::map(profile_payload_files[has_payload], ~ pm_safe_eval(quote(readRDS(.x)), label = "profile_payload", debug = debug))
+      payloads <- payloads[!vapply(payloads, is.null, logical(1))]
+      if (length(payloads) > 0) {
+        payload_scales <- as.character(vapply(payloads, function(x) as.numeric(x$scaler), numeric(1)))
+        lik_out <- setNames(purrr::map(payloads, "lik_out"), payload_scales)
+        lik_raw <- setNames(purrr::map(payloads, "lik_raw"), payload_scales)
+        existing_scales <- payload_scales
+      } else {
+        lik_out <- list()
+        lik_raw <- list()
+        existing_scales <- character(0)
+      }
     } else {
-      lik_out <- list()
-      lik_raw <- list()
-      existing_scales <- character(0)
+      output_files <- file.path(scaler_dirs, "test_plot_output")
+      existing_files <- output_files[file.exists(output_files)]
+      existing_scales <- scales[file.exists(output_files)]
+    
+      if (length(existing_files) > 0) {
+        lik_out <- setNames(purrr::map(existing_files, ~ pm_safe_eval(quote(read.MFCLLikelihood(.x)), label = "LikOut", debug = debug)), existing_scales)
+        lik_raw <- setNames(purrr::map(existing_files, ~ pm_safe_eval(quote(readLines(.x)), label = "LikRawOut", debug = debug)), existing_scales)
+      } else {
+        lik_out <- list()
+        lik_raw <- list()
+        existing_scales <- character(0)
+      }
     }
   } else {
     output_files <- list.files(folder, pattern = "^test_plot_output_\\d+$", full.names = TRUE)
@@ -64,9 +90,21 @@ pm_read_jitter_outputs <- function(folder, debug = FALSE) {
   seeds <- basename(jitter_seed_dirs) %>% stringr::str_extract("\\d+$")
   
   jitter_pars <- setNames(purrr::map(jitter_seed_dirs, function(d) {
+    jitter_payload_file <- file.path(d, "jitter_result.rds")
+    if (file.exists(jitter_payload_file)) {
+      return(pm_safe_eval(quote(readRDS(jitter_payload_file)), label = "jitter_result", debug = debug))
+    }
     par_file <- list.files(d, pattern = "jittered_out_\\d+\\.par$", full.names = TRUE)
     if (length(par_file) == 0) return(NULL)
-    pm_safe_eval(quote(read.MFCLPar(par_file[1])), label = "JitterPar", debug = debug)
+    par_obj <- pm_safe_eval(quote(read.MFCLPar(par_file[1])), label = "JitterPar", debug = debug)
+    if (is.null(par_obj)) return(NULL)
+    list(
+      seed = suppressWarnings(as.integer(stringr::str_extract(basename(d), "\\d+$"))),
+      obj_fun = suppressWarnings(as.numeric(par_obj@obj_fun)),
+      max_grad = suppressWarnings(as.numeric(par_obj@max_grad)),
+      output_par = basename(par_file[1]),
+      source = "legacy_par"
+    )
   }), seeds)
   
   jitter_infos <- setNames(purrr::map(jitter_seed_dirs, function(d) {
@@ -84,43 +122,63 @@ pm_read_jitter_outputs <- function(folder, debug = FALSE) {
 # Returns NULL when required core files (Par/Rep) are unavailable.
 pm_read_single_model <- function(folder, debug = FALSE, tag_report_year1 = 1952) {
   pm_debug_message(sprintf("Processing folder: %s", folder), enabled = debug)
-  
-  par_file <- pm_safe_eval(quote(finalPar(folder)), label = "finalPar", debug = debug)
-  rep_file <- pm_safe_eval(quote(finalRep(folder)), label = "finalRep", debug = debug)
-  
-  par_out <- if (!is.null(par_file) && file.exists(par_file)) {
-    pm_safe_eval(quote(read.MFCLPar(par_file)), label = "ParOut", debug = debug)
-  } else NULL
-  rep_out <- if (!is.null(rep_file) && file.exists(rep_file)) {
-    pm_safe_eval(quote(read.MFCLRep(rep_file)), label = "RepOut", debug = debug)
-  } else NULL
-  
+
+  payload <- pm_read_model_payload(folder, debug = debug)
+  if (!is.null(payload)) {
+    par_out <- payload$ParOut
+    rep_out <- payload$RepOut
+    tagrep_out <- payload$TagRepOut
+    tagtemp_out <- payload$TagTempOut
+    len_out <- payload$LengOut
+    wgt_out <- payload$WeightOut
+    tag_out <- payload$TagOut
+    age_out <- payload$AgeOut
+    indep_out <- payload$IndepOut
+    info <- payload$info
+  } else {
+    par_file <- pm_safe_eval(quote(finalPar(folder)), label = "finalPar", debug = debug)
+    rep_file <- pm_safe_eval(quote(finalRep(folder)), label = "finalRep", debug = debug)
+
+    par_out <- if (!is.null(par_file) && file.exists(par_file)) {
+      pm_safe_eval(quote(read.MFCLPar(par_file)), label = "ParOut", debug = debug)
+    } else NULL
+    rep_out <- if (!is.null(rep_file) && file.exists(rep_file)) {
+      pm_safe_eval(quote(read.MFCLRep(rep_file)), label = "RepOut", debug = debug)
+    } else NULL
+
+    if (is.null(par_out) || is.null(rep_out)) {
+      pm_debug_message(sprintf("Skipping model due to missing Par/Rep: %s", basename(folder)), enabled = TRUE)
+      return(NULL)
+    }
+
+    tagrep_out <- pm_safe_eval(quote(read.MFCLTagRep(par_file)), label = "TagRepOut", debug = debug)
+    tagtemp_out <- pm_safe_eval(
+      quote(read.temporary_tag_report(file.path(folder, "temporary_tag_report"), year1 = tag_report_year1)),
+      label = "TagTempOut",
+      debug = debug
+    )
+    len_out <- pm_safe_eval(quote(read.MFCLLenFit(file.path(folder, "length.fit"))), label = "LengOut", debug = debug)
+    wgt_out <- pm_safe_eval(quote(read.MFCLWgtFit(file.path(folder, "weight.fit"))), label = "WeightOut", debug = debug)
+
+    tag_file <- list.files(folder, "\\.tag$", full.names = TRUE)
+    tag_out <- if (length(tag_file) > 0) {
+      pm_safe_eval(quote(read.MFCLTag(tag_file)), label = "TagOut", debug = debug)
+    } else NULL
+
+    age_file <- list.files(folder, "\\.age_length$", full.names = TRUE)
+    age_out <- if (length(age_file) > 0) {
+      pm_safe_eval(quote(read.MFCLALK(age_file)), label = "AgeOut", debug = debug)
+    } else NULL
+
+    indep_out <- if (file.exists(file.path(folder, "indepvar.rpt"))) readLines(file.path(folder, "indepvar.rpt")) else NULL
+    info <- pm_safe_eval(quote(readRDS(file.path(folder, "model_info.rds"))), label = "model_info", debug = debug)
+  }
+
   if (is.null(par_out) || is.null(rep_out)) {
     pm_debug_message(sprintf("Skipping model due to missing Par/Rep: %s", basename(folder)), enabled = TRUE)
     return(NULL)
   }
-  
-  tagrep_out <- pm_safe_eval(quote(read.MFCLTagRep(par_file)), label = "TagRepOut", debug = debug)
-  tagtemp_out <- pm_safe_eval(
-    quote(read.temporary_tag_report(file.path(folder, "temporary_tag_report"), year1 = tag_report_year1)),
-    label = "TagTempOut",
-    debug = debug
-  )
-  len_out <- pm_safe_eval(quote(read.MFCLLenFit(file.path(folder, "length.fit"))), label = "LengOut", debug = debug)
-  wgt_out <- pm_safe_eval(quote(read.MFCLWgtFit(file.path(folder, "weight.fit"))), label = "WeightOut", debug = debug)
-  
-  tag_file <- list.files(folder, "\\.tag$", full.names = TRUE)
-  tag_out <- if (length(tag_file) > 0) {
-    pm_safe_eval(quote(read.MFCLTag(tag_file)), label = "TagOut", debug = debug)
-  } else NULL
-  
-  age_file <- list.files(folder, "\\.age_length$", full.names = TRUE)
-  age_out <- if (length(age_file) > 0) {
-    pm_safe_eval(quote(read.MFCLALK(age_file)), label = "AgeOut", debug = debug)
-  } else NULL
-  
-  indep_out <- if (file.exists(file.path(folder, "indepvar.rpt"))) readLines(file.path(folder, "indepvar.rpt")) else NULL
-  info <- pm_safe_eval(quote(readRDS(file.path(folder, "model_info.rds"))), label = "model_info", debug = debug)
+
   lik <- pm_read_likelihood_profiles(folder, debug = debug)
   jit <- pm_read_jitter_outputs(folder, debug = debug)
   

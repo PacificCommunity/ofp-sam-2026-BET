@@ -96,48 +96,68 @@ server_data_load <- function(input, output, session, rv) {
             scenario_name <- model_names[i]
           
             tryCatch({
-              # Check if required files exist
-              par_file <- finalPar(folder)
-              rep_file <- finalRep(folder)
-            
-              # Validate .par file
-              if (!file.exists(par_file)) {
+              payload_file <- file.path(folder, "model_payload.rds")
+              payload_data <- if (file.exists(payload_file)) {
+                tryCatch(readRDS(payload_file)$data, error = function(e) NULL)
+              } else {
+                NULL
+              }
+
+              if (!is.null(payload_data)) {
+                par_obj <- payload_data$ParOut
+                rep_obj <- payload_data$RepOut
+              } else {
+                # Check if required files exist
+                par_file <- finalPar(folder)
+                rep_file <- finalRep(folder)
+
+                # Validate .par file
+                if (!file.exists(par_file)) {
+                  return(list(
+                    name = scenario_name,
+                    error = paste("Missing .par file in", scenario_name),
+                    data = NULL
+                  ))
+                }
+
+                # Validate plot.rep file
+                if (!file.exists(rep_file)) {
+                  return(list(
+                    name = scenario_name,
+                    error = paste("Missing plot.rep file in", scenario_name),
+                    data = NULL
+                  ))
+                }
+
+                par_obj <- read.MFCLPar(par_file)
+                rep_obj <- read.MFCLRep(rep_file)
+              }
+
+              if (is.null(par_obj) || is.null(rep_obj)) {
                 return(list(
                   name = scenario_name,
-                  error = paste("Missing .par file in", scenario_name),
+                  error = paste("Missing model payload/core outputs in", scenario_name),
                   data = NULL
                 ))
               }
-            
-              # Validate plot.rep file
-              if (!file.exists(rep_file)) {
-                return(list(
-                  name = scenario_name,
-                  error = paste("Missing plot.rep file in", scenario_name),
-                  data = NULL
-                ))
-              }
-            
-              par_obj <- read.MFCLPar(par_file)
-              rep_obj <- read.MFCLRep(rep_file)
 
               # Read model output files
               data <- list(
                 ParOut = par_obj,
                 RepOut = rep_obj,
-                LengOut = tryCatch({
+                LengOut = if (!is.null(payload_data$LengOut)) payload_data$LengOut else tryCatch({
                   lf_file <- file.path(folder, "length.fit")
                   if (file.exists(lf_file)) read.MFCLLenFit(lf_file) else NULL
                 }, error = function(e) NULL),
-                WeightOut = tryCatch({
+                WeightOut = if (!is.null(payload_data$WeightOut)) payload_data$WeightOut else tryCatch({
                   wf_file <- file.path(folder, "weight.fit")
                   if (file.exists(wf_file)) read.MFCLWgtFit(wf_file) else NULL
                 }, error = function(e) NULL),
-                TagOut = tryCatch({
+                TagOut = if (!is.null(payload_data$TagOut)) payload_data$TagOut else tryCatch({
                   tag_files <- list.files(folder, "\\.tag$", full.names = TRUE)
                   if (length(tag_files) > 0) read.MFCLTag(tag_files) else NULL
                 }, error = function(e) NULL),
-                TagTempOut = tryCatch({
+                TagTempOut = if (!is.null(payload_data$TagTempOut)) payload_data$TagTempOut else tryCatch({
                   ttr_file <- file.path(folder, "temporary_tag_report")
                   if (file.exists(ttr_file)) {
                     year1 <- suppressWarnings(as.numeric(par_obj@range["minyear"]))
@@ -145,11 +165,11 @@ server_data_load <- function(input, output, session, rv) {
                     read.temporary_tag_report(ttr_file, year1 = year1)
                   } else NULL
                 }, error = function(e) NULL),
-                AgeOut = tryCatch({
+                AgeOut = if (!is.null(payload_data$AgeOut)) payload_data$AgeOut else tryCatch({
                   age_files <- list.files(folder, "\\.age_length$", full.names = TRUE)
                   if (length(age_files) > 0) read.MFCLALK(age_files) else NULL
                 }, error = function(e) NULL),
-                IndepOut = safe_read(file.path(folder, "indepvar.rpt")),
+                IndepOut = if (!is.null(payload_data$IndepOut)) payload_data$IndepOut else safe_read(file.path(folder, "indepvar.rpt")),
                 JitterPars = tryCatch({
                   jitter_dir <- file.path(folder, "jitter")
                   seed_dirs <- list.dirs(jitter_dir, full.names = TRUE, recursive = FALSE)
@@ -159,9 +179,21 @@ server_data_load <- function(input, output, session, rv) {
                   } else {
                     seeds <- sub(".*_(\\d+)$", "\\1", basename(seed_dirs))
                     pars <- setNames(lapply(seed_dirs, function(d) {
+                      result_file <- file.path(d, "jitter_result.rds")
+                      if (file.exists(result_file)) {
+                        return(tryCatch(readRDS(result_file), error = function(e) NULL))
+                      }
                       par_file <- list.files(d, pattern = "jittered_out_\\d+\\.par$", full.names = TRUE)
                       if (length(par_file) == 0) return(NULL)
-                      tryCatch(read.MFCLPar(par_file[1]), error = function(e) NULL)
+                      par_obj <- tryCatch(read.MFCLPar(par_file[1]), error = function(e) NULL)
+                      if (is.null(par_obj)) return(NULL)
+                      list(
+                        seed = suppressWarnings(as.integer(sub(".*_(\\d+)$", "\\1", basename(d)))),
+                        obj_fun = suppressWarnings(as.numeric(par_obj@obj_fun)),
+                        max_grad = suppressWarnings(as.numeric(par_obj@max_grad)),
+                        output_par = basename(par_file[1]),
+                        source = "legacy_par"
+                      )
                     }), seeds)
                     Filter(Negate(is.null), pars)
                   }

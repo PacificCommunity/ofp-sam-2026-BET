@@ -3,6 +3,7 @@ library(FLR4MFCL)
 library(CondorBox)
 
 source("tools/retro.R")
+source("tools/model_payload.R")
 
 ## environment variables
 program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_02_04_vsn2278")
@@ -160,5 +161,28 @@ saveRDS(
   compress = "xz"
 )
 
-cat("✅ Retrospective run completed for peel", retro_peel, "\n")
+retro_rep_file <- mp_final_rep(peel_dir)
+retro_rep_obj <- if (!is.null(retro_rep_file) && file.exists(retro_rep_file)) {
+  tryCatch(read.MFCLRep(retro_rep_file), error = function(e) NULL)
+} else {
+  NULL
+}
+retro_metrics <- mp_extract_rep_timeseries(
+  retro_rep_obj,
+  scenario = basename(model_dir),
+  peel = retro_peel
+)
+saveRDS(
+  retro_metrics,
+  file = file.path(peel_dir, "retro_metrics.rds"),
+  compress = "xz"
+)
 
+deleted_n <- mp_cleanup_files(
+  peel_dir,
+  keep = c("retro_metrics.rds", "retro_info.rds"),
+  recursive = TRUE
+)
+cat("Cleanup removed", deleted_n, "non-core files in", peel_dir, "\n")
+
+cat("✅ Retrospective run completed for peel", retro_peel, "\n")

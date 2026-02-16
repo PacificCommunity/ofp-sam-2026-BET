@@ -221,6 +221,21 @@ calc_lik_change <- function(data, group_col) {
     ungroup()
 }
 
+#' Extract jitter diagnostics from either payload list or legacy MFCLPar object
+jitter_metrics <- function(x) {
+  if (is.null(x)) return(list(obj_fun = NA_real_, max_grad = NA_real_))
+  if (is.list(x) && !is.null(x$obj_fun) && !is.null(x$max_grad)) {
+    return(list(
+      obj_fun = suppressWarnings(as.numeric(x$obj_fun)),
+      max_grad = suppressWarnings(as.numeric(x$max_grad))
+    ))
+  }
+  list(
+    obj_fun = suppressWarnings(as.numeric(x@obj_fun)),
+    max_grad = suppressWarnings(as.numeric(x@max_grad))
+  )
+}
+
 #' Parse indepvar.rpt file
 #' @param lines Character vector of file lines
 parse_indepvar <- function(lines) {
@@ -1652,8 +1667,8 @@ if (length(scenarios_with_jitter) > 0) {
     ref_obj <- as.numeric(base_par@obj_fun)
     ref_grad <- base_par@max_grad
     
-    jitter_obj <- sapply(jitter_pars, function(p) as.numeric(p@obj_fun))
-    jitter_grad <- sapply(jitter_pars, function(p) p@max_grad)
+    jitter_obj <- sapply(jitter_pars, function(p) jitter_metrics(p)$obj_fun)
+    jitter_grad <- sapply(jitter_pars, function(p) jitter_metrics(p)$max_grad)
     
     # Percent difference from reference
     pct_diff <- ((jitter_obj - ref_obj) / abs(ref_obj)) * 100
@@ -1816,6 +1831,7 @@ hessian_rows <- lapply(names(ParOut_list), function(sc) {
   reliability <- tryCatch(info$eigen$reliability, error = function(e) NA_character_)
   stitch_complete <- tryCatch(info$stitch$is_complete, error = function(e) NA)
   n_parts_expected <- tryCatch(info$stitch$n_parts, error = function(e) NA)
+  found_parts <- if (length(part_files) > 0) length(part_files) else as.integer(n_parts_expected)
   
   data.frame(
     Scenario = sc,
@@ -1844,8 +1860,8 @@ hessian_rows <- lapply(names(ParOut_list), function(sc) {
     ),
     `Parts (found/expected)` = ifelse(
       is.na(n_parts_expected),
-      as.character(length(part_files)),
-      sprintf("%d / %d", length(part_files), as.integer(n_parts_expected))
+      as.character(found_parts),
+      sprintf("%d / %d", as.integer(found_parts), as.integer(n_parts_expected))
     ),
     stringsAsFactors = FALSE
   )
@@ -1925,12 +1941,21 @@ for (sc in retro_scenarios) {
   
   for (pd in peel_dirs) {
     peel_num <- as.integer(stringr::str_extract(basename(pd), "\\d+$"))
+    metrics_file <- file.path(pd, "retro_metrics.rds")
+    if (file.exists(metrics_file)) {
+      m <- tryCatch(readRDS(metrics_file), error = function(e) NULL)
+      if (!is.null(m) && nrow(m) > 0) {
+        retro_data[[paste0(sc, "_peel_", peel_num)]] <- m
+        next
+      }
+    }
+
     rep_path <- tryCatch(finalRep(pd), error = function(e) NULL)
     if (is.null(rep_path) || !file.exists(rep_path)) next
-    
+
     rep_obj <- tryCatch(read.MFCLRep(rep_path), error = function(e) NULL)
     if (is.null(rep_obj)) next
-    
+
     retro_data[[paste0(sc, "_peel_", peel_num)]] <- extract_retro_metrics(rep_obj, sc, peel_num)
   }
 }
@@ -3006,10 +3031,19 @@ get_reporting_group_labels <- function(model_name) {
     return(data.frame(group = numeric(0), group_name = character(0), stringsAsFactors = FALSE))
   }
 
-  fmap %>%
+  by_recapture <- fmap %>%
     filter(!is.na(tag_recapture_group), !is.na(tag_recapture_name), nzchar(tag_recapture_name)) %>%
     mutate(group = as.numeric(tag_recapture_group), group_name = as.character(tag_recapture_name)) %>%
+    mutate(priority = 1)
+
+  by_fishery <- fmap %>%
+    filter(!is.na(fishery), !is.na(fishery_name), nzchar(fishery_name)) %>%
+    mutate(group = as.numeric(fishery), group_name = as.character(fishery_name)) %>%
+    mutate(priority = 2)
+
+  bind_rows(by_recapture, by_fishery) %>%
     filter(is.finite(group)) %>%
+    arrange(priority) %>%
     group_by(group) %>%
     summarise(group_name = first(group_name), .groups = "drop")
 }
@@ -3038,6 +3072,9 @@ for (i in seq_along(ParOut_list)) {
       upper_bound = upper.bound,
       names = if_else(!is.na(group_name) & nzchar(group_name), group_name, paste0("G", group))
     ) %>%
+    mutate(name_duplicated = duplicated(names) | duplicated(names, fromLast = TRUE)) %>%
+    mutate(names = if_else(name_duplicated, paste0(names, " [G", group, "]"), names)) %>%
+    select(-name_duplicated) %>%
     select(-group_name)
   
   tag_rr_list[[model_name]] <- tag_dt
