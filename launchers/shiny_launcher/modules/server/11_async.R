@@ -61,6 +61,8 @@
       }
       job_env <- list2env(model_env_list, parent = emptyenv())
       job_env$DOCKER_IMAGE <- common_params$docker_image
+      # Condor-only compact archive mode: keep only top-level model/ before archiving.
+      job_env$condor_keep_only_model_archive <- "true"
       remote_dir_suffix <- paste0(spec$model_name, "_model")
       batch_suffix <- ""
       

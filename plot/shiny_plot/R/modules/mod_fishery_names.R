@@ -12,7 +12,7 @@ mod_fishery_names_ui <- function() {
         collapsed = FALSE,
         HTML("<ul>
               <li>🎯 <strong>Select Model:</strong> Choose which model fishery map to edit</li>
-              <li>📝 <strong>Edit names:</strong> Edit the <code>fishery_name</code> column directly</li>
+              <li>📝 <strong>Edit fields:</strong> Edit all columns except <code>fishery</code> directly</li>
               <li>💾 <strong>Apply changes:</strong> Save edits to the currently loaded model map in app memory</li>
               <li>⚠ <strong>Required:</strong> <code>fishery_map.R</code> or <code>fishery_map.r</code> must exist in each model folder when loading models</li>
             </ul>")
@@ -150,6 +150,17 @@ mod_fishery_names_server <- function(input, output, session, rv) {
       c("fishery", "fishery_name", "group", "region", "tag_recapture_group", "tag_recapture_name")]
   }
 
+  coerce_to_reference_type <- function(values, reference) {
+    if (is.factor(reference)) return(factor(values, levels = levels(reference)))
+    if (inherits(reference, "Date")) return(as.Date(values))
+    if (inherits(reference, "POSIXct")) return(as.POSIXct(values))
+    if (inherits(reference, "POSIXlt")) return(as.POSIXct(values))
+    if (is.logical(reference)) return(as.logical(values))
+    if (is.integer(reference)) return(as.integer(values))
+    if (is.numeric(reference)) return(as.numeric(values))
+    as.character(values)
+  }
+
   output$fishery_count_text <- renderText({
     req(input$fishery_names_model, rv$fishery_names_dfs)
     if (fishery_map_missing_for_selected()) return("⚠ fishery_map.R/.r missing/invalid for selected model")
@@ -171,14 +182,14 @@ mod_fishery_names_server <- function(input, output, session, rv) {
 
     datatable(
       df,
-      editable = list(target = "cell", disable = list(columns = c(0, 2, 3, 4, 5))),
+      editable = list(target = "cell", disable = list(columns = c(0))),
       options = list(
         pageLength = 25,
         scrollX = TRUE,
         dom = "frtip",
         columnDefs = list(
           list(className = "dt-center", targets = 0),
-          list(className = "editable-cell", targets = 1)
+          list(className = "editable-cell", targets = c(1, 2, 3, 4, 5))
         )
       ),
       rownames = FALSE
@@ -203,11 +214,16 @@ mod_fishery_names_server <- function(input, output, session, rv) {
     df <- rv$fishery_names_dfs[[model_name]]
     base_df <- rv$FISHERY_MAPS[[model_name]]
     idx <- match(df$fishery, base_df$fishery)
-    base_df$fishery_name[idx] <- as.character(df$fishery_name)
+    editable_cols <- c("fishery_name", "group", "region", "tag_recapture_group", "tag_recapture_name")
+    editable_cols <- editable_cols[editable_cols %in% names(base_df) & editable_cols %in% names(df)]
+
+    for (col_nm in editable_cols) {
+      base_df[[col_nm]][idx] <- coerce_to_reference_type(df[[col_nm]], base_df[[col_nm]])
+    }
 
     apply_map_df_to_model(model_name, base_df)
     refresh_dependents()
 
-    showNotification(HTML(paste0("✓ Fishery names updated for model: <strong>", model_name, "</strong>")), type = "message", duration = 3)
+    showNotification(HTML(paste0("✓ Fishery map fields updated for model: <strong>", model_name, "</strong>")), type = "message", duration = 3)
   })
 }

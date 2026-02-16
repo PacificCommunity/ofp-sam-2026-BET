@@ -4,6 +4,7 @@ library(CondorBox)
 
 source("tools/jitter.R")
 source("tools/model_payload.R")
+source("tools/condor_archive_cleanup.R")
 
 
 ## environment variables
@@ -129,5 +130,7 @@ deleted_n <- mp_cleanup_files(
   recursive = TRUE
 )
 cat("Cleanup removed", deleted_n, "non-core files in", seed_dir, "\n")
+
+cb_condor_keep_only_model_cleanup()
 
 cat("✅ Jitter run completed for seed", jitter_seed, "\n")

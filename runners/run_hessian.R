@@ -1,6 +1,7 @@
 ## load libraries
 library(FLR4MFCL)
 library(CondorBox)
+source("tools/condor_archive_cleanup.R")
 
 ## environment variables
 program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_02_04_vsn2278")
@@ -167,5 +168,7 @@ if (isTRUE(part_compact_cleanup)) {
   }
   cat("Compact cleanup complete for part directory; kept", length(keep_files), "files\n")
 }
+
+cb_condor_keep_only_model_cleanup()
 
 cat("✅ Hessian calculation completed for part", hessian_part, "\n")

@@ -2,6 +2,7 @@
 library(FLR4MFCL)
 library(CondorBox)
 source("tools/model_payload.R")
+source("tools/condor_archive_cleanup.R")
 
 ## environment variables
 program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_02_04_vsn2278")
@@ -97,5 +98,7 @@ if (!is.null(payload$files$par) && file.exists(payload$files$par)) {
 
 deleted_n <- mp_cleanup_files(model_dir, keep = keep_top, recursive = FALSE)
 cat("Cleanup removed", deleted_n, "non-core top-level files in", model_dir, "\n")
+
+cb_condor_keep_only_model_cleanup()
 
 cat("✅ Model run completed for", basename(model_dir), "\n")

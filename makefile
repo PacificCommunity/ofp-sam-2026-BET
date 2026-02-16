@@ -78,21 +78,10 @@ docker-report:
 # SHINY APP TARGETS
 # =============================================================================
 
-# Launch Shiny app locally
-app:
-	Rscript -e "shiny::runApp('shiny', launch.browser=TRUE)"
+shiny_plot:
+	Rscript -e "shiny::runApp('plot/shiny_plot', launch.browser=TRUE)"
 
-# Launch Shiny app in Docker
-docker-app:
-	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) -p 3838:3838 $(DOCKER_IMAGE) \
-	Rscript -e "shiny::runApp('shiny', host='0.0.0.0', port=3838)"
+shiny_launcher:
+	Rscript -e "shiny::runApp('launchers/shiny_launcher', launch.browser=TRUE)"
 
-# Launch Shiny app in background (detached)
-app-bg:
-	Rscript -e "shiny::runApp('shiny', launch.browser=TRUE)" &
-
-# Stop background Shiny app
-app-stop:
-	pkill -f "shiny::runApp"
-
-.PHONY: app docker-app app-bg app-stop
+.PHONY: shiny_launcher shiny_plot

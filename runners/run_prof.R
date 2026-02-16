@@ -4,6 +4,7 @@ library(CondorBox)
 
 source("tools/ProfLike_utils.R")
 source("tools/model_payload.R")
+source("tools/condor_archive_cleanup.R")
 
 ## environment variables
 program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_02_04_vsn2278")
@@ -102,5 +103,7 @@ deleted_n <- mp_cleanup_files(
   recursive = TRUE
 )
 cat("Cleanup removed", deleted_n, "non-core files in", scaler_dir, "\n")
+
+cb_condor_keep_only_model_cleanup()
 
 cat("✅ Profile likelihood completed for scaler", scaler, "\n")
