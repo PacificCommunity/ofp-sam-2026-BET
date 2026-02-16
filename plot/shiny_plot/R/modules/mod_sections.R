@@ -109,16 +109,29 @@ mod_harvest_server <- function(input, output, session, rv) {
       SBdep <- tryCatch(GetQuantSimple(SBSBF0, RepOut_list, minYear, maxYear), error = function(e) {
         map_dfr(names(RepOut_list), function(sc) {
           rep_obj <- RepOut_list[[sc]]
-          yr <- as.numeric(rv$YearRanges[[sc]]$minYear)
-          sb <- apply(rep_obj@adultBiomass, 2, sum, na.rm = TRUE)
-          sb0 <- apply(rep_obj@adultBiomass_nofish, 2, sum, na.rm = TRUE)
-          data.frame(Scenario = sc, Year = yr + seq_along(sb) - 1, Quant = sb / sb0)
+          bio_fish <- safe_array_to_df(rep_obj@adultBiomass) %>%
+            group_by(year, season) %>%
+            summarise(bio_fish = sum(data, na.rm = TRUE), .groups = "drop")
+          
+          bio_nofish <- safe_array_to_df(rep_obj@adultBiomass_nofish) %>%
+            group_by(year, season) %>%
+            summarise(bio_nofish = sum(data, na.rm = TRUE), .groups = "drop")
+          
+          bio_fish %>%
+            inner_join(bio_nofish, by = c("year", "season")) %>%
+            mutate(
+              Scenario = sc,
+              Year = as.numeric(year),
+              Quant = bio_fish / pmax(bio_nofish, .Machine$double.eps)
+            ) %>%
+            group_by(Scenario, Year) %>%
+            summarise(Quant = mean(Quant, na.rm = TRUE), .groups = "drop")
         })
       })
 
       rec_all <- data.frame()
       for (i in seq_along(RepOut_list)) {
-        rec_temp <- as.data.frame(RepOut_list[[i]]@rec_region) %>% mutate(scenario = scenarios_name[i])
+        rec_temp <- safe_array_to_df(RepOut_list[[i]]@rec_region) %>% mutate(scenario = scenarios_name[i])
         rec_all <- bind_rows(rec_all, rec_temp)
       }
       rec_total <- rec_all %>% group_by(year, scenario) %>% summarise(data = sum(data) / 1e6, .groups = "drop")
@@ -126,7 +139,7 @@ mod_harvest_server <- function(input, output, session, rv) {
 
       bioFish_all <- data.frame()
       for (i in seq_along(RepOut_list)) {
-        bioFish_temp <- as.data.frame(RepOut_list[[i]]@adultBiomass) %>% mutate(scenario = scenarios_name[i])
+        bioFish_temp <- safe_array_to_df(RepOut_list[[i]]@adultBiomass) %>% mutate(scenario = scenarios_name[i])
         bioFish_all <- bind_rows(bioFish_all, bioFish_temp)
       }
       SpawnPot <- bioFish_all %>%
@@ -136,9 +149,9 @@ mod_harvest_server <- function(input, output, session, rv) {
 
       fm_all <- data.frame(); popn_all <- data.frame()
       for (i in seq_along(RepOut_list)) {
-        fm_temp <- as.data.frame(RepOut_list[[i]]@fm) %>% mutate(scenario = scenarios_name[i])
+        fm_temp <- safe_array_to_df(RepOut_list[[i]]@fm) %>% mutate(scenario = scenarios_name[i])
         fm_all <- bind_rows(fm_all, fm_temp)
-        popn_temp <- as.data.frame(RepOut_list[[i]]@popN) %>% mutate(scenario = scenarios_name[i]) %>% rename(N = data)
+        popn_temp <- safe_array_to_df(RepOut_list[[i]]@popN) %>% mutate(scenario = scenarios_name[i]) %>% rename(N = data)
         popn_all <- bind_rows(popn_all, popn_temp)
       }
 
@@ -191,11 +204,11 @@ mod_harvest_server <- function(input, output, session, rv) {
     if (plot_type == "depletion_area") {
       bioNoFish_all <- data.frame(); bioFish_all <- data.frame()
       for (i in seq_along(RepOut_list)) {
-        bioNoFish_temp <- as.data.frame(RepOut_list[[i]]@adultBiomass_nofish) %>% mutate(scenario = scenarios_name[i])
+        bioNoFish_temp <- safe_array_to_df(RepOut_list[[i]]@adultBiomass_nofish) %>% mutate(scenario = scenarios_name[i])
         bioNoFish_all <- bind_rows(bioNoFish_all, bioNoFish_temp)
       }
       for (i in seq_along(RepOut_list)) {
-        bioFish_temp <- as.data.frame(RepOut_list[[i]]@adultBiomass) %>% mutate(scenario = scenarios_name[i])
+        bioFish_temp <- safe_array_to_df(RepOut_list[[i]]@adultBiomass) %>% mutate(scenario = scenarios_name[i])
         bioFish_all <- bind_rows(bioFish_all, bioFish_temp)
       }
 
@@ -232,7 +245,7 @@ mod_harvest_server <- function(input, output, session, rv) {
     if (plot_type == "rec_area") {
       rec_all <- data.frame()
       for (i in seq_along(RepOut_list)) {
-        rec_temp <- as.data.frame(RepOut_list[[i]]@rec_region) %>% mutate(scenario = scenarios_name[i])
+        rec_temp <- safe_array_to_df(RepOut_list[[i]]@rec_region) %>% mutate(scenario = scenarios_name[i])
         rec_all <- bind_rows(rec_all, rec_temp)
       }
 
@@ -263,13 +276,13 @@ mod_harvest_server <- function(input, output, session, rv) {
       fm_all <- data.frame(); mat_all <- data.frame(); popn_all <- data.frame()
 
       for (i in seq_along(RepOut_list)) {
-        fm_temp <- as.data.frame(RepOut_list[[i]]@fm) %>% mutate(scenario = scenarios_name[i])
+        fm_temp <- safe_array_to_df(RepOut_list[[i]]@fm) %>% mutate(scenario = scenarios_name[i])
         fm_all <- bind_rows(fm_all, fm_temp)
 
-        popn_temp <- as.data.frame(RepOut_list[[i]]@popN) %>% mutate(scenario = scenarios_name[i]) %>% rename(N = data)
+        popn_temp <- safe_array_to_df(RepOut_list[[i]]@popN) %>% mutate(scenario = scenarios_name[i]) %>% rename(N = data)
         popn_all <- bind_rows(popn_all, popn_temp)
 
-        mat_temp <- as.data.frame(ParOut_list[[i]]@mat) %>% arrange(age, season) %>%
+        mat_temp <- safe_array_to_df(ParOut_list[[i]]@mat) %>% arrange(age, season) %>%
           mutate(scenario = scenarios_name[i], age_new = row_number()) %>%
           select(age = age_new, maturity = data, scenario)
         mat_all <- bind_rows(mat_all, mat_temp)
@@ -337,10 +350,10 @@ mod_harvest_server <- function(input, output, session, rv) {
     if (plot_type == "fm_area_contrib") {
       fm_all <- data.frame(); mat_all <- data.frame(); popn_all <- data.frame(); m_all <- data.frame()
       for (i in seq_along(RepOut_list)) {
-        fm_temp <- as.data.frame(RepOut_list[[i]]@fm) %>% mutate(scenario = scenarios_name[i]); fm_all <- bind_rows(fm_all, fm_temp)
-        popn_temp <- as.data.frame(RepOut_list[[i]]@popN) %>% mutate(scenario = scenarios_name[i]) %>% rename(N = data); popn_all <- bind_rows(popn_all, popn_temp)
-        mat_temp <- as.data.frame(ParOut_list[[i]]@mat) %>% arrange(age, season) %>% mutate(scenario = scenarios_name[i], age_new = row_number()) %>% select(age = age_new, maturity = data, scenario); mat_all <- bind_rows(mat_all, mat_temp)
-        m_temp <- as.data.frame(RepOut_list[[i]]@m_at_age) %>% arrange(age, season) %>% mutate(scenario = scenarios_name[i], age_new = row_number()) %>% select(age = age_new, M = data, scenario); m_all <- bind_rows(m_all, m_temp)
+        fm_temp <- safe_array_to_df(RepOut_list[[i]]@fm) %>% mutate(scenario = scenarios_name[i]); fm_all <- bind_rows(fm_all, fm_temp)
+        popn_temp <- safe_array_to_df(RepOut_list[[i]]@popN) %>% mutate(scenario = scenarios_name[i]) %>% rename(N = data); popn_all <- bind_rows(popn_all, popn_temp)
+        mat_temp <- safe_array_to_df(ParOut_list[[i]]@mat) %>% arrange(age, season) %>% mutate(scenario = scenarios_name[i], age_new = row_number()) %>% select(age = age_new, maturity = data, scenario); mat_all <- bind_rows(mat_all, mat_temp)
+        m_temp <- safe_array_to_df(RepOut_list[[i]]@m_at_age) %>% arrange(age, season) %>% mutate(scenario = scenarios_name[i], age_new = row_number()) %>% select(age = age_new, M = data, scenario); m_all <- bind_rows(m_all, m_temp)
       }
 
       area_data <- fm_all %>%
@@ -383,11 +396,11 @@ mod_harvest_server <- function(input, output, session, rv) {
       bioNoFish_all <- data.frame(); bioFish_all <- data.frame()
 
       for (i in seq_along(RepOut_list)) {
-        bioNoFish_temp <- as.data.frame(slot(RepOut_list[[i]], use_no)) %>% mutate(scenario = scenarios_name[i])
+        bioNoFish_temp <- safe_array_to_df(slot(RepOut_list[[i]], use_no)) %>% mutate(scenario = scenarios_name[i])
         bioNoFish_all <- bind_rows(bioNoFish_all, bioNoFish_temp)
       }
       for (i in seq_along(RepOut_list)) {
-        bioFish_temp <- as.data.frame(slot(RepOut_list[[i]], use_with)) %>% mutate(scenario = scenarios_name[i])
+        bioFish_temp <- safe_array_to_df(slot(RepOut_list[[i]], use_with)) %>% mutate(scenario = scenarios_name[i])
         bioFish_all <- bind_rows(bioFish_all, bioFish_temp)
       }
 

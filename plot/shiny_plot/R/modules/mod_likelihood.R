@@ -39,7 +39,9 @@ mod_likelihood_ui <- function() {
             "Likelihood: Tagging" = "tagging",
             "Likelihood: CAL by Fishery" = "cal_fishery",
             "Likelihood: CAL by Year" = "cal_year",
-            "Jitter Diagnostics" = "jitter"
+            "Jitter Diagnostics" = "jitter",
+            "Retrospective: Depletion & Spawning Potential" = "retro",
+            "Hessian Diagnostics (PDH / SPD)" = "hessian"
           ),
           selected = "components"
         ),
@@ -84,7 +86,8 @@ mod_likelihood_ui <- function() {
         solidHeader = TRUE,
         status = "warning",
         collapsible = TRUE,
-        plotOutput("likelihood_plot", height = "650px")
+        plotOutput("likelihood_plot", height = "650px"),
+        uiOutput("likelihood_table_ui")
       )
     )
   )
@@ -329,7 +332,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       tag_out <- tag_out_list[[sc]]
       if (is.null(tag_out)) next
 
-      rel_df <- tryCatch(as.data.frame(tag_out@releases), error = function(e) NULL)
+      rel_df <- tryCatch(safe_array_to_df(tag_out@releases), error = function(e) NULL)
       if (is.null(rel_df) || nrow(rel_df) == 0) next
 
       program_map <- rel_df %>%
@@ -368,7 +371,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
   get_alk_summary <- function(age_out) {
     if (is.null(age_out)) return(NULL)
-    alk_df <- tryCatch(as.data.frame(age_out@ALK), error = function(e) NULL)
+    alk_df <- tryCatch(safe_array_to_df(age_out@ALK), error = function(e) NULL)
     if (is.null(alk_df) || nrow(alk_df) == 0) return(NULL)
 
     alk_df %>%
@@ -478,6 +481,160 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     bind_rows(rows)
   }
+  
+  build_retro_data <- function(scenarios, model_dir, rep_out_list) {
+    extract_retro_metrics <- function(rep_obj, scenario, peel) {
+      bio_fish <- safe_array_to_df(rep_obj@adultBiomass) %>%
+        mutate(year = suppressWarnings(as.numeric(year)), season = suppressWarnings(as.numeric(season)), data = suppressWarnings(as.numeric(data))) %>%
+        filter(is.finite(year), is.finite(season), is.finite(data)) %>%
+        group_by(year, season) %>%
+        summarise(bio_fish = sum(data), .groups = "drop")
+      
+      bio_nofish <- safe_array_to_df(rep_obj@adultBiomass_nofish) %>%
+        mutate(year = suppressWarnings(as.numeric(year)), season = suppressWarnings(as.numeric(season)), data = suppressWarnings(as.numeric(data))) %>%
+        filter(is.finite(year), is.finite(season), is.finite(data)) %>%
+        group_by(year, season) %>%
+        summarise(bio_nofish = sum(data), .groups = "drop")
+      
+      dep <- bio_fish %>%
+        inner_join(bio_nofish, by = c("year", "season")) %>%
+        mutate(
+          bio_fish = suppressWarnings(as.numeric(bio_fish)),
+          bio_nofish = suppressWarnings(as.numeric(bio_nofish))
+        ) %>%
+        mutate(depletion = bio_fish / pmax(bio_nofish, .Machine$double.eps)) %>%
+        group_by(year) %>%
+        summarise(depletion = mean(depletion, na.rm = TRUE), .groups = "drop")
+      
+      sp <- bio_fish %>%
+        group_by(year) %>%
+        summarise(spawning_potential = mean(bio_fish, na.rm = TRUE) / 1e3, .groups = "drop")
+      
+      dep %>%
+        inner_join(sp, by = "year") %>%
+        mutate(
+          year = suppressWarnings(as.numeric(year)),
+          depletion = suppressWarnings(as.numeric(depletion)),
+          spawning_potential = suppressWarnings(as.numeric(spawning_potential)),
+          scenario = scenario,
+          peel = as.integer(peel)
+        ) %>%
+        filter(is.finite(year), is.finite(depletion), is.finite(spawning_potential))
+    }
+    
+    retro_rows <- list()
+    for (sc in scenarios) {
+      if (!is.null(rep_out_list[[sc]])) {
+        retro_rows[[paste0(sc, "_peel_0")]] <- extract_retro_metrics(rep_out_list[[sc]], sc, 0)
+      }
+      
+      retro_dir <- file.path(model_dir, sc, "retro")
+      peel_dirs <- list.dirs(retro_dir, recursive = FALSE, full.names = TRUE)
+      peel_dirs <- peel_dirs[grepl("peel_\\d+$", peel_dirs)]
+      
+      for (pd in peel_dirs) {
+        peel_num <- suppressWarnings(as.integer(stringr::str_extract(basename(pd), "\\d+$")))
+        if (!is.finite(peel_num)) next
+        
+        rep_path <- tryCatch(finalRep(pd), error = function(e) NULL)
+        if (is.null(rep_path) || !file.exists(rep_path)) next
+        
+        rep_obj <- tryCatch(read.MFCLRep(rep_path), error = function(e) NULL)
+        if (is.null(rep_obj)) next
+        
+        retro_rows[[paste0(sc, "_peel_", peel_num)]] <- extract_retro_metrics(rep_obj, sc, peel_num)
+      }
+    }
+    
+    bind_rows(retro_rows)
+  }
+  
+  build_hessian_data <- function(scenarios, model_dir) {
+    rows <- lapply(scenarios, function(sc) {
+      hfile <- file.path(model_dir, sc, "hessian", "hessian_info.rds")
+      part_files <- list.files(
+        file.path(model_dir, sc, "hessian"),
+        pattern = "^part_\\d+/hessian_info\\.rds$",
+        full.names = TRUE,
+        recursive = TRUE
+      )
+      
+      if (!file.exists(hfile)) {
+        return(data.frame(
+          Scenario = sc,
+          Hessian_File = "Missing",
+          PDH = NA_character_,
+          `SPD (positivised cov)` = NA_character_,
+          `Neg. Eigen` = NA_character_,
+          `Hessian Status` = NA_character_,
+          Reliability = NA_character_,
+          `Stitch Complete` = NA_character_,
+          `Parts (found/expected)` = ifelse(length(part_files) > 0, as.character(length(part_files)), NA_character_),
+          stringsAsFactors = FALSE
+        ))
+      }
+      
+      info <- tryCatch(readRDS(hfile), error = function(e) NULL)
+      if (is.null(info)) {
+        return(data.frame(
+          Scenario = sc,
+          Hessian_File = "Read error",
+          PDH = NA_character_,
+          `SPD (positivised cov)` = NA_character_,
+          `Neg. Eigen` = NA_character_,
+          `Hessian Status` = NA_character_,
+          Reliability = NA_character_,
+          `Stitch Complete` = NA_character_,
+          `Parts (found/expected)` = ifelse(length(part_files) > 0, as.character(length(part_files)), NA_character_),
+          stringsAsFactors = FALSE
+        ))
+      }
+      
+      is_pdh <- tryCatch(info$diagnostics$summary$pdh$is_pdh, error = function(e) NA)
+      spd_pos_cov <- tryCatch(info$diagnostics$summary$positivised_cov_is_spd, error = function(e) NA)
+      n_neg <- tryCatch(info$eigen$n_negative_eigenvalues, error = function(e) NA)
+      n_tot <- tryCatch(info$eigen$n_total_eigenvalues, error = function(e) NA)
+      h_status <- tryCatch(info$eigen$hessian_status, error = function(e) NA_character_)
+      reliability <- tryCatch(info$eigen$reliability, error = function(e) NA_character_)
+      stitch_complete <- tryCatch(info$stitch$is_complete, error = function(e) NA)
+      n_parts_expected <- tryCatch(info$stitch$n_parts, error = function(e) NA)
+      
+      data.frame(
+        Scenario = sc,
+        Hessian_File = "OK",
+        PDH = dplyr::case_when(
+          isTRUE(is_pdh) ~ "PDH",
+          identical(is_pdh, FALSE) ~ "Not PDH",
+          TRUE ~ "NA"
+        ),
+        `SPD (positivised cov)` = dplyr::case_when(
+          isTRUE(spd_pos_cov) ~ "SPD",
+          identical(spd_pos_cov, FALSE) ~ "Not SPD",
+          TRUE ~ "NA"
+        ),
+        `Neg. Eigen` = ifelse(
+          is.na(n_neg) || is.na(n_tot),
+          NA_character_,
+          sprintf("%d / %d", as.integer(n_neg), as.integer(n_tot))
+        ),
+        `Hessian Status` = as.character(h_status),
+        Reliability = as.character(reliability),
+        `Stitch Complete` = dplyr::case_when(
+          isTRUE(stitch_complete) ~ "Yes",
+          identical(stitch_complete, FALSE) ~ "No",
+          TRUE ~ "NA"
+        ),
+        `Parts (found/expected)` = ifelse(
+          is.na(n_parts_expected),
+          as.character(length(part_files)),
+          sprintf("%d / %d", length(part_files), as.integer(n_parts_expected))
+        ),
+        stringsAsFactors = FALSE
+      )
+    })
+    
+    bind_rows(rows)
+  }
 
   profile_data_reactive <- reactive({
     req(rv$data_loaded, input$lik_scenarios)
@@ -495,6 +652,72 @@ mod_likelihood_server <- function(input, output, session, rv) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No jitter analysis results found", plot_kind = "jitter"))
       }
       return(list(data = data, group_col = NULL, label = "Jitter", message = NULL, plot_kind = "jitter"))
+    }
+    
+    if (type == "retro") {
+      req(input$model_dir)
+      data <- build_retro_data(selected, input$model_dir, rv$RepOut_list)
+      if (nrow(data) == 0) {
+        return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No retrospective outputs found", plot_kind = "retro"))
+      }
+      data <- data %>%
+        mutate(
+          year = suppressWarnings(as.numeric(year)),
+          depletion = suppressWarnings(as.numeric(depletion)),
+          spawning_potential = suppressWarnings(as.numeric(spawning_potential)),
+          peel = as.integer(peel)
+        ) %>%
+        filter(is.finite(year), is.finite(depletion), is.finite(spawning_potential))
+      if (nrow(data) == 0) {
+        return(list(data = data.frame(), group_col = NULL, label = NULL, message = "Retrospective outputs were found but numeric series could not be parsed", plot_kind = "retro"))
+      }
+      
+      eps <- .Machine$double.eps
+      base_terminal <- data %>%
+        filter(peel == 0) %>%
+        select(scenario, year, depletion_base = depletion, spawning_potential_base = spawning_potential)
+      
+      peel_terminal <- data %>%
+        filter(peel > 0) %>%
+        group_by(scenario, peel) %>%
+        filter(year == max(year, na.rm = TRUE)) %>%
+        summarise(
+          year = max(year, na.rm = TRUE),
+          depletion_peel = dplyr::last(depletion),
+          spawning_potential_peel = dplyr::last(spawning_potential),
+          .groups = "drop"
+        )
+      
+      mohn_summary <- peel_terminal %>%
+        left_join(base_terminal, by = c("scenario", "year")) %>%
+        mutate(
+          rho_dep_component = (depletion_peel - depletion_base) / pmax(abs(depletion_base), eps),
+          rho_sp_component = (spawning_potential_peel - spawning_potential_base) / pmax(abs(spawning_potential_base), eps)
+        ) %>%
+        group_by(scenario) %>%
+        summarise(
+          mohn_rho_depletion = ifelse(sum(is.finite(rho_dep_component)) > 0, mean(rho_dep_component, na.rm = TRUE), NA_real_),
+          mohn_rho_spawning_potential = ifelse(sum(is.finite(rho_sp_component)) > 0, mean(rho_sp_component, na.rm = TRUE), NA_real_),
+          .groups = "drop"
+        )
+      
+      return(list(
+        data = data,
+        group_col = NULL,
+        label = "Retrospective",
+        message = NULL,
+        plot_kind = "retro",
+        rho = mohn_summary
+      ))
+    }
+    
+    if (type == "hessian") {
+      req(input$model_dir)
+      data <- build_hessian_data(selected, input$model_dir)
+      if (nrow(data) == 0) {
+        return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No Hessian diagnostics found", plot_kind = "hessian"))
+      }
+      return(list(data = data, group_col = NULL, label = "Hessian", message = NULL, plot_kind = "hessian"))
     }
 
     req(input$model_dir)
@@ -602,7 +825,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
   observeEvent(profile_data_reactive(), {
     info <- profile_data_reactive()
-    if (is.null(info$group_col) || nrow(info$data) == 0) {
+    plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else "piner"
+    if (is.null(info$group_col) || nrow(info$data) == 0 || plot_kind %in% c("jitter", "retro", "hessian")) {
       updatePickerInput(session, "lik_groups", choices = character(0), selected = character(0))
       return()
     }
@@ -709,12 +933,159 @@ mod_likelihood_server <- function(input, output, session, rv) {
           )
       )
     }
+    
+    if (identical(plot_kind, "retro")) {
+      retro_df <- data %>%
+        mutate(
+          year = suppressWarnings(as.numeric(year)),
+          depletion = suppressWarnings(as.numeric(depletion)),
+          spawning_potential = suppressWarnings(as.numeric(spawning_potential)),
+          scenario = factor(scenario, levels = unique(scenario)),
+          peel = as.integer(peel)
+        ) %>%
+        filter(is.finite(year), is.finite(depletion), is.finite(spawning_potential), !is.na(peel))
+      if (nrow(retro_df) == 0) {
+        return(
+          ggplot() +
+            annotate("text", x = 0.5, y = 0.5, label = "No retrospective numeric data after parsing", size = 6, color = "#999") +
+            theme_void()
+        )
+      }
+      
+      peel_levels <- sort(unique(retro_df$peel))
+      peel_levels_chr <- as.character(peel_levels)
+      
+      terminal_by_peel <- retro_df %>%
+        group_by(scenario, peel) %>%
+        summarise(terminal_year = max(year, na.rm = TRUE), .groups = "drop") %>%
+        group_by(peel) %>%
+        summarise(
+          terminal_year = ifelse(n_distinct(terminal_year) == 1,
+                                 dplyr::first(terminal_year),
+                                 max(terminal_year, na.rm = TRUE)),
+          .groups = "drop"
+        ) %>%
+        arrange(peel)
+      
+      peel_labels <- setNames(as.character(terminal_by_peel$terminal_year), as.character(terminal_by_peel$peel))
+      peel_colors <- if (length(peel_levels) == 1) {
+        c("0" = "black")
+      } else {
+        c(
+          "0" = "black",
+          setNames(
+            viridis(length(peel_levels[peel_levels > 0]), option = "C", direction = -1),
+            as.character(peel_levels[peel_levels > 0])
+          )
+        )
+      }
+      
+      rho_df <- info$rho
+      dep_anno <- if (!is.null(rho_df) && nrow(rho_df) > 0) {
+        rho_df %>% transmute(scenario, label = sprintf("Mohn's rho: %.3f", mohn_rho_depletion))
+      } else {
+        data.frame(scenario = character(0), label = character(0), stringsAsFactors = FALSE)
+      }
+      sp_anno <- if (!is.null(rho_df) && nrow(rho_df) > 0) {
+        rho_df %>% transmute(scenario, label = sprintf("Mohn's rho: %.3f", mohn_rho_spawning_potential))
+      } else {
+        data.frame(scenario = character(0), label = character(0), stringsAsFactors = FALSE)
+      }
+      
+      dep_plot <- ggplot(
+        retro_df,
+        aes(
+          x = year,
+          y = depletion,
+          color = factor(peel, levels = peel_levels_chr),
+          group = interaction(scenario, peel)
+        )
+      ) +
+        geom_line(linewidth = 1.1, alpha = 0.9) +
+        geom_text(
+          data = dep_anno,
+          aes(x = Inf, y = Inf, label = label),
+          inherit.aes = FALSE,
+          hjust = 1.05, vjust = 1.2, size = 3.4, fontface = "bold", color = "black"
+        ) +
+        facet_wrap(~scenario, scales = "free_x", ncol = 2) +
+        scale_color_manual(values = peel_colors, breaks = peel_levels_chr, labels = peel_labels) +
+        geom_hline(yintercept = 0.2, linetype = "dashed", color = "darkred") +
+        geom_hline(yintercept = 0.5, linetype = "dashed", color = "darkgreen") +
+        labs(
+          x = "Year",
+          y = bquote(SB/SB["F=0"]),
+          color = "Terminal year",
+          title = "Retrospective Depletion"
+        ) +
+        coord_cartesian(ylim = c(0, 1.1)) +
+        theme_bw(base_size = 12)
+      
+      sp_plot <- ggplot(
+        retro_df,
+        aes(
+          x = year,
+          y = spawning_potential,
+          color = factor(peel, levels = peel_levels_chr),
+          group = interaction(scenario, peel)
+        )
+      ) +
+        geom_line(linewidth = 1.1, alpha = 0.9) +
+        geom_text(
+          data = sp_anno,
+          aes(x = Inf, y = Inf, label = label),
+          inherit.aes = FALSE,
+          hjust = 1.05, vjust = 1.2, size = 3.4, fontface = "bold", color = "black"
+        ) +
+        facet_wrap(~scenario, scales = "free_x", ncol = 2) +
+        scale_color_manual(values = peel_colors, breaks = peel_levels_chr, labels = peel_labels) +
+        labs(
+          x = "Year",
+          y = bquote("Spawning Potential (" * 10^3 * " MT)"),
+          color = "Terminal year",
+          title = "Retrospective Spawning Potential"
+        ) +
+        theme_bw(base_size = 12)
+      
+      return(cowplot::plot_grid(dep_plot, sp_plot, ncol = 1, align = "v"))
+    }
+    
+    if (identical(plot_kind, "hessian")) {
+      return(
+        ggplot() +
+          annotate("text", x = 0.5, y = 0.5, label = "Hessian diagnostics table is shown below", size = 6, color = "#777") +
+          theme_void()
+      )
+    }
 
     create_piner_plot(data, group_col, label)
   })
 
   output$likelihood_plot <- renderPlot({
     likelihood_plot_reactive()
+  })
+  
+  output$likelihood_table_ui <- renderUI({
+    info <- profile_data_reactive()
+    plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else "piner"
+    if (!identical(plot_kind, "hessian")) return(NULL)
+    tagList(
+      br(),
+      h4("Hessian Diagnostics Table"),
+      DTOutput("likelihood_table")
+    )
+  })
+  
+  output$likelihood_table <- renderDT({
+    info <- profile_data_reactive()
+    plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else "piner"
+    if (!identical(plot_kind, "hessian") || nrow(info$data) == 0) return(NULL)
+    
+    datatable(
+      info$data,
+      options = list(pageLength = 10, scrollX = TRUE),
+      rownames = FALSE
+    )
   })
 
   observeEvent(input$show_lik_download_modal, {

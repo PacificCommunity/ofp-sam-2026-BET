@@ -1838,7 +1838,7 @@ if (nrow(hessian_df) > 0) {
   )
   
   cat("\\n\\n")
-  cat("`PDH`: Hessian positive definite 여부 | `SPD (positivised cov)`: positivised covariance SPD 여부\\n\\n")
+  cat("`PDH`: whether the Hessian is positive definite | `SPD (positivised cov)`: whether the positivised covariance is SPD\\n\\n")
 } else {
   cat("*No Hessian diagnostics found.*\\n\\n")
 }

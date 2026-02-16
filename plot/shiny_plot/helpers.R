@@ -158,6 +158,54 @@ get_scenario_colors <- function(scenarios, option = "D") {
   setNames(viridis(length(scenarios), option = option, direction = 1), scenarios)
 }
 
+# Convert FLR-style arrays/FLQuant objects to data.frame defensively.
+# Some model outputs carry malformed dimnames; this avoids as.data.frame() failures.
+safe_array_to_df <- function(x, value_col = "data") {
+  out <- tryCatch(as.data.frame(x), error = function(e) NULL)
+  if (!is.null(out)) return(out)
+
+  d <- dim(x)
+  if (is.null(d) || length(d) == 0) {
+    vals <- suppressWarnings(as.numeric(x))
+    return(data.frame(data = vals))
+  }
+
+  dn <- tryCatch(dimnames(x), error = function(e) NULL)
+  if (is.null(dn)) dn <- vector("list", length(d))
+  if (length(dn) < length(d)) {
+    dn <- c(dn, vector("list", length(d) - length(dn)))
+  } else if (length(dn) > length(d)) {
+    dn <- dn[seq_along(d)]
+  }
+
+  dim_cols <- names(dn)
+  if (is.null(dim_cols) || length(dim_cols) != length(d) || any(!nzchar(dim_cols))) {
+    dim_cols <- paste0("dim", seq_along(d))
+  }
+
+  idx <- lapply(d, seq_len)
+  grid <- expand.grid(idx, KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
+  names(grid) <- dim_cols
+
+  for (i in seq_along(d)) {
+    labels <- dn[[i]]
+    if (is.null(labels) || length(labels) != d[[i]]) {
+      labels <- as.character(seq_len(d[[i]]))
+    } else {
+      labels <- as.character(labels)
+    }
+    grid[[dim_cols[[i]]]] <- labels[grid[[dim_cols[[i]]]]]
+  }
+
+  vals <- suppressWarnings(as.numeric(c(x)))
+  expected_n <- prod(d)
+  if (length(vals) != expected_n) {
+    vals <- rep(NA_real_, expected_n)
+  }
+  grid[[value_col]] <- vals
+  grid
+}
+
 check_lf_compatibility_global <- function(rv, base_model, compare_models) {
   if (is.null(rv$LengOut_list[[base_model]])) return(character(0))
 
