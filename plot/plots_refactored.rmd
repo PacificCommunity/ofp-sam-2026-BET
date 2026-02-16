@@ -1736,6 +1736,196 @@ if (length(scenarios_with_jitter) > 0) {
 }
 ```
 
+# Retrospective Diagnostics {.tabset}
+
+## Depletion and Spawning Potential by Peel
+
+```{r retrospective-analysis, echo=FALSE, message=FALSE, warning=FALSE, fig.dim=c(12,10)}
+# =============================================================================
+# RETROSPECTIVE DIAGNOSTICS
+# Overlay base + retrospective peels for depletion and spawning potential.
+# =============================================================================
+
+retro_scenarios <- names(ParOut_list)[vapply(names(ParOut_list), function(sc) {
+  dir.exists(file.path(MODEL_DIR, sc, "retro"))
+}, logical(1))]
+
+extract_retro_metrics <- function(rep_obj, scenario, peel) {
+  bio_fish <- as.data.frame(rep_obj@adultBiomass) %>%
+    group_by(year, season) %>%
+    summarise(bio_fish = sum(data), .groups = "drop")
+  
+  bio_nofish <- as.data.frame(rep_obj@adultBiomass_nofish) %>%
+    group_by(year, season) %>%
+    summarise(bio_nofish = sum(data), .groups = "drop")
+  
+  dep <- bio_fish %>%
+    inner_join(bio_nofish, by = c("year", "season")) %>%
+    mutate(depletion = bio_fish / pmax(bio_nofish, .Machine$double.eps)) %>%
+    group_by(year) %>%
+    summarise(depletion = mean(depletion, na.rm = TRUE), .groups = "drop")
+  
+  sp <- bio_fish %>%
+    group_by(year) %>%
+    summarise(spawning_potential = mean(bio_fish, na.rm = TRUE) / 1e3, .groups = "drop")
+  
+  dep %>%
+    inner_join(sp, by = "year") %>%
+    mutate(scenario = scenario, peel = peel)
+}
+
+retro_data <- list()
+
+for (sc in retro_scenarios) {
+  # Base run as peel = 0
+  if (!is.null(RepOut_list[[sc]])) {
+    retro_data[[paste0(sc, "_peel_0")]] <- extract_retro_metrics(RepOut_list[[sc]], sc, 0)
+  }
+  
+  retro_dir <- file.path(MODEL_DIR, sc, "retro")
+  peel_dirs <- list.dirs(retro_dir, recursive = FALSE, full.names = TRUE)
+  peel_dirs <- peel_dirs[grepl("peel_\\d+$", peel_dirs)]
+  
+  for (pd in peel_dirs) {
+    peel_num <- as.integer(stringr::str_extract(basename(pd), "\\d+$"))
+    rep_path <- tryCatch(finalRep(pd), error = function(e) NULL)
+    if (is.null(rep_path) || !file.exists(rep_path)) next
+    
+    rep_obj <- tryCatch(read.MFCLRep(rep_path), error = function(e) NULL)
+    if (is.null(rep_obj)) next
+    
+    retro_data[[paste0(sc, "_peel_", peel_num)]] <- extract_retro_metrics(rep_obj, sc, peel_num)
+  }
+}
+
+retro_df <- bind_rows(retro_data)
+
+if (nrow(retro_df) > 0) {
+  retro_df <- retro_df %>%
+    mutate(
+      scenario = factor(scenario, levels = unique(scenario)),
+      peel = as.integer(peel)
+    )
+  
+  peel_levels <- sort(unique(retro_df$peel))
+  peel_levels_chr <- as.character(peel_levels)
+  peel_labels <- setNames(ifelse(peel_levels == 0, "0 (base)", peel_levels_chr), peel_levels_chr)
+  
+  peel_colors <- if (length(peel_levels) == 1) {
+    c("0" = "black")
+  } else {
+    c(
+      "0" = "black",
+      setNames(
+        viridis(length(peel_levels[peel_levels > 0]), option = "C", direction = -1),
+        as.character(peel_levels[peel_levels > 0])
+      )
+    )
+  }
+  
+  dep_plot <- ggplot(
+    retro_df,
+    aes(
+      x = year,
+      y = depletion,
+      color = factor(peel, levels = peel_levels_chr),
+      group = interaction(scenario, peel)
+    )
+  ) +
+    geom_line(linewidth = 1.1, alpha = 0.9) +
+    facet_wrap(~scenario, scales = "free_x", ncol = 2) +
+    scale_color_manual(values = peel_colors, breaks = peel_levels_chr, labels = peel_labels) +
+    geom_hline(yintercept = 0.2, linetype = "dashed", color = "darkred") +
+    geom_hline(yintercept = 0.5, linetype = "dashed", color = "darkgreen") +
+    labs(
+      x = "Year",
+      y = bquote(SB/SB["F=0"]),
+      color = "Peel",
+      title = "Retrospective Depletion"
+    ) +
+    coord_cartesian(ylim = c(0, 1.1)) +
+    theme_bw()
+  
+  sp_plot <- ggplot(
+    retro_df,
+    aes(
+      x = year,
+      y = spawning_potential,
+      color = factor(peel, levels = peel_levels_chr),
+      group = interaction(scenario, peel)
+    )
+  ) +
+    geom_line(linewidth = 1.1, alpha = 0.9) +
+    facet_wrap(~scenario, scales = "free_x", ncol = 2) +
+    scale_color_manual(values = peel_colors, breaks = peel_levels_chr, labels = peel_labels) +
+    labs(
+      x = "Year",
+      y = bquote("Spawning Potential (" * 10^3 * " MT)"),
+      color = "Peel",
+      title = "Retrospective Spawning Potential"
+    ) +
+    theme_bw()
+  
+  print(cowplot::plot_grid(dep_plot, sp_plot, ncol = 1, align = "v"))
+  
+  # Mohn's rho (scenario-wise): mean relative deviation at each peel terminal year
+  eps <- .Machine$double.eps
+  base_terminal <- retro_df %>%
+    filter(peel == 0) %>%
+    select(
+      scenario, year,
+      depletion_base = depletion,
+      spawning_potential_base = spawning_potential
+    )
+  
+  peel_terminal <- retro_df %>%
+    filter(peel > 0) %>%
+    group_by(scenario, peel) %>%
+    filter(year == max(year, na.rm = TRUE)) %>%
+    summarise(
+      year = max(year, na.rm = TRUE),
+      depletion_peel = dplyr::last(depletion),
+      spawning_potential_peel = dplyr::last(spawning_potential),
+      .groups = "drop"
+    )
+  
+  mohn_components <- peel_terminal %>%
+    left_join(base_terminal, by = c("scenario", "year")) %>%
+    mutate(
+      rho_dep_component = (depletion_peel - depletion_base) / pmax(abs(depletion_base), eps),
+      rho_sp_component = (spawning_potential_peel - spawning_potential_base) / pmax(abs(spawning_potential_base), eps)
+    )
+  
+  mohn_summary <- mohn_components %>%
+    group_by(scenario) %>%
+    summarise(
+      n_peels_dep = sum(!is.na(rho_dep_component)),
+      n_peels_sp = sum(!is.na(rho_sp_component)),
+      mohn_rho_depletion = ifelse(n_peels_dep > 0, mean(rho_dep_component, na.rm = TRUE), NA_real_),
+      mohn_rho_spawning_potential = ifelse(n_peels_sp > 0, mean(rho_sp_component, na.rm = TRUE), NA_real_),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      mohn_rho_depletion = sprintf("%.3f", mohn_rho_depletion),
+      mohn_rho_spawning_potential = sprintf("%.3f", mohn_rho_spawning_potential)
+    ) %>%
+    arrange(scenario)
+  
+  cat("\\n\\n### Mohn's rho Summary\\n\\n")
+  print(
+    kable(
+      mohn_summary,
+      col.names = c("Scenario", "N peels (Dep)", "N peels (SP)", "Mohn's rho (Depletion)", "Mohn's rho (Spawning Potential)"),
+      align = c("l", "r", "r", "r", "r")
+    ) %>%
+      kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE) %>%
+      row_spec(0, bold = TRUE, background = "#1565C0", color = "white")
+  )
+} else {
+  cat("*No retrospective outputs found (`retro/peel_*`) in model folders.*\\n\\n")
+}
+```
+
 # Likelihood Diagnostics {.tabset}
 
 ## Each component
