@@ -18,10 +18,13 @@ retro:
 	Rscript runners/run_retro.R
 
 collate-hessian:
-	Rscript tools/collate_hessian.R
+	Rscript tools/collate_hessian_mfcl.R
 
 stitch-hessian:
 	Rscript tools/collate_hessian_mfcl.R
+
+stitch-hessian-all:
+	Rscript tools/collate_hessian_mfcl.R --all
 
 run: model prof
 	
@@ -50,10 +53,13 @@ docker-retro:
 	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript runners/run_retro.R
 
 docker-collate-hessian:
-	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript collate_hessian.R
+	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript tools/collate_hessian_mfcl.R
 
 docker-stitch-hessian:
-	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript collate_hessian_mfcl.R
+	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript tools/collate_hessian_mfcl.R
+
+docker-stitch-hessian-all:
+	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript tools/collate_hessian_mfcl.R --all
 
 docker-run: docker-model docker-prof
 	
@@ -64,7 +70,7 @@ docker-report:
 	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(stitch-hessian docker-run docker-model docker-prof docker-jitter docker-hessian docker-collate-hessian docker-stitch
 
 	
-.PHONY: plot run model prof jitter hessian retro collate-hessian docker-run docker-model docker-prof docker-jitter docker-hessian docker-retro docker-collate-hessian docker-plot prepaw report docker-report
+.PHONY: plot run model prof jitter hessian retro collate-hessian stitch-hessian stitch-hessian-all docker-run docker-model docker-prof docker-jitter docker-hessian docker-retro docker-collate-hessian docker-stitch-hessian docker-stitch-hessian-all docker-plot prepaw report docker-report
 
 
 
@@ -90,4 +96,3 @@ app-stop:
 	pkill -f "shiny::runApp"
 
 .PHONY: app docker-app app-bg app-stop
-

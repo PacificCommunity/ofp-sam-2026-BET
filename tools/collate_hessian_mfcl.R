@@ -4,12 +4,116 @@
 ## Uses parest_flags(145)=5 for eigenvalue decomposition
 ## Performs comprehensive Hessian diagnostics and uncertainty analysis
 ## Reference: MFCL Hessian diagnostics documentation
-## Usage: Rscript collate_hessian_mfcl.R [model_dir]
+## Usage:
+##   Rscript collate_hessian_mfcl.R [model_dir_or_hessian_dir]
+##   Rscript collate_hessian_mfcl.R --all
+##   Rscript collate_hessian_mfcl.R        # auto-detect all model/*/hessian
 
 library(FLR4MFCL)
 
 ## Get model directory from command line
 args <- commandArgs(trailingOnly = TRUE)
+all_args <- commandArgs(trailingOnly = FALSE)
+launch_wd <- getwd()
+
+## Resolve current script path for batch self-invocation
+script_arg <- grep("^--file=", all_args, value = TRUE)
+script_path <- if(length(script_arg) > 0) sub("^--file=", "", script_arg[1]) else NA_character_
+if(!is.na(script_path) && !grepl("^/", script_path)) {
+  script_path <- file.path(launch_wd, script_path)
+}
+if(!is.na(script_path)) {
+  script_path <- normalizePath(script_path, mustWork = FALSE)
+}
+
+## Auto-detect model directories that contain a hessian subdirectory
+discover_model_dirs <- function(model_root = "model") {
+  if(!dir.exists(model_root)) return(character(0))
+  candidates <- list.dirs(model_root, recursive = FALSE, full.names = TRUE)
+  candidates[dir.exists(file.path(candidates, "hessian"))]
+}
+
+## Batch mode:
+## - no argument  -> process all model/* directories with hessian
+## - --all / all  -> process all model/* directories with hessian
+batch_mode <- length(args) == 0 || (length(args) > 0 && args[1] %in% c("--all", "all"))
+
+if(batch_mode) {
+  if(is.na(script_path)) {
+    stop("Cannot resolve script path for batch mode self-invocation")
+  }
+  
+  model_dirs <- discover_model_dirs("model")
+  if(length(model_dirs) == 0) {
+    stop("No model directories with hessian found under: model")
+  }
+
+  detected_cores <- parallel::detectCores(logical = TRUE)
+  if(!is.finite(detected_cores) || is.na(detected_cores)) detected_cores <- 1L
+  max_workers <- max(1L, as.integer(detected_cores) - 2L)
+  workers <- min(length(model_dirs), max_workers)
+  
+  cat("==============================================\n")
+  cat("Batch Hessian Collation Mode\n")
+  cat("Detected", length(model_dirs), "model(s):\n")
+  for(md in model_dirs) cat("  -", md, "\n")
+  cat("Detected cores:", detected_cores, "\n")
+  cat("Parallel workers (max cores-2):", workers, "\n")
+  cat("==============================================\n\n")
+
+  run_one_model <- function(md) {
+    log_file <- file.path(md, "hessian", "batch_collate.log")
+    status <- system2(
+      command = "Rscript",
+      args = c(script_path, md),
+      stdout = log_file,
+      stderr = log_file
+    )
+    list(
+      model_dir = md,
+      status = as.integer(status),
+      log_file = log_file
+    )
+  }
+
+  results <- parallel::mclapply(
+    model_dirs,
+    run_one_model,
+    mc.cores = workers
+  )
+  results <- do.call(rbind, lapply(results, as.data.frame, stringsAsFactors = FALSE))
+
+  failures <- results$model_dir[results$status != 0]
+  successes <- results$model_dir[results$status == 0]
+
+  if(length(successes) > 0) {
+    cat("Completed models:\n")
+    for(md in successes) cat("  ✓", md, "\n")
+    cat("\n")
+  }
+
+  if(length(failures) > 0) {
+    cat("Failed models:\n")
+    for(md in failures) {
+      log_file <- results$log_file[results$model_dir == md][1]
+      cat("  ✗", md, "(see", log_file, ")\n")
+    }
+    cat("\n")
+  }
+  
+  cat("\n==============================================\n")
+  cat("Batch run finished\n")
+  if(length(failures) == 0) {
+    cat("All models completed successfully\n")
+    cat("==============================================\n")
+    quit(status = 0)
+  } else {
+    cat("Failed models:", length(failures), "\n")
+    for(md in failures) cat("  -", md, "\n")
+    cat("==============================================\n")
+    quit(status = 1)
+  }
+}
 
 if(length(args) > 0) {
   first_arg <- args[1]
@@ -25,9 +129,14 @@ if(length(args) > 0) {
     stop("Invalid directory: ", first_arg)
   }
 } else {
+  ## This branch is now only used if batch_mode is explicitly bypassed.
   model_dir <- Sys.getenv("model_dir", "model/base")
   hessian_dir <- file.path(model_dir, "hessian")
 }
+
+## Lock to absolute paths early to avoid setwd-relative path issues.
+model_dir <- normalizePath(model_dir, mustWork = TRUE)
+hessian_dir <- normalizePath(hessian_dir, mustWork = TRUE)
 
 cat("==============================================\n")
 cat("MFCL Hessian Stitching & Diagnostics Utility\n")
@@ -75,6 +184,45 @@ cat("Found", length(part_infos), "completed parts\n")
 part_numbers <- sapply(part_infos, function(x) x$hessian_part)
 part_infos <- part_infos[order(part_numbers)]
 part_dirs <- part_dirs[order(part_numbers)]
+part_numbers <- part_numbers[order(part_numbers)]
+
+## Validate part numbering per model (part count can differ by model)
+if(any(duplicated(part_numbers))) {
+  stop("Duplicate hessian_part detected: ", paste(unique(part_numbers[duplicated(part_numbers)]), collapse = ", "))
+}
+
+## Validate expected split count when available in metadata
+nsplit_values <- suppressWarnings(as.integer(sapply(part_infos, function(x) {
+  if(!is.null(x$nsplit)) x$nsplit else NA
+})))
+nsplit_values <- nsplit_values[is.finite(nsplit_values)]
+
+if(length(nsplit_values) > 0) {
+  expected_nsplit <- unique(nsplit_values)
+  if(length(expected_nsplit) > 1) {
+    stop("Inconsistent nsplit values across part metadata: ", paste(expected_nsplit, collapse = ", "))
+  }
+  expected_nsplit <- expected_nsplit[1]
+  missing_parts <- setdiff(seq_len(expected_nsplit), part_numbers)
+  if(length(missing_parts) > 0) {
+    stop(
+      "Missing hessian parts for this model. Expected 1..", expected_nsplit,
+      ", found: ", paste(part_numbers, collapse = ", "),
+      ", missing: ", paste(missing_parts, collapse = ", ")
+    )
+  }
+} else {
+  ## Fallback check using observed max part number if nsplit is absent
+  missing_parts <- setdiff(seq_len(max(part_numbers)), part_numbers)
+  if(length(missing_parts) > 0) {
+    warning(
+      "Potential missing hessian parts (nsplit not available). Found parts: ",
+      paste(part_numbers, collapse = ", "),
+      "; missing in 1..max(part): ",
+      paste(missing_parts, collapse = ", ")
+    )
+  }
+}
 
 ## Get parameters
 npars <- part_infos[[1]]$npars
@@ -501,153 +649,6 @@ cat("==============================================\n")
 cat("Step 7: Hessian Diagnostic Analysis\n")
 cat("==============================================\n\n")
 
-## Check for diagnostic files
-cat("Checking diagnostic output files...\n")
-diagnostic_files <- c(
-  "neigenvalues",
-  "new_cor_report",
-  paste0(root_name, "_new_std"),
-  paste0(root_name, "_pos_new_std"),
-  paste0(root_name, "_hess_inv_diag"),
-  paste0(root_name, "_pos_hess_inv_diag2"),
-  paste0(root_name, "_pos_hess_cor"),
-  paste0(root_name, "_pos_hess_cov")
-)
-
-for(df in diagnostic_files) {
-  if(file.exists(df)) {
-    fsize <- file.size(df)
-    if(fsize > 1024*1024) {
-      cat("  ✓", df, "-", round(fsize/1024/1024, 2), "MB\n")
-    } else {
-      cat("  ✓", df, "-", round(fsize/1024, 2), "KB\n")
-    }
-  } else {
-    cat("  ✗", df, "- NOT FOUND\n")
-  }
-}
-cat("\n")
-
-## Analyze negative eigenvalues
-cat("==============================================\n")
-cat("Analyzing Eigenvalues (Critical for Model Validation)\n")
-cat("==============================================\n\n")
-
-neigen_file <- "neigenvalues"
-hessian_status <- "Unknown"
-n_negative <- NA
-reliability <- "UNKNOWN"
-
-if(file.exists(neigen_file)) {
-  neigen_lines <- readLines(neigen_file)
-  
-  ## First line: "n_negative total_params"
-  first_line <- as.integer(strsplit(neigen_lines[1], " ")[[1]])
-  n_negative <- first_line[1]
-  n_total <- first_line[2]
-  
-  cat("Total parameters:", n_total, "\n")
-  cat("Negative eigenvalues:", n_negative, "\n")
-  cat("Proportion:", round(n_negative/n_total*100, 2), "%\n\n")
-  
-  if(n_negative == 0) {
-    cat("✅ EXCELLENT: Hessian is POSITIVE DEFINITE (PDH)\n")
-    cat("   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-    cat("   All uncertainty estimates are VALID and RELIABLE\n")
-    cat("   Model has converged to a true minimum\n")
-    cat("   Use: *_new_std (normal standard errors)\n")
-    cat("   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
-    hessian_status <- "PDH"
-    reliability <- "HIGH"
-    
-  } else if(n_negative < n_total * 0.01) {
-    cat("⚠️  WARNING: Few negative eigenvalues detected\n")
-    cat("   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-    cat("   Model is close to convergence but not quite there\n")
-    cat("   Uncertainty estimates are APPROXIMATE\n")
-    cat("   Use: *_pos_new_std (positivized standard errors)\n")
-    cat("   Note: Positivized = negative eigenvalues forced positive\n")
-    cat("   Recommendation: Use with CAUTION, perform sensitivity analysis\n")
-    cat("   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
-    hessian_status <- "Near-PDH"
-    reliability <- "MODERATE"
-    
-  } else {
-    cat("❌ PROBLEM: Many negative eigenvalues detected\n")
-    cat("   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-    cat("   Hessian is NOT positive definite\n")
-    cat("   Uncertainty estimates are UNRELIABLE\n")
-    cat("   Model has NOT converged properly\n")
-    cat("   Use: *_pos_new_std (positivized - but UNRELIABLE)\n")
-    cat("   Note: Positivized values are mathematical approximations\n")
-    cat("         and do NOT represent true uncertainty\n")
-    cat("   Action: DO NOT USE for management advice - FIX MODEL FIRST\n")
-    cat("   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
-    hessian_status <- "Non-PDH"
-    reliability <- "LOW"
-  }
-  
-  ## Show the actual negative eigenvalues
-  if(n_negative > 0 && length(neigen_lines) > 1) {
-    cat("Negative eigenvalue(s) [smallest to largest]:\n")
-    n_show <- min(n_negative, 10)
-    for(i in 2:min(length(neigen_lines), n_show + 1)) {
-      eigen_line <- neigen_lines[i]
-      eigen_vals <- as.numeric(strsplit(eigen_line, " ")[[1]])
-      cat(sprintf("  %2d: %.6e\n", i-1, eigen_vals[1]))
-    }
-    if(n_negative > 10) {
-      cat("  ... (", n_negative - 10, " more)\n", sep = "")
-    }
-    cat("\n")
-  }
-  
-} else {
-  cat("⚠️  neigenvalues file not found\n")
-  cat("   Eigenvalue analysis may not have completed\n")
-  cat("   Check log:", eval_log_file, "\n\n")
-}
-
-## Analyze parameter confounding from new_cor_report
-cat("==============================================\n")
-cat("Parameter Confounding Analysis\n")
-cat("==============================================\n\n")
-
-new_cor_file <- "new_cor_report"
-
-if(file.exists(new_cor_file)) {
-  cor_lines <- readLines(new_cor_file, n = 200)
-  
-  ## Find "Smallest eigenvalues" section
-  smallest_idx <- grep("Smallest eigenvalues", cor_lines)
-  
-  if(length(smallest_idx) > 0) {
-    cat("Smallest eigenvalues (most confounded parameters):\n")
-    cat("Format: eigenvalue (param_index contribution) ...\n\n")
-    
-    start_idx <- smallest_idx[1] + 1
-    n_show <- min(10, length(cor_lines) - start_idx)
-    
-    for(i in start_idx:(start_idx + n_show - 1)) {
-      if(i <= length(cor_lines) && nchar(cor_lines[i]) > 0) {
-        cat("  ", cor_lines[i], "\n")
-      }
-    }
-    cat("\n")
-    
-    cat("Parameter indices correspond to xinit.rpt listings\n")
-    cat("High absolute contributions (>0.3) indicate confounding\n\n")
-  }
-} else {
-  cat("new_cor_report not found\n")
-  cat("This file contains detailed eigenvalue analysis\n\n")
-}
-
-## Extract and compare standard errors
-cat("==============================================\n")
-cat("Parameter Uncertainty (Standard Errors)\n")
-cat("==============================================\n\n")
-
 std_errors_normal <- NULL
 std_errors_pos <- NULL
 
@@ -681,232 +682,144 @@ if(file.exists(std_file_pos)) {
   con <- file(std_file_pos, "rb")
   std_errors_pos <- readBin(con, "double", n = npars)
   close(con)
-  
-  cat("Positivized standard errors (_pos_new_std):\n")
-  cat("  Parameters:", length(std_errors_pos), "\n")
-  cat("  Range: [", sprintf("%.6e", min(std_errors_pos, na.rm = TRUE)), 
-      ", ", sprintf("%.6e", max(std_errors_pos, na.rm = TRUE)), "]\n", sep = "")
-  cat("  Mean:", sprintf("%.6e", mean(std_errors_pos, na.rm = TRUE)), "\n")
-  
-  ## Check for invalid values
-  n_na <- sum(is.na(std_errors_pos))
-  n_inf <- sum(is.infinite(std_errors_pos))
-  n_neg <- sum(std_errors_pos < 0, na.rm = TRUE)
-  
-  if(n_na > 0) cat("  ⚠️  NA values:", n_na, "\n")
-  if(n_inf > 0) cat("  ⚠️  Infinite values:", n_inf, "\n")
-  if(n_neg > 0) cat("  ⚠️  Negative values:", n_neg, "\n")
-  cat("\n")
 }
 
-## Compare normal vs positivized if both exist
-if(!is.null(std_errors_normal) && !is.null(std_errors_pos)) {
-  cat("Comparison (Normal vs Positivized):\n")
-  
-  diff_abs <- abs(std_errors_pos - std_errors_normal)
-  diff_rel <- diff_abs / std_errors_normal * 100
-  
-  cat("  Max absolute difference:", sprintf("%.6e", max(diff_abs, na.rm = TRUE)), "\n")
-  cat("  Max relative difference:", sprintf("%.2f%%", max(diff_rel[is.finite(diff_rel)], na.rm = TRUE)), "\n")
-  cat("  Mean relative difference:", sprintf("%.2f%%", mean(diff_rel[is.finite(diff_rel)], na.rm = TRUE)), "\n")
-  
-  n_large_diff <- sum(diff_rel > 10, na.rm = TRUE)
-  if(n_large_diff > 0) {
-    cat("  ⚠️  Parameters with >10% difference:", n_large_diff, "\n")
+## Read eigenvalue summary for PDH status
+neigen_file <- "neigenvalues"
+n_negative <- NA_integer_
+n_total <- npars
+if(file.exists(neigen_file)) {
+  first_line <- suppressWarnings(as.integer(strsplit(readLines(neigen_file, n = 1), " +")[[1]]))
+  first_line <- first_line[is.finite(first_line)]
+  if(length(first_line) >= 1) {
+    n_negative <- first_line[1]
+    if(length(first_line) >= 2) n_total <- first_line[2]
   }
-  cat("\n")
 }
 
-## Determine which standard errors to use
-if(hessian_status == "PDH") {
+hessian_status <- "Unknown"
+reliability <- "UNKNOWN"
+if(!is.na(n_negative) && n_negative == 0) {
+  hessian_status <- "PDH"
+  reliability <- "HIGH"
+} else if(!is.na(n_negative) && n_negative < n_total * 0.01) {
+  hessian_status <- "Near-PDH"
+  reliability <- "MODERATE"
+} else if(!is.na(n_negative)) {
+  hessian_status <- "Non-PDH"
+  reliability <- "LOW"
+}
+
+if(hessian_status == "PDH" && !is.null(std_errors_normal)) {
   recommended_se <- std_errors_normal
   recommended_file <- std_file_normal
-  cat("✅ RECOMMENDED: Use NORMAL standard errors (_new_std)\n")
-  cat("   Reliability: HIGH\n\n")
-  
-} else if(hessian_status == "Near-PDH") {
+} else if(!is.null(std_errors_pos)) {
   recommended_se <- std_errors_pos
   recommended_file <- std_file_pos
-  cat("⚠️  RECOMMENDED: Use POSITIVIZED standard errors (_pos_new_std)\n")
-  cat("   Reliability: MODERATE (use with caution)\n")
-  cat("   Note: These are approximations due to negative eigenvalues\n\n")
-  
 } else {
-  recommended_se <- std_errors_pos
-  recommended_file <- std_file_pos
-  cat("❌ CAUTION: Only POSITIVIZED standard errors available\n")
-  cat("   Reliability: LOW\n")
-  cat("   Warning: DO NOT use for critical management decisions\n")
-  cat("   Action: Fix model convergence issues first\n\n")
+  recommended_se <- NULL
+  recommended_file <- NA_character_
 }
 
 ## Save standard errors
-if(!is.null(recommended_se)) {
-  saveRDS(list(
-    standard_errors = recommended_se,
-    source_file = recommended_file,
-    hessian_status = hessian_status,
-    reliability = reliability,
-    n_negative_eigenvalues = n_negative
-  ), file = "standard_errors.rds")
+standard_errors_info <- list(
+  source_file = recommended_file,
+  available = !is.null(recommended_se),
+  values = recommended_se
+)
+
+##################################################################
+## Step 7b: Build compact diagnostics info object (hessian_cal.R)
+##################################################################
+## Resolve hessian_cal.R path relative to this script
+hessian_cal_script <- NA_character_
+if(!is.na(script_path)) {
+  tools_dir <- dirname(normalizePath(script_path))
+  candidate <- file.path(tools_dir, "hessian_cal.R")
+  if(file.exists(candidate)) hessian_cal_script <- candidate
+}
+
+if(is.na(hessian_cal_script)) {
+  candidate <- file.path(old_wd, "tools", "hessian_cal.R")
+  if(file.exists(candidate)) hessian_cal_script <- candidate
+}
+
+hessian_diagnostics_info <- NULL
+hessian_diag_build_log <- character(0)
+
+if(!is.na(hessian_cal_script) && file.exists(hessian_cal_script)) {
+  info_build_log <- file.path(hessian_dir, "hessian_cal_build.log")
+  info_tmp <- tempfile(pattern = "hessian_diagnostics_", fileext = ".rds")
+  info_status <- system2(
+    command = "Rscript",
+    args = c(hessian_cal_script, hessian_dir, info_tmp),
+    stdout = info_build_log,
+    stderr = info_build_log
+  )
+  hessian_diag_build_log <- info_build_log
   
-  cat("✓ Recommended standard errors saved to: standard_errors.rds\n\n")
+  if(identical(info_status, 0L)) {
+    hessian_diagnostics_info <- tryCatch(readRDS(info_tmp), error = function(e) NULL)
+    if(file.exists(info_tmp)) file.remove(info_tmp)
+    cat("✓ Built integrated diagnostics payload\n")
+  } else {
+    cat("⚠ Failed to build diagnostics payload via hessian_cal.R\n")
+  }
+} else {
+  cat("⚠ hessian_cal.R not found; skipping diagnostics info generation\n")
+}
+
+##################################################################
+## Step 8: Save unified hessian_info and clean up
+##################################################################
+hessian_info <- list(
+  meta = list(
+    model_dir = normalizePath(model_dir),
+    hessian_dir = normalizePath(hessian_dir),
+    root_name = root_name,
+    created_at = Sys.time()
+  ),
+  stitch = list(
+    npars = npars,
+    n_parts = n_parts,
+    start_positions = start_positions,
+    part_ranges = part_ranges,
+    stitched_hessian_file = stitched_hess_file,
+    is_complete = is_complete,
+    file_size_mb = file_size_mb,
+    expected_size_mb = expected_data_size_mb,
+    size_diff_mb = size_diff_mb,
+    size_diff_pct = size_diff_pct
+  ),
+  eigen = list(
+    n_negative_eigenvalues = n_negative,
+    n_total_eigenvalues = n_total,
+    hessian_status = hessian_status,
+    reliability = reliability
+  ),
+  standard_errors = standard_errors_info,
+  diagnostics = hessian_diagnostics_info,
+  diagnostics_build_log = hessian_diag_build_log
+)
+
+saveRDS(hessian_info, file = file.path(hessian_dir, "hessian_info.rds"))
+cat("✓ Saved: hessian_info.rds\n")
+
+## Remove component .hes_* files
+hes_components <- list.files(hessian_dir, pattern = "\\.hes_[0-9]+$", full.names = TRUE)
+if(length(hes_components) > 0) {
+  file.remove(hes_components)
+  cat("✓ Removed component files:", length(hes_components), "\n")
 }
 
 ## Return to original directory
 setwd(old_wd)
 
-##################################################################
-## Step 8: Clean up component files (optional)
-##################################################################
-cat("==============================================\n")
-cat("Step 8: Cleaning up\n")
-cat("==============================================\n")
-
-## Remove component .hes_* files
-hes_components <- list.files(hessian_dir, pattern = "\\.hes_[0-9]+$", full.names = TRUE)
-if(length(hes_components) > 0) {
-  cat("Removing", length(hes_components), "component .hes_* files...\n")
-  file.remove(hes_components)
-  cat("✓ Cleanup complete\n\n")
-}
-
-##################################################################
-## Final Summary Report
-##################################################################
-cat("==============================================\n")
-cat("FINAL HESSIAN DIAGNOSTIC SUMMARY\n")
-cat("==============================================\n\n")
-
-cat("HESSIAN STATUS:", hessian_status, "\n")
-cat("RELIABILITY:", reliability, "\n")
-if(!is.na(n_negative)) {
-  cat("NEGATIVE EIGENVALUES:", n_negative, "out of", npars, "\n")
-}
-cat("\n")
-
-if(hessian_status == "PDH") {
-  cat("✅ MODEL VALIDATION: PASSED\n")
-  cat("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-  cat("✓ Hessian is positive definite\n")
-  cat("✓ Model has converged to a true minimum\n")
-  cat("✓ All uncertainty estimates are reliable\n")
-  cat("✓ Parameter correlations are valid\n")
-  cat("✓ Ready for management advice\n\n")
-  
-  cat("RECOMMENDED NEXT STEPS:\n")
-  cat("  1. Extract parameter estimates from .par file\n")
-  cat("  2. Match with standard errors from standard_errors.rds\n")
-  cat("  3. Compute 95% confidence intervals: estimate ± 1.96 × SE\n")
-  cat("  4. Analyze parameter correlations (*_pos_hess_cor)\n")
-  cat("  5. Generate stock assessment outputs with uncertainty\n")
-  cat("  6. Proceed with management advice\n\n")
-  
-} else if(hessian_status == "Near-PDH") {
-  cat("⚠️  MODEL VALIDATION: MARGINAL\n")
-  cat("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-  cat("⚠️  Few negative eigenvalues detected (", n_negative, ")\n", sep = "")
-  cat("⚠️  Model is close to but not at convergence\n")
-  cat("⚠️  Uncertainty estimates are approximate\n")
-  cat("⚠️  Use positivized standard errors with caution\n\n")
-  
-  cat("WHAT IS POSITIVIZED?\n")
-  cat("  Positivized means negative eigenvalues were mathematically\n")
-  cat("  forced to be positive to allow uncertainty calculation.\n")
-  cat("  This is an approximation, not the true uncertainty.\n\n")
-  
-  cat("RECOMMENDED ACTIONS:\n")
-  cat("  1. Review new_cor_report to identify confounded parameters\n")
-  cat("  2. Check parameter indices against xinit.rpt\n")
-  cat("  3. Consider tighter convergence criteria and re-run\n")
-  cat("  4. Examine parameter bounds and constraints\n")
-  cat("  5. Use positivized SE but perform sensitivity analysis\n")
-  cat("  6. Document limitations in assessment report\n\n")
-  
-} else if(hessian_status == "Non-PDH") {
-  cat("❌ MODEL VALIDATION: FAILED\n")
-  cat("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-  cat("❌ Many negative eigenvalues detected (", n_negative, ")\n", sep = "")
-  cat("❌ Hessian is NOT positive definite\n")
-  cat("❌ Model has NOT converged properly\n")
-  cat("❌ Uncertainty estimates are UNRELIABLE\n\n")
-  
-  cat("WHAT IS POSITIVIZED?\n")
-  cat("  Positivized standard errors are calculated by forcing\n")
-  cat("  negative eigenvalues to be positive. This is a mathematical\n")
-  cat("  trick to get numbers, but they DO NOT represent real\n")
-  cat("  uncertainty when many eigenvalues are negative.\n\n")
-  
-  cat("CRITICAL - DO NOT:\n")
-  cat("  ✗ Use these uncertainty estimates for management advice\n")
-  cat("  ✗ Report confidence intervals from this model\n")
-  cat("  ✗ Present this as a converged solution\n\n")
-  
-  cat("REQUIRED ACTIONS TO FIX:\n")
-  cat("  1. Review model convergence diagnostics thoroughly\n")
-  cat("  2. Check new_cor_report for parameter confounding\n")
-  cat("  3. Consider model reparameterization\n")
-  cat("  4. Review and adjust parameter bounds\n")
-  cat("  5. Try different initial parameter values\n")
-  cat("  6. Simplify model structure if overparameterized\n")
-  cat("  7. Check data quality and consistency\n")
-  cat("  8. Consult with assessment team\n\n")
-  
-} else {
-  cat("❓ MODEL VALIDATION: UNKNOWN\n")
-  cat("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-  cat("Eigenvalue analysis files not found\n")
-  cat("Check log files for errors\n\n")
-}
-
-cat("OUTPUT FILES LOCATION:\n")
-cat("  Directory:", hessian_dir, "\n\n")
-
-cat("KEY OUTPUT FILES:\n")
-cat("  Hessian matrix:       ", stitched_hess_file_name, " (", round(file_size_mb, 2), " MB)\n", sep = "")
-if(file.exists(file.path(hessian_dir, eval_file))) {
-  cat("  Eigenvalues:          ", eval_file, "\n", sep = "")
-}
-if(file.exists(file.path(hessian_dir, evec_file))) {
-  cat("  Eigenvectors:         ", evec_file, "\n", sep = "")
-}
-if(file.exists(file.path(hessian_dir, "neigenvalues"))) {
-  cat("  Neg eigenval summary: neigenvalues\n")
-}
-if(file.exists(file.path(hessian_dir, "new_cor_report"))) {
-  cat("  Detailed report:      new_cor_report\n")
-}
-if(file.exists(file.path(hessian_dir, recommended_file))) {
-  cat("  Standard errors:      ", basename(recommended_file), " (RECOMMENDED)\n", sep = "")
-}
-if(file.exists(file.path(hessian_dir, "standard_errors.rds"))) {
-  cat("  Saved SE (R object):  standard_errors.rds\n")
-}
-cat("\n")
-
-cat("USAGE IN R:\n")
-cat("  # Load standard errors\n")
-cat("  se_data <- readRDS('model/base/hessian/standard_errors.rds')\n")
-cat("  std_errors <- se_data$standard_errors\n")
-cat("  hess_status <- se_data$hessian_status\n")
-cat("  reliability <- se_data$reliability\n")
-cat("  \n")
-cat("  # Compute 95% confidence intervals\n")
-cat("  # (assuming you have parameter estimates in 'params')\n")
-cat("  ci_lower <- params - 1.96 * std_errors\n")
-cat("  ci_upper <- params + 1.96 * std_errors\n")
-cat("  \n")
-cat("  # Read full Hessian matrix\n")
-cat("  library(FLR4MFCL)\n")
-cat("  hess <- read.MFCLHess('model/base/hessian/", root_name, ".hes')\n", sep = "")
-cat("  \n")
-
-cat("LOG FILES:\n")
-cat("  ", file.path(hessian_dir, log_file), "\n", sep = "")
-cat("  ", file.path(hessian_dir, eval_log_file), "\n\n", sep = "")
-
-cat("==============================================\n")
-cat("Processing completed:", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n")
-cat("==============================================\n\n")
-
-
+cat("\nSummary\n")
+cat("  status:", hessian_status, "\n")
+cat("  reliability:", reliability, "\n")
+cat("  negative eigenvalues:", ifelse(is.na(n_negative), "NA", n_negative), "/", n_total, "\n")
+cat("  saved:", file.path(hessian_dir, "hessian_info.rds"), "\n")
+cat("  log files:\n")
+cat("    ", file.path(hessian_dir, log_file), "\n", sep = "")
+cat("    ", file.path(hessian_dir, eval_log_file), "\n", sep = "")
