@@ -499,6 +499,7 @@ mod_tagging_ui <- function() {
           )
         ),
         numericInput("tag_facet_ncol", "Facet columns:", value = 2, min = 1, max = 6, step = 1),
+        checkboxInput("tag_rr_nonneg_only", "Tag RR filter: exclude rr <= 0", value = FALSE),
         selectInput("tag_plot", "Plot:", choices = c(
           "Tag Reporting Rates by Group" = "report",
           "Tag Returns Over Time (All Combined)" = "returns_all",
@@ -565,6 +566,7 @@ mod_tagging_server <- function(input, output, session, rv) {
     view_mode <- if (is.null(input$tag_view_mode)) "single" else input$tag_view_mode
     time_mode <- if (is.null(input$tag_time_mode)) "year" else input$tag_time_mode
     mode <- if (is.null(input$tag_plot)) "report" else input$tag_plot
+    rr_nonneg_only <- isTRUE(input$tag_rr_nonneg_only)
 
     selected_models <- if (identical(view_mode, "overlay")) scenarios_name else input$tag_model_single
     selected_models <- selected_models[selected_models %in% names(rv$ParOut_list)]
@@ -605,6 +607,7 @@ mod_tagging_server <- function(input, output, session, rv) {
     facet_ncol <- min(max(facet_ncol, 1), 6)
 
     ParOut_list <- subset_named(rv$ParOut_list, selected_models)
+    TagRepOut_list <- subset_named(rv$TagRepOut_list, selected_models)
     TagOut_list <- subset_named(rv$TagOut_list, selected_models)
     TagTempOut_list <- subset_named(rv$TagTempOut_list, selected_models)
     seasons_per_model <- pm_get_seasons_per_model(subset_named(rv$ParOut_list, selected_models), fallback = 4)
@@ -661,20 +664,33 @@ mod_tagging_server <- function(input, output, session, rv) {
         }
 
         by_recapture <- fmap %>%
-          filter(!is.na(tag_recapture_group), !is.na(tag_recapture_name), nzchar(tag_recapture_name)) %>%
-          mutate(group = as.numeric(tag_recapture_group), group_name = as.character(tag_recapture_name)) %>%
-          mutate(priority = 1)
+          filter(!is.na(tag_recapture_group)) %>%
+          mutate(
+            group = as.numeric(tag_recapture_group),
+            group_name = as.character(tag_recapture_name),
+            fallback_name = as.character(fishery_name)
+          ) %>%
+          mutate(group_name = if_else(is.na(group_name) | !nzchar(group_name), fallback_name, group_name)) %>%
+          select(group, group_name)
 
         by_fishery <- fmap %>%
           filter(!is.na(fishery), !is.na(fishery_name), nzchar(fishery_name)) %>%
-          mutate(group = as.numeric(fishery), group_name = as.character(fishery_name)) %>%
-          mutate(priority = 2)
+          transmute(group = as.numeric(fishery), group_name = as.character(fishery_name))
 
         bind_rows(by_recapture, by_fishery) %>%
           filter(is.finite(group)) %>%
-          arrange(priority) %>%
+          filter(!is.na(group_name), nzchar(group_name)) %>%
+          arrange(group) %>%
           group_by(group) %>%
-          summarise(group_name = first(group_name), .groups = "drop")
+          summarise(group_name = first(group_name), .groups = "drop") %>%
+          group_by(group_name) %>%
+          mutate(
+            name_idx = row_number(),
+            name_n = dplyr::n(),
+            group_name = if_else(name_n > 1, paste0(group_name, "-", name_idx), group_name)
+          ) %>%
+          ungroup() %>%
+          select(group, group_name)
       }
 
       tag_rr_list <- list()
@@ -687,28 +703,34 @@ mod_tagging_server <- function(input, output, session, rv) {
           rr = c(tag_fish_rep_rate(ParOut_list[[i]])),
           prior_mean = c(tag_fish_rep_target(ParOut_list[[i]]) / 100),
           prior_sd = c(sqrt(1 / (2 * tag_fish_rep_pen(ParOut_list[[i]]))))
-        ) %>% unique() %>% arrange(group) %>% filter(rr > 0) %>%
+        ) %>% unique() %>% arrange(group) %>%
           left_join(group_labels, by = "group") %>%
           mutate(
             scenario = model_name,
             upper_bound = upper.bound,
-            names = if_else(!is.na(group_name) & nzchar(group_name), group_name, paste0("G", group))
+            names = group_name
           ) %>%
-          mutate(name_duplicated = duplicated(names) | duplicated(names, fromLast = TRUE)) %>%
-          mutate(names = if_else(name_duplicated, paste0(names, " [G", group, "]"), names)) %>%
-          select(-name_duplicated) %>%
+          filter(!is.na(names), nzchar(names)) %>%
           select(-group_name)
         tag_rr_list[[model_name]] <- tag_dt
       }
 
       tag_rr_all <- bind_rows(tag_rr_list, .id = "Model")
+      if (rr_nonneg_only) {
+        tag_rr_all <- tag_rr_all %>% filter(is.finite(rr), rr > 0)
+      }
       if (nrow(tag_rr_all) == 0) return(ggplot() + theme_void() + annotate("text", x = 0.5, y = 0.5, label = "No tag reporting-rate data"))
 
       x_seq <- seq(0, 1, length.out = 500)
       prior_curve <- bind_rows(lapply(seq_len(nrow(tag_rr_all)), function(i) {
-        data.frame(Model = tag_rr_all$Model[i], names = tag_rr_all$names[i], x = x_seq,
+        data.frame(Model = tag_rr_all$Model[i], group = tag_rr_all$group[i], names = tag_rr_all$names[i], x = x_seq,
                    density = dnorm(x_seq, mean = tag_rr_all$prior_mean[i], sd = tag_rr_all$prior_sd[i]))
       }))
+      tag_rr_all <- tag_rr_all %>% mutate(panel = paste0("G", group))
+      prior_curve <- prior_curve %>% mutate(panel = paste0("G", group))
+      panel_labels <- tag_rr_all %>%
+        distinct(panel, names) %>%
+        { stats::setNames(.$names, .$panel) }
 
       compatible <- is_compatible_by(tag_rr_all, "names")
       if (!overlay || compatible) {
@@ -717,7 +739,8 @@ mod_tagging_server <- function(input, output, session, rv) {
           geom_vline(data = tag_rr_all, aes(xintercept = rr, color = Model), linewidth = 1.1) +
           geom_vline(data = tag_rr_all, aes(xintercept = upper_bound), color = "blue", linewidth = 0.9, linetype = "dashed") +
           coord_cartesian(xlim = c(0, 1), ylim = c(0, NA)) +
-          facet_wrap(~ names, scales = "free_y", ncol = 4) +
+          scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05))) +
+          facet_wrap(~ panel, scales = "free_y", ncol = 4, labeller = as_labeller(panel_labels)) +
           scale_color_manual(values = scenario_colors, drop = FALSE) +
           labs(x = "Reporting rate", y = "Density",
                title = if (overlay) "Tag Reporting Rates (Overlay)" else paste("Tag Reporting Rates -", selected_models[1]),
@@ -728,14 +751,15 @@ mod_tagging_server <- function(input, output, session, rv) {
         return(p)
       }
 
-      tag_rr_all <- tag_rr_all %>% mutate(panel = paste(Model, names, sep = " | "))
-      prior_curve <- prior_curve %>% mutate(panel = paste(Model, names, sep = " | "))
+      tag_rr_all <- tag_rr_all %>% mutate(panel = paste(Model, panel, sep = " | "))
+      prior_curve <- prior_curve %>% mutate(panel = paste(Model, panel, sep = " | "))
       return(
         ggplot() +
           geom_line(data = prior_curve, aes(x = x, y = density), color = "black", linewidth = 1) +
           geom_vline(data = tag_rr_all, aes(xintercept = rr), linewidth = 1.1, color = "#2c7fb8") +
           geom_vline(data = tag_rr_all, aes(xintercept = upper_bound), color = "blue", linewidth = 0.9, linetype = "dashed") +
           coord_cartesian(xlim = c(0, 1), ylim = c(0, NA)) +
+          scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05))) +
           facet_wrap(~ panel, scales = "free_y", ncol = 4) +
           labs(x = "Reporting rate", y = "Density", title = "Tag Reporting Rates (Model-specific panels; incompatible groups)") +
           theme_bw() +

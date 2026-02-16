@@ -147,4 +147,25 @@ saveRDS(
   compress = "xz"
 )
 
+## Optional compact cleanup within each part directory.
+## Keep only files needed for downstream collate/stitch and diagnostics.
+part_compact_cleanup <- tolower(Sys.getenv("hessian_part_compact_cleanup", "true")) %in% c("1", "true", "yes", "y")
+if (isTRUE(part_compact_cleanup)) {
+  keep_ext_files <- list.files(
+    part_dir,
+    pattern = "\\.(hes|txt|rds|par|frq|age_length|cfg|tag|dep|dp2)$",
+    full.names = FALSE
+  )
+  keep_named_files <- c("depgrad.rpt", "Hess.rpt")
+  keep_files <- unique(c(keep_ext_files, keep_named_files))
+
+  entries <- list.files(part_dir, full.names = TRUE, recursive = FALSE, all.files = FALSE, no.. = TRUE)
+  entry_base <- basename(entries)
+  drop_entries <- entries[!(entry_base %in% keep_files)]
+  if (length(drop_entries) > 0) {
+    unlink(drop_entries, recursive = TRUE, force = TRUE)
+  }
+  cat("Compact cleanup complete for part directory; kept", length(keep_files), "files\n")
+}
+
 cat("✅ Hessian calculation completed for part", hessian_part, "\n")

@@ -141,35 +141,19 @@ server_data_load <- function(input, output, session, rv) {
                 ))
               }
 
-              # Read model output files
+              # Read model outputs primarily from model_payload.rds.
+              # Raw-file fallbacks are intentionally avoided for optional objects
+              # so compact-cleaned model folders still load cleanly.
               data <- list(
                 ParOut = par_obj,
                 RepOut = rep_obj,
-                LengOut = if (!is.null(payload_data$LengOut)) payload_data$LengOut else tryCatch({
-                  lf_file <- file.path(folder, "length.fit")
-                  if (file.exists(lf_file)) read.MFCLLenFit(lf_file) else NULL
-                }, error = function(e) NULL),
-                WeightOut = if (!is.null(payload_data$WeightOut)) payload_data$WeightOut else tryCatch({
-                  wf_file <- file.path(folder, "weight.fit")
-                  if (file.exists(wf_file)) read.MFCLWgtFit(wf_file) else NULL
-                }, error = function(e) NULL),
-                TagOut = if (!is.null(payload_data$TagOut)) payload_data$TagOut else tryCatch({
-                  tag_files <- list.files(folder, "\\.tag$", full.names = TRUE)
-                  if (length(tag_files) > 0) read.MFCLTag(tag_files) else NULL
-                }, error = function(e) NULL),
-                TagTempOut = if (!is.null(payload_data$TagTempOut)) payload_data$TagTempOut else tryCatch({
-                  ttr_file <- file.path(folder, "temporary_tag_report")
-                  if (file.exists(ttr_file)) {
-                    year1 <- suppressWarnings(as.numeric(par_obj@range["minyear"]))
-                    if (!is.finite(year1)) year1 <- 1952
-                    read.temporary_tag_report(ttr_file, year1 = year1)
-                  } else NULL
-                }, error = function(e) NULL),
-                AgeOut = if (!is.null(payload_data$AgeOut)) payload_data$AgeOut else tryCatch({
-                  age_files <- list.files(folder, "\\.age_length$", full.names = TRUE)
-                  if (length(age_files) > 0) read.MFCLALK(age_files) else NULL
-                }, error = function(e) NULL),
-                IndepOut = if (!is.null(payload_data$IndepOut)) payload_data$IndepOut else safe_read(file.path(folder, "indepvar.rpt")),
+                TagRepOut = if (!is.null(payload_data)) payload_data$TagRepOut else NULL,
+                LengOut = if (!is.null(payload_data)) payload_data$LengOut else NULL,
+                WeightOut = if (!is.null(payload_data)) payload_data$WeightOut else NULL,
+                TagOut = if (!is.null(payload_data)) payload_data$TagOut else NULL,
+                TagTempOut = if (!is.null(payload_data)) payload_data$TagTempOut else NULL,
+                AgeOut = if (!is.null(payload_data)) payload_data$AgeOut else NULL,
+                IndepOut = if (!is.null(payload_data)) payload_data$IndepOut else NULL,
                 JitterPars = tryCatch({
                   jitter_dir <- file.path(folder, "jitter")
                   seed_dirs <- list.dirs(jitter_dir, full.names = TRUE, recursive = FALSE)
@@ -272,6 +256,7 @@ server_data_load <- function(input, output, session, rv) {
         # Extract data into separate lists
         rv$ParOut_list <- map(results_named, "ParOut")
         rv$RepOut_list <- map(results_named, "RepOut")
+        rv$TagRepOut_list <- map(results_named, "TagRepOut")
         rv$LengOut_list <- map(results_named, "LengOut")
         rv$WeightOut_list <- map(results_named, "WeightOut")
         rv$TagOut_list <- map(results_named, "TagOut")

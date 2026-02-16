@@ -361,6 +361,10 @@ other_files <- c(
   paste0(root_name, ".age_length"),
   paste0(root_name, ".ini"),
   paste0(root_name, ".tag"),
+  paste0(root_name, ".dep"),
+  paste0(root_name, ".dp2"),
+  "depgrad.rpt",
+  "Hess.rpt",
   "mfcl.cfg"
 )
 
@@ -805,38 +809,45 @@ hessian_info <- list(
 saveRDS(hessian_info, file = file.path(hessian_dir, "hessian_info.rds"))
 cat("✓ Saved: hessian_info.rds\n")
 
-## Remove component .hes_* files
-hes_components <- list.files(hessian_dir, pattern = "\\.hes_[0-9]+$", full.names = TRUE)
-if(length(hes_components) > 0) {
-  file.remove(hes_components)
-  cat("✓ Removed component files:", length(hes_components), "\n")
-}
-
-## Optional compact cleanup: keep only compact artifacts after successful stitch
+## Optional compact cleanup: keep only compact artifacts after successful stitch.
+## Default policy keeps only .rds/.txt files used by plots_refactored.rmd and shiny.
 compact_cleanup <- tolower(Sys.getenv("hessian_compact_cleanup", "true")) %in% c("1", "true", "yes", "y")
+keep_hes <- tolower(Sys.getenv("hessian_keep_hes", "false")) %in% c("1", "true", "yes", "y")
 if (isTRUE(compact_cleanup)) {
-  keep_top <- c(
-    "hessian_info.rds",
-    "stitch_info.rds",
-    basename(log_file),
-    basename(eval_log_file),
-    "hessian_cal_build.log"
-  )
-
-  ## Remove raw part directories once hessian_info.rds has been created.
+  ## Remove raw part directories first.
   if (length(part_dirs) > 0) {
     unlink(part_dirs, recursive = TRUE, force = TRUE)
   }
 
-  top_files <- list.files(hessian_dir, full.names = TRUE, recursive = FALSE, all.files = FALSE, no.. = TRUE)
-  top_files <- top_files[file.info(top_files)$isdir %in% FALSE]
-  keep_paths <- normalizePath(file.path(hessian_dir, keep_top), winslash = "/", mustWork = FALSE)
-  top_paths <- normalizePath(top_files, winslash = "/", mustWork = FALSE)
-  rm_files <- top_files[!(top_paths %in% keep_paths)]
+  all_files <- list.files(
+    hessian_dir,
+    full.names = TRUE,
+    recursive = TRUE,
+    all.files = FALSE,
+    no.. = TRUE
+  )
+  all_files <- all_files[file.info(all_files)$isdir %in% FALSE]
+
+  keep_pattern <- if (isTRUE(keep_hes)) "\\.(rds|txt|hes)$" else "\\.(rds|txt)$"
+  keep_mask <- grepl(keep_pattern, tolower(basename(all_files)))
+  rm_files <- all_files[!keep_mask]
   if (length(rm_files) > 0) {
-    file.remove(rm_files)
+    unlink(rm_files, recursive = FALSE, force = TRUE)
   }
-  cat("✓ Compact cleanup complete in hessian directory\n")
+
+  ## Remove empty directories left after file cleanup.
+  all_dirs <- list.dirs(hessian_dir, full.names = TRUE, recursive = TRUE)
+  all_dirs <- all_dirs[order(nchar(all_dirs), decreasing = TRUE)]
+  hdir_norm <- normalizePath(hessian_dir, winslash = "/", mustWork = FALSE)
+  for (d in all_dirs) {
+    d_norm <- normalizePath(d, winslash = "/", mustWork = FALSE)
+    if (identical(d_norm, hdir_norm)) next
+    if (length(list.files(d, all.files = FALSE, no.. = TRUE)) == 0) {
+      unlink(d, recursive = TRUE, force = TRUE)
+    }
+  }
+
+  cat("✓ Compact cleanup complete in hessian directory (keep:", ifelse(keep_hes, ".rds/.txt/.hes", ".rds/.txt"), ")\n")
 }
 
 ## Return to original directory

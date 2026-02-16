@@ -38,6 +38,16 @@ mod_cpue_ui <- function() {
           selected = "overlay"
         ),
 
+        radioButtons(
+          "cpue_metric",
+          "Metric:",
+          choices = c(
+            "Observed vs Fitted" = "fits",
+            "Residuals (obs - fit)" = "residuals"
+          ),
+          selected = "fits"
+        ),
+
         pickerInput(
           "cpue_fisheries",
           "Fisheries:",
@@ -195,8 +205,11 @@ mod_cpue_server <- function(input, output, session, rv) {
       cpue_all <- cpue_all %>%
         mutate(
           year_season = year + (season - 1) / 4,
-          obs = exp(obs),
-          fit = exp(fit)
+          obs_log = obs,
+          fit_log = fit,
+          obs = exp(obs_log),
+          fit = exp(fit_log),
+          residual = obs - fit
         )
 
       obs_points <- cpue_all %>%
@@ -205,6 +218,50 @@ mod_cpue_server <- function(input, output, session, rv) {
 
       scenario_colors <- get_scenario_colors(input$cpue_scenarios)
       view_mode <- if (is.null(input$cpue_view_mode)) "overlay" else input$cpue_view_mode
+      metric <- if (is.null(input$cpue_metric)) "fits" else input$cpue_metric
+
+      if (identical(metric, "residuals") && identical(view_mode, "by_scenario")) {
+        p <- ggplot(cpue_all, aes(x = year_season, y = residual, color = Scenario)) +
+          geom_hline(yintercept = 0, linetype = "dashed", color = "#666") +
+          geom_point(size = 1.2, alpha = 0.55) +
+          facet_grid(Scenario ~ fishery_name, scales = "free_y") +
+          scale_color_manual(values = scenario_colors) +
+          labs(x = "Year + Season", y = "Residual (obs - fit)", title = "CPUE Residuals by Scenario") +
+          theme_bw(base_size = 12) +
+          theme(
+            legend.position = "none",
+            plot.title = element_text(hjust = 0.5, face = "bold", size = 15),
+            strip.background = element_rect(fill = "grey90"),
+            strip.text = element_text(face = "bold"),
+            panel.grid.minor = element_blank()
+          )
+
+        return(p)
+      }
+
+      if (identical(metric, "residuals")) {
+      p <- ggplot(cpue_all, aes(x = year_season, y = residual, color = Scenario)) +
+        geom_hline(yintercept = 0, linetype = "dashed", color = "#666") +
+        geom_point(size = 1.6, alpha = 0.55) +
+        facet_wrap(~fishery_name, scales = "free_y", ncol = 3) +
+          scale_color_manual(values = scenario_colors) +
+          labs(
+            x = "Year + Season",
+            y = "Residual (obs - fit)",
+            title = paste("CPUE Residuals -", paste(input$cpue_scenarios, collapse = ", "))
+          ) +
+          theme_bw(base_size = 13) +
+          theme(
+            legend.position = "top",
+            legend.title = element_blank(),
+            plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+            strip.background = element_rect(fill = "grey90"),
+            strip.text = element_text(face = "bold"),
+            panel.grid.minor = element_blank()
+          )
+
+        return(p)
+      }
 
       if (identical(view_mode, "by_scenario")) {
         p <- ggplot(cpue_all, aes(x = year_season)) +

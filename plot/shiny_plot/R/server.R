@@ -24,6 +24,7 @@ server <- function(input, output, session) {
     LengOut_list = NULL,              # List of MFCLLenFit objects
     WeightOut_list = NULL,            # List of MFCLWgtFit objects
     TagOut_list = NULL,               # List of MFCLTag objects
+    TagRepOut_list = NULL,            # List of MFCLTagRep objects
     TagTempOut_list = NULL,           # List of temporary tag report dataframes
     AgeOut_list = NULL,               # List of MFCLALK objects
     IndepOut_list = NULL,             # List of indepvar.rpt contents

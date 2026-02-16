@@ -2501,6 +2501,36 @@ cpue_overlay_info <- pm_overlay_capability(
   extractor = function(x) as.numeric(unique(cpue_obs(x)$unit))
 )
 
+# Build long CPUE table for residual diagnostics (raw-scale residual: obs - fit).
+cpue_long <- purrr::imap_dfr(RepOut_list, function(rep_obj, scenario_name) {
+  obs <- tryCatch(as.data.frame(cpue_obs(rep_obj)), error = function(e) NULL)
+  fit <- tryCatch(as.data.frame(cpue_pred(rep_obj)), error = function(e) NULL)
+  if (is.null(obs) || is.null(fit) || nrow(obs) == 0 || nrow(fit) == 0) return(NULL)
+
+  names(obs)[names(obs) == "data"] <- "obs_log"
+  names(fit)[names(fit) == "data"] <- "fit_log"
+
+  cpue <- merge(obs, fit)
+  cpue <- type.convert(cpue, as.is = TRUE)
+  cpue <- cpue[cpue$unit %in% cpue_fisheries, , drop = FALSE]
+  if (nrow(cpue) == 0) return(NULL)
+
+  cpue %>%
+    mutate(
+      unit_chr = as.character(unit),
+      fishery_name = if_else(
+        unit_chr %in% names(cpue_mapping),
+        as.character(cpue_mapping[unit_chr]),
+        paste("Unknown", unit_chr)
+      ),
+      year_season = year + (season - 1) / 4,
+      obs = exp(obs_log),
+      fit = exp(fit_log),
+      residual = obs - fit,
+      Scenario = scenario_name
+    )
+})
+
 # Create plots using utility function
 scenario_plots <- create_cpue_plots(
   RepOut_list = RepOut_list,
@@ -2560,6 +2590,80 @@ if (!cpue_overlay_info$can_overlay) {
     )
   
   interactive_plot
+}
+```
+
+## Residuals by scenario {.tabset .tabset-pills}
+
+```{r cpue-residual-by-scenario, echo=FALSE, message=FALSE, warning=FALSE, results='asis', fig.dim=c(8,8)}
+if (!exists("cpue_long") || is.null(cpue_long) || nrow(cpue_long) == 0) {
+  cat("No CPUE residual data available.\n")
+} else {
+  by_sc <- split(cpue_long, cpue_long$Scenario)
+  scenario_colors <- get_scenario_colors(names(by_sc))
+
+  for (nm in names(by_sc)) {
+    cat(sprintf("\n### %s\n\n", nm))
+
+    p <- ggplot(by_sc[[nm]], aes(x = year_season, y = residual)) +
+      geom_hline(yintercept = 0, linetype = "dashed", color = "#666") +
+      geom_point(color = scenario_colors[[nm]], size = 1.2, alpha = 0.55) +
+      facet_wrap(~fishery_name, scales = "free_y", ncol = 3) +
+      labs(
+        title = paste("CPUE Residuals:", nm),
+        x = "Year + Season (Q)",
+        y = "Residual (obs - fit)"
+      ) +
+      theme_bw() +
+      theme(
+        strip.text = element_text(size = 10, face = "bold"),
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(hjust = 0.5)
+      )
+
+    print(p)
+    cat("\n\n")
+  }
+}
+```
+
+## Residuals overlay
+
+```{r cpue-residual-overlay, echo=FALSE, message=FALSE, fig.dim=c(10,8)}
+if (!exists("cpue_long") || is.null(cpue_long) || nrow(cpue_long) == 0) {
+  cat("No CPUE residual data available.\n")
+} else if (!exists("cpue_overlay_info") || is.null(cpue_overlay_info) || !isTRUE(cpue_overlay_info$can_overlay)) {
+  cat("Overlay is not available for CPUE residuals (single model or no common fishery IDs across models).")
+} else {
+  cpue_residual_overlay <- cpue_long %>%
+    filter(unit %in% cpue_overlay_info$common_ids)
+
+  if (nrow(cpue_residual_overlay) == 0) {
+    cat("No CPUE residual data for common overlay fisheries.\n")
+  } else {
+    scenario_colors <- get_scenario_colors(unique(cpue_residual_overlay$Scenario))
+
+    p <- ggplot(cpue_residual_overlay, aes(x = year_season, y = residual, color = Scenario)) +
+      geom_hline(yintercept = 0, linetype = "dashed", color = "#666") +
+      geom_point(size = 1.4, alpha = 0.55) +
+      facet_wrap(~fishery_name, scales = "free_y", ncol = 3) +
+      scale_color_manual(values = scenario_colors) +
+      labs(
+        title = "CPUE Residuals: All Scenarios",
+        x = "Year + Season (Q)",
+        y = "Residual (obs - fit)"
+      ) +
+      theme_bw() +
+      theme(
+        legend.position = "top",
+        legend.title = element_blank(),
+        strip.text = element_text(size = 10, face = "bold"),
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(hjust = 0.5)
+      )
+
+    print(p)
+  }
 }
 ```
 
@@ -3032,20 +3136,33 @@ get_reporting_group_labels <- function(model_name) {
   }
 
   by_recapture <- fmap %>%
-    filter(!is.na(tag_recapture_group), !is.na(tag_recapture_name), nzchar(tag_recapture_name)) %>%
-    mutate(group = as.numeric(tag_recapture_group), group_name = as.character(tag_recapture_name)) %>%
-    mutate(priority = 1)
+    filter(!is.na(tag_recapture_group)) %>%
+    mutate(
+      group = as.numeric(tag_recapture_group),
+      group_name = as.character(tag_recapture_name),
+      fallback_name = as.character(fishery_name)
+    ) %>%
+    mutate(group_name = if_else(is.na(group_name) | !nzchar(group_name), fallback_name, group_name)) %>%
+    select(group, group_name)
 
   by_fishery <- fmap %>%
     filter(!is.na(fishery), !is.na(fishery_name), nzchar(fishery_name)) %>%
-    mutate(group = as.numeric(fishery), group_name = as.character(fishery_name)) %>%
-    mutate(priority = 2)
+    transmute(group = as.numeric(fishery), group_name = as.character(fishery_name))
 
   bind_rows(by_recapture, by_fishery) %>%
     filter(is.finite(group)) %>%
-    arrange(priority) %>%
+    filter(!is.na(group_name), nzchar(group_name)) %>%
+    arrange(group) %>%
     group_by(group) %>%
-    summarise(group_name = first(group_name), .groups = "drop")
+    summarise(group_name = first(group_name), .groups = "drop") %>%
+    group_by(group_name) %>%
+    mutate(
+      name_idx = row_number(),
+      name_n = dplyr::n(),
+      group_name = if_else(name_n > 1, paste0(group_name, "-", name_idx), group_name)
+    ) %>%
+    ungroup() %>%
+    select(group, group_name)
 }
 
 # Extract reporting rate data from each scenario
@@ -3065,16 +3182,13 @@ for (i in seq_along(ParOut_list)) {
   ) %>%
     unique() %>%
     arrange(group) %>%
-    filter(rr > 0) %>%  # Exclude fixed values (rr = 0)
     left_join(group_labels, by = "group") %>%
     mutate(
       scenario = model_name,
       upper_bound = upper.bound,
-      names = if_else(!is.na(group_name) & nzchar(group_name), group_name, paste0("G", group))
+      names = group_name
     ) %>%
-    mutate(name_duplicated = duplicated(names) | duplicated(names, fromLast = TRUE)) %>%
-    mutate(names = if_else(name_duplicated, paste0(names, " [G", group, "]"), names)) %>%
-    select(-name_duplicated) %>%
+    filter(!is.na(names), nzchar(names)) %>%
     select(-group_name)
   
   tag_rr_list[[model_name]] <- tag_dt
@@ -3096,6 +3210,7 @@ for (i in 1:nrow(tag_rr_all)) {
   
   prior_curve_list[[i]] <- data.frame(
     Model = tag_rr_all$Model[i],
+    group = tag_rr_all$group[i],
     names = tag_rr_all$names[i],
     x = x_seq,
     density = pdf_vals
@@ -3104,12 +3219,17 @@ for (i in 1:nrow(tag_rr_all)) {
 
 # Combine prior distribution curves
 prior_curve <- bind_rows(prior_curve_list)
+tag_rr_all <- tag_rr_all %>% mutate(panel = paste0("G", group))
+prior_curve <- prior_curve %>% mutate(panel = paste0("G", group))
 
 # Convert to factor for proper ordering
 tag_rr_all$names <- factor(tag_rr_all$names, levels = unique(tag_rr_all$names))
 tag_rr_all$Model <- factor(tag_rr_all$Model, levels = scenarios_name)
 prior_curve$names <- factor(prior_curve$names, levels = unique(prior_curve$names))
 prior_curve$Model <- factor(prior_curve$Model, levels = scenarios_name)
+panel_labels <- tag_rr_all %>%
+  distinct(panel, names) %>%
+  { stats::setNames(.$names, .$panel) }
 
 # =============================================================================
 # Define color palette
@@ -3140,10 +3260,9 @@ for (model in scenarios_name) {
     # Upper bound (blue dashed line)
     geom_vline(data = tag_rr_model, aes(xintercept = upper_bound), 
                color = "blue", linewidth = 1, linetype = "dashed") +
-    coord_cartesian(xlim = c(0, 1)) +
-    coord_cartesian(ylim = c(0, NA)) +
-    facet_wrap(~ names, ncol = 4, scales = "free_y") +
-    scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+    coord_cartesian(xlim = c(0, 1), ylim = c(0, NA)) +
+    facet_wrap(~ panel, ncol = 4, scales = "free_y", labeller = as_labeller(panel_labels)) +
+    scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05))) +
     labs(x = "Tag group",
          y = "Density",
          title = paste("Tag Reporting Rates -", model)) +
