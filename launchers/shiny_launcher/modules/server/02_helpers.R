@@ -3,7 +3,7 @@
   get_job_history_file <- function(config_file) {
     if (is.null(config_file)) return(NULL)
     config_basename <- tools::file_path_sans_ext(basename(config_file))
-    job_history_file <- file.path(resolve_repo_path("configs/models_ran"), 
+    job_history_file <- file.path(resolve_repo_path(".models_ran"), 
                                   paste0(config_basename, "_job_history.rds"))
     return(job_history_file)
   }
@@ -29,6 +29,8 @@
   save_job_history <- function(config_file, job_record) {
     job_file <- get_job_history_file(config_file)
     if (is.null(job_file)) return()
+    job_dir <- dirname(job_file)
+    if (!dir.exists(job_dir)) dir.create(job_dir, recursive = TRUE, showWarnings = FALSE)
     history <- load_job_history(config_file)
     history <- rbind(history, job_record)
     saveRDS(history, job_file)
@@ -224,6 +226,8 @@
             # Try to find the file
             possible_paths <- c(
               saved_settings$last_config_file,
+              file.path(resolve_repo_path(".launcher_configs"), saved_settings$last_config_file),
+              file.path(resolve_repo_path(".launcher_configs"), basename(saved_settings$last_config_file)),
               file.path(resolve_repo_path("configs"), saved_settings$last_config_file),
               file.path(resolve_repo_path("configs"), basename(saved_settings$last_config_file))
             )

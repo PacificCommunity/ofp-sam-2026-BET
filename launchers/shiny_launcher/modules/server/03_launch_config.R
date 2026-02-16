@@ -88,12 +88,12 @@
       filename <- paste0(filename, ".R")
     }
     
-    save_path <- file.path(resolve_repo_path("configs"), filename)
+    save_path <- file.path(resolve_repo_path(".launcher_configs"), filename)
     
     tryCatch({
       # Create directory if needed
-      if (!dir.exists(resolve_repo_path("configs"))) {
-        dir.create(resolve_repo_path("configs"), recursive = TRUE)
+      if (!dir.exists(resolve_repo_path(".launcher_configs"))) {
+        dir.create(resolve_repo_path(".launcher_configs"), recursive = TRUE)
       }
       
       # Write content
@@ -129,12 +129,12 @@
       filename <- paste0(filename, ".R")
     }
     
-    save_path <- file.path(resolve_repo_path("configs"), filename)
+    save_path <- file.path(resolve_repo_path(".launcher_configs"), filename)
     
     tryCatch({
       # Create directory if needed
-      if (!dir.exists(resolve_repo_path("configs"))) {
-        dir.create(resolve_repo_path("configs"), recursive = TRUE)
+      if (!dir.exists(resolve_repo_path(".launcher_configs"))) {
+        dir.create(resolve_repo_path(".launcher_configs"), recursive = TRUE)
       }
       
       # Write content
@@ -170,7 +170,7 @@
       start_path <- if (!is.null(rv$last_browse_path) && dir.exists(rv$last_browse_path)) {
         rv$last_browse_path
       } else {
-        resolve_repo_path("configs")
+        repo_root_val()
       }
       
       # Normalize path

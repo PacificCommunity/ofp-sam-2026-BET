@@ -23,7 +23,7 @@
   }
   
   settings_path <- function() {
-    file.path(repo_root_val(), "configs", ".last_settings.rds")
+    file.path(repo_root_val(), ".shiny_launcher_settings.rds")
   }
   
   launcher_settings_path <- function() {
@@ -169,10 +169,6 @@
   
   # Function to save settings
   save_settings <- function() {
-    settings_dir <- dirname(settings_path())
-    if (!dir.exists(settings_dir)) {
-      dir.create(settings_dir, recursive = TRUE, showWarnings = FALSE)
-    }
     settings <- list(
       repo_root = repo_root_val(),
       scan_output_dir = input$scan_output_dir,
@@ -404,7 +400,7 @@
   
   observeEvent(repo_root_val(), {
     if (is.null(rv$last_browse_path) || !dir.exists(rv$last_browse_path)) {
-      rv$last_browse_path <- file.path(repo_root_val(), "configs")
+      rv$last_browse_path <- repo_root_val()
     }
   }, ignoreInit = FALSE)
   
@@ -452,7 +448,7 @@
     selected_models = c(),
     # uploaded_filename = NULL,
     # uploaded_temp_path = NULL,
-    last_browse_path = file.path(repo_root_default, "configs"),
+    last_browse_path = repo_root_default,
     last_job_type = NULL,
     pending_repo_root_path = NULL,
     pending_download_path = NULL,

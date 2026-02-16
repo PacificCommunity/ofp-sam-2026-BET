@@ -328,7 +328,7 @@
   
   output$saved_configs_ui <- renderUI({
     rv$saved_configs_trigger
-    saved_dir <- resolve_repo_path("configs/models_ran")
+    saved_dir <- resolve_repo_path(".models_ran")
     if (!dir.exists(saved_dir)) return(p("No saved run configurations found."))
     
     saved_files <- list.files(saved_dir, pattern = "\\.rds$", full.names = TRUE)
@@ -422,7 +422,7 @@
         models = rv$models
       )
       
-      saved_dir <- resolve_repo_path("configs/models_ran")
+      saved_dir <- resolve_repo_path(".models_ran")
       if (!dir.exists(saved_dir)) {
         dir.create(saved_dir, recursive = TRUE)
       }
