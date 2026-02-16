@@ -1736,6 +1736,114 @@ if (length(scenarios_with_jitter) > 0) {
 }
 ```
 
+## Hessian Diagnostics (PDH / SPD)
+
+```{r hessian-diagnostics, echo=FALSE, message=FALSE, warning=FALSE, results='asis'}
+hessian_rows <- lapply(names(ParOut_list), function(sc) {
+  hfile <- file.path(MODEL_DIR, sc, "hessian", "hessian_info.rds")
+  part_files <- list.files(
+    file.path(MODEL_DIR, sc, "hessian"),
+    pattern = "^part_\\d+/hessian_info\\.rds$",
+    full.names = TRUE,
+    recursive = TRUE
+  )
+  
+  if (!file.exists(hfile)) {
+    return(data.frame(
+      Scenario = sc,
+      Hessian_File = "Missing",
+      PDH = NA_character_,
+      `SPD (positivised cov)` = NA_character_,
+      `Neg. Eigen` = NA_character_,
+      `Hessian Status` = NA_character_,
+      Reliability = NA_character_,
+      `Stitch Complete` = NA_character_,
+      `Parts (found/expected)` = ifelse(length(part_files) > 0, as.character(length(part_files)), NA_character_),
+      stringsAsFactors = FALSE
+    ))
+  }
+  
+  info <- tryCatch(readRDS(hfile), error = function(e) NULL)
+  if (is.null(info)) {
+    return(data.frame(
+      Scenario = sc,
+      Hessian_File = "Read error",
+      PDH = NA_character_,
+      `SPD (positivised cov)` = NA_character_,
+      `Neg. Eigen` = NA_character_,
+      `Hessian Status` = NA_character_,
+      Reliability = NA_character_,
+      `Stitch Complete` = NA_character_,
+      `Parts (found/expected)` = ifelse(length(part_files) > 0, as.character(length(part_files)), NA_character_),
+      stringsAsFactors = FALSE
+    ))
+  }
+  
+  is_pdh <- tryCatch(info$diagnostics$summary$pdh$is_pdh, error = function(e) NA)
+  spd_pos_cov <- tryCatch(info$diagnostics$summary$positivised_cov_is_spd, error = function(e) NA)
+  n_neg <- tryCatch(info$eigen$n_negative_eigenvalues, error = function(e) NA)
+  n_tot <- tryCatch(info$eigen$n_total_eigenvalues, error = function(e) NA)
+  h_status <- tryCatch(info$eigen$hessian_status, error = function(e) NA_character_)
+  reliability <- tryCatch(info$eigen$reliability, error = function(e) NA_character_)
+  stitch_complete <- tryCatch(info$stitch$is_complete, error = function(e) NA)
+  n_parts_expected <- tryCatch(info$stitch$n_parts, error = function(e) NA)
+  
+  data.frame(
+    Scenario = sc,
+    Hessian_File = "OK",
+    PDH = dplyr::case_when(
+      isTRUE(is_pdh) ~ "PDH",
+      identical(is_pdh, FALSE) ~ "Not PDH",
+      TRUE ~ "NA"
+    ),
+    `SPD (positivised cov)` = dplyr::case_when(
+      isTRUE(spd_pos_cov) ~ "SPD",
+      identical(spd_pos_cov, FALSE) ~ "Not SPD",
+      TRUE ~ "NA"
+    ),
+    `Neg. Eigen` = ifelse(
+      is.na(n_neg) || is.na(n_tot),
+      NA_character_,
+      sprintf("%d / %d", as.integer(n_neg), as.integer(n_tot))
+    ),
+    `Hessian Status` = as.character(h_status),
+    Reliability = as.character(reliability),
+    `Stitch Complete` = dplyr::case_when(
+      isTRUE(stitch_complete) ~ "Yes",
+      identical(stitch_complete, FALSE) ~ "No",
+      TRUE ~ "NA"
+    ),
+    `Parts (found/expected)` = ifelse(
+      is.na(n_parts_expected),
+      as.character(length(part_files)),
+      sprintf("%d / %d", length(part_files), as.integer(n_parts_expected))
+    ),
+    stringsAsFactors = FALSE
+  )
+})
+
+hessian_df <- bind_rows(hessian_rows)
+
+if (nrow(hessian_df) > 0) {
+  print(
+    kable(
+      hessian_df,
+      align = c("l", "c", "c", "c", "c", "c", "c", "c", "c")
+    ) %>%
+      kable_styling(
+        bootstrap_options = c("striped", "hover", "condensed"),
+        full_width = FALSE
+      ) %>%
+      row_spec(0, bold = TRUE, background = "#00695C", color = "white")
+  )
+  
+  cat("\\n\\n")
+  cat("`PDH`: Hessian positive definite 여부 | `SPD (positivised cov)`: positivised covariance SPD 여부\\n\\n")
+} else {
+  cat("*No Hessian diagnostics found.*\\n\\n")
+}
+```
+
 # Retrospective Diagnostics {.tabset}
 
 ## Depletion and Spawning Potential by Peel
