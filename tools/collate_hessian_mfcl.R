@@ -47,7 +47,7 @@ if(batch_mode) {
   if(length(model_dirs) == 0) {
     stop("No model directories with hessian found under: model")
   }
-
+  
   detected_cores <- parallel::detectCores(logical = TRUE)
   if(!is.finite(detected_cores) || is.na(detected_cores)) detected_cores <- 1L
   max_workers <- max(1L, as.integer(detected_cores) - 2L)
@@ -60,7 +60,7 @@ if(batch_mode) {
   cat("Detected cores:", detected_cores, "\n")
   cat("Parallel workers (max cores-2):", workers, "\n")
   cat("==============================================\n\n")
-
+  
   run_one_model <- function(md) {
     log_file <- file.path(md, "hessian", "batch_collate.log")
     status <- system2(
@@ -75,23 +75,23 @@ if(batch_mode) {
       log_file = log_file
     )
   }
-
+  
   results <- parallel::mclapply(
     model_dirs,
     run_one_model,
     mc.cores = workers
   )
   results <- do.call(rbind, lapply(results, as.data.frame, stringsAsFactors = FALSE))
-
+  
   failures <- results$model_dir[results$status != 0]
   successes <- results$model_dir[results$status == 0]
-
+  
   if(length(successes) > 0) {
     cat("Completed models:\n")
     for(md in successes) cat("  ✓", md, "\n")
     cat("\n")
   }
-
+  
   if(length(failures) > 0) {
     cat("Failed models:\n")
     for(md in failures) {
@@ -300,60 +300,100 @@ for(i in seq_along(part_infos)) {
 cat("\n")
 
 ##################################################################
-## Step 3: Copy required input files to hessian directory
+## Step 3: Copy required input files (order: part_1 → part_2 → ... → model_dir)
 ##################################################################
 cat("==============================================\n")
 cat("Step 3: Copying input files\n")
 cat("==============================================\n")
 
-## Copy frq file - try model_dir first, then part directories
-frq_src <- file.path(model_dir, frq_file)
-frq_dst <- file.path(hessian_dir, frq_file)
-
-if(file.exists(frq_src)) {
-  file.copy(frq_src, frq_dst, overwrite = TRUE)
-  cat("✓ Copied:", frq_file, "(from model directory)\n")
-} else {
-  ## Try to find frq in part directories
-  for(part_dir in part_dirs) {
-    frq_part <- file.path(part_dir, frq_file)
-    if(file.exists(frq_part)) {
-      file.copy(frq_part, frq_dst, overwrite = TRUE)
-      cat("✓ Copied:", frq_file, "(from", basename(part_dir), ")\n")
-      break
+## Helper function to find and copy a file
+find_and_copy_file <- function(filename, search_locations, dest_dir, required = TRUE) {
+  dest_file <- file.path(dest_dir, filename)
+  
+  ## Search in provided locations
+  for(loc in search_locations) {
+    if(is.na(loc) || !dir.exists(loc)) next
+    
+    src_file <- file.path(loc, filename)
+    if(file.exists(src_file)) {
+      file.copy(src_file, dest_file, overwrite = TRUE)
+      file_size <- file.size(src_file)
+      size_str <- if(file_size > 1024^2) {
+        paste0(round(file_size/1024/1024, 1), " MB")
+      } else {
+        paste0(round(file_size/1024, 1), " KB")
+      }
+      cat("✓ Copied:", filename, "(from", basename(loc), "-", size_str, ")\n")
+      return(TRUE)
     }
   }
   
-  if(!file.exists(frq_dst)) {
-    stop("FRQ file not found in model directory or part directories: ", frq_file)
+  ## File not found
+  if(required) {
+    stop("Required file not found: ", filename)
+  } else {
+    cat("  (Optional file not found:", filename, ")\n")
+    return(FALSE)
   }
 }
 
-## Find the converged .par file (look for highest numbered .par)
-par_files <- list.files(model_dir, pattern = "^[0-9]+\\.par$", full.names = TRUE)
-
-## If not found in model_dir, try part directories
-if(length(par_files) == 0) {
-  for(part_dir in part_dirs) {
-    part_par_files <- list.files(part_dir, pattern = "^[0-9]+\\.par$", full.names = TRUE)
-    if(length(part_par_files) > 0) {
-      par_files <- part_par_files
-      break
-    }
+## Collect base_dir from each part in order (part 1, 2, 3, ...)
+base_dirs <- list()
+for(i in seq_along(part_infos)) {
+  info <- part_infos[[i]]
+  if(!is.null(info$base_dir) && !is.na(info$base_dir)) {
+    base_dirs[[i]] <- info$base_dir
+    cat("Part", part_numbers[i], "base_dir:", info$base_dir, "\n")
   }
 }
 
-if(length(par_files) > 0) {
-  ## Get the highest numbered par file
-  par_numbers <- as.integer(sub("\\.par$", "", basename(par_files)))
-  final_par <- par_files[which.max(par_numbers)]
-  par_file <- basename(final_par)
+## Convert to vector and remove NULLs
+base_dirs <- unlist(base_dirs)
+base_dirs <- unique(base_dirs[!is.na(base_dirs)])
+
+cat("\n")
+
+## Build search locations:
+## 1. base_dir from part_1's hessian_info
+## 2. base_dir from part_2's hessian_info
+## 3. ... (all parts in order)
+## 4. model_dir (fallback)
+search_locations <- c(
+  base_dirs,      # All base_dirs from parts in order
+  model_dir       # Fallback: model directory
+)
+
+## Remove NA and duplicates while preserving order
+search_locations <- unique(search_locations[!is.na(search_locations)])
+
+cat("Search priority order:\n")
+for(i in seq_along(search_locations)) {
+  cat(sprintf("  %d. %s\n", i, search_locations[i]))
+}
+cat("\n")
+
+## Copy FRQ file
+find_and_copy_file(frq_file, search_locations, hessian_dir, required = TRUE)
+
+## Find and copy the converged .par file
+par_file <- NULL
+for(loc in search_locations) {
+  if(is.na(loc) || !dir.exists(loc)) next
   
-  par_dst <- file.path(hessian_dir, par_file)
-  file.copy(final_par, par_dst, overwrite = TRUE)
-  cat("✓ Copied:", par_file, "(", round(file.size(final_par)/1024/1024, 1), "MB )\n")
-} else {
-  stop("No .par file found in model or part directories")
+  par_files <- list.files(loc, pattern = "^[0-9]+\\.par$", full.names = TRUE)
+  if(length(par_files) > 0) {
+    par_numbers <- as.integer(sub("\\.par$", "", basename(par_files)))
+    final_par <- par_files[which.max(par_numbers)]
+    par_file <- basename(final_par)
+    file.copy(final_par, file.path(hessian_dir, par_file), overwrite = TRUE)
+    cat("✓ Copied:", par_file, "(from", basename(loc), "-", 
+        round(file.size(final_par)/1024/1024, 1), "MB )\n")
+    break
+  }
+}
+
+if(is.null(par_file)) {
+  stop("No .par file found in any search location")
 }
 
 ## Copy other necessary files using root_name
@@ -369,23 +409,12 @@ other_files <- c(
 )
 
 for(file_name in other_files) {
-  src <- file.path(model_dir, file_name)
-  
-  ## If not in model_dir, try first part directory
-  if(!file.exists(src)) {
-    src <- file.path(part_dirs[1], file_name)
-  }
-  
-  if(file.exists(src)) {
-    dst <- file.path(hessian_dir, file_name)
-    file.copy(src, dst, overwrite = TRUE)
-    cat("✓ Copied:", file_name, "\n")
-  } else {
-    cat("  (Optional file not found:", file_name, ")\n")
-  }
+  find_and_copy_file(file_name, search_locations, hessian_dir, required = FALSE)
 }
 
 cat("\n")
+
+
 
 ##################################################################
 ## Step 4: Run MFCL stitching command
@@ -818,7 +847,7 @@ if (isTRUE(compact_cleanup)) {
   if (length(part_dirs) > 0) {
     unlink(part_dirs, recursive = TRUE, force = TRUE)
   }
-
+  
   all_files <- list.files(
     hessian_dir,
     full.names = TRUE,
@@ -827,14 +856,14 @@ if (isTRUE(compact_cleanup)) {
     no.. = TRUE
   )
   all_files <- all_files[file.info(all_files)$isdir %in% FALSE]
-
+  
   keep_pattern <- if (isTRUE(keep_hes)) "\\.(rds|txt|hes)$" else "\\.(rds|txt)$"
   keep_mask <- grepl(keep_pattern, tolower(basename(all_files)))
   rm_files <- all_files[!keep_mask]
   if (length(rm_files) > 0) {
     unlink(rm_files, recursive = FALSE, force = TRUE)
   }
-
+  
   ## Remove empty directories left after file cleanup.
   all_dirs <- list.dirs(hessian_dir, full.names = TRUE, recursive = TRUE)
   all_dirs <- all_dirs[order(nchar(all_dirs), decreasing = TRUE)]
@@ -846,7 +875,7 @@ if (isTRUE(compact_cleanup)) {
       unlink(d, recursive = TRUE, force = TRUE)
     }
   }
-
+  
   cat("✓ Compact cleanup complete in hessian directory (keep:", ifelse(keep_hes, ".rds/.txt/.hes", ".rds/.txt"), ")\n")
 }
 

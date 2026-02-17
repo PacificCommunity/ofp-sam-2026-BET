@@ -138,6 +138,7 @@ info_list <- list(
   program_path  = program_path,
   model_dir     = model_dir,
   part_dir      = part_dir,
+  base_dir      = base_dir,
   input_par     = basename(most_recent),
   output_par    = output_par_name
 )
@@ -154,7 +155,7 @@ part_compact_cleanup <- tolower(Sys.getenv("hessian_part_compact_cleanup", "true
 if (isTRUE(part_compact_cleanup)) {
   keep_ext_files <- list.files(
     part_dir,
-    pattern = "\\.(hes|txt|rds|par|frq|age_length|cfg|tag|dep|dp2)$",
+    pattern = "\\.(hes|rds)$",
     full.names = FALSE
   )
   keep_named_files <- c("depgrad.rpt", "Hess.rpt")
