@@ -38,30 +38,85 @@
   launcher_settings_path <- function() {
     file.path(app_dir, ".launcher_settings.rds")
   }
+
+  read_rds_safe <- function(path) {
+    if (!file.exists(path)) return(list())
+    tryCatch(readRDS(path), error = function(e) list())
+  }
+
+  file_mtime_safe <- function(path) {
+    if (!file.exists(path)) return(as.POSIXct(NA))
+    file.info(path)$mtime
+  }
+
+  read_makefile_docker_image <- function() {
+    paths <- c(file.path(repo_root_val(), "Makefile"), file.path(repo_root_val(), "makefile"))
+    for (mk in paths) {
+      if (!file.exists(mk)) next
+      lines <- readLines(mk, warn = FALSE)
+      idx <- grep("^\\s*DOCKER_IMAGE\\s*=", lines)
+      if (length(idx) == 0) next
+      v <- sub("^\\s*DOCKER_IMAGE\\s*=\\s*", "", lines[idx[1]])
+      if (nzchar(v)) return(v)
+    }
+    NULL
+  }
+
+  latest_setting_value <- function(key, launcher_obj, root_obj, launcher_mtime, root_mtime) {
+    ordered <- character(0)
+    if (!is.na(launcher_mtime) && !is.na(root_mtime)) {
+      ordered <- if (launcher_mtime >= root_mtime) c("launcher", "root") else c("root", "launcher")
+    } else if (!is.na(launcher_mtime)) {
+      ordered <- "launcher"
+    } else if (!is.na(root_mtime)) {
+      ordered <- "root"
+    }
+
+    for (src in ordered) {
+      v <- if (src == "launcher") launcher_obj[[key]] else root_obj[[key]]
+      if (!is.null(v) && !(is.character(v) && length(v) == 1 && !nzchar(v))) return(v)
+    }
+    NULL
+  }
   
   load_launcher_settings <- function() {
-    if (file.exists(launcher_settings_path())) {
-      tryCatch({
-        ls <- readRDS(launcher_settings_path())
-        rv$launcher_settings_loaded <- TRUE
-        if (!is.null(ls$last_repo_root) && ls$last_repo_root != "") {
-          updateTextInput(session, "repo_root", value = normalize_repo_root_candidate(ls$last_repo_root))
-        }
-        if (!is.null(ls$last_download_location) && ls$last_download_location != "") {
-          updateTextInput(session, "download_location", value = ls$last_download_location)
-        }
-        if (!is.null(ls$remote_user)) updateTextInput(session, "remote_user", value = ls$remote_user)
-        if (!is.null(ls$remote_host)) updateTextInput(session, "remote_host", value = ls$remote_host)
-        if (!is.null(ls$github_username)) updateTextInput(session, "github_username", value = ls$github_username)
-        if (!is.null(ls$github_org)) updateTextInput(session, "github_org", value = ls$github_org)
-        if (!is.null(ls$github_repo)) updateTextInput(session, "github_repo", value = ls$github_repo)
-        if (!is.null(ls$docker_image)) updateTextInput(session, "docker_image", value = ls$docker_image)
-        if (!is.null(ls$condor_cpus)) updateNumericInput(session, "condor_cpus", value = ls$condor_cpus)
-        if (!is.null(ls$condor_memory)) updateNumericInput(session, "condor_memory", value = ls$condor_memory)
-        if (!is.null(ls$condor_disk)) updateNumericInput(session, "condor_disk", value = ls$condor_disk)
-      }, error = function(e) {
-        # ignore
-      })
+    launcher_file <- launcher_settings_path()
+    root_file <- settings_path()
+
+    launcher_obj <- read_rds_safe(launcher_file)
+    root_obj <- read_rds_safe(root_file)
+    launcher_mtime <- file_mtime_safe(launcher_file)
+    root_mtime <- file_mtime_safe(root_file)
+
+    rv$launcher_settings_loaded <- TRUE
+
+    latest_repo_root <- latest_setting_value("last_repo_root", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (is.null(latest_repo_root)) latest_repo_root <- latest_setting_value("repo_root", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (!is.null(latest_repo_root) && nzchar(latest_repo_root)) {
+      updateTextInput(session, "repo_root", value = normalize_repo_root_candidate(latest_repo_root))
+    }
+
+    latest_download <- latest_setting_value("last_download_location", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (is.null(latest_download)) latest_download <- latest_setting_value("download_location", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (!is.null(latest_download) && nzchar(latest_download)) {
+      updateTextInput(session, "download_location", value = latest_download)
+    }
+
+    for (k in c("remote_user", "remote_host", "github_username", "github_org", "github_repo")) {
+      v <- latest_setting_value(k, launcher_obj, root_obj, launcher_mtime, root_mtime)
+      if (!is.null(v)) updateTextInput(session, k, value = v)
+    }
+
+    docker_from_makefile <- read_makefile_docker_image()
+    docker_from_settings <- latest_setting_value("docker_image", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    docker_value <- if (!is.null(docker_from_makefile) && nzchar(docker_from_makefile)) docker_from_makefile else docker_from_settings
+    if (!is.null(docker_value) && nzchar(docker_value)) {
+      updateTextInput(session, "docker_image", value = docker_value)
+    }
+
+    for (k in c("condor_cpus", "condor_memory", "condor_disk")) {
+      v <- latest_setting_value(k, launcher_obj, root_obj, launcher_mtime, root_mtime)
+      if (!is.null(v)) updateNumericInput(session, k, value = v)
     }
   }
   
@@ -77,7 +132,8 @@
       docker_image = input$docker_image,
       condor_cpus = input$condor_cpus,
       condor_memory = input$condor_memory,
-      condor_disk = input$condor_disk
+      condor_disk = input$condor_disk,
+      timestamp = Sys.time()
     )
     tryCatch({
       saveRDS(ls, launcher_settings_path())
@@ -192,6 +248,7 @@
       condor_cpus = input$condor_cpus,
       condor_memory = input$condor_memory,
       condor_disk = input$condor_disk,
+      docker_image = input$docker_image,
       launch_parallel_cores = input$launch_parallel_cores,
       retrieve_parallel_cores = input$retrieve_parallel_cores,
       timestamp = Sys.time()

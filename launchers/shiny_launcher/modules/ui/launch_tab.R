@@ -125,7 +125,7 @@ launch_tab_ui <- function() {
                       value = "ofp-sam-2026-bet"),
             
             textInput("docker_image", "Docker Image:", 
-                      value = "ghcr.io/pacificcommunity/bet-2026:v1.2"),
+                      value = "ghcr.io/pacificcommunity/bet-2026:v1.5"),
             
             checkboxInput("ghcr_login", "GHCR Login (private images)", value = FALSE),
             
