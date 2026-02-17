@@ -8,7 +8,10 @@ source("tools/condor_archive_cleanup.R")
 program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_02_04_vsn2278")
 Sys.setenv("PROGRAM_PATH" = paste0("../../", program_path))
 base_dir <- Sys.getenv("base_dir", "mfcl/inputs/2023_rep")
-model_dir <- Sys.getenv("model_dir", "model/base2")
+model_dir <- Sys.getenv("model_dir", "model/base")
+n_mixing_periods <- as.numeric(Sys.getenv("n_mixing_periods", "1"))
+min_year <- as.numeric(Sys.getenv("min_year", "1952"))
+
 
 ## Convert to absolute paths using getwd() (assumes script runs from project root)
 project_root <- getwd()
@@ -68,7 +71,9 @@ info_list <- list(
   mfcl_commands = mfcl_commands,
   frq_file      = frq_file,
   base_dir      = base_dir,
-  model_dir     = model_dir
+  model_dir     = model_dir,
+  n_mixing_periods = n_mixing_periods,
+  min_year = min_year
 )
 
 saveRDS(
@@ -77,7 +82,7 @@ saveRDS(
   compress = "xz"
 )
 
-payload <- mp_build_model_payload(model_dir, tag_report_year1 = 1952)
+payload <- mp_build_model_payload(model_dir, tag_report_year1 = min_year)
 saveRDS(
   payload,
   file = file.path(model_dir, "model_payload.rds"),
