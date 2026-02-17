@@ -243,7 +243,7 @@ mod_wf_server <- function(input, output, session, rv) {
         n_rows <- ceiling(max(n_fisheries, 1) / ncol_facet)
         return(min(max(350 + n_rows * 240, 550), 3200))
       }
-    
+
       n_years <- length(input$wf_years)
     
       if (n_years == 0) return(400)
@@ -271,10 +271,13 @@ mod_wf_server <- function(input, output, session, rv) {
   
     # Reactive: generate weight frequency plot
     wf_plot_reactive <- reactive({
-      req(rv$data_loaded, input$wf_model, input$wf_fishery, input$wf_scenarios, input$wf_years)
-    
-      # Check if any scenarios selected
-      if (length(input$wf_scenarios) == 0) {
+      req(rv$data_loaded, input$wf_model, input$wf_fishery, input$wf_years)
+
+      view_mode <- if (is.null(input$wf_view_mode)) "overlay" else input$wf_view_mode
+      scenarios_to_use <- if (identical(view_mode, "by_scenario")) input$wf_model else input$wf_scenarios
+
+      # Check if any scenarios selected (overlay/all-years)
+      if (!identical(view_mode, "by_scenario") && length(scenarios_to_use) == 0) {
         p <- ggplot() + 
           annotate("text", x = 0.5, y = 0.5, label = "No scenarios selected", size = 6, color = "#999") +
           theme_void()
@@ -330,7 +333,7 @@ mod_wf_server <- function(input, output, session, rv) {
 
       # Combine data from selected scenarios (name-based fishery matching across models).
       # Join-based lookup is much faster than row-wise name lookup.
-      combined_data <- map_dfr(input$wf_scenarios, function(sc) {
+      combined_data <- map_dfr(scenarios_to_use, function(sc) {
         if (is.null(rv$WeightOut_list[[sc]])) return(NULL)
         df <- rv$WeightOut_list[[sc]]@wgtfits
         sc_lookup <- rv$FISHERY_MAPS[[sc]] %>%
@@ -424,8 +427,6 @@ mod_wf_server <- function(input, output, session, rv) {
         n_years <= 30 ~ 8,
         TRUE ~ 7
       )
-    
-      view_mode <- if (is.null(input$wf_view_mode)) "overlay" else input$wf_view_mode
       observed_fill <- "#08519C"
 
       if (identical(view_mode, "all_years")) {
@@ -472,7 +473,7 @@ mod_wf_server <- function(input, output, session, rv) {
             strip.text = element_text(size = 9, face = "bold")
           )
       } else if (identical(view_mode, "by_scenario")) {
-        panel_count <- dplyr::n_distinct(plot_data$year) * dplyr::n_distinct(plot_data$Scenario)
+        panel_count <- dplyr::n_distinct(plot_data$year)
         border_lwd <- dplyr::case_when(
           panel_count >= 24 ~ 0.03,
           panel_count >= 12 ~ 0.08,
@@ -480,30 +481,30 @@ mod_wf_server <- function(input, output, session, rv) {
         )
         p <- ggplot() +
           geom_col(
-            data = plot_data,
+            data = obs_data,
             aes(x = weight, y = obs, fill = "Observed"),
             alpha = 1, width = wf_bar_width, position = "identity",
             colour = "white", linewidth = border_lwd
           ) +
           geom_line(
             data = plot_data,
-            aes(x = weight, y = pred, color = Scenario),
-            linewidth = 1
+            aes(x = weight, y = pred, color = "Predicted"),
+            linewidth = 1.2
           ) +
-          facet_grid(Scenario ~ year, scales = "free_y") +
+          facet_wrap(~year, scales = "free_y", ncol = ncol_facet) +
           scale_fill_manual(values = c("Observed" = observed_fill)) +
-          scale_color_viridis_d() +
+          scale_color_manual(values = c("Predicted" = "#E31A1C")) +
           labs(
-            title = paste(fishery_name, "- by scenario"),
+            title = paste(fishery_name, "-", input$wf_model),
             x = "Weight (kg)", y = "Sample count"
           ) +
-          theme_bw(base_size = 11) +
+          theme_bw(base_size = 12) +
           theme(
             legend.position = "top",
             plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
             strip.background = element_rect(fill = "grey90"),
-            strip.text = element_text(size = 8, face = "bold"),
-            panel.spacing = unit(0.2, "lines")
+            strip.text = element_text(size = strip_size, face = "bold"),
+            panel.spacing = unit(0.3, "lines")
           )
       } else {
         panel_count <- dplyr::n_distinct(plot_data$year)

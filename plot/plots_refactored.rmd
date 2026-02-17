@@ -340,31 +340,72 @@ fishery_map <- pm_load_or_build_fishery_map(
   tagtemp_list = TagTempOut_list
 )
 
-# Build model-specific fishery maps strictly from each scenario's fishery_map.R.
+# Build model-specific fishery maps:
+# prefer each scenario's fishery_map.R when available, otherwise fallback to
+# the global/default map augmented with fishery IDs seen in model outputs.
 load_model_fishery_map <- function(model_name) {
-  map_r <- file.path(MODEL_DIR, model_name, "fishery_map.R")
-  if (!file.exists(map_r)) {
-    stop(sprintf("fishery_map.R not found for model '%s': %s", model_name, map_r))
+  map_r_candidates <- list.files(
+    file.path(MODEL_DIR, model_name),
+    pattern = "^fishery_map\\.[Rr]$",
+    full.names = TRUE,
+    ignore.case = TRUE
+  )
+
+  if (length(map_r_candidates) > 0) {
+    map_r <- map_r_candidates[1]
+    env <- new.env(parent = globalenv())
+    env$save <- function(...) invisible(NULL)
+    ok <- tryCatch({
+      sys.source(map_r, envir = env, keep.source = FALSE)
+      TRUE
+    }, error = function(e) {
+      warning(sprintf("Failed to source %s (%s). Falling back to default fishery map.", map_r, e$message))
+      FALSE
+    })
+    if (ok && exists("fishery_map", envir = env, inherits = FALSE)) {
+      model_map <- get("fishery_map", envir = env, inherits = FALSE)
+      if (is.data.frame(model_map)) {
+        return(pm_normalize_fishery_map(model_map))
+      }
+      warning(sprintf("fishery_map in %s is not a data.frame. Falling back to default fishery map.", map_r))
+    } else {
+      warning(sprintf("No fishery_map object defined in %s. Falling back to default fishery map.", map_r))
+    }
+  } else {
+    warning(sprintf(
+      "fishery_map.R not found for model '%s' under %s. Using default fishery map fallback.",
+      model_name, file.path(MODEL_DIR, model_name)
+    ))
   }
 
-  env <- new.env(parent = globalenv())
-  env$save <- function(...) invisible(NULL)
-  ok <- tryCatch({
-    sys.source(map_r, envir = env, keep.source = FALSE)
-    TRUE
-  }, error = function(e) {
-    stop(sprintf("Failed to source %s: %s", map_r, e$message))
-  })
-  if (!ok || !exists("fishery_map", envir = env, inherits = FALSE)) {
-    stop(sprintf("No fishery_map object defined in %s", map_r))
+  model_rep <- RepOut_list[[model_name]]
+  model_len <- LengOut_list[[model_name]]
+  model_wgt <- WeightOut_list[[model_name]]
+  model_tag <- TagTempOut_list[[model_name]]
+
+  units_cpue <- tryCatch(as.numeric(unique(cpue_obs(model_rep)$unit)), error = function(e) numeric(0))
+  units_len <- tryCatch(as.numeric(unique(model_len@lenfits$fishery)), error = function(e) numeric(0))
+  units_wgt <- tryCatch(as.numeric(unique(model_wgt@wgtfits$fishery)), error = function(e) numeric(0))
+  units_tag <- tryCatch(as.numeric(unique(model_tag$recap.fishery)), error = function(e) numeric(0))
+
+  map_fallback <- pm_normalize_fishery_map(fishery_map)
+  units_all <- sort(unique(c(units_cpue, units_len, units_wgt, units_tag)))
+  units_missing <- setdiff(units_all, map_fallback$fishery)
+
+  if (length(units_missing) > 0) {
+    add_df <- tibble::tibble(
+      fishery_name = paste("Fishery", units_missing),
+      fishery = units_missing,
+      region = NA_real_,
+      group = "Unknown",
+      tag_recapture_group = units_missing,
+      tag_recapture_name = paste("Fishery", units_missing)
+    )
+    map_fallback <- dplyr::bind_rows(map_fallback, add_df) %>%
+      dplyr::arrange(fishery)
   }
 
-  model_map <- get("fishery_map", envir = env, inherits = FALSE)
-  if (!is.data.frame(model_map)) {
-    stop(sprintf("fishery_map in %s is not a data.frame", map_r))
-  }
-
-  pm_normalize_fishery_map(model_map)
+  pm_normalize_fishery_map(map_fallback)
 }
 
 FISHERY_MAPS <- setNames(lapply(names(ParOut_list), load_model_fishery_map), names(ParOut_list))
@@ -2982,8 +3023,14 @@ if(exists("WeightOut_list")) {
       }
       
       # Create plot
+      panel_count <- dplyr::n_distinct(pdat_model$fishery_name)
+      border_lwd <- dplyr::case_when(
+        panel_count >= 24 ~ 0.03,
+        panel_count >= 12 ~ 0.06,
+        TRUE ~ 0.12
+      )
       p_model <- ggplot(pdat_model, aes(x = weight)) +
-        geom_bar(aes(y = obs), fill = "blue", colour = "white", linewidth = 0.2, stat = "identity", width = bar_width, alpha = 0.7) +
+        geom_bar(aes(y = obs), fill = "blue", colour = "white", linewidth = border_lwd, stat = "identity", width = bar_width, alpha = 0.7) +
         geom_line(aes(y = pred), colour = "red", linewidth = 1.2) +
         facet_wrap(~ fishery_name, scales = "free", ncol = 4) +
         scale_y_continuous(expand = c(0, 0)) +
@@ -3077,7 +3124,16 @@ for (fish in all_fisheries) {
   }
   
   p <- ggplot() +
-    geom_col(data = obs_data, aes(x = weight, y = obs, fill = "Observed"), alpha = 1, width = bar_width, colour = "grey95", linewidth = 0.25) +
+    geom_col(
+      data = obs_data,
+      aes(x = weight, y = obs, fill = "Observed"),
+      alpha = 1, width = bar_width, colour = "white",
+      linewidth = dplyr::case_when(
+        dplyr::n_distinct(obs_data$year) >= 24 ~ 0.03,
+        dplyr::n_distinct(obs_data$year) >= 12 ~ 0.06,
+        TRUE ~ 0.12
+      )
+    ) +
     geom_line(data = pred_data, aes(x = weight, y = pred, color = Scenario), linewidth = 1) +
     facet_wrap(~year, scales = "free_y", ncol = config$facet_ncol + 1) +
     scale_fill_manual(name = "", values = c("Observed" = "#8C2D04")) +
@@ -3144,7 +3200,15 @@ for (scenario_name in all_scenarios) {
     }
     
     p <- ggplot(plot_data, aes(x = weight)) +
-      geom_col(aes(y = obs, fill = "Observed"), alpha = 1, width = bar_width, colour = "grey95", linewidth = 0.25) +
+      geom_col(
+        aes(y = obs, fill = "Observed"),
+        alpha = 1, width = bar_width, colour = "white",
+        linewidth = dplyr::case_when(
+          dplyr::n_distinct(plot_data$year) >= 24 ~ 0.03,
+          dplyr::n_distinct(plot_data$year) >= 12 ~ 0.06,
+          TRUE ~ 0.12
+        )
+      ) +
       geom_line(aes(y = pred, color = "Predicted"), linewidth = 1) +
       facet_wrap(~year, scales = "free_y", ncol = 4) +
       scale_fill_manual(name = "", values = c("Observed" = "#8C2D04")) +
@@ -3270,17 +3334,14 @@ for (i in 1:nrow(tag_rr_all)) {
 
 # Combine prior distribution curves
 prior_curve <- bind_rows(prior_curve_list)
-tag_rr_all <- tag_rr_all %>% mutate(panel = paste0("G", group))
-prior_curve <- prior_curve %>% mutate(panel = paste0("G", group))
+tag_rr_all <- tag_rr_all %>% mutate(panel = as.character(names))
+prior_curve <- prior_curve %>% mutate(panel = as.character(names))
 
 # Convert to factor for proper ordering
 tag_rr_all$names <- factor(tag_rr_all$names, levels = unique(tag_rr_all$names))
 tag_rr_all$Model <- factor(tag_rr_all$Model, levels = scenarios_name)
-prior_curve$names <- factor(prior_curve$names, levels = unique(prior_curve$names))
+prior_curve$names <- factor(prior_curve$names, levels = levels(tag_rr_all$names))
 prior_curve$Model <- factor(prior_curve$Model, levels = scenarios_name)
-panel_labels <- tag_rr_all %>%
-  distinct(panel, names) %>%
-  { stats::setNames(.$names, .$panel) }
 
 # =============================================================================
 # Define color palette
@@ -3312,7 +3373,7 @@ for (model in scenarios_name) {
     geom_vline(data = tag_rr_model, aes(xintercept = upper_bound), 
                color = "blue", linewidth = 1, linetype = "dashed") +
     coord_cartesian(xlim = c(0, 1), ylim = c(0, NA)) +
-    facet_wrap(~ panel, ncol = 4, scales = "free_y", labeller = as_labeller(panel_labels)) +
+    facet_wrap(~ panel, ncol = 4, scales = "free_y") +
     scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05))) +
     labs(x = "Tag group",
          y = "Density",

@@ -242,7 +242,7 @@ mod_lf_server <- function(input, output, session, rv) {
         n_rows <- ceiling(max(n_fisheries, 1) / ncol_facet)
         return(min(max(350 + n_rows * 240, 550), 3200))
       }
-    
+
       n_years <- length(input$lf_years)
     
       if (n_years == 0) return(400)
@@ -270,10 +270,13 @@ mod_lf_server <- function(input, output, session, rv) {
   
     # Reactive: generate length frequency plot
     lf_plot_reactive <- reactive({
-      req(rv$data_loaded, input$lf_model, input$lf_fishery, input$lf_scenarios, input$lf_years)
-    
-      # Check if any scenarios selected
-      if (length(input$lf_scenarios) == 0) {
+      req(rv$data_loaded, input$lf_model, input$lf_fishery, input$lf_years)
+
+      view_mode <- if (is.null(input$lf_view_mode)) "overlay" else input$lf_view_mode
+      scenarios_to_use <- if (identical(view_mode, "by_scenario")) input$lf_model else input$lf_scenarios
+
+      # Check if any scenarios selected (overlay/all-years)
+      if (!identical(view_mode, "by_scenario") && length(scenarios_to_use) == 0) {
         p <- ggplot() + 
           annotate("text", x = 0.5, y = 0.5, label = "No scenarios selected", size = 6, color = "#999") +
           theme_void()
@@ -289,7 +292,7 @@ mod_lf_server <- function(input, output, session, rv) {
       }
     
       # Combine data from selected scenarios
-      combined_data <- map_dfr(input$lf_scenarios, function(sc) {
+      combined_data <- map_dfr(scenarios_to_use, function(sc) {
         if (is.null(rv$LengOut_list[[sc]])) return(NULL)
         df <- rv$LengOut_list[[sc]]@lenfits
         if (identical(input$lf_view_mode, "all_years")) {
@@ -386,8 +389,6 @@ mod_lf_server <- function(input, output, session, rv) {
         TRUE ~ 8.5
       )
       observed_fill <- "#08519C"
-    
-      view_mode <- if (is.null(input$lf_view_mode)) "overlay" else input$lf_view_mode
 
       if (identical(view_mode, "all_years")) {
         all_year_obs <- obs_data %>%
@@ -433,39 +434,38 @@ mod_lf_server <- function(input, output, session, rv) {
             strip.text = element_text(size = 9.5, face = "bold")
           )
       } else if (identical(view_mode, "by_scenario")) {
-        panel_count <- dplyr::n_distinct(plot_data$year) * dplyr::n_distinct(plot_data$Scenario)
+        panel_count <- dplyr::n_distinct(plot_data$year)
         border_lwd <- dplyr::case_when(
           panel_count >= 24 ~ 0.03,
           panel_count >= 12 ~ 0.08,
           TRUE ~ 0.25
         )
-
         p <- ggplot() +
           geom_col(
-            data = plot_data,
+            data = obs_data,
             aes(x = length, y = obs, fill = "Observed"),
             alpha = 1, width = lf_bar_width, position = "identity",
             colour = "white", linewidth = border_lwd
           ) +
           geom_line(
             data = plot_data,
-            aes(x = length, y = pred, color = Scenario),
-            linewidth = 1
+            aes(x = length, y = pred, color = "Predicted"),
+            linewidth = 1.2
           ) +
-          facet_grid(Scenario ~ year, scales = "free_y") +
+          facet_wrap(~year, scales = "free_y", ncol = ncol_facet) +
           scale_fill_manual(values = c("Observed" = observed_fill)) +
-          scale_color_viridis_d() +
+          scale_color_manual(values = c("Predicted" = "#E31A1C")) +
           labs(
-            title = paste(fishery_name, "- by scenario"),
+            title = paste(fishery_name, "-", input$lf_model),
             x = "Length (cm)", y = "Sample count"
           ) +
-          theme_bw(base_size = 11) +
+          theme_bw(base_size = 12) +
           theme(
             legend.position = "top",
             plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
             strip.background = element_rect(fill = "grey90"),
-            strip.text = element_text(size = 8, face = "bold"),
-            panel.spacing = unit(0.2, "lines")
+            strip.text = element_text(size = strip_size, face = "bold"),
+            panel.spacing = unit(0.3, "lines")
           )
       } else {
         panel_count <- dplyr::n_distinct(plot_data$year)
