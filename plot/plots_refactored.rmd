@@ -289,7 +289,7 @@ get_scenario_colors <- function(scenarios, option = "D") {
 results <- pm_load_models(
   model_dir = MODEL_DIR,
   debug = DEBUG_PLOTS,
-  tag_report_year1 = 1952
+  tag_report_year1 = "auto"
 )
 HAS_VALID_MODELS <- length(results) > 0
 if (!HAS_VALID_MODELS) {
@@ -3409,8 +3409,12 @@ for (model in scenarios_name) {
 
 scenarios_name <- names(TagTempOut_list)
 
-# Set mixing period for each model (in model time-steps, default = 2)
-mixing_periods <- pm_default_mixing_periods(scenarios_name, default_steps = 2)
+# Resolve mixing period by model from model_info/config (no hardcoded default).
+mixing_periods <- pm_get_mixing_periods(
+  scenarios_name,
+  info_list = Info_list,
+  config_path = file.path(PLOT_DIR, "config", "mixing_periods.csv")
+)
 
 # Alternative: set different mixing periods per model
 # mixing_periods <- c(
@@ -3485,8 +3489,12 @@ print(p)
 
 scenarios_name <- names(TagTempOut_list)
 
-# Set mixing period for each model (in model time-steps, default = 2)
-mixing_periods <- pm_default_mixing_periods(scenarios_name, default_steps = 2)
+# Resolve mixing period by model from model_info/config (no hardcoded default).
+mixing_periods <- pm_get_mixing_periods(
+  scenarios_name,
+  info_list = Info_list,
+  config_path = file.path(PLOT_DIR, "config", "mixing_periods.csv")
+)
 
 # =============================================================================
 # Create model-specific tag recapture group mapping (excluding Index fisheries)
@@ -3592,8 +3600,12 @@ for (model_name in scenarios_name) {
 
 scenarios_name <- names(TagTempOut_list)
 
-# Set mixing period for each model (in model time-steps, default = 2)
-mixing_periods <- pm_default_mixing_periods(scenarios_name, default_steps = 2)
+# Resolve mixing period by model from model_info/config (no hardcoded default).
+mixing_periods <- pm_get_mixing_periods(
+  scenarios_name,
+  info_list = Info_list,
+  config_path = file.path(PLOT_DIR, "config", "mixing_periods.csv")
+)
 
 # =============================================================================
 # Get release information from TagOut_list

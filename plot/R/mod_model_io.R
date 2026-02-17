@@ -14,6 +14,28 @@ pm_discover_model_folders <- function(model_dir) {
   list.dirs(model_dir, full.names = TRUE, recursive = FALSE)
 }
 
+# Resolve year1 for temporary_tag_report.
+# - numeric: use as-is
+# - "auto"/NULL/NA: prefer info$min_year, then ParOut@range["minyear"]
+pm_resolve_tag_report_year1 <- function(par_out, tag_report_year1 = "auto", info_obj = NULL) {
+  if (is.numeric(tag_report_year1) && length(tag_report_year1) > 0 && is.finite(tag_report_year1[1])) {
+    return(as.integer(tag_report_year1[1]))
+  }
+
+  use_auto <- is.null(tag_report_year1) ||
+    (length(tag_report_year1) == 1 && is.na(tag_report_year1)) ||
+    (is.character(tag_report_year1) && length(tag_report_year1) == 1 && tolower(tag_report_year1) == "auto")
+  if (!use_auto) return(NA_integer_)
+
+  minyear <- suppressWarnings(as.numeric(info_obj$min_year))
+  minyear <- if (length(minyear) > 0) minyear[1] else NA_real_
+  if (!is.finite(minyear)) {
+    minyear <- suppressWarnings(as.numeric(tryCatch(par_out@range["minyear"], error = function(e) NA_real_)))
+    minyear <- if (length(minyear) > 0) minyear[1] else NA_real_
+  }
+  if (is.finite(minyear)) as.integer(minyear) else NA_integer_
+}
+
 pm_read_model_payload <- function(folder, debug = FALSE) {
   payload_file <- file.path(folder, "model_payload.rds")
   if (!file.exists(payload_file)) return(NULL)
@@ -120,7 +142,7 @@ pm_read_jitter_outputs <- function(folder, debug = FALSE) {
 
 # Read one model folder and return a standardized result list.
 # Returns NULL when required core files (Par/Rep) are unavailable.
-pm_read_single_model <- function(folder, debug = FALSE, tag_report_year1 = 1952) {
+pm_read_single_model <- function(folder, debug = FALSE, tag_report_year1 = "auto") {
   pm_debug_message(sprintf("Processing folder: %s", folder), enabled = debug)
 
   payload <- pm_read_model_payload(folder, debug = debug)
@@ -151,12 +173,19 @@ pm_read_single_model <- function(folder, debug = FALSE, tag_report_year1 = 1952)
       return(NULL)
     }
 
+    info <- pm_safe_eval(quote(readRDS(file.path(folder, "model_info.rds"))), label = "model_info", debug = debug)
     tagrep_out <- pm_safe_eval(quote(read.MFCLTagRep(par_file)), label = "TagRepOut", debug = debug)
-    tagtemp_out <- pm_safe_eval(
-      quote(read.temporary_tag_report(file.path(folder, "temporary_tag_report"), year1 = tag_report_year1)),
-      label = "TagTempOut",
-      debug = debug
-    )
+    tag_year1 <- pm_resolve_tag_report_year1(par_out, tag_report_year1, info_obj = info)
+    tagtemp_out <- if (is.finite(tag_year1)) {
+      pm_safe_eval(
+        quote(read.temporary_tag_report(file.path(folder, "temporary_tag_report"), year1 = tag_year1)),
+        label = "TagTempOut",
+        debug = debug
+      )
+    } else {
+      pm_debug_message(sprintf("Skipping temporary_tag_report (min_year unavailable): %s", basename(folder)), enabled = debug)
+      NULL
+    }
     len_out <- pm_safe_eval(quote(read.MFCLLenFit(file.path(folder, "length.fit"))), label = "LengOut", debug = debug)
     wgt_out <- pm_safe_eval(quote(read.MFCLWgtFit(file.path(folder, "weight.fit"))), label = "WeightOut", debug = debug)
 
@@ -171,7 +200,6 @@ pm_read_single_model <- function(folder, debug = FALSE, tag_report_year1 = 1952)
     } else NULL
 
     indep_out <- if (file.exists(file.path(folder, "indepvar.rpt"))) readLines(file.path(folder, "indepvar.rpt")) else NULL
-    info <- pm_safe_eval(quote(readRDS(file.path(folder, "model_info.rds"))), label = "model_info", debug = debug)
   }
 
   if (is.null(par_out) || is.null(rep_out)) {
@@ -202,7 +230,7 @@ pm_read_single_model <- function(folder, debug = FALSE, tag_report_year1 = 1952)
 }
 
 # Load all models from a model directory and return only valid models.
-pm_load_models <- function(model_dir, debug = FALSE, tag_report_year1 = 1952) {
+pm_load_models <- function(model_dir, debug = FALSE, tag_report_year1 = "auto") {
   model_folders <- pm_discover_model_folders(model_dir)
   model_names <- basename(model_folders)
   

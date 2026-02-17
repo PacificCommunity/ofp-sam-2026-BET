@@ -1,6 +1,59 @@
 # Provide default mixing-period settings keyed by model name.
-pm_default_mixing_periods <- function(models, default_steps = 2) {
+pm_default_mixing_periods <- function(models, default_steps = NA_real_) {
   setNames(rep(default_steps, length(models)), models)
+}
+
+# Resolve model-specific mixing periods without hardcoded defaults.
+# Priority:
+# 1) config CSV (optional): columns [Model|model] and [n_mixing_periods|mixing_period|mix_period|tag_mixing_period]
+# 2) info_list per model: n_mixing_periods/mixing_period/mix_period/tag_mixing_period
+# 3) model-name pattern: mixP<digits> (e.g. mixP1 -> 1)
+# Unresolved models remain NA.
+pm_get_mixing_periods <- function(models, info_list = NULL, config_path = NULL) {
+  out <- setNames(rep(NA_real_, length(models)), models)
+
+  if (!is.null(config_path)) {
+    cfg_candidates <- as.character(config_path)
+    cfg_candidates <- cfg_candidates[file.exists(cfg_candidates)]
+    if (length(cfg_candidates) > 0) {
+      cfg <- tryCatch(read.csv(cfg_candidates[1], stringsAsFactors = FALSE), error = function(e) NULL)
+      if (!is.null(cfg) && nrow(cfg) > 0) {
+        model_col <- intersect(c("Model", "model"), names(cfg))
+        mix_col <- intersect(c("n_mixing_periods", "mixing_period", "mix_period", "tag_mixing_period"), names(cfg))
+        if (length(model_col) > 0 && length(mix_col) > 0) {
+          idx <- match(models, as.character(cfg[[model_col[1]]]))
+          vals <- suppressWarnings(as.numeric(cfg[[mix_col[1]]][idx]))
+          ok <- is.finite(vals)
+          out[ok] <- vals[ok]
+        }
+      }
+    }
+  }
+
+  if (!is.null(info_list)) {
+    for (m in models) {
+      cur <- out[[m]]
+      if (length(cur) > 0 && is.finite(cur[1])) next
+      info <- info_list[[m]]
+      if (is.null(info)) next
+      for (k in c("n_mixing_periods", "mixing_period", "mix_period", "tag_mixing_period")) {
+        v <- suppressWarnings(as.numeric(info[[k]]))
+        if (length(v) > 0 && is.finite(v[1])) {
+          out[[m]] <- v[1]
+          break
+        }
+      }
+    }
+  }
+
+  for (m in models) {
+    cur <- out[[m]]
+    if (length(cur) > 0 && is.finite(cur[1])) next
+    hit <- regmatches(m, regexec("(?i)mixp\\s*_?\\s*([0-9]+)", m, perl = TRUE))[[1]]
+    if (length(hit) >= 2) out[[m]] <- suppressWarnings(as.numeric(hit[2]))
+  }
+
+  out
 }
 
 # Build standardized release table from MFCL tag objects.
@@ -28,7 +81,10 @@ pm_apply_mixing_filter <- function(tag_temp_out_list, mixing_periods, seasons_pe
     dplyr::ungroup() %>%
     dplyr::left_join(data.frame(Model = names(mixing_periods), mixing_period = mixing_periods), by = "Model") %>%
     dplyr::mutate(seasons = seasons_per_model[Model]) %>%
-    dplyr::mutate(min_allowed_ts = first_recap_ts + (mixing_period / seasons)) %>%
+    dplyr::mutate(
+      mix_lag = dplyr::if_else(is.finite(mixing_period) & is.finite(seasons) & seasons > 0, mixing_period / seasons, 0),
+      min_allowed_ts = first_recap_ts + mix_lag
+    ) %>%
     dplyr::filter(recap_ts >= min_allowed_ts | is.infinite(min_allowed_ts))
 }
 

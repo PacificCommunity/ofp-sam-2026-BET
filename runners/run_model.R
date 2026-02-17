@@ -9,8 +9,8 @@ program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_02_04_vsn2278"
 Sys.setenv("PROGRAM_PATH" = paste0("../../", program_path))
 base_dir <- Sys.getenv("base_dir", "mfcl/inputs/2023_rep")
 model_dir <- Sys.getenv("model_dir", "model/base")
-n_mixing_periods <- as.numeric(Sys.getenv("n_mixing_periods", "1"))
-min_year <- as.numeric(Sys.getenv("min_year", "1952"))
+n_mixing_periods <- as.numeric(Sys.getenv("n_mixing_periods", ""))
+min_year <- as.numeric(Sys.getenv("min_year", ""))
 
 
 ## Convert to absolute paths using getwd() (assumes script runs from project root)

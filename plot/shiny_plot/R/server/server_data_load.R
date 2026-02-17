@@ -141,6 +141,20 @@ server_data_load <- function(input, output, session, rv) {
                 ))
               }
 
+              info_obj <- if (!is.null(payload_data) && !is.null(payload_data$info)) {
+                payload_data$info
+              } else {
+                info_file <- file.path(folder, "model_info.rds")
+                if (file.exists(info_file)) tryCatch(readRDS(info_file), error = function(e) NULL) else NULL
+              }
+
+              model_min_year <- suppressWarnings(as.numeric(info_obj$min_year))
+              model_min_year <- if (length(model_min_year) > 0) model_min_year[1] else NA_real_
+              if (!is.finite(model_min_year)) {
+                model_min_year <- suppressWarnings(as.numeric(tryCatch(par_obj@range["minyear"], error = function(e) NA_real_)))
+                model_min_year <- if (length(model_min_year) > 0) model_min_year[1] else NA_real_
+              }
+
               # Read model outputs primarily from model_payload.rds.
               # Raw-file fallbacks are intentionally avoided for optional objects
               # so compact-cleaned model folders still load cleanly.
@@ -151,9 +165,19 @@ server_data_load <- function(input, output, session, rv) {
                 LengOut = if (!is.null(payload_data)) payload_data$LengOut else NULL,
                 WeightOut = if (!is.null(payload_data)) payload_data$WeightOut else NULL,
                 TagOut = if (!is.null(payload_data)) payload_data$TagOut else NULL,
-                TagTempOut = if (!is.null(payload_data)) payload_data$TagTempOut else NULL,
+                TagTempOut = if (!is.null(payload_data) && !is.null(payload_data$TagTempOut)) {
+                  payload_data$TagTempOut
+                } else {
+                  tt_file <- file.path(folder, "temporary_tag_report")
+                  if (file.exists(tt_file) && is.finite(model_min_year)) {
+                    tryCatch(read.temporary_tag_report(tt_file, year1 = as.integer(model_min_year)), error = function(e) NULL)
+                  } else {
+                    NULL
+                  }
+                },
                 AgeOut = if (!is.null(payload_data)) payload_data$AgeOut else NULL,
                 IndepOut = if (!is.null(payload_data)) payload_data$IndepOut else NULL,
+                info = info_obj,
                 JitterPars = tryCatch({
                   jitter_dir <- file.path(folder, "jitter")
                   seed_dirs <- list.dirs(jitter_dir, full.names = TRUE, recursive = FALSE)
@@ -263,6 +287,7 @@ server_data_load <- function(input, output, session, rv) {
         rv$TagTempOut_list <- map(results_named, "TagTempOut")
         rv$AgeOut_list <- map(results_named, "AgeOut")
         rv$IndepOut_list <- map(results_named, "IndepOut")
+        rv$Info_list <- map(results_named, "info")
         rv$JitterPars_list <- map(results_named, "JitterPars")
         rv$JitterInfos_list <- map(results_named, "JitterInfos")
       

@@ -1,4 +1,4 @@
-retro.tag <- function(tag.obj, max_year, n_mixing_periods = 1) {
+retro.tag <- function(tag.obj, max_year, n_mixing_periods = NA_real_) {
   # Calculate the effective maximum year for tag releases
   # Releases must occur BEFORE (terminal_period - mixing_periods)
   effective_max_year <- max_year - (n_mixing_periods / 4)  # assuming quarterly periods

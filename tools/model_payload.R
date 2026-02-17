@@ -69,7 +69,7 @@ mp_extract_rep_timeseries <- function(rep_obj, scenario = NA_character_, peel = 
   out
 }
 
-mp_build_model_payload <- function(folder, tag_report_year1 = 1952) {
+mp_build_model_payload <- function(folder, tag_report_year1 = "auto") {
   par_file <- mp_final_par(folder)
   rep_file <- mp_final_rep(folder)
 
@@ -78,9 +78,21 @@ mp_build_model_payload <- function(folder, tag_report_year1 = 1952) {
 
   tagrep_out <- if (!is.null(par_file) && file.exists(par_file)) mp_safe(suppressWarnings(read.MFCLTagRep(par_file))) else NULL
 
+  info_out <- if (file.exists(file.path(folder, "model_info.rds"))) mp_safe(readRDS(file.path(folder, "model_info.rds"))) else NULL
+  model_min_year <- suppressWarnings(as.numeric(info_out$min_year))
+  if (!is.finite(model_min_year)) model_min_year <- suppressWarnings(as.numeric(tryCatch(par_out@range["minyear"], error = function(e) NA)))
+
+  tag_year1 <- if (is.numeric(tag_report_year1) && length(tag_report_year1) > 0 && is.finite(tag_report_year1[1])) {
+    as.integer(tag_report_year1[1])
+  } else if (is.null(tag_report_year1) || (length(tag_report_year1) == 1 && is.na(tag_report_year1)) || (is.character(tag_report_year1) && tolower(tag_report_year1) == "auto")) {
+    if (is.finite(model_min_year)) as.integer(model_min_year) else NA_integer_
+  } else {
+    NA_integer_
+  }
+
   tagtemp_file <- file.path(folder, "temporary_tag_report")
-  tagtemp_out <- if (file.exists(tagtemp_file)) {
-    mp_safe(suppressWarnings(read.temporary_tag_report(tagtemp_file, year1 = tag_report_year1)))
+  tagtemp_out <- if (file.exists(tagtemp_file) && is.finite(tag_year1)) {
+    mp_safe(suppressWarnings(read.temporary_tag_report(tagtemp_file, year1 = tag_year1)))
   } else {
     NULL
   }
@@ -120,7 +132,7 @@ mp_build_model_payload <- function(folder, tag_report_year1 = 1952) {
       TagOut = tag_out,
       AgeOut = age_out,
       IndepOut = mp_safe_read_lines(file.path(folder, "indepvar.rpt")),
-      info = if (file.exists(file.path(folder, "model_info.rds"))) mp_safe(readRDS(file.path(folder, "model_info.rds"))) else NULL
+      info = info_out
     )
   )
 }

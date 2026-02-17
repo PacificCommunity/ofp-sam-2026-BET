@@ -773,7 +773,11 @@ mod_tagging_server <- function(input, output, session, rv) {
     seasons_per_model <- seasons_per_model[scenarios_name]
 
     if (mode == "returns_all") {
-      mixing_periods <- pm_default_mixing_periods(scenarios_name, default_steps = 2)
+      mixing_periods <- pm_get_mixing_periods(
+        scenarios_name,
+        info_list = subset_named(rv$Info_list, scenarios_name),
+        config_path = c(file.path("config", "mixing_periods.csv"), file.path("..", "config", "mixing_periods.csv"))
+      )
       tag_all <- pm_apply_mixing_filter(tag_temp_out_list = tagtemp_nonnull, mixing_periods = mixing_periods, seasons_per_model = seasons_per_model)
 
       tag_summary <- tag_all %>%
@@ -810,7 +814,11 @@ mod_tagging_server <- function(input, output, session, rv) {
     }
 
     if (mode == "returns_group") {
-      mixing_periods <- pm_default_mixing_periods(scenarios_name, default_steps = 2)
+      mixing_periods <- pm_get_mixing_periods(
+        scenarios_name,
+        info_list = subset_named(rv$Info_list, scenarios_name),
+        config_path = c(file.path("config", "mixing_periods.csv"), file.path("..", "config", "mixing_periods.csv"))
+      )
       tag_recapture_map <- bind_rows(lapply(scenarios_name, function(m) {
         pm_build_tag_recapture_map(rv$FISHERY_MAPS[[m]], include_index = FALSE) %>% mutate(Model = m)
       }))
