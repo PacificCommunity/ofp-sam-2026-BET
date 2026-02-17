@@ -2807,6 +2807,15 @@ for (fish in all_fisheries) {
     cat("*No data available for this fishery*\n\n")
     next
   }
+
+  # Convert composition scale to sample-count scale when sample sizes are available.
+  if ("sample_size" %in% names(combined_data)) {
+    combined_data <- combined_data %>%
+      mutate(
+        obs = obs * sample_size,
+        pred = pred * sample_size
+      )
+  }
   
   pred_data <- combined_data %>%
     group_by(Scenario, fishery, year, length) %>%
@@ -2814,7 +2823,7 @@ for (fish in all_fisheries) {
   
   obs_data <- combined_data %>%
     group_by(fishery, year, length) %>%
-    summarise(obs = median(obs, na.rm = TRUE), .groups = "drop")
+    summarise(obs = sum(obs, na.rm = TRUE), .groups = "drop")
   
   p <- ggplot() +
     geom_col(data = obs_data, aes(x = length, y = obs, fill = "Observed"), alpha = 0.7, width = 2) +
@@ -2823,7 +2832,7 @@ for (fish in all_fisheries) {
     scale_fill_manual(name = "", values = c("Observed" = "#E69F00")) +
     scale_color_viridis_d(name = "Scenario") +
     labs(title = paste(fishery_name, "- Length Frequency Fits"),
-         x = "Length (cm)", y = "Frequency") +
+         x = "Length (cm)", y = "Sample count") +
     theme_bw() +
     theme(legend.position = "top", legend.box = "vertical",
           strip.text = element_text(size = 8))
@@ -2859,8 +2868,12 @@ for (scenario_name in all_scenarios) {
     
     plot_data <- scenario_data@lenfits %>%
       filter(fishery == fish) %>%
+      mutate(
+        obs = if ("sample_size" %in% names(.)) obs * sample_size else obs,
+        pred = if ("sample_size" %in% names(.)) pred * sample_size else pred
+      ) %>%
       group_by(fishery, year, length) %>%
-      summarise(obs = sum(obs), pred = sum(pred), .groups = "drop")
+      summarise(obs = sum(obs, na.rm = TRUE), pred = sum(pred, na.rm = TRUE), .groups = "drop")
     
     if (nrow(plot_data) == 0) {
       cat("*No data available for this fishery*\n\n")
@@ -2874,7 +2887,7 @@ for (scenario_name in all_scenarios) {
       scale_fill_manual(name = "", values = c("Observed" = "#E69F00")) +
       scale_color_manual(name = "", values = c("Predicted" = "#56B4E9")) +
       labs(title = paste(scenario_name, "-", fishery_name, "- Length Frequency Fits"),
-           x = "Length (cm)", y = "Frequency") +
+           x = "Length (cm)", y = "Sample count") +
       theme_bw() +
       theme(legend.position = "top", legend.box = "horizontal",
             strip.text = element_text(size = 8))
@@ -2959,17 +2972,18 @@ if(exists("WeightOut_list")) {
         left_join(fishery_map[, c("fishery", "fishery_name")], by = "fishery") %>%
         filter(fishery %in% fisheries_to_plot)
       
-      # Calculate bar width
+      # Calculate bar width from the minimum positive bin spacing.
       if(nrow(pdat_model) > 1) {
-        bar_width <- unique(diff(sort(unique(pdat_model$weight))))
-        if(length(bar_width) == 0 || is.na(bar_width)) bar_width <- 0.5
+        width_steps <- diff(sort(unique(pdat_model$weight)))
+        width_steps <- width_steps[is.finite(width_steps) & width_steps > 0]
+        bar_width <- if (length(width_steps) == 0) 0.5 else min(width_steps)
       } else {
         bar_width <- 0.5
       }
       
       # Create plot
       p_model <- ggplot(pdat_model, aes(x = weight)) +
-        geom_bar(aes(y = obs), fill = "blue", colour = "blue", stat = "identity", width = bar_width, alpha = 0.7) +
+        geom_bar(aes(y = obs), fill = "blue", colour = "white", linewidth = 0.2, stat = "identity", width = bar_width, alpha = 0.7) +
         geom_line(aes(y = pred), colour = "red", linewidth = 1.2) +
         facet_wrap(~ fishery_name, scales = "free", ncol = 4) +
         scale_y_continuous(expand = c(0, 0)) +
@@ -3032,6 +3046,15 @@ for (fish in all_fisheries) {
     cat("*No data available for this fishery*\n\n")
     next
   }
+
+  # Convert composition scale to sample-count scale when sample sizes are available.
+  if ("sample_size" %in% names(combined_data)) {
+    combined_data <- combined_data %>%
+      mutate(
+        obs = obs * sample_size,
+        pred = pred * sample_size
+      )
+  }
   
   pred_data <- combined_data %>%
     group_by(Scenario, fishery, year, weight) %>%
@@ -3039,16 +3062,28 @@ for (fish in all_fisheries) {
   
   obs_data <- combined_data %>%
     group_by(fishery, year, weight) %>%
-    summarise(obs = median(obs, na.rm = TRUE), .groups = "drop")
+    summarise(obs = sum(obs, na.rm = TRUE), .groups = "drop")
+
+  # Dynamic weight-bin bar width so bars touch exactly.
+  bar_width <- {
+    wvals <- sort(unique(obs_data$weight))
+    if (length(wvals) <= 1) {
+      0.5
+    } else {
+      width_steps <- diff(wvals)
+      width_steps <- width_steps[is.finite(width_steps) & width_steps > 0]
+      if (length(width_steps) == 0) 0.5 else min(width_steps)
+    }
+  }
   
   p <- ggplot() +
-    geom_col(data = obs_data, aes(x = weight, y = obs, fill = "Observed"), alpha = 0.7, width = 2) +
+    geom_col(data = obs_data, aes(x = weight, y = obs, fill = "Observed"), alpha = 1, width = bar_width, colour = "grey95", linewidth = 0.25) +
     geom_line(data = pred_data, aes(x = weight, y = pred, color = Scenario), linewidth = 1) +
     facet_wrap(~year, scales = "free_y", ncol = config$facet_ncol + 1) +
-    scale_fill_manual(name = "", values = c("Observed" = "#E69F00")) +
+    scale_fill_manual(name = "", values = c("Observed" = "#8C2D04")) +
     scale_color_viridis_d(name = "Scenario") +
     labs(title = paste(fishery_name, "- Weight Frequency Fits"),
-         x = "Weight (kg)", y = "Frequency") +
+         x = "Weight (kg)", y = "Sample count") +
     theme_bw() +
     theme(legend.position = "top", legend.box = "vertical",
           strip.text = element_text(size = 8))
@@ -3084,22 +3119,38 @@ for (scenario_name in all_scenarios) {
     
     plot_data <- scenario_data@wgtfits %>%
       filter(fishery == fish) %>%
+      mutate(
+        obs = if ("sample_size" %in% names(.)) obs * sample_size else obs,
+        pred = if ("sample_size" %in% names(.)) pred * sample_size else pred
+      ) %>%
       group_by(fishery, year, weight) %>%
-      summarise(obs = sum(obs), pred = sum(pred), .groups = "drop")
+      summarise(obs = sum(obs, na.rm = TRUE), pred = sum(pred, na.rm = TRUE), .groups = "drop")
     
     if (nrow(plot_data) == 0) {
       cat("*No data available for this fishery*\n\n")
       next
     }
+
+    # Dynamic weight-bin bar width so bars touch exactly.
+    bar_width <- {
+      wvals <- sort(unique(plot_data$weight))
+      if (length(wvals) <= 1) {
+        0.5
+      } else {
+        width_steps <- diff(wvals)
+        width_steps <- width_steps[is.finite(width_steps) & width_steps > 0]
+        if (length(width_steps) == 0) 0.5 else min(width_steps)
+      }
+    }
     
     p <- ggplot(plot_data, aes(x = weight)) +
-      geom_col(aes(y = obs, fill = "Observed"), alpha = 0.7, width = 2) +
+      geom_col(aes(y = obs, fill = "Observed"), alpha = 1, width = bar_width, colour = "grey95", linewidth = 0.25) +
       geom_line(aes(y = pred, color = "Predicted"), linewidth = 1) +
       facet_wrap(~year, scales = "free_y", ncol = 4) +
-      scale_fill_manual(name = "", values = c("Observed" = "#E69F00")) +
+      scale_fill_manual(name = "", values = c("Observed" = "#8C2D04")) +
       scale_color_manual(name = "", values = c("Predicted" = "#56B4E9")) +
       labs(title = paste(scenario_name, "-", fishery_name, "- Weight Frequency Fits"),
-           x = "Weight (kg)", y = "Frequency") +
+           x = "Weight (kg)", y = "Sample count") +
       theme_bw() +
       theme(legend.position = "top", legend.box = "horizontal",
             strip.text = element_text(size = 8))

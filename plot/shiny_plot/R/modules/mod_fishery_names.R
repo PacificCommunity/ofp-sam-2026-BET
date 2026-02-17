@@ -119,7 +119,7 @@ mod_fishery_names_server <- function(input, output, session, rv) {
     all_models <- names(rv$LengOut_list)[!sapply(rv$LengOut_list, is.null)]
     compatible_models <- check_lf_compatibility_global(rv, input$lf_model, all_models)
     updatePickerInput(session, "lf_scenarios", choices = compatible_models,
-                      selected = intersect(isolate(input$lf_scenarios), compatible_models))
+                      selected = compatible_models)
   }
 
   refresh_wf_choices <- function() {
@@ -134,7 +134,7 @@ mod_fishery_names_server <- function(input, output, session, rv) {
     all_models <- names(rv$WeightOut_list)[!sapply(rv$WeightOut_list, is.null)]
     compatible_models <- check_wf_compatibility_global(rv, input$wf_model, all_models)
     updatePickerInput(session, "wf_scenarios", choices = compatible_models,
-                      selected = intersect(isolate(input$wf_scenarios), compatible_models))
+                      selected = compatible_models)
   }
 
   refresh_dependents <- function() {

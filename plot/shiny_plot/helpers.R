@@ -209,21 +209,25 @@ safe_array_to_df <- function(x, value_col = "data") {
 check_lf_compatibility_global <- function(rv, base_model, compare_models) {
   if (is.null(rv$LengOut_list[[base_model]])) return(character(0))
 
+  normalize_name <- function(x) {
+    x <- as.character(x)
+    x <- trimws(x)
+    x <- gsub("\\s+", " ", x)
+    tolower(x)
+  }
+
   base_fisheries <- unique(rv$LengOut_list[[base_model]]@lenfits$fishery)
-  base_years <- unique(rv$LengOut_list[[base_model]]@lenfits$year)
   base_map <- rv$FISHERY_MAPS[[base_model]]
-  base_fishery_names <- sapply(base_fisheries, function(f) get_fishery_name(f, base_map))
+  base_fishery_names <- normalize_name(sapply(base_fisheries, function(f) get_fishery_name(f, base_map)))
 
   compatible <- sapply(compare_models, function(m) {
     if (is.null(rv$LengOut_list[[m]])) return(FALSE)
     m_fisheries <- unique(rv$LengOut_list[[m]]@lenfits$fishery)
-    m_years <- unique(rv$LengOut_list[[m]]@lenfits$year)
     m_map <- rv$FISHERY_MAPS[[m]]
-    m_fishery_names <- sapply(m_fisheries, function(f) get_fishery_name(f, m_map))
+    m_fishery_names <- normalize_name(sapply(m_fisheries, function(f) get_fishery_name(f, m_map)))
 
     setequal(base_fisheries, m_fisheries) &&
-      identical(sort(base_fishery_names), sort(m_fishery_names)) &&
-      setequal(base_years, m_years)
+      setequal(base_fishery_names, m_fishery_names)
   })
 
   names(compatible)[compatible]
@@ -232,21 +236,23 @@ check_lf_compatibility_global <- function(rv, base_model, compare_models) {
 check_wf_compatibility_global <- function(rv, base_model, compare_models) {
   if (is.null(rv$WeightOut_list[[base_model]])) return(character(0))
 
+  normalize_name <- function(x) {
+    x <- as.character(x)
+    x <- trimws(x)
+    x <- gsub("\\s+", " ", x)
+    tolower(x)
+  }
+
   base_fisheries <- unique(rv$WeightOut_list[[base_model]]@wgtfits$fishery)
-  base_years <- unique(rv$WeightOut_list[[base_model]]@wgtfits$year)
   base_map <- rv$FISHERY_MAPS[[base_model]]
-  base_fishery_names <- sapply(base_fisheries, function(f) get_fishery_name(f, base_map))
+  base_fishery_names <- normalize_name(sapply(base_fisheries, function(f) get_fishery_name(f, base_map)))
 
   compatible <- sapply(compare_models, function(m) {
     if (is.null(rv$WeightOut_list[[m]])) return(FALSE)
-    m_fisheries <- unique(rv$WeightOut_list[[m]]@wgtfits$fishery)
-    m_years <- unique(rv$WeightOut_list[[m]]@wgtfits$year)
     m_map <- rv$FISHERY_MAPS[[m]]
-    m_fishery_names <- sapply(m_fisheries, function(f) get_fishery_name(f, m_map))
-
-    setequal(base_fisheries, m_fisheries) &&
-      identical(sort(base_fishery_names), sort(m_fishery_names)) &&
-      setequal(base_years, m_years)
+    m_fisheries <- unique(rv$WeightOut_list[[m]]@wgtfits$fishery)
+    m_fishery_names <- normalize_name(sapply(m_fisheries, function(f) get_fishery_name(f, m_map)))
+    setequal(base_fishery_names, m_fishery_names)
   })
 
   names(compatible)[compatible]
