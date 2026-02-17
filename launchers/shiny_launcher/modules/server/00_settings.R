@@ -44,13 +44,18 @@
     tryCatch(readRDS(path), error = function(e) list())
   }
 
+  ensure_named_list <- function(x) {
+    if (!is.list(x)) return(list())
+    x
+  }
+
   file_mtime_safe <- function(path) {
     if (!file.exists(path)) return(as.POSIXct(NA))
     file.info(path)$mtime
   }
 
-  read_makefile_docker_image <- function() {
-    paths <- c(file.path(repo_root_val(), "Makefile"), file.path(repo_root_val(), "makefile"))
+  read_makefile_docker_image <- function(root_dir = repo_root_default) {
+    paths <- c(file.path(root_dir, "Makefile"), file.path(root_dir, "makefile"))
     for (mk in paths) {
       if (!file.exists(mk)) next
       lines <- readLines(mk, warn = FALSE)
@@ -81,10 +86,14 @@
   
   load_launcher_settings <- function() {
     launcher_file <- launcher_settings_path()
-    root_file <- settings_path()
 
-    launcher_obj <- read_rds_safe(launcher_file)
-    root_obj <- read_rds_safe(root_file)
+    launcher_obj <- ensure_named_list(read_rds_safe(launcher_file))
+    startup_repo_root <- launcher_obj[["last_repo_root"]]
+    if (is.null(startup_repo_root) || !nzchar(startup_repo_root)) startup_repo_root <- repo_root_default
+    startup_repo_root <- normalize_repo_root_candidate(startup_repo_root)
+
+    root_file <- file.path(startup_repo_root, ".shiny_launcher_settings.rds")
+    root_obj <- ensure_named_list(read_rds_safe(root_file))
     launcher_mtime <- file_mtime_safe(launcher_file)
     root_mtime <- file_mtime_safe(root_file)
 
@@ -107,7 +116,7 @@
       if (!is.null(v)) updateTextInput(session, k, value = v)
     }
 
-    docker_from_makefile <- read_makefile_docker_image()
+    docker_from_makefile <- read_makefile_docker_image(startup_repo_root)
     docker_from_settings <- latest_setting_value("docker_image", launcher_obj, root_obj, launcher_mtime, root_mtime)
     docker_value <- if (!is.null(docker_from_makefile) && nzchar(docker_from_makefile)) docker_from_makefile else docker_from_settings
     if (!is.null(docker_value) && nzchar(docker_value)) {
