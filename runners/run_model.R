@@ -41,7 +41,12 @@ defaultswitch <- paste("-switch 1",
 ## mfcl_commands contains only arguments (frq, par, switches), NOT program path
 mfcl_commands <- Sys.getenv("mfcl_commands", 
                             paste(program_path, frq_file, "11.par 12.par", defaultswitch))
+
+if(mfcl_commands == "./doitall.sh") {
+  mfcl_commands <- mfcl_commands
+} else {
 mfcl_commands <- paste0("../../", mfcl_commands)
+}
 
 ## create model directory and copy files
 dir.create(model_dir, recursive = TRUE, showWarnings = FALSE)
