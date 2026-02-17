@@ -12,7 +12,7 @@ models <- list(
     
     ## configuration for profiling
     Reps = "15 25 25 1000 500 500",
-    scalers = paste0((seq(170, 50, by=-10)), collapse = " "),
+    scalers = paste0((seq(170, 50, by=-5)), collapse = " "),
     
     ## retrospective configuration
     retro_peels = "1 2 3 4 5 6 7",
