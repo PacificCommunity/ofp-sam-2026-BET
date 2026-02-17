@@ -99,11 +99,11 @@ mod_lf_ui <- function() {
               "lf_view_mode",
               "View:",
               choices = c(
+                "All years combined" = "all_years",
                 "Overlay scenarios" = "overlay",
-                "By scenario" = "by_scenario",
-                "All years combined" = "all_years"
+                "By scenario" = "by_scenario"
               ),
-              selected = "overlay"
+              selected = "all_years"
             ),
             
             helpText("💡 Only models with identical fishery structure and names can be overlaid", 

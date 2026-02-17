@@ -99,9 +99,9 @@ mod_wf_ui <- function() {
               "wf_view_mode",
               "View:",
               choices = c(
+                "All years combined" = "all_years",
                 "Overlay scenarios" = "overlay",
-                "By scenario" = "by_scenario",
-                "All years combined" = "all_years"
+                "By scenario" = "by_scenario"
               ),
               selected = "all_years"
             ),
