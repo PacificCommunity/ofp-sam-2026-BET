@@ -166,12 +166,9 @@
     showNotification("Loading config files...", type = "message", duration = 2)
     
     tryCatch({
-      # Start from last browsed path or default
-      start_path <- if (!is.null(rv$last_browse_path) && dir.exists(rv$last_browse_path)) {
-        rv$last_browse_path
-      } else {
-        repo_root_val()
-      }
+      # Always open from repo root when launching the config browser.
+      start_path <- repo_root_val()
+      rv$last_browse_path <- start_path
       
       # Normalize path
       start_path <- normalizePath(start_path, mustWork = FALSE)
@@ -201,7 +198,7 @@
                    padding: 15px; border: 1px solid #ddd; border-radius: 4px;",
           
           # Parent directory link
-          if (start_path != normalizePath("..", mustWork = FALSE)) {
+          if (!identical(parent_dir, start_path)) {
             tags$div(
               style = "padding: 8px; margin-bottom: 10px; border-bottom: 2px solid #ddd;",
               tags$a(
@@ -269,6 +266,10 @@
                       "Shiny.setInputValue('browse_select_file_config', '%s', {priority: 'event'}); return false;",
                       f
                     ),
+                  ondblclick = sprintf(
+                    "Shiny.setInputValue('browse_select_file_config', '%s', {priority: 'event'}); Shiny.setInputValue('confirm_config_file_select', Date.now(), {priority: 'event'}); return false;",
+                    f
+                  ),
                   icon(file_icon, style = paste0("color: ", file_color, ";")), 
                   " ", file_name,
                     style = "color: #333; text-decoration: none; font-size: 13px;"
@@ -330,7 +331,7 @@
           style = "max-height: 500px; overflow-y: auto; background: #f9f9f9; 
                    padding: 15px; border: 1px solid #ddd; border-radius: 4px;",
           
-          if (start_path != normalizePath("..", mustWork = FALSE)) {
+          if (!identical(parent_dir, start_path)) {
             tags$div(
               style = "padding: 8px; margin-bottom: 10px; border-bottom: 2px solid #ddd;",
               tags$a(
@@ -396,6 +397,10 @@
                       "Shiny.setInputValue('browse_select_file_config', '%s', {priority: 'event'}); return false;",
                       f
                     ),
+                    ondblclick = sprintf(
+                      "Shiny.setInputValue('browse_select_file_config', '%s', {priority: 'event'}); Shiny.setInputValue('confirm_config_file_select', Date.now(), {priority: 'event'}); return false;",
+                      f
+                    ),
                     icon(file_icon, style = paste0("color: ", file_color, ";")), 
                     " ", file_name,
                     style = "color: #333; text-decoration: none; font-size: 13px;"
@@ -408,9 +413,14 @@
                    style = "text-align: center; color: #999; padding: 20px;")
           }
         ),
-        
+        shiny::hr(),
+        div(style = "font-size:12px; color:#666;",
+            "Selected: ",
+            strong(textOutput("config_file_pending_display", inline = TRUE))
+        ),
         footer = tagList(
-          modalButton("Cancel")
+          modalButton("Cancel"),
+          actionButton("confirm_config_file_select", "Select", class = "btn-primary")
         )
       ))
       
@@ -452,7 +462,7 @@
           style = "max-height: 500px; overflow-y: auto; background: #f9f9f9; 
                    padding: 15px; border: 1px solid #ddd; border-radius: 4px;",
           
-          if (start_path != normalizePath("..", mustWork = FALSE)) {
+          if (!identical(parent_dir, start_path)) {
             tags$div(
               style = "padding: 8px; margin-bottom: 10px; border-bottom: 2px solid #ddd;",
               tags$a(
@@ -518,6 +528,10 @@
                       "Shiny.setInputValue('browse_select_file_config', '%s', {priority: 'event'}); return false;",
                       f
                     ),
+                    ondblclick = sprintf(
+                      "Shiny.setInputValue('browse_select_file_config', '%s', {priority: 'event'}); Shiny.setInputValue('confirm_config_file_select', Date.now(), {priority: 'event'}); return false;",
+                      f
+                    ),
                     icon(file_icon, style = paste0("color: ", file_color, ";")), 
                     " ", file_name,
                     style = "color: #333; text-decoration: none; font-size: 13px;"
@@ -530,9 +544,14 @@
                    style = "text-align: center; color: #999; padding: 20px;")
           }
         ),
-        
+        shiny::hr(),
+        div(style = "font-size:12px; color:#666;",
+            "Selected: ",
+            strong(textOutput("config_file_pending_display", inline = TRUE))
+        ),
         footer = tagList(
-          modalButton("Cancel")
+          modalButton("Cancel"),
+          actionButton("confirm_config_file_select", "Select", class = "btn-primary")
         )
       ))
       

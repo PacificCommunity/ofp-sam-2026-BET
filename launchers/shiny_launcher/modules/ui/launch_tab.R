@@ -9,8 +9,8 @@ launch_tab_ui <- function() {
         fluidRow(
           column(9,
                  textInput("repo_root", NULL,
-                           value = normalizePath("..", mustWork = FALSE),
-                           placeholder = "/path/to/repo")
+                          value = normalizePath(file.path("..", ".."), mustWork = FALSE),
+                          placeholder = "/path/to/repo")
           ),
           column(3,
                  actionButton("browse_repo_root", "Browse",

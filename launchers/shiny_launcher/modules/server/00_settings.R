@@ -1,10 +1,19 @@
   # ===== SETTINGS SAVE/LOAD =====
   # Repo root + path helpers
-  repo_root_default <- normalizePath(file.path(app_dir, ".."), mustWork = FALSE)
+  repo_root_default <- normalizePath(file.path(app_dir, "..", ".."), mustWork = FALSE)
+
+  normalize_repo_root_candidate <- function(path_in) {
+    p <- normalizePath(path_in, mustWork = FALSE)
+    if (basename(p) == "launchers" && dir.exists(file.path(p, "shiny_launcher"))) {
+      parent <- dirname(p)
+      if (dir.exists(parent)) return(parent)
+    }
+    p
+  }
   
   repo_root_val <- reactive({
     if (!is.null(input$repo_root) && input$repo_root != "") {
-      normalizePath(input$repo_root, mustWork = FALSE)
+      normalize_repo_root_candidate(input$repo_root)
     } else {
       repo_root_default
     }
@@ -36,7 +45,7 @@
         ls <- readRDS(launcher_settings_path())
         rv$launcher_settings_loaded <- TRUE
         if (!is.null(ls$last_repo_root) && ls$last_repo_root != "") {
-          updateTextInput(session, "repo_root", value = ls$last_repo_root)
+          updateTextInput(session, "repo_root", value = normalize_repo_root_candidate(ls$last_repo_root))
         }
         if (!is.null(ls$last_download_location) && ls$last_download_location != "") {
           updateTextInput(session, "download_location", value = ls$last_download_location)
@@ -92,7 +101,7 @@
         saved_settings <- readRDS(settings_file)
         
         if (!is.null(saved_settings$repo_root) && !isTRUE(rv$launcher_settings_loaded)) {
-          updateTextInput(session, "repo_root", value = saved_settings$repo_root)
+          updateTextInput(session, "repo_root", value = normalize_repo_root_candidate(saved_settings$repo_root))
         }
         
         
