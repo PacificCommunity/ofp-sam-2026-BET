@@ -98,6 +98,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     retro = list(),
     hessian = list()
   )
+  last_group_key <- reactiveVal(NULL)
 
   scenario_cache_key <- function(model_dir, scenario) {
     paste(
@@ -910,19 +911,32 @@ mod_likelihood_server <- function(input, output, session, rv) {
     info <- profile_data_reactive()
     plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else "piner"
     if (is.null(info$group_col) || nrow(info$data) == 0 || plot_kind %in% c("jitter", "retro", "hessian")) {
+      last_group_key(NULL)
       updatePickerInput(session, "lik_groups", choices = character(0), selected = character(0))
       return()
     }
 
     groups <- sort(unique(info$data[[info$group_col]]))
+    group_key <- paste(
+      input$lik_profile_type,
+      info$group_col,
+      paste(groups, collapse = "||"),
+      sep = "::"
+    )
+
     current <- isolate(input$lik_groups)
-    if (is.null(current) || length(current) == 0) {
+    if (!identical(last_group_key(), group_key)) {
       selected <- groups
     } else {
-      selected <- intersect(current, groups)
-      if (length(selected) == 0) selected <- groups
+      if (is.null(current) || length(current) == 0) {
+        selected <- groups
+      } else {
+        selected <- intersect(current, groups)
+        if (length(selected) == 0) selected <- groups
+      }
     }
 
+    last_group_key(group_key)
     updatePickerInput(session, "lik_groups", choices = groups, selected = selected)
   }, ignoreInit = TRUE)
 
