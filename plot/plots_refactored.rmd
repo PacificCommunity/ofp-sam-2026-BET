@@ -25,12 +25,17 @@ editor_options:
 
 knitr::opts_chunk$set(
   dev = "png",
-  dpi = 160,
+  dpi = if (identical(Sys.getenv("PLOTS_FAST", "0"), "1")) 120 else 160,
   echo = FALSE,
-  cache = FALSE,
+  cache = TRUE,
+  cache.path = "../report/.knitr_cache/",
   warning = FALSE,
   message = FALSE,
-  fig.path = '../report/Figures/'
+  fig.path = '../report/Figures/',
+  fig.width = 11,
+  fig.height = 8,
+  out.width = "100%",
+  fig.align = "center"
 )
 
 # -----------------------------------------------------------------------------
@@ -75,7 +80,29 @@ load_plot_modules(PLOT_DIR)
 # -----------------------------------------------------------------------------
 
 # Paths
-MODEL_DIR <- file.path(PLOT_DIR, "..", "model")
+resolve_model_dir <- function(plot_dir = PLOT_DIR) {
+  env_dir <- Sys.getenv("PLOT_MODEL_DIR", "")
+  if (nzchar(env_dir) && dir.exists(env_dir)) {
+    return(normalizePath(env_dir, winslash = "/", mustWork = FALSE))
+  }
+
+  last_dir_files <- c(
+    file.path(plot_dir, ".model_dir_last.rds"),
+    file.path(plot_dir, "..", ".model_dir_last.rds")
+  )
+  for (f in last_dir_files) {
+    if (file.exists(f)) {
+      last_dir <- tryCatch(readRDS(f), error = function(e) NULL)
+      if (!is.null(last_dir) && nzchar(last_dir) && dir.exists(last_dir)) {
+        return(normalizePath(last_dir, winslash = "/", mustWork = FALSE))
+      }
+    }
+  }
+
+  default_dir <- file.path(plot_dir, "..", "model")
+  normalizePath(default_dir, winslash = "/", mustWork = FALSE)
+}
+MODEL_DIR <- resolve_model_dir(PLOT_DIR)
 
 # Plot aesthetics (named 'config' for compatibility with plot_utils.R functions)
 config <- list(
@@ -109,21 +136,50 @@ safe_read <- function(path, reader = readLines) {
 #' Get scenario names that have profiling enabled
 #' If run_prof is not in info_list, check if prof_lik_list has data
 get_prof_scenarios <- function(info_list, prof_lik_list) {
-  # If info_list has run_prof field, use it
-  has_run_prof <- sapply(info_list, function(x) !is.null(x$run_prof))
-  
-  if(any(has_run_prof)) {
-    run_prof <- sapply(info_list, function(x) {
-      val <- x$run_prof
-      if(is.null(val)) return(0)
-      as.numeric(val)
-    })
-    scenarios_with_prof <- names(run_prof)[run_prof == 1]
-    return(intersect(names(prof_lik_list), scenarios_with_prof))
-  } else {
-    # If no run_prof field, just use scenarios that have prof_lik data
-    return(names(prof_lik_list))
+  # Shiny behavior: rely on actual profile outputs, not run_prof metadata.
+  names(prof_lik_list)
+}
+
+get_profile_context <- function(info_list, prof_lik_list, prof_lik_raw_list = NULL) {
+  scenarios <- get_prof_scenarios(info_list, prof_lik_list)
+  scenarios <- intersect(scenarios, names(prof_lik_list))
+  if (!is.null(prof_lik_raw_list)) {
+    scenarios <- intersect(scenarios, names(prof_lik_raw_list))
   }
+  if (length(scenarios) == 0) {
+    return(list(scenarios = character(0), common_scales = character(0)))
+  }
+
+  scales_by_scenario <- lapply(scenarios, function(sc) names(prof_lik_list[[sc]]))
+  common_scales <- Reduce(intersect, scales_by_scenario)
+  common_scales <- sort(unique(as.character(common_scales)))
+
+  list(
+    scenarios = scenarios,
+    common_scales = common_scales
+  )
+}
+
+extract_survey_index_like_from_raw <- function(raw_lines) {
+  if (is.null(raw_lines) || length(raw_lines) == 0) return(numeric(0))
+
+  header_idx <- which(grepl("^\\s*#\\s*Survey_index_like_by_fishery\\s*$", raw_lines))
+  if (length(header_idx) == 0) return(numeric(0))
+
+  i <- header_idx[1] + 1
+  if (i > length(raw_lines)) return(numeric(0))
+
+  block <- character(0)
+  while (i <= length(raw_lines)) {
+    line <- trimws(raw_lines[i])
+    if (!nzchar(line) || grepl("^\\s*#", line)) break
+    block <- c(block, line)
+    i <- i + 1
+  }
+  if (length(block) == 0) return(numeric(0))
+
+  vals <- suppressWarnings(as.numeric(strsplit(paste(block, collapse = " "), "\\s+")[[1]]))
+  vals[is.finite(vals)]
 }
 
 #' Read average biomass values for scenarios
@@ -137,6 +193,15 @@ get_avg_bio <- function(scenarios, model_dir = MODEL_DIR) {
     scaler_dirs <- grep("scaler_\\d+$", scaler_dirs, value = TRUE)
     
     if (length(scaler_dirs) > 0) {
+      # Prefer profile payload avg_bio (matches shiny behavior)
+      payload_file <- file.path(scaler_dirs[1], "profile_payload.rds")
+      if (file.exists(payload_file)) {
+        payload_avg <- tryCatch({
+          suppressWarnings(as.numeric(readRDS(payload_file)$avg_bio))
+        }, error = function(e) NA_real_)
+        if (is.finite(payload_avg)) return(payload_avg)
+      }
+
       # Read from first scaler folder (value should be same across all)
       avg_bio_file <- file.path(scaler_dirs[1], "avg_bio")
       if (file.exists(avg_bio_file)) {
@@ -159,7 +224,12 @@ get_avg_bio <- function(scenarios, model_dir = MODEL_DIR) {
 #' @param scenario Scenario name
 #' @param avg_bio Named vector of average biomass values
 scale_to_biomass <- function(scaler, scenario, avg_bio) {
-  as.numeric(scaler) * 0.01 * avg_bio[scenario]
+  sc <- as.numeric(scaler)
+  b <- suppressWarnings(as.numeric(avg_bio[as.character(scenario)]))
+  out <- sc * 0.01 * b
+  bad <- !is.finite(b)
+  out[bad] <- sc[bad]
+  out
 }
 
 #' Create a standard likelihood profile plot
@@ -791,7 +861,7 @@ scenario_legend <- cowplot::get_legend(
     theme(
       legend.position = "right",
       legend.title = element_text(face = "bold"),
-      legend.key.width = unit(1.5, "cm")
+      legend.key.width = unit(1.0, "cm")
     ) +
     labs(color = "Scenario") +
     guides(color = guide_legend(override.aes = list(linewidth = 2)))
@@ -810,7 +880,7 @@ combined_plot <- cowplot::plot_grid(
 # Add legend to the right side
 final_plot <- cowplot::plot_grid(
   combined_plot, scenario_legend,
-  ncol = 2, rel_widths = c(4, 1)
+  ncol = 2, rel_widths = c(3.2, 1.3)
 )
 
 print(final_plot)
@@ -921,7 +991,7 @@ scenario_legend <- cowplot::get_legend(
     theme(
       legend.position = "right",
       legend.title = element_text(face = "bold"),
-      legend.key.width = unit(1.5, "cm")
+      legend.key.width = unit(1.0, "cm")
     ) +
     labs(color = "Scenario") +
     guides(color = guide_legend(override.aes = list(linewidth = 2)))
@@ -933,7 +1003,7 @@ scenario_legend <- cowplot::get_legend(
 
 final_plot <- cowplot::plot_grid(
   depletion_plot, scenario_legend,
-  ncol = 2, rel_widths = c(4, 0.8)
+  ncol = 2, rel_widths = c(3.2, 1.3)
 )
 
 print(final_plot)
@@ -1016,7 +1086,7 @@ scenario_legend <- cowplot::get_legend(
     theme(
       legend.position = "right",
       legend.title = element_text(face = "bold"),
-      legend.key.width = unit(1.5, "cm")
+      legend.key.width = unit(1.0, "cm")
     ) +
     labs(color = "Scenario") +
     guides(color = guide_legend(override.aes = list(linewidth = 2)))
@@ -1028,7 +1098,7 @@ scenario_legend <- cowplot::get_legend(
 
 final_plot <- cowplot::plot_grid(
   rec_plot, scenario_legend,
-  ncol = 2, rel_widths = c(4, 0.8)
+  ncol = 2, rel_widths = c(3.2, 1.3)
 )
 
 print(final_plot)
@@ -1194,7 +1264,7 @@ scenario_legend <- cowplot::get_legend(
     theme(
       legend.position = "right",
       legend.title = element_text(face = "bold"),
-      legend.key.width = unit(1.5, "cm")
+      legend.key.width = unit(1.0, "cm")
     ) +
     labs(color = "Scenario") +
     guides(color = guide_legend(override.aes = list(linewidth = 2)))
@@ -1211,7 +1281,7 @@ lifestage_legend <- cowplot::get_legend(
     theme(
       legend.position = "right",
       legend.title = element_text(face = "bold"),
-      legend.key.width = unit(2.5, "cm")
+      legend.key.width = unit(1.8, "cm")
     )
 )
 
@@ -1227,7 +1297,7 @@ combined_legend <- cowplot::plot_grid(
 
 final_plot <- cowplot::plot_grid(
   fm_area_plot, combined_legend,
-  ncol = 2, rel_widths = c(4, 1)
+  ncol = 2, rel_widths = c(3.2, 1.3)
 )
 
 print(final_plot)
@@ -1490,7 +1560,7 @@ scenario_legend <- cowplot::get_legend(
     theme(
       legend.position = "right",
       legend.title = element_text(face = "bold"),
-      legend.key.width = unit(1.5, "cm")
+      legend.key.width = unit(1.0, "cm")
     ) +
     labs(color = "Scenario") +
     guides(color = guide_legend(override.aes = list(linewidth = 2)))
@@ -1507,7 +1577,7 @@ status_legend <- cowplot::get_legend(
     theme(
       legend.position = "right",
       legend.title = element_text(face = "bold"),
-      legend.key.width = unit(2.5, "cm")
+      legend.key.width = unit(1.8, "cm")
     )
 )
 
@@ -1523,7 +1593,7 @@ combined_legend <- cowplot::plot_grid(
 
 final_plot <- cowplot::plot_grid(
   bio_plot, combined_legend,
-  ncol = 2, rel_widths = c(4, 1)
+  ncol = 2, rel_widths = c(3.2, 1.3)
 )
 
 print(final_plot)
@@ -1643,7 +1713,7 @@ scenario_legend <- cowplot::get_legend(
     theme(
       legend.position = "right",
       legend.title = element_text(face = "bold"),
-      legend.key.width = unit(1.5, "cm")
+      legend.key.width = unit(1.0, "cm")
     ) +
     labs(color = "Scenario") +
     guides(color = guide_legend(override.aes = list(linewidth = 2)))
@@ -1660,7 +1730,7 @@ status_legend <- cowplot::get_legend(
     theme(
       legend.position = "right",
       legend.title = element_text(face = "bold"),
-      legend.key.width = unit(2.5, "cm")
+      legend.key.width = unit(1.8, "cm")
     )
 )
 
@@ -1676,7 +1746,7 @@ combined_legend <- cowplot::plot_grid(
 
 final_plot <- cowplot::plot_grid(
   bio_plot, combined_legend,
-  ncol = 2, rel_widths = c(4, 1)
+  ncol = 2, rel_widths = c(3.2, 1.3)
 )
 
 print(final_plot)
@@ -2149,69 +2219,57 @@ if (nrow(retro_df) > 0) {
 
 ## Each component
 
-```{r lik-profile-components, echo=FALSE, message=FALSE, fig.dim=c(8,8)}
+```{r lik-profile-components, echo=FALSE, message=FALSE, fig.dim=c(11,8)}
 # =============================================================================
 # LIKELIHOOD PROFILE BY COMPONENT
 # Shows how each likelihood component changes across biomass scalers
 # =============================================================================
 
-# Get scenarios with profiling enabled
-# Get scenarios with profiling enabled
-scenarios_prof <- get_prof_scenarios(Info_list, ProfLikOut_list)
+prof_ctx <- get_profile_context(Info_list, ProfLikOut_list, ProfLikOutRaw_list)
+scenarios_prof <- prof_ctx$scenarios
 
 if (length(scenarios_prof) > 0) {
 
   # Get average biomass for scaling
   avg_bio <- get_avg_bio(scenarios_prof)
 
-  # --- scales can differ by scenario ---
-  scales_by_sc <- purrr::map(scenarios_prof, ~ results[[.x]]$scales)
-  scales <- Reduce(union, scales_by_sc)   # <- use intersect for common-only
-
-  # Extract likelihood components for each scale
-  Likes <- purrr::map(scales, function(scl) {
-
-    mat <- sapply(scenarios_prof, function(sc) {
-
-      # If this scale is missing in this scenario, return NA vector
-      if (is.null(ProfLikOut_list[[sc]][[scl]]) || is.null(ProfLikOutRaw_list[[sc]][[scl]])) {
-        return(c(Indices = NA_real_, LFs = NA_real_, Penalties = NA_real_,
-                 WFs = NA_real_, Age = NA_real_, Tags = NA_real_))
-      }
-
+  Likes_long <- purrr::map_dfr(scenarios_prof, function(sc) {
+    sc_scales <- names(ProfLikOut_list[[sc]])
+    purrr::map_dfr(sc_scales, function(scl) {
       lik <- ProfLikOut_list[[sc]][[scl]]
       raw <- ProfLikOutRaw_list[[sc]][[scl]]
+      if (is.null(lik)) return(data.frame())
 
-      c(
+      vals <- c(
         Indices   = sum(lik@survey_index, na.rm = TRUE),
         LFs       = sum(lik@total_length_fish, na.rm = TRUE),
-        Penalties = as.numeric(raw[6]),
+        Penalties = suppressWarnings(as.numeric(raw[6])),
         WFs       = sum(lik@total_weight_fish, na.rm = TRUE),
         Age       = sum(lik@age_length, na.rm = TRUE),
         Tags      = sum(unlist(lik@tag_rel_fish, recursive = TRUE), na.rm = TRUE)
       )
+      vals <- c(vals, Total = sum(vals, na.rm = TRUE))
+
+      data.frame(
+        scenario = sc,
+        scaler = scl,
+        Likelihood = names(vals),
+        value = as.numeric(vals),
+        stringsAsFactors = FALSE
+      )
     })
-
-    rbind(mat, Total = colSums(mat, na.rm = TRUE))
-  })
-  names(Likes) <- scales
-
-  # Convert to long format
-  Likes_long <- purrr::imap_dfr(Likes, function(mat, scl) {
-    as.data.frame(mat) %>%
-      tibble::rownames_to_column("Likelihood") %>%
-      mutate(scaler = scl)
   }) %>%
-    tidyr::pivot_longer(cols = all_of(scenarios_prof),
-                        names_to = "scenario",
-                        values_to = "value") %>%
     mutate(scaler = scale_to_biomass(scaler, scenario, avg_bio))
 
   # Calculate change from minimum
-  Likes_change <- calc_lik_change(Likes_long, "Likelihood")
-
-  # Create plot
-  print(create_piner_plot(Likes_change, "Likelihood"))
+  if (nrow(Likes_long) > 0) {
+    Likes_change <- calc_lik_change(Likes_long, "Likelihood")
+    print(create_piner_plot(Likes_change, "Likelihood"))
+  } else {
+    cat("*No likelihood-component profile data available.*\n\n")
+  }
+} else {
+  cat("*No profile outputs (`prof/scaler_*/profile_payload.rds`) were found across selected scenarios.*\n\n")
 }
 
 ```
@@ -2220,47 +2278,59 @@ if (length(scenarios_prof) > 0) {
 
 ## Piner (CPUEs)
 
-```{r piner-CPUEs, echo=FALSE, message=FALSE, fig.dim=c(8,8)}
+```{r piner-CPUEs, echo=FALSE, message=FALSE, fig.dim=c(11,8)}
 # =============================================================================
 # PINER PLOT: INDEX CPUE LIKELIHOODS BY FISHERY
 # =============================================================================
 
 
-scenarios_prof <- get_prof_scenarios(Info_list, ProfLikOut_list)
+prof_ctx <- get_profile_context(Info_list, ProfLikOut_list, ProfLikOutRaw_list)
+scenarios_prof <- prof_ctx$scenarios
 
 if (length(scenarios_prof) > 0) {
-  
   avg_bio <- get_avg_bio(scenarios_prof)
-  scales <- results[[scenarios_prof[1]]]$scales
-  
-  Likes <- map(scales, function(scl) {
-    mat <- sapply(scenarios_prof, function(sc) {
-      cpue_vec <- ProfLikOutRaw_list[[sc]][[scl]][68] %>%  
-        strsplit(" ") %>%
-        unlist() %>% 
-        as.numeric() %>%
-        na.omit()
-      names(cpue_vec) <- (fishery_map %>% dplyr::filter(group == "Index") %>% with(setNames(fishery_name, fishery)))[as.character(seq_along(cpue_vec))]
-      cpue_vec
+
+  Likes_long <- purrr::map_dfr(scenarios_prof, function(sc) {
+    sc_scales <- names(ProfLikOutRaw_list[[sc]])
+    purrr::map_dfr(sc_scales, function(scl) {
+      raw <- ProfLikOutRaw_list[[sc]][[scl]]
+      cpue_vec <- extract_survey_index_like_from_raw(raw)
+      if (length(cpue_vec) == 0) return(data.frame())
+
+      fish_ids <- as.character(seq_along(cpue_vec))
+      keep_idx <- is.finite(cpue_vec) & abs(cpue_vec) > 0
+      cpue_vec <- cpue_vec[keep_idx]
+      fish_ids <- fish_ids[keep_idx]
+      if (length(cpue_vec) == 0) return(data.frame())
+
+      fish_names <- sapply(fish_ids, function(fid) get_fishery_name(fid))
+      out <- data.frame(
+        scenario = sc,
+        scaler = scl,
+        Fishery = fish_names,
+        value = as.numeric(cpue_vec),
+        stringsAsFactors = FALSE
+      )
+      bind_rows(
+        out,
+        data.frame(scenario = sc, scaler = scl, Fishery = "Total", value = sum(cpue_vec), stringsAsFactors = FALSE)
+      )
     })
-    
-    # Remove zero rows and add total
-    mat <- mat[rowSums(mat != 0) > 0, , drop = FALSE]
-    rbind(mat, Total = colSums(mat))
-  })
-  
-  # Convert to long format
-  Likes_long <- imap_dfr(Likes, function(mat, scl) {
-    as.data.frame(mat) %>%
-      tibble::rownames_to_column("Fishery") %>%
-      mutate(scaler = scl)
   }) %>%
-    pivot_longer(cols = all_of(scenarios_prof), names_to = "scenario", values_to = "value") %>%
     mutate(scaler = scale_to_biomass(scaler, scenario, avg_bio))
-  
-  # Calculate change and plot
-  Likes_change <- calc_lik_change(Likes_long, "Fishery")
-  print(create_piner_plot(Likes_change, "Fishery", "CPUEs"))
+
+  if (nrow(Likes_long) > 0) {
+    cat(sprintf("CPUE profile rows: %d | fisheries: %d | scenarios: %d\n\n",
+                nrow(Likes_long),
+                dplyr::n_distinct(Likes_long$Fishery),
+                dplyr::n_distinct(Likes_long$scenario)))
+    Likes_change <- calc_lik_change(Likes_long, "Fishery")
+    print(create_piner_plot(Likes_change, "Fishery", "CPUEs"))
+  } else {
+    cat("*No CPUE profile rows parsed from `# Survey_index_like_by_fishery` blocks.*\n\n")
+  }
+} else {
+  cat("*No CPUE profile outputs were found across selected scenarios.*\n\n")
 }
 
 ```
@@ -2269,123 +2339,122 @@ if (length(scenarios_prof) > 0) {
 
 ## Piner (LFs)
 
-```{r piner-lfs, echo=FALSE, message=FALSE, fig.dim=c(8,8)}
+```{r piner-lfs, echo=FALSE, message=FALSE, fig.dim=c(11,8)}
 # =============================================================================
 # PINER PLOT: LENGTH FREQUENCY LIKELIHOODS BY FISHERY
 # =============================================================================
 
 
-scenarios_prof <- get_prof_scenarios(Info_list, ProfLikOut_list)
+prof_ctx <- get_profile_context(Info_list, ProfLikOut_list, ProfLikOutRaw_list)
+scenarios_prof <- prof_ctx$scenarios
 
 if (length(scenarios_prof) > 0) {
-  
   avg_bio <- get_avg_bio(scenarios_prof)
-  scales <- results[[scenarios_prof[1]]]$scales
   
-  # Extract LF likelihoods by fishery
-  Likes <- map(scales, function(scl) {
-    mat <- sapply(scenarios_prof, function(sc) {
+  Likes_long <- purrr::map_dfr(scenarios_prof, function(sc) {
+    sc_scales <- names(ProfLikOut_list[[sc]])
+    purrr::map_dfr(sc_scales, function(scl) {
       lf_vec <- ProfLikOut_list[[sc]][[scl]]@total_length_fish
-names(lf_vec) <- (fishery_map  %>% with(setNames(fishery_name, fishery)))[as.character(seq_along(lf_vec))]
-      lf_vec
+      fish_names <- (fishery_map %>% with(setNames(fishery_name, fishery)))[as.character(seq_along(lf_vec))]
+      out <- data.frame(
+        scenario = sc,
+        scaler = scl,
+        Fishery = fish_names,
+        value = as.numeric(lf_vec),
+        stringsAsFactors = FALSE
+      ) %>% filter(is.finite(value), value != 0)
+      if (nrow(out) == 0) return(data.frame())
+      bind_rows(out, data.frame(scenario = sc, scaler = scl, Fishery = "Total", value = sum(out$value), stringsAsFactors = FALSE))
     })
-    
-    # Remove zero rows and add total
-    mat <- mat[rowSums(mat != 0) > 0, , drop = FALSE]
-    rbind(mat, Total = colSums(mat))
-  })
-  names(Likes) <- scales
-  
-  # Convert to long format
-  Likes_long <- imap_dfr(Likes, function(mat, scl) {
-    as.data.frame(mat) %>%
-      tibble::rownames_to_column("Fishery") %>%
-      mutate(scaler = scl)
   }) %>%
-    pivot_longer(cols = all_of(scenarios_prof), names_to = "scenario", values_to = "value") %>%
     mutate(scaler = scale_to_biomass(scaler, scenario, avg_bio))
   
   # Calculate change and plot
-  Likes_change <- calc_lik_change(Likes_long, "Fishery")
-  print(create_piner_plot(Likes_change, "Fishery", "LFs"))
+  if (nrow(Likes_long) > 0) {
+    Likes_change <- calc_lik_change(Likes_long, "Fishery")
+    print(create_piner_plot(Likes_change, "Fishery", "LFs"))
+  } else {
+    cat("*No LF profile data available.*\n\n")
+  }
+} else {
+  cat("*No LF profile outputs were found across selected scenarios.*\n\n")
 }
 ```
 
 ## Piner (WFs)
 
-```{r piner-wfs, echo=FALSE, message=FALSE, fig.dim=c(8,8)}
+```{r piner-wfs, echo=FALSE, message=FALSE, fig.dim=c(11,8)}
 # =============================================================================
 # PINER PLOT: WEIGHT FREQUENCY LIKELIHOODS BY FISHERY
 # =============================================================================
 
-scenarios_prof <- get_prof_scenarios(Info_list, ProfLikOut_list)
+prof_ctx <- get_profile_context(Info_list, ProfLikOut_list, ProfLikOutRaw_list)
+scenarios_prof <- prof_ctx$scenarios
 
 if (length(scenarios_prof) > 0) {
-  
   avg_bio <- get_avg_bio(scenarios_prof)
-  scales <- results[[scenarios_prof[1]]]$scales
   
-  # Extract WF likelihoods by fishery
-  Likes <- map(scales, function(scl) {
-    mat <- sapply(scenarios_prof, function(sc) {
+  Likes_long <- purrr::map_dfr(scenarios_prof, function(sc) {
+    sc_scales <- names(ProfLikOut_list[[sc]])
+    purrr::map_dfr(sc_scales, function(scl) {
       wf_vec <- ProfLikOut_list[[sc]][[scl]]@total_weight_fish
-      names(wf_vec) <-fishery_map  %>%
-  with(setNames(fishery_name, fishery)) 
-
-      wf_vec
+      fish_names <- (fishery_map %>% with(setNames(fishery_name, fishery)))[as.character(seq_along(wf_vec))]
+      out <- data.frame(
+        scenario = sc,
+        scaler = scl,
+        Fishery = fish_names,
+        value = as.numeric(wf_vec),
+        stringsAsFactors = FALSE
+      ) %>% filter(is.finite(value), value != 0)
+      if (nrow(out) == 0) return(data.frame())
+      bind_rows(out, data.frame(scenario = sc, scaler = scl, Fishery = "Total", value = sum(out$value), stringsAsFactors = FALSE))
     })
-    
-    mat <- mat[rowSums(mat != 0) > 0, , drop = FALSE]
-    rbind(mat, Total = colSums(mat))
-  })
-  names(Likes) <- scales
-  
-  # Convert to long format
-  Likes_long <- imap_dfr(Likes, function(mat, scl) {
-    as.data.frame(mat) %>%
-      tibble::rownames_to_column("Fishery") %>%
-      mutate(scaler = scl)
   }) %>%
-    pivot_longer(cols = all_of(scenarios_prof), names_to = "scenario", values_to = "value") %>%
     mutate(scaler = scale_to_biomass(scaler, scenario, avg_bio))
   
-  Likes_change <- calc_lik_change(Likes_long, "Fishery")
-  print(create_piner_plot(Likes_change, "Fishery", "WFs"))
+  if (nrow(Likes_long) > 0) {
+    Likes_change <- calc_lik_change(Likes_long, "Fishery")
+    print(create_piner_plot(Likes_change, "Fishery", "WFs"))
+  } else {
+    cat("*No WF profile data available.*\n\n")
+  }
+} else {
+  cat("*No WF profile outputs were found across selected scenarios.*\n\n")
 }
 ```
 
 ## Piner (Tagging)
 
-```{r piner-tag, echo=FALSE, message=FALSE, fig.dim=c(8,8)}
+```{r piner-tag, echo=FALSE, message=FALSE, fig.dim=c(11,8)}
 # =============================================================================
 # PINER PLOT: TAGGING LIKELIHOODS BY PROGRAM
 # =============================================================================
 
-scenarios_prof <- get_prof_scenarios(Info_list, ProfLikOut_list)
+prof_ctx <- get_profile_context(Info_list, ProfLikOut_list, ProfLikOutRaw_list)
+scenarios_prof <- prof_ctx$scenarios
 
 if (length(scenarios_prof) > 0) {
-  
   avg_bio <- get_avg_bio(scenarios_prof)
-  scales <- results[[scenarios_prof[1]]]$scales
   
   # Extract tag likelihoods by program
-  Likes_raw <- map(scales, function(scl) {
-    sapply(scenarios_prof, function(sc) {
+  Likes_long <- purrr::map_dfr(scenarios_prof, function(sc) {
+    sc_scales <- names(ProfLikOut_list[[sc]])
+    purrr::map_dfr(sc_scales, function(scl) {
       tag_rel <- ProfLikOut_list[[sc]][[scl]]@tag_rel_fish
       sums_vec <- sapply(tag_rel, function(g) sum(unlist(g)))
-      names(sums_vec) <- tag_program_maps[[sc]]$program_name[seq_along(sums_vec)]
-      sums_vec
-    }, simplify = FALSE)
-  })
-  names(Likes_raw) <- scales
-  
-  # Convert to data frame
-  Likes_long <- bind_rows(lapply(names(Likes_raw), function(scl) {
-    bind_rows(lapply(names(Likes_raw[[scl]]), function(sc) {
-      vec <- Likes_raw[[scl]][[sc]]
-      data.frame(scenario = sc, scaler = scl, program = names(vec), value = as.numeric(vec))
-    }))
-  })) %>%
+      program_names <- tag_program_maps[[sc]]$program_name[seq_along(sums_vec)]
+      if (length(program_names) != length(sums_vec)) {
+        program_names <- paste("Program", seq_along(sums_vec))
+      }
+      data.frame(
+        scenario = sc,
+        scaler = scl,
+        program = as.character(program_names),
+        value = as.numeric(sums_vec),
+        stringsAsFactors = FALSE
+      )
+    })
+  }) %>%
     mutate(scaler = scale_to_biomass(scaler, scenario, avg_bio)) %>%
     group_by(program, scaler, scenario) %>%
     summarise(value = sum(value), .groups = "drop")
@@ -2398,127 +2467,147 @@ if (length(scenarios_prof) > 0) {
   
   Likes_long <- bind_rows(Likes_long, Likes_total)
   
-  Likes_change <- calc_lik_change(Likes_long, "program")
-  print(create_piner_plot(Likes_change, "program", "Tagging program"))
+  if (nrow(Likes_long) > 0) {
+    Likes_change <- calc_lik_change(Likes_long, "program")
+    print(create_piner_plot(Likes_change, "program", "Tagging program"))
+  } else {
+    cat("*No tagging profile data available.*\n\n")
+  }
+} else {
+  cat("*No tagging profile outputs were found across selected scenarios.*\n\n")
 }
 ```
 
 ## Piner (CAL by fishery)
 
-```{r piner-cal-fishery, echo=FALSE, message=FALSE, fig.dim=c(8,8)}
+```{r piner-cal-fishery, echo=FALSE, message=FALSE, fig.dim=c(11,8)}
 # =============================================================================
 # PINER PLOT: CONDITIONAL AGE-AT-LENGTH BY FISHERY
 # =============================================================================
 
-scenarios_prof <- names(ProfLikOut_list)
+prof_ctx <- get_profile_context(Info_list, ProfLikOut_list, ProfLikOutRaw_list)
+scenarios_prof <- prof_ctx$scenarios
+scales <- prof_ctx$common_scales
 avg_bio <- get_avg_bio(scenarios_prof)
 
-# Extract CAL likelihood data for all scenarios
-age_lik_data <- map_dfr(scenarios_prof, function(sc) {
-  
-  # Get unique year-month-fishery combinations
-  alk_summary <- as.data.frame(AgeOut_list[[sc]]@ALK) %>%
-    mutate(order = row_number()) %>%
-    group_by(year, month, fishery) %>%
-    summarise(first_order = min(order), .groups = "drop") %>%
-    arrange(first_order) %>%
-    select(-first_order)
-  
-  # Get scalers
-  scalers <- names(ProfLikOut_list[[sc]])
-  
-  # Add likelihood values for each scaler
-  map_dfr(scalers, function(scl) {
-    lik_vec <- ProfLikOut_list[[sc]][[scl]]@age_length
-    alk_summary %>%
-      mutate(
-        scenario = sc,
-        scaler = scale_to_biomass(scl, sc, avg_bio),
-        Lik = lik_vec[seq_len(nrow(alk_summary))]
-      )
+if (length(scenarios_prof) == 0 || length(scales) == 0) {
+  cat("*No shared CAL-by-fishery profile outputs were found.*\n\n")
+} else {
+  # Extract CAL likelihood data for all scenarios
+  age_lik_data <- map_dfr(scenarios_prof, function(sc) {
+
+    # Get unique year-month-fishery combinations
+    alk_summary <- as.data.frame(AgeOut_list[[sc]]@ALK) %>%
+      mutate(order = row_number()) %>%
+      group_by(year, month, fishery) %>%
+      summarise(first_order = min(order), .groups = "drop") %>%
+      arrange(first_order) %>%
+      select(-first_order)
+
+    # Add likelihood values for each scaler
+    map_dfr(scales, function(scl) {
+      lik_vec <- ProfLikOut_list[[sc]][[scl]]@age_length
+      alk_summary %>%
+        mutate(
+          scenario = sc,
+          scaler = scale_to_biomass(scl, sc, avg_bio),
+          Lik = lik_vec[seq_len(nrow(alk_summary))]
+        )
+    })
   })
-})
 
-# Map fishery numbers to names
-age_lik_data <- age_lik_data %>%
-  dplyr::mutate(fishery = (fishery_map %>% with(setNames(fishery_name, fishery)))[as.character(fishery)])
+  # Map fishery numbers to names
+  age_lik_data <- age_lik_data %>%
+    dplyr::mutate(fishery = (fishery_map %>% with(setNames(fishery_name, fishery)))[as.character(fishery)])
 
-# Sum by fishery
-lik_by_fishery <- age_lik_data %>%
-  group_by(fishery, scaler, scenario) %>%
-  summarise(value = sum(Lik, na.rm = TRUE), .groups = "drop")
+  # Sum by fishery
+  lik_by_fishery <- age_lik_data %>%
+    group_by(fishery, scaler, scenario) %>%
+    summarise(value = sum(Lik, na.rm = TRUE), .groups = "drop")
 
-# Add total
-lik_total <- lik_by_fishery %>%
-  group_by(scaler, scenario) %>%
-  summarise(value = sum(value), .groups = "drop") %>%
-  mutate(fishery = "Total")
+  # Add total
+  lik_total <- lik_by_fishery %>%
+    group_by(scaler, scenario) %>%
+    summarise(value = sum(value), .groups = "drop") %>%
+    mutate(fishery = "Total")
 
-lik_combined <- bind_rows(lik_by_fishery, lik_total)
+  lik_combined <- bind_rows(lik_by_fishery, lik_total)
 
-lik_change <- lik_combined %>%
-  group_by(fishery, scenario) %>%
-  mutate(change = value - min(value, na.rm = TRUE)) %>%
-  ungroup()
+  lik_change <- lik_combined %>%
+    group_by(fishery, scenario) %>%
+    mutate(change = value - min(value, na.rm = TRUE)) %>%
+    ungroup()
 
-print(create_piner_plot(lik_change, "fishery", "CAL"))
+  if (nrow(lik_change) > 0) {
+    print(create_piner_plot(lik_change, "fishery", "CAL"))
+  } else {
+    cat("*No shared CAL-by-fishery profile outputs were found.*\n\n")
+  }
+}
 ```
 
 ## Piner (CAL by year)
 
-```{r piner-cal-year, echo=FALSE, message=FALSE, fig.dim=c(8,8)}
+```{r piner-cal-year, echo=FALSE, message=FALSE, fig.dim=c(11,8)}
 # =============================================================================
 # PINER PLOT: CONDITIONAL AGE-AT-LENGTH BY YEAR
 # =============================================================================
 
-scenarios_prof <- names(ProfLikOut_list)
+prof_ctx <- get_profile_context(Info_list, ProfLikOut_list, ProfLikOutRaw_list)
+scenarios_prof <- prof_ctx$scenarios
+scales <- prof_ctx$common_scales
 avg_bio <- get_avg_bio(scenarios_prof)
 
-# Extract CAL likelihood data (reuse from previous chunk if in same session)
-age_lik_data <- map_dfr(scenarios_prof, function(sc) {
-  
-  alk_summary <- as.data.frame(AgeOut_list[[sc]]@ALK) %>%
-    mutate(order = row_number()) %>%
-    group_by(year, month, fishery) %>%
-    summarise(first_order = min(order), .groups = "drop") %>%
-    arrange(first_order) %>%
-    select(-first_order)
-  
-  scalers <- names(ProfLikOut_list[[sc]])
-  
-  map_dfr(scalers, function(scl) {
-    lik_vec <- ProfLikOut_list[[sc]][[scl]]@age_length
-    alk_summary %>%
-      mutate(
-        scenario = sc,
-        scaler = scale_to_biomass(scl, sc, avg_bio),
-        Lik = lik_vec[seq_len(nrow(alk_summary))]
-      )
+if (length(scenarios_prof) == 0 || length(scales) == 0) {
+  cat("*No shared CAL-by-year profile outputs were found.*\n\n")
+} else {
+  # Extract CAL likelihood data
+  age_lik_data <- map_dfr(scenarios_prof, function(sc) {
+    alk_summary <- as.data.frame(AgeOut_list[[sc]]@ALK) %>%
+      mutate(order = row_number()) %>%
+      group_by(year, month, fishery) %>%
+      summarise(first_order = min(order), .groups = "drop") %>%
+      arrange(first_order) %>%
+      select(-first_order)
+
+    map_dfr(scales, function(scl) {
+      lik_vec <- ProfLikOut_list[[sc]][[scl]]@age_length
+      alk_summary %>%
+        mutate(
+          scenario = sc,
+          scaler = scale_to_biomass(scl, sc, avg_bio),
+          Lik = lik_vec[seq_len(nrow(alk_summary))]
+        )
+    })
   })
-})
 
-# Sum by year
-lik_by_year <- age_lik_data %>%
-  group_by(year, scaler, scenario) %>%
-  summarise(value = sum(Lik, na.rm = TRUE), .groups = "drop")
+  # Sum by year
+  lik_by_year <- age_lik_data %>%
+    group_by(year, scaler, scenario) %>%
+    summarise(value = sum(Lik, na.rm = TRUE), .groups = "drop")
 
-# Add total
-lik_total <- lik_by_year %>%
-  group_by(scaler, scenario) %>%
-  summarise(value = sum(value), .groups = "drop") %>%
-  mutate(year = "Total")
+  # Add total
+  lik_total <- lik_by_year %>%
+    group_by(scaler, scenario) %>%
+    summarise(value = sum(value), .groups = "drop") %>%
+    mutate(year = "Total")
 
-lik_combined <- bind_rows(
-  lik_by_year %>% mutate(year = as.character(year)),
-  lik_total
-)
+  lik_combined <- bind_rows(
+    lik_by_year %>% mutate(year = as.character(year)),
+    lik_total
+  )
 
-lik_change <- lik_combined %>%
-  group_by(year, scenario) %>%
-  mutate(change = value - min(value, na.rm = TRUE)) %>%
-  ungroup()
+  lik_change <- lik_combined %>%
+    group_by(year, scenario) %>%
+    mutate(change = value - min(value, na.rm = TRUE)) %>%
+    ungroup()
 
-print(create_piner_plot(lik_change, "year", "CAL"))
+  if (nrow(lik_change) > 0) {
+    print(create_piner_plot(lik_change, "year", "CAL"))
+  } else {
+    cat("*No shared CAL-by-year profile outputs were found.*\n\n")
+  }
+}
 ```
 
 
@@ -4352,7 +4441,8 @@ growth_list <- lapply(seq_along(RepOut_list), function(i) {
   tmp_laa <- c(aperm(mean_laa(tmp_rep), c(4, 1, 2, 3, 5, 6)))
   tmp_sd_laa <- c(aperm(sd_laa(tmp_rep), c(4, 1, 2, 3, 5, 6)))
   
-  # Calculate confidence intervals (only if single model, otherwise just use mean)
+  # For a single-model report, show an approximate 95% band from mean_laa +/- 1.96*sd_laa.
+  # This is model-predicted spread at age, not parameter-estimation uncertainty.
   if(length(RepOut_list) == 1) {
     tmp_lower <- tmp_laa - 1.96 * tmp_sd_laa
     tmp_upper <- tmp_laa + 1.96 * tmp_sd_laa
@@ -4393,7 +4483,12 @@ p_growth <- ggplot(growth_data, aes(x = age, y = length, color = Model, fill = M
   labs(
     x = "Age class",
     y = "Length (cm)",
-    title = "Model Growth Curve"
+    title = "Model Growth Curve",
+    subtitle = if (length(RepOut_list) == 1) {
+      "Band = mean_laa +/- 1.96 * sd_laa (model-predicted L-at-age spread)"
+    } else {
+      "Multiple models: uncertainty band suppressed"
+    }
   ) +
   theme_bw() +
   theme(
