@@ -320,6 +320,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           Age = sum(lik@age_length),
           Tags = sum(unlist(lik@tag_rel_fish, recursive = TRUE))
         )
+        values <- c(values, Total = sum(values, na.rm = TRUE))
 
         scaler_bio <- scale_to_biomass(scl, avg_bio)
         rows[[length(rows) + 1]] <- data.frame(
