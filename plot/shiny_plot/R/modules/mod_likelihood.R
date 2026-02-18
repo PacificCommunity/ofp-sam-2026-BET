@@ -336,7 +336,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
     bind_rows(rows)
   }
 
-  build_fishery_data <- function(profile_data, scenarios, fishery_maps, slot_name, label, scales) {
+  build_fishery_data <- function(profile_data, scenarios, fishery_maps, slot_name, label, scales,
+                                 allowed_fisheries = NULL, fallback_nonzero_only = FALSE) {
     if (length(scales) == 0) return(data.frame())
 
     rows <- list()
@@ -350,6 +351,23 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
         vec <- slot(lik, slot_name)
         fish_ids <- as.character(seq_along(vec))
+        keep_idx <- rep(TRUE, length(fish_ids))
+        if (!is.null(allowed_fisheries)) {
+          allowed_ids <- as.character(allowed_fisheries[[sc]])
+          allowed_ids <- allowed_ids[!is.na(allowed_ids)]
+          if (length(allowed_ids) > 0) {
+            keep_idx <- fish_ids %in% allowed_ids
+          } else if (isTRUE(fallback_nonzero_only)) {
+            keep_idx <- is.finite(vec) & abs(vec) > 0
+          }
+        } else if (isTRUE(fallback_nonzero_only)) {
+          keep_idx <- is.finite(vec) & abs(vec) > 0
+        }
+
+        vec <- vec[keep_idx]
+        fish_ids <- fish_ids[keep_idx]
+        if (length(vec) == 0) next
+
         fish_map <- fishery_maps[[sc]]
         fish_names <- sapply(fish_ids, function(fid) get_fishery_name(fid, fish_map))
 
@@ -378,6 +396,72 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     names(data)[names(data) == "group"] <- label
     data
+  }
+
+  extract_survey_index_like_from_raw <- function(raw_lines) {
+    if (is.null(raw_lines) || length(raw_lines) == 0) return(numeric(0))
+    header_idx <- which(grepl("^\\s*#\\s*Survey_index_like_by_fishery\\s*$", raw_lines))
+    if (length(header_idx) == 0) return(numeric(0))
+
+    i <- header_idx[1] + 1
+    if (i > length(raw_lines)) return(numeric(0))
+
+    block <- character(0)
+    while (i <= length(raw_lines)) {
+      line <- trimws(raw_lines[i])
+      if (!nzchar(line) || grepl("^\\s*#", line)) break
+      block <- c(block, line)
+      i <- i + 1
+    }
+    if (length(block) == 0) return(numeric(0))
+
+    vals <- suppressWarnings(as.numeric(strsplit(paste(block, collapse = " "), "\\s+")[[1]]))
+    vals[is.finite(vals)]
+  }
+
+  build_cpue_fishery_data <- function(profile_data, scenarios, fishery_maps, scales) {
+    if (length(scales) == 0) return(data.frame())
+
+    rows <- list()
+    for (sc in scenarios) {
+      avg_bio <- profile_data[[sc]]$avg_bio
+      if (!is.finite(avg_bio)) next
+
+      for (scl in scales) {
+        raw <- profile_data[[sc]]$lik_raw[[scl]]
+        vec <- extract_survey_index_like_from_raw(raw)
+        if (length(vec) == 0) next
+
+        fish_ids <- as.character(seq_along(vec))
+        keep_idx <- is.finite(vec) & abs(vec) > 0
+        vec <- vec[keep_idx]
+        fish_ids <- fish_ids[keep_idx]
+        if (length(vec) == 0) next
+
+        fish_map <- fishery_maps[[sc]]
+        fish_names <- sapply(fish_ids, function(fid) get_fishery_name(fid, fish_map))
+
+        df <- data.frame(
+          scenario = sc,
+          scaler = scale_to_biomass(scl, avg_bio),
+          Fishery = fish_names,
+          value = as.numeric(vec),
+          stringsAsFactors = FALSE
+        )
+
+        total_row <- data.frame(
+          scenario = sc,
+          scaler = scale_to_biomass(scl, avg_bio),
+          Fishery = "Total",
+          value = sum(vec),
+          stringsAsFactors = FALSE
+        )
+
+        rows[[length(rows) + 1]] <- bind_rows(df, total_row)
+      }
+    }
+
+    bind_rows(rows)
   }
 
   build_tagging_data <- function(profile_data, scenarios, tag_out_list, scales) {
@@ -836,8 +920,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     if (type == "cpues") {
-      data <- build_fishery_data(profile_data, names(profile_data), rv$FISHERY_MAPS,
-                                 "survey_index", "Fishery", common_scales)
+      data <- build_cpue_fishery_data(profile_data, names(profile_data), rv$FISHERY_MAPS, common_scales)
       data <- data %>% filter(is.finite(value) & is.finite(scaler))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No CPUE profile data available"))
