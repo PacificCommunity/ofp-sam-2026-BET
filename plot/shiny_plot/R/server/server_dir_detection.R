@@ -3,7 +3,10 @@ server_dir_detection <- function(input, output, session, rv) {
     # ---------------------------------------------------------------------------
     repo_root <- normalizePath("..", mustWork = FALSE)
     state_file <- file.path(repo_root, ".model_dir_last.rds")
+    export_state_file <- file.path(repo_root, ".plot_export_dir_last.rds")
+    default_export_dir <- normalizePath(file.path(repo_root, "figure"), mustWork = FALSE)
     initialized <- FALSE
+    export_initialized <- FALSE
 
     observe({
       if (!initialized && file.exists(state_file)) {
@@ -17,6 +20,16 @@ server_dir_detection <- function(input, output, session, rv) {
       } else if (!initialized && !file.exists(state_file)) {
         updateTextInput(session, "model_dir", value = repo_root)
         initialized <<- TRUE
+      }
+    })
+
+    observe({
+      if (!export_initialized) {
+        if (!dir.exists(default_export_dir)) {
+          try(dir.create(default_export_dir, recursive = TRUE, showWarnings = FALSE), silent = TRUE)
+        }
+        updateTextInput(session, "plot_export_dir", value = default_export_dir)
+        export_initialized <<- TRUE
       }
     })
   
@@ -66,6 +79,12 @@ server_dir_detection <- function(input, output, session, rv) {
         try(saveRDS(input$model_dir, state_file), silent = TRUE)
       }
     }, ignoreInit = TRUE)
+
+    observeEvent(input$plot_export_dir, {
+      if (nchar(input$plot_export_dir) > 0 && dir.exists(input$plot_export_dir)) {
+        try(saveRDS(input$plot_export_dir, export_state_file), silent = TRUE)
+      }
+    }, ignoreInit = TRUE)
   
     # Output: scenarios detected flag
     output$scenarios_detected <- reactive({ rv$scenarios_detected })
@@ -100,11 +119,22 @@ server_dir_detection <- function(input, output, session, rv) {
     observe({
       shinyFiles::shinyDirChoose(input, "browse_dir", roots = volumes(), session = session)
     })
+
+    observe({
+      shinyFiles::shinyDirChoose(input, "browse_plot_export_dir", roots = volumes(), session = session)
+    })
   
     observeEvent(input$browse_dir, {
       selected <- shinyFiles::parseDirPath(volumes(), input$browse_dir)
       if (length(selected) > 0 && dir.exists(selected)) {
         updateTextInput(session, "model_dir", value = selected)
+      }
+    })
+
+    observeEvent(input$browse_plot_export_dir, {
+      selected <- shinyFiles::parseDirPath(volumes(), input$browse_plot_export_dir)
+      if (length(selected) > 0 && dir.exists(selected)) {
+        updateTextInput(session, "plot_export_dir", value = selected)
       }
     })
   

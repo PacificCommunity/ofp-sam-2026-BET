@@ -1,6 +1,6 @@
 mod_sections_download <- function(prefix, title, plot_reactive, input, session, output) {
   observeEvent(input[[paste0("show_", prefix, "_download_modal")]], {
-    show_download_modal(prefix, title)
+    show_download_modal(prefix, title, current_save_dir = input$plot_export_dir)
   })
 
   observeEvent(input[[paste0(prefix, "_preset_wide")]], {
@@ -26,18 +26,18 @@ mod_sections_download <- function(prefix, title, plot_reactive, input, session, 
       height <- input[[paste0(prefix, "_height")]]
       dpi <- as.numeric(input[[paste0(prefix, "_dpi")]])
       format <- input[[paste0(prefix, "_format")]]
-
-      if (format == "png") {
-        ggsave(file, plot = p, width = width, height = height, dpi = dpi, device = "png", bg = "white")
-      } else if (format == "pdf") {
-        ggsave(file, plot = p, width = width, height = height, device = "pdf")
-      } else if (format == "svg") {
-        ggsave(file, plot = p, width = width, height = height, device = "svg", bg = "white")
-      } else if (format == "jpeg") {
-        ggsave(file, plot = p, width = width, height = height, dpi = dpi, device = "jpeg", bg = "white", quality = 95)
-      }
+      save_plot_with_format(p, file, width = width, height = height, dpi = dpi, format = format)
       removeModal()
     }
+  )
+
+  register_folder_save_button(
+    plot_type = prefix,
+    plot_reactive = plot_reactive,
+    input = input,
+    session = session,
+    output = output,
+    filename_fun = function() paste0(prefix, "_", Sys.Date(), ".", input[[paste0(prefix, "_format")]])
   )
 }
 

@@ -209,7 +209,7 @@ mod_stock_server <- function(input, output, session, rv) {
     # ---------------------------------------------------------------------------
 
     observeEvent(input$show_stock_download_modal, {
-      show_download_modal("stock", "Stock Status Plot")
+      show_download_modal("stock", "Stock Status Plot", current_save_dir = input$plot_export_dir)
     })
 
     observeEvent(input$stock_preset_wide, {
@@ -254,6 +254,18 @@ mod_stock_server <- function(input, output, session, rv) {
         }
 
         removeModal()
+      }
+    )
+
+    register_folder_save_button(
+      plot_type = "stock",
+      plot_reactive = stock_plot_reactive,
+      input = input,
+      session = session,
+      output = output,
+      filename_fun = function() {
+        format <- input$stock_format
+        paste0("stock_status_", Sys.Date(), ".", format)
       }
     )
 

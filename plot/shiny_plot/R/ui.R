@@ -55,6 +55,10 @@ ui <- dashboardPage(
                   ))
     ),
 
+    div(style = "display:none;",
+        textInput("plot_export_dir", NULL, value = "")
+    ),
+
     shiny::hr(),
 
     # Navigation menu

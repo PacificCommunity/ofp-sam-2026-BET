@@ -795,7 +795,7 @@ mod_wf_server <- function(input, output, session, rv) {
   # ---------------------------------------------------------------------------
 
   observeEvent(input$show_wf_download_modal, {
-    show_download_modal("wf", "Weight Frequency Plot")
+    show_download_modal("wf", "Weight Frequency Plot", current_save_dir = input$plot_export_dir)
   })
 
   observeEvent(input$wf_preset_wide, {
@@ -841,6 +841,18 @@ mod_wf_server <- function(input, output, session, rv) {
       }
 
       removeModal()
+    }
+  )
+
+  register_folder_save_button(
+    plot_type = "wf",
+    plot_reactive = wf_plot_reactive,
+    input = input,
+    session = session,
+    output = output,
+    filename_fun = function() {
+      format <- input$wf_format
+      paste0("weight_freq_", input$wf_model, "_", input$wf_fishery, "_", Sys.Date(), ".", format)
     }
   )
 

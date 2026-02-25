@@ -756,7 +756,7 @@ mod_lf_server <- function(input, output, session, rv) {
   # ---------------------------------------------------------------------------
 
   observeEvent(input$show_lf_download_modal, {
-    show_download_modal("lf", "Length Frequency Plot")
+    show_download_modal("lf", "Length Frequency Plot", current_save_dir = input$plot_export_dir)
   })
 
   observeEvent(input$lf_preset_wide, {
@@ -802,6 +802,18 @@ mod_lf_server <- function(input, output, session, rv) {
       }
 
       removeModal()
+    }
+  )
+
+  register_folder_save_button(
+    plot_type = "lf",
+    plot_reactive = lf_plot_reactive,
+    input = input,
+    session = session,
+    output = output,
+    filename_fun = function() {
+      format <- input$lf_format
+      paste0("length_freq_", input$lf_model, "_", input$lf_fishery, "_", Sys.Date(), ".", format)
     }
   )
 

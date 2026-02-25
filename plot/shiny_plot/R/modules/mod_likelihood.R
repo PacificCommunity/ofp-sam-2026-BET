@@ -1282,7 +1282,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
   })
 
   observeEvent(input$show_lik_download_modal, {
-    show_download_modal("lik", "Likelihood Profile Plot")
+    show_download_modal("lik", "Likelihood Profile Plot", current_save_dir = input$plot_export_dir)
   })
 
   observeEvent(input$lik_preset_wide, {
@@ -1327,6 +1327,18 @@ mod_likelihood_server <- function(input, output, session, rv) {
       }
 
       removeModal()
+    }
+  )
+
+  register_folder_save_button(
+    plot_type = "lik",
+    plot_reactive = likelihood_plot_reactive,
+    input = input,
+    session = session,
+    output = output,
+    filename_fun = function() {
+      format <- input$lik_format
+      paste0("likelihood_profile_", Sys.Date(), ".", format)
     }
   )
 }

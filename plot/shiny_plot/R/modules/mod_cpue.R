@@ -324,7 +324,7 @@ mod_cpue_server <- function(input, output, session, rv) {
   # ---------------------------------------------------------------------------
 
   observeEvent(input$show_cpue_download_modal, {
-    show_download_modal("cpue", "CPUE Fits Plot")
+    show_download_modal("cpue", "CPUE Fits Plot", current_save_dir = input$plot_export_dir)
   })
 
   observeEvent(input$cpue_preset_wide, {
@@ -369,6 +369,18 @@ mod_cpue_server <- function(input, output, session, rv) {
       }
 
       removeModal()
+    }
+  )
+
+  register_folder_save_button(
+    plot_type = "cpue",
+    plot_reactive = cpue_plot_reactive,
+    input = input,
+    session = session,
+    output = output,
+    filename_fun = function() {
+      format <- input$cpue_format
+      paste0("cpue_fits_", Sys.Date(), ".", format)
     }
   )
 }
