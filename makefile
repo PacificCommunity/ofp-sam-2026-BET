@@ -78,10 +78,41 @@ docker-report:
 # SHINY APP TARGETS
 # =============================================================================
 
+SHINY_PLOT_PORT ?= 3838
+SHINY_LAUNCHER_PORT ?= 3839
+SHINY_LOG_DIR ?= logs
+
 shiny_plot:
 	Rscript -e "shiny::runApp('plot/shiny_plot', launch.browser=TRUE)"
 
 shiny_launcher:
 	Rscript -e "shiny::runApp('launchers/shiny_launcher', launch.browser=TRUE)"
 
-.PHONY: shiny_launcher shiny_plot
+shiny_plot_bg:
+	mkdir -p $(SHINY_LOG_DIR)
+	nohup Rscript -e "shiny::runApp('plot/shiny_plot', host='127.0.0.1', port=$(SHINY_PLOT_PORT), launch.browser=FALSE)" > $(SHINY_LOG_DIR)/shiny_plot.log 2>&1 &
+	@echo "shiny_plot running at http://127.0.0.1:$(SHINY_PLOT_PORT)"
+	@echo "log: $(SHINY_LOG_DIR)/shiny_plot.log"
+
+shiny_launcher_bg:
+	mkdir -p $(SHINY_LOG_DIR)
+	nohup Rscript -e "shiny::runApp('launchers/shiny_launcher', host='127.0.0.1', port=$(SHINY_LAUNCHER_PORT), launch.browser=FALSE)" > $(SHINY_LOG_DIR)/shiny_launcher.log 2>&1 &
+	@echo "shiny_launcher running at http://127.0.0.1:$(SHINY_LAUNCHER_PORT)"
+	@echo "log: $(SHINY_LOG_DIR)/shiny_launcher.log"
+
+shiny_bg: shiny_plot_bg shiny_launcher_bg
+
+shiny_plot_stop:
+	-pkill -f "shiny::runApp\\('plot/shiny_plot'" || true
+	@echo "stopped shiny_plot (if running)"
+
+shiny_launcher_stop:
+	-pkill -f "shiny::runApp\\('launchers/shiny_launcher'" || true
+	@echo "stopped shiny_launcher (if running)"
+
+shiny_stop: shiny_plot_stop shiny_launcher_stop
+
+shiny_status:
+	-ps -ef | grep "shiny::runApp" | grep -v grep || true
+
+.PHONY: shiny_launcher shiny_plot shiny_plot_bg shiny_launcher_bg shiny_bg shiny_plot_stop shiny_launcher_stop shiny_stop shiny_status
