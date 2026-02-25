@@ -16,3 +16,4 @@ report/.knitr_cache/
 launchers/shiny_launcher/.launcher_settings.rds
 launchers/configs/
 configs/.last_settings.rds
+*.DS_Store
