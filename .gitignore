@@ -7,3 +7,12 @@ report/Figures
 *.Rproj
 model
 *.pdf
+.launcher_configs/
+.model_dir_last.rds
+.shiny_launcher_settings.rds
+logs/
+plot/.plot_export_dir_last.rds
+report/.knitr_cache/
+launchers/shiny_launcher/.launcher_settings.rds
+launchers/configs/
+configs/.last_settings.rds
