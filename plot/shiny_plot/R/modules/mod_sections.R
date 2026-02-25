@@ -459,7 +459,10 @@ mod_harvest_server <- function(input, output, session, rv) {
     ggplot() + theme_void()
   })
 
-  output$harvest_plot_output <- renderPlot({ harvest_plot_reactive() })
+
+  output$harvest_plot_output <- renderPlot({
+    harvest_plot_reactive()
+  })
   mod_sections_download("harvest", "Key Quantities Plot", harvest_plot_reactive, input, session, output)
 }
 
@@ -1057,7 +1060,10 @@ mod_tagging_server <- function(input, output, session, rv) {
       annotate("text", x = 0.5, y = 0.5, label = paste("Unknown tag plot mode:", mode))
   })
 
-  output$tagging_plot_output <- renderPlot({ tagging_plot_reactive() })
+
+  output$tagging_plot_output <- renderPlot({
+    tagging_plot_reactive()
+  })
   mod_sections_download("tagging", "Tagging Dynamics Plot", tagging_plot_reactive, input, session, output)
 }
 
@@ -1243,7 +1249,10 @@ mod_fishery_process_server <- function(input, output, session, rv) {
       theme(panel.grid = element_blank(), legend.position = "right", legend.title = element_text(face = "bold", size = 10), strip.background = element_rect(fill = "gray90"), strip.text = element_text(face = "bold", size = 9), axis.text = element_text(size = 8))
   })
 
-  output$fishery_process_plot_output <- renderPlot({ fishery_process_plot_reactive() })
+
+  output$fishery_process_plot_output <- renderPlot({
+    fishery_process_plot_reactive()
+  })
   mod_sections_download("fishery_process", "Fishery Process Plot", fishery_process_plot_reactive, input, session, output)
 }
 
@@ -1403,6 +1412,9 @@ mod_population_biology_server <- function(input, output, session, rv) {
       theme(panel.grid.minor = element_blank(), panel.grid.major = element_line(linewidth = 0.25, color = "gray85"), legend.position = "bottom", legend.title = element_text(face = "bold"))
   })
 
-  output$population_biology_plot_output <- renderPlot({ population_biology_plot_reactive() })
+
+  output$population_biology_plot_output <- renderPlot({
+    population_biology_plot_reactive()
+  })
   mod_sections_download("population_biology", "Population Biology Plot", population_biology_plot_reactive, input, session, output)
 }

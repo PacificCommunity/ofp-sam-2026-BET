@@ -758,8 +758,8 @@ mod_wf_server <- function(input, output, session, rv) {
     
       return(p)
     })
-    wf_plot_reactive <- bindCache(
-      wf_plot_reactive,
+  wf_plot_reactive <- bindCache(
+    wf_plot_reactive,
       input$wf_model,
       input$wf_view_mode,
       input$wf_fishery,
@@ -767,10 +767,10 @@ mod_wf_server <- function(input, output, session, rv) {
       input$wf_scenarios,
       input$wf_years,
       input$wf_facet_ncol,
-      input$wf_plot_style
-    )
-  
-    # Render weight frequency plot
+    input$wf_plot_style
+  )
+
+  # Render weight frequency plot
   output$wf_plot <- renderPlot({
     wf_plot_reactive()
   })

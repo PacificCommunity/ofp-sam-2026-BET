@@ -730,7 +730,7 @@ mod_lf_server <- function(input, output, session, rv) {
       input$lf_facet_ncol,
       input$lf_plot_style
     )
-  
+
     # Render length frequency plot
     output$lf_plot <- renderPlot({
       lf_plot_reactive()
