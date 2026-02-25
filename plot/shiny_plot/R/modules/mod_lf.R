@@ -218,10 +218,22 @@ mod_lf_server <- function(input, output, session, rv) {
         updatePickerInput(session, "lf_years", choices = NULL, selected = NULL)
         return()
       }
-    
-      updatePickerInput(session, "lf_years", 
+
+      current_years <- isolate(input$lf_years)
+      if (is.null(current_years)) current_years <- character(0)
+      selected_years <- intersect(as.character(current_years), as.character(years))
+      if (length(selected_years) == 0) selected_years <- as.character(years)
+
+      # Avoid unnecessary input resets (which trigger an extra re-render) when paging fisheries.
+      if (identical(sort(as.character(current_years)), sort(as.character(selected_years))) &&
+          length(current_years) > 0) {
+        return()
+      }
+
+      freezeReactiveValue(input, "lf_years")
+      updatePickerInput(session, "lf_years",
                         choices = years,
-                        selected = years)
+                        selected = selected_years)
     }, ignoreInit = TRUE)
 
     observeEvent(input$tabs, {
@@ -362,7 +374,7 @@ mod_lf_server <- function(input, output, session, rv) {
         return(p)
       }
 
-      # Dynamic bar width with slight visual separation.
+      # Dynamic bar width close to bin spacing; use a subtle stroke for separation.
       lf_bar_width <- {
         lvals <- sort(unique(plot_data$length))
         if (length(lvals) <= 1) {
@@ -398,7 +410,8 @@ mod_lf_server <- function(input, output, session, rv) {
         n_years <= 30 ~ 9,
         TRUE ~ 8.5
       )
-      observed_fill <- "#08519C"
+      observed_fill <- "#2C6E63"
+      observed_border <- "#173F39"
 
       if (identical(view_mode, "all_fisheries")) {
         all_year_obs <- obs_data %>%
@@ -409,19 +422,15 @@ mod_lf_server <- function(input, output, session, rv) {
           group_by(Scenario, fishery_name, length) %>%
           summarise(pred = sum(pred, na.rm = TRUE), .groups = "drop")
 
-        panel_count <- dplyr::n_distinct(all_year_obs$fishery_name)
-        border_lwd <- dplyr::case_when(
-          panel_count >= 24 ~ 0.03,
-          panel_count >= 12 ~ 0.08,
-          TRUE ~ 0.25
-        )
-
         p <- ggplot() +
           geom_col(
             data = all_year_obs,
             aes(x = length, y = obs, fill = "Observed"),
-            alpha = 1, width = lf_bar_width, position = "identity",
-            colour = "white", linewidth = border_lwd
+            width = lf_bar_width,
+            position = "identity",
+            colour = observed_border,
+            linewidth = 0.12,
+            alpha = 0.95
           ) +
           geom_line(
             data = all_year_pred,
@@ -444,18 +453,15 @@ mod_lf_server <- function(input, output, session, rv) {
             strip.text = element_text(size = 9.5, face = "bold")
           )
       } else if (length(unique(plot_data$Scenario)) <= 1) {
-        panel_count <- dplyr::n_distinct(plot_data$year)
-        border_lwd <- dplyr::case_when(
-          panel_count >= 24 ~ 0.03,
-          panel_count >= 12 ~ 0.08,
-          TRUE ~ 0.25
-        )
         p <- ggplot() +
           geom_col(
             data = obs_data,
             aes(x = length, y = obs, fill = "Observed"),
-            alpha = 1, width = lf_bar_width, position = "identity",
-            colour = "white", linewidth = border_lwd
+            width = lf_bar_width,
+            position = "identity",
+            colour = observed_border,
+            linewidth = 0.12,
+            alpha = 0.95
           ) +
           geom_line(
             data = plot_data,
@@ -478,18 +484,14 @@ mod_lf_server <- function(input, output, session, rv) {
             panel.spacing = unit(0.3, "lines")
           )
       } else {
-        panel_count <- dplyr::n_distinct(plot_data$year)
-        border_lwd <- dplyr::case_when(
-          panel_count >= 24 ~ 0.03,
-          panel_count >= 12 ~ 0.08,
-          TRUE ~ 0.25
-        )
-
         p <- ggplot() +
           geom_col(data = obs_data,
                    aes(x = length, y = obs, fill = "Observed"),
-                   alpha = 1, width = lf_bar_width, position = "identity",
-                   colour = "white", linewidth = border_lwd) +
+                   width = lf_bar_width,
+                   position = "identity",
+                   colour = observed_border,
+                   linewidth = 0.12,
+                   alpha = 0.95) +
           geom_line(data = plot_data,
                     aes(x = length, y = pred, color = Scenario),
                     linewidth = 1.2) +
