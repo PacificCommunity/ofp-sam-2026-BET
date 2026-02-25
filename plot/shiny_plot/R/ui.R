@@ -19,6 +19,11 @@ ui <- dashboardPage(
   # Sidebar
   # ---------------------------------------------------------------------------
   dashboardSidebar(
+    div(
+      style = "margin: 10px 12px 8px 12px; padding: 10px; background: #f7fbff; border: 1px solid #cfe3f2; border-left: 4px solid #3c8dbc; border-radius: 4px; color: #1f2d3d; line-height: 1.35;",
+      tags$div("Created by Kyuhan Kim (SPC)", style = "font-weight: 700; font-size: 12px;"),
+      tags$div("Contact info: kyuhank@spc.int", style = "font-size: 11px; margin-top: 2px;")
+    ),
     
     # Navigation menu
     sidebarMenu(
@@ -79,6 +84,11 @@ ui <- dashboardPage(
         ),
         
         # Searchable dropdown for model selection
+        tags$style(HTML("
+          label[for='models_to_load'] {
+            color: #000 !important;
+          }
+        ")),
         pickerInput(
           "models_to_load",
           label = "Select models to load:",

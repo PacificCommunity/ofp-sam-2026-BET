@@ -99,6 +99,15 @@ mod_lf_ui <- function() {
               ),
               selected = "all_fisheries"
             ),
+            radioButtons(
+              "lf_plot_style",
+              "Plot style:",
+              choices = c(
+                "Histogram fits" = "hist",
+                "Bubble residuals" = "bubble"
+              ),
+              selected = "hist"
+            ),
             numericInput("lf_facet_ncol", "Facet columns:", value = 3, min = 1, max = 12, step = 1),
             
             helpText("💡 Compatible models only. Check 1 model for single display, 2+ for overlay.", 
@@ -271,16 +280,30 @@ mod_lf_server <- function(input, output, session, rv) {
       facet_ncol <- suppressWarnings(as.integer(input$lf_facet_ncol))
       if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 3
       facet_ncol <- min(max(facet_ncol, 1), 12)
+      plot_style <- if (is.null(input$lf_plot_style)) "hist" else input$lf_plot_style
 
       if (identical(input$lf_view_mode, "all_fisheries")) {
         n_fisheries <- length(input$lf_fisheries_all)
         n_rows <- ceiling(max(n_fisheries, 1) / facet_ncol)
+        if (identical(plot_style, "bubble")) {
+          n_scen <- max(length(input$lf_scenarios), 1)
+          n_panel_rows <- ceiling(n_scen / facet_ncol)
+          panel_height <- min(max(180 + max(n_fisheries, 1) * 16, 280), 760)
+          return(min(max(120 + n_panel_rows * panel_height, 420), 2600))
+        }
         return(min(max(350 + n_rows * 240, 550), 3200))
       }
 
       n_years <- length(input$lf_years)
     
       if (n_years == 0) return(400)
+
+        if (identical(plot_style, "bubble")) {
+          n_scen <- max(length(input$lf_scenarios), 1)
+          n_panel_rows <- ceiling(n_scen / facet_ncol)
+          panel_height <- min(max(220 + n_years * 8, 320), 820)
+          return(min(max(140 + n_panel_rows * panel_height, 420), 2600))
+        }
     
       # Calculate rows needed
       n_rows <- ceiling(n_years / facet_ncol)
@@ -299,6 +322,7 @@ mod_lf_server <- function(input, output, session, rv) {
       req(rv$data_loaded, input$lf_model, input$lf_fishery, input$lf_years)
 
       view_mode <- if (is.null(input$lf_view_mode)) "all_fisheries" else input$lf_view_mode
+      plot_style <- if (is.null(input$lf_plot_style)) "hist" else input$lf_plot_style
       scenarios_to_use <- input$lf_scenarios
 
       # Check if any scenarios selected
@@ -412,6 +436,182 @@ mod_lf_server <- function(input, output, session, rv) {
       )
       observed_fill <- "#2C6E63"
       observed_border <- "#173F39"
+      bubble_expand_all <- ggplot2::expansion(mult = c(0.02, 0.02))
+      bubble_expand_year <- ggplot2::expansion(mult = c(0.08, 0.08))
+
+      if (identical(plot_style, "bubble")) {
+        if (identical(view_mode, "all_fisheries")) {
+          bubble_data <- plot_data %>%
+            group_by(Scenario, fishery_name, length) %>%
+            summarise(
+              obs = sum(obs, na.rm = TRUE),
+              pred = sum(pred, na.rm = TRUE),
+              .groups = "drop"
+            ) %>%
+            mutate(
+              resid = pred - obs,
+              abs_resid = abs(resid)
+            ) %>%
+            filter(abs_resid > 0)
+
+          if (nrow(bubble_data) == 0) {
+            p <- ggplot() +
+              annotate("text", x = 0.5, y = 0.5, label = "No residual differences to display", size = 6, color = "#999") +
+              theme_void()
+            return(p)
+          }
+
+          if (length(unique(bubble_data$Scenario)) <= 1) {
+            p <- ggplot(bubble_data, aes(x = length, y = fishery_name)) +
+              geom_point(
+                aes(size = abs_resid, fill = resid),
+                shape = 21, color = "#1f1f1f", stroke = 0.18, alpha = 0.9
+              ) +
+              scale_size_continuous(name = "|Pred - Obs|", range = c(0.8, 5.8), trans = "sqrt") +
+              scale_fill_gradient2(
+                name = "Pred - Obs",
+                low = "#c43c39",
+                mid = "#f7f7f7",
+                high = "#2c7fb8",
+                midpoint = 0
+              ) +
+              scale_y_discrete(expand = bubble_expand_all) +
+              labs(
+                title = "LF Bubble Residuals (all selected fisheries, years combined)",
+                subtitle = paste0("Scenario: ", unique(as.character(bubble_data$Scenario))[1],
+                                  " | Years: ", min(input$lf_years), " to ", max(input$lf_years)),
+                x = "Length (cm)", y = "Fishery"
+              ) +
+              theme_bw(base_size = 12) +
+              theme(
+                legend.position = "right",
+                plot.title = element_text(hjust = 0.5, face = "bold", size = 13.5),
+                plot.subtitle = element_text(hjust = 0.5, size = 10),
+                axis.text = element_text(size = 10, colour = "#222"),
+                axis.text.y = element_text(size = 10, colour = "#111", face = "bold"),
+                panel.grid.minor = element_blank()
+              )
+          } else {
+            p <- ggplot(bubble_data, aes(x = length, y = fishery_name)) +
+              geom_point(
+                aes(size = abs_resid, fill = resid),
+                shape = 21, color = "#1f1f1f", stroke = 0.18, alpha = 0.9
+              ) +
+              facet_wrap(~Scenario, ncol = ncol_facet) +
+              scale_size_continuous(name = "|Pred - Obs|", range = c(0.8, 5.0), trans = "sqrt") +
+              scale_fill_gradient2(
+                name = "Pred - Obs",
+                low = "#c43c39",
+                mid = "#f7f7f7",
+                high = "#2c7fb8",
+                midpoint = 0
+              ) +
+              scale_y_discrete(expand = bubble_expand_all) +
+              labs(
+                title = "LF Bubble Residuals (all selected fisheries, years combined)",
+                subtitle = paste0("Years: ", min(input$lf_years), " to ", max(input$lf_years)),
+                x = "Length (cm)", y = "Fishery"
+              ) +
+              theme_bw(base_size = 12) +
+              theme(
+                legend.position = "right",
+                plot.title = element_text(hjust = 0.5, face = "bold", size = 13.5),
+                plot.subtitle = element_text(hjust = 0.5, size = 10),
+                strip.text = element_text(size = 10, face = "bold", colour = "#111"),
+                axis.text = element_text(size = 9.5, colour = "#222"),
+                axis.text.y = element_text(size = 9.5, colour = "#111", face = "bold"),
+                panel.grid.minor = element_blank(),
+                panel.spacing = unit(0.15, "lines")
+              )
+          }
+          return(p)
+        }
+
+        bubble_data <- plot_data %>%
+          group_by(Scenario, year, length) %>%
+          summarise(
+            obs = sum(obs, na.rm = TRUE),
+            pred = sum(pred, na.rm = TRUE),
+            .groups = "drop"
+          ) %>%
+          mutate(
+            resid = pred - obs,
+            abs_resid = abs(resid),
+            year_f = factor(year, levels = sort(unique(year)))
+          ) %>%
+          filter(abs_resid > 0)
+
+        if (nrow(bubble_data) == 0) {
+          p <- ggplot() +
+            annotate("text", x = 0.5, y = 0.5, label = "No residual differences to display", size = 6, color = "#999") +
+            theme_void()
+          return(p)
+        }
+
+        if (length(unique(bubble_data$Scenario)) <= 1) {
+          p <- ggplot(bubble_data, aes(x = length, y = year_f)) +
+            geom_point(
+              aes(size = abs_resid, fill = resid),
+              shape = 21, color = "#1f1f1f", stroke = 0.18, alpha = 0.9
+            ) +
+            scale_size_continuous(name = "|Pred - Obs|", range = c(0.8, 6.2), trans = "sqrt") +
+            scale_fill_gradient2(
+              name = "Pred - Obs",
+              low = "#c43c39",
+              mid = "#f7f7f7",
+              high = "#2c7fb8",
+              midpoint = 0
+            ) +
+            scale_y_discrete(expand = bubble_expand_year) +
+            labs(
+              title = paste(fishery_name, "- LF Bubble Residuals -", unique(as.character(bubble_data$Scenario))[1]),
+              x = "Length (cm)", y = "Year"
+            ) +
+            theme_bw(base_size = 12) +
+            theme(
+              legend.position = "right",
+              plot.title = element_text(hjust = 0.5, face = "bold", size = 13.5),
+              axis.text = element_text(size = 10, colour = "#222"),
+              axis.text.y = element_text(size = 10, colour = "#111", face = "bold"),
+              panel.grid.minor = element_blank()
+            )
+        } else {
+          p <- ggplot(bubble_data, aes(x = length, y = year_f)) +
+            geom_point(
+              aes(size = abs_resid, fill = resid),
+              shape = 21, color = "#1f1f1f", stroke = 0.15, alpha = 0.88
+            ) +
+            facet_wrap(~Scenario, ncol = ncol_facet) +
+            scale_size_continuous(name = "|Pred - Obs|", range = c(0.8, 5.6), trans = "sqrt") +
+            scale_fill_gradient2(
+              name = "Pred - Obs",
+              low = "#c43c39",
+              mid = "#f7f7f7",
+              high = "#2c7fb8",
+              midpoint = 0
+            ) +
+            scale_y_discrete(expand = bubble_expand_year) +
+            labs(
+              title = paste(fishery_name, "- LF Bubble Residuals"),
+              subtitle = paste0("Base: ", input$lf_model, " (", n_years, " years)"),
+              x = "Length (cm)", y = "Year"
+            ) +
+            theme_bw(base_size = 12) +
+            theme(
+              legend.position = "right",
+              plot.title = element_text(hjust = 0.5, face = "bold", size = 13.5),
+              plot.subtitle = element_text(hjust = 0.5, size = 10),
+              strip.background = element_rect(fill = "grey90"),
+              strip.text = element_text(size = 10, face = "bold", colour = "#111"),
+              axis.text = element_text(size = 9.5, colour = "#222"),
+              axis.text.y = element_text(size = 9.5, colour = "#111", face = "bold"),
+              panel.grid.minor = element_blank(),
+              panel.spacing = unit(0.15, "lines")
+            )
+        }
+
+        return(p)
+      }
 
       if (identical(view_mode, "all_fisheries")) {
         all_year_obs <- obs_data %>%
@@ -450,7 +650,9 @@ mod_lf_server <- function(input, output, session, rv) {
             legend.position = "top",
             plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
             plot.subtitle = element_text(hjust = 0.5, size = 10.5),
-            strip.text = element_text(size = 9.5, face = "bold")
+            strip.text = element_text(size = 10.5, face = "bold", colour = "#111"),
+            axis.text = element_text(size = 9.5, colour = "#222"),
+            axis.text.y = element_text(size = 9.5, colour = "#111")
           )
       } else if (length(unique(plot_data$Scenario)) <= 1) {
         p <- ggplot() +
@@ -480,7 +682,9 @@ mod_lf_server <- function(input, output, session, rv) {
             legend.position = "top",
             plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
             strip.background = element_rect(fill = "grey90"),
-            strip.text = element_text(size = strip_size, face = "bold"),
+            strip.text = element_text(size = strip_size + 0.8, face = "bold", colour = "#111"),
+            axis.text = element_text(size = 9.5, colour = "#222"),
+            axis.text.y = element_text(size = 9.5, colour = "#111"),
             panel.spacing = unit(0.3, "lines")
           )
       } else {
@@ -506,7 +710,9 @@ mod_lf_server <- function(input, output, session, rv) {
             legend.position = "top",
             plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
             strip.background = element_rect(fill = "grey90"),
-            strip.text = element_text(size = strip_size, face = "bold"),
+            strip.text = element_text(size = strip_size + 0.8, face = "bold", colour = "#111"),
+            axis.text = element_text(size = 9.5, colour = "#222"),
+            axis.text.y = element_text(size = 9.5, colour = "#111"),
             panel.spacing = unit(0.3, "lines")
           )
       }
@@ -521,7 +727,8 @@ mod_lf_server <- function(input, output, session, rv) {
       input$lf_fisheries_all,
       input$lf_scenarios,
       input$lf_years,
-      input$lf_facet_ncol
+      input$lf_facet_ncol,
+      input$lf_plot_style
     )
   
     # Render length frequency plot
