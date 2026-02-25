@@ -99,7 +99,10 @@ load_fishery_map_from_r <- function(map_r_path) {
 }
 
 # Safely load tag reporting labels from tag_rep_map.R.
-# Expected object name is `tag_map`.
+# Expected object name is `tag_rep_map`.
+# Accepted column names:
+# - preferred internal names: tag_recapture_group, tag_recapture_name
+# - aliases from user files:   tag_rep_group, tag_rep_name
 load_tag_rep_map_from_r <- function(map_r_path) {
   if (is.null(map_r_path) || !file.exists(map_r_path)) return(NULL)
 
@@ -111,14 +114,17 @@ load_tag_rep_map_from_r <- function(map_r_path) {
   }, error = function(e) FALSE)
   if (!ok) return(NULL)
 
-  if (!exists("tag_map", envir = env, inherits = FALSE)) return(NULL)
-  map_df <- get("tag_map", envir = env, inherits = FALSE)
+  if (!exists("tag_rep_map", envir = env, inherits = FALSE)) return(NULL)
+  map_df <- get("tag_rep_map", envir = env, inherits = FALSE)
   if (!is.data.frame(map_df)) return(NULL)
 
-  required_cols <- c("tag_recapture_group", "tag_recapture_name")
-  if (!all(required_cols %in% names(map_df))) return(NULL)
+  nm <- names(map_df)
+  grp_col <- if ("tag_recapture_group" %in% nm) "tag_recapture_group" else if ("tag_rep_group" %in% nm) "tag_rep_group" else NULL
+  name_col <- if ("tag_recapture_name" %in% nm) "tag_recapture_name" else if ("tag_rep_name" %in% nm) "tag_rep_name" else NULL
+  if (is.null(grp_col) || is.null(name_col)) return(NULL)
 
-  out <- map_df[, required_cols, drop = FALSE]
+  out <- map_df[, c(grp_col, name_col), drop = FALSE]
+  names(out) <- c("tag_recapture_group", "tag_recapture_name")
   out$tag_recapture_group <- suppressWarnings(as.numeric(out$tag_recapture_group))
   out$tag_recapture_name <- as.character(out$tag_recapture_name)
   out <- out[is.finite(out$tag_recapture_group), , drop = FALSE]
@@ -143,6 +149,49 @@ build_model_fishery_map <- function(par_obj, base_map, rep_obj = NULL, len_obj =
   map <- base_map[order(base_map$fishery), , drop = FALSE]
   rownames(map) <- NULL
   map
+}
+
+# Build a minimal fallback fishery map when fishery_map.R is missing/invalid.
+# This keeps plots working with numeric/default labels.
+build_fallback_fishery_map <- function(rep_obj = NULL, len_obj = NULL, wgt_obj = NULL, tagtemp_obj = NULL) {
+  ids <- numeric(0)
+
+  rep_sel_ids <- tryCatch({
+    s <- as.data.frame(sel(rep_obj), drop = TRUE)
+    suppressWarnings(as.numeric(as.character(s$unit)))
+  }, error = function(e) numeric(0))
+  ids <- c(ids, rep_sel_ids)
+
+  rep_cpue_ids <- tryCatch({
+    o <- as.data.frame(cpue_obs(rep_obj))
+    suppressWarnings(as.numeric(as.character(o$unit)))
+  }, error = function(e) numeric(0))
+  ids <- c(ids, rep_cpue_ids)
+
+  len_ids <- tryCatch(suppressWarnings(as.numeric(as.character(unique(len_obj@lenfits$fishery)))), error = function(e) numeric(0))
+  ids <- c(ids, len_ids)
+
+  wgt_ids <- tryCatch(suppressWarnings(as.numeric(as.character(unique(wgt_obj@wgtfits$fishery)))), error = function(e) numeric(0))
+  ids <- c(ids, wgt_ids)
+
+  tag_rel_ids <- tryCatch(suppressWarnings(as.numeric(tagtemp_obj$rel.fishery)), error = function(e) numeric(0))
+  tag_recap_ids <- tryCatch(suppressWarnings(as.numeric(tagtemp_obj$recap.fishery)), error = function(e) numeric(0))
+  ids <- c(ids, tag_rel_ids, tag_recap_ids)
+
+  ids <- sort(unique(ids[is.finite(ids)]))
+  if (length(ids) == 0) return(NULL)
+
+  out <- data.frame(
+    fishery = ids,
+    fishery_name = as.character(ids),
+    group = rep("Unknown", length(ids)),
+    region = rep(NA_real_, length(ids)),
+    tag_recapture_group = rep(NA_real_, length(ids)),
+    tag_recapture_name = rep(NA_character_, length(ids)),
+    stringsAsFactors = FALSE
+  )
+  rownames(out) <- NULL
+  out
 }
 
 get_fishery_name <- function(fishery_num, mapping = NULL) {

@@ -291,22 +291,32 @@ server_data_load <- function(input, output, session, rv) {
         rv$JitterPars_list <- map(results_named, "JitterPars")
         rv$JitterInfos_list <- map(results_named, "JitterInfos")
       
-        # Create model-specific fishery maps from fishery_map.R only.
-        # Required: scenario_dir/fishery_map.R only (no root fallback).
+        # Create model-specific fishery maps from fishery_map.R when available.
+        # If missing/invalid, build a fallback map so plots still render with default labels.
         map_status <- setNames(rep("ok", length(names(results_named))), names(results_named))
 
         rv$FISHERY_MAPS <- lapply(names(results_named), function(sc) {
           scenario_dir <- file.path(MODEL_DIR, sc)
           scenario_map_r <- find_fishery_map_script(scenario_dir)
           if (is.null(scenario_map_r) || !file.exists(scenario_map_r)) {
-            map_status[[sc]] <<- "missing"
-            return(NULL)
+            map_status[[sc]] <<- "missing_fallback"
+            return(build_fallback_fishery_map(
+              rep_obj = rv$RepOut_list[[sc]],
+              len_obj = rv$LengOut_list[[sc]],
+              wgt_obj = rv$WeightOut_list[[sc]],
+              tagtemp_obj = rv$TagTempOut_list[[sc]]
+            ))
           }
 
           map_from_r <- load_fishery_map_from_r(scenario_map_r)
           if (is.null(map_from_r)) {
-            map_status[[sc]] <<- "invalid"
-            return(NULL)
+            map_status[[sc]] <<- "invalid_fallback"
+            return(build_fallback_fishery_map(
+              rep_obj = rv$RepOut_list[[sc]],
+              len_obj = rv$LengOut_list[[sc]],
+              wgt_obj = rv$WeightOut_list[[sc]],
+              tagtemp_obj = rv$TagTempOut_list[[sc]]
+            ))
           }
 
           build_model_fishery_map(
@@ -323,12 +333,12 @@ server_data_load <- function(input, output, session, rv) {
         missing_or_invalid_models <- names(map_status)[map_status != "ok"]
         rv$fishery_map_missing_models <- missing_or_invalid_models
 
-        if (isTRUE(rv$fishery_map_required) && length(missing_or_invalid_models) > 0) {
+        if (length(missing_or_invalid_models) > 0) {
           showNotification(
               HTML(paste0(
-              "<strong>⚠ fishery_map.R / fishery_map.r is required and missing/invalid</strong><br/>",
+              "<strong>⚠ fishery_map.R / fishery_map.r missing/invalid for some models</strong><br/>",
               "Affected models: ", paste(missing_or_invalid_models, collapse = ", "), "<br/>",
-              "Models with valid fishery_map.R or fishery_map.r remain available in fishery-map dependent tabs."
+              "Plots will still load using fallback numeric/default fishery names. Add fishery_map.R for descriptive names."
             )),
             type = "warning",
             duration = 12

@@ -14,7 +14,7 @@ mod_fishery_names_ui <- function() {
               <li>🎯 <strong>Select Model:</strong> Choose which model fishery map to edit</li>
               <li>📝 <strong>Edit fields:</strong> Edit all columns except <code>fishery</code> directly</li>
               <li>💾 <strong>Apply changes:</strong> Save edits to the currently loaded model map in app memory</li>
-              <li>⚠ <strong>Required:</strong> <code>fishery_map.R</code> or <code>fishery_map.r</code> must exist in each model folder when loading models</li>
+              <li>⚠ <strong>Recommended:</strong> Add <code>fishery_map.R</code> and <code>tag_rep_map.R</code> in each model folder for descriptive names (plots still work with fallback/default names)</li>
               <li>🏷 <strong>Tag reporting labels:</strong> <code>tag_rep_map.R</code> is shown below per model and can be edited in-app</li>
             </ul>")
       )
@@ -92,9 +92,9 @@ mod_fishery_names_server <- function(input, output, session, rv) {
     if (!fishery_map_missing_for_selected()) return()
     showNotification(
       HTML(paste0(
-        "<strong>fishery_map.R / fishery_map.r not found</strong><br/>",
+        "<strong>fishery_map.R / fishery_map.r missing/invalid (recommended)</strong><br/>",
         "Model: ", input$fishery_names_model, "<br/>",
-        "Please provide a valid fishery_map.R or fishery_map.r and reload model data."
+        "Plots still run with fallback/default fishery names. Add fishery_map.R for descriptive naming."
       )),
       type = "warning",
       duration = 8
@@ -105,12 +105,12 @@ mod_fishery_names_server <- function(input, output, session, rv) {
     req(rv$data_loaded, input$fishery_names_model)
     if (!fishery_map_missing_for_selected()) return(NULL)
     tags$div(
-      class = "alert alert-warning",
+      class = "alert alert-info",
       style = "margin-bottom: 15px;",
       HTML(paste0(
-        "<strong>fishery_map.R / fishery_map.r is missing/invalid for selected model.</strong><br/>",
+        "<strong>fishery_map.R / fishery_map.r is missing/invalid for selected model (recommended file).</strong><br/>",
         "Model: ", input$fishery_names_model, "<br/>",
-        "Provide a valid fishery_map.R or fishery_map.r in each model folder and click <strong>Load Data</strong> again."
+        "Plots use fallback/default fishery names. Add the file and click <strong>Load Data</strong> again for descriptive names."
       ))
     )
   })
@@ -139,7 +139,7 @@ mod_fishery_names_server <- function(input, output, session, rv) {
       HTML(paste0(
         "<strong>tag_rep_map.R not found for selected model.</strong><br/>",
         "Model: ", input$fishery_names_model, "<br/>",
-        "You can add <code>tag_rep_map.R</code> and click <strong>Load Data</strong> again."
+        "Plots use fallback/default tag reporting labels. Add <code>tag_rep_map.R</code> and click <strong>Load Data</strong> again for descriptive labels."
       ))
     )
   })
@@ -210,21 +210,11 @@ mod_fishery_names_server <- function(input, output, session, rv) {
 
   output$fishery_count_text <- renderText({
     req(input$fishery_names_model, rv$fishery_names_dfs)
-    if (fishery_map_missing_for_selected()) return("⚠ fishery_map.R/.r missing/invalid for selected model")
     paste0("📊 Total fisheries in this model: ", nrow(rv$fishery_names_dfs[[input$fishery_names_model]]))
   })
 
   output$fishery_names_table <- renderDT({
     req(rv$data_loaded, input$fishery_names_model, rv$fishery_names_dfs)
-    if (fishery_map_missing_for_selected()) {
-      return(
-        datatable(
-          data.frame(Message = paste0("fishery_map.R/.r missing/invalid for model: ", input$fishery_names_model, ". Provide it and reload data.")),
-          options = list(dom = "t", paging = FALSE),
-          rownames = FALSE
-        )
-      )
-    }
     df <- rv$fishery_names_dfs[[input$fishery_names_model]]
 
     datatable(
@@ -285,7 +275,6 @@ mod_fishery_names_server <- function(input, output, session, rv) {
   })
 
   observeEvent(input$fishery_names_table_cell_edit, {
-    if (fishery_map_missing_for_selected()) return()
     req(input$fishery_names_model)
     info <- input$fishery_names_table_cell_edit
     rv$fishery_names_dfs[[input$fishery_names_model]][info$row, info$col + 1] <- info$value
@@ -299,10 +288,6 @@ mod_fishery_names_server <- function(input, output, session, rv) {
   })
 
   observeEvent(input$apply_fishery_names, {
-    if (fishery_map_missing_for_selected()) {
-      showNotification("fishery_map.R/.r is missing/invalid for selected model. Provide it and reload data first.", type = "warning", duration = 5)
-      return()
-    }
     req(input$fishery_names_model, rv$fishery_names_dfs)
     model_name <- input$fishery_names_model
 
@@ -319,7 +304,7 @@ mod_fishery_names_server <- function(input, output, session, rv) {
     apply_map_df_to_model(model_name, base_df)
     refresh_dependents()
 
-    showNotification(HTML(paste0("✓ Fishery map fields updated for model: <strong>", model_name, "</strong>")), type = "message", duration = 3)
+    showNotification(HTML(paste0("✓ Fishery map fields updated in app memory for model: <strong>", model_name, "</strong>")), type = "message", duration = 3)
   })
 
   observeEvent(input$apply_tag_rep_map, {

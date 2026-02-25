@@ -65,6 +65,7 @@ mod_cpue_ui <- function() {
             size = 10
           )
         ),
+        numericInput("cpue_facet_ncol", "Facet columns:", value = 3, min = 1, max = 12, step = 1),
 
         shiny::hr(),
         h5("Download Plot", style = "font-weight: bold;"),
@@ -219,6 +220,9 @@ mod_cpue_server <- function(input, output, session, rv) {
       scenario_colors <- get_scenario_colors(input$cpue_scenarios)
       view_mode <- if (is.null(input$cpue_view_mode)) "overlay" else input$cpue_view_mode
       metric <- if (is.null(input$cpue_metric)) "fits" else input$cpue_metric
+      facet_ncol <- suppressWarnings(as.integer(input$cpue_facet_ncol))
+      if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 3
+      facet_ncol <- min(max(facet_ncol, 1), 12)
 
       if (identical(metric, "residuals") && identical(view_mode, "by_scenario")) {
         p <- ggplot(cpue_all, aes(x = year_season, y = residual, color = Scenario)) +
@@ -243,7 +247,7 @@ mod_cpue_server <- function(input, output, session, rv) {
       p <- ggplot(cpue_all, aes(x = year_season, y = residual, color = Scenario)) +
         geom_hline(yintercept = 0, linetype = "dashed", color = "#666") +
         geom_point(size = 1.6, alpha = 0.55) +
-        facet_wrap(~fishery_name, scales = "free_y", ncol = 3) +
+        facet_wrap(~fishery_name, scales = "free_y", ncol = facet_ncol) +
           scale_color_manual(values = scenario_colors) +
           labs(
             x = "Year + Season",
@@ -285,7 +289,7 @@ mod_cpue_server <- function(input, output, session, rv) {
       p <- ggplot(cpue_all, aes(x = year_season)) +
         geom_point(data = obs_points, aes(y = obs), size = 2, alpha = 0.6, color = "#E69F00") +
         geom_line(aes(y = fit, color = Scenario), linewidth = 1.2, alpha = 0.9) +
-        facet_wrap(~fishery_name, scales = "free_y", ncol = 3) +
+        facet_wrap(~fishery_name, scales = "free_y", ncol = facet_ncol) +
         scale_color_manual(values = scenario_colors) +
         labs(
           x = "Year + Season",

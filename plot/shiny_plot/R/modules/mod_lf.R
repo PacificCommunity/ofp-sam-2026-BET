@@ -11,18 +11,34 @@ mod_lf_ui <- function() {
             solidHeader = TRUE,
             status = "primary",
             
-            # Model selector (single selection)
-            selectInput(
-              "lf_model",
-              "Model:",
+            # Scenario selector (1 selected = single, 2+ selected = overlay)
+            pickerInput(
+              "lf_scenarios",
+              "Scenarios:",
               choices = NULL,
-              selected = NULL
+              selected = NULL,
+              multiple = TRUE,
+              options = pickerOptions(
+                actionsBox = TRUE,
+                selectAllText = "Select All",
+                deselectAllText = "Deselect All",
+                selectedTextFormat = "count > 2",
+                countSelectedText = "{0} scenarios selected",
+                liveSearch = TRUE,
+                liveSearchPlaceholder = "Search scenarios...",
+                size = 10
+              )
+            ),
+            # Hidden base model selector (first selected scenario) used by existing server logic.
+            tags$div(
+              style = "display:none;",
+              selectInput("lf_model", NULL, choices = NULL, selected = NULL)
             ),
             
             # Fishery selector with navigation buttons
             div(
               style = "margin-bottom: 15px;",
-              tags$label("Fishery:", style = "font-weight: bold; margin-bottom: 5px; display: block;"),
+              tags$label("Fishery (individual view):", style = "font-weight: bold; margin-bottom: 5px; display: block;"),
               div(
                 style = "display: flex; align-items: center; gap: 5px;",
                 actionButton("lf_prev", "", icon = icon("chevron-left"), 
@@ -74,39 +90,18 @@ mod_lf_ui <- function() {
               )
             ),
             
-            shiny::hr(),
-            
-            # Scenarios selector for overlay (only compatible models)
-            pickerInput(
-              "lf_scenarios",
-              "Overlay Scenarios:",
-              choices = NULL,
-              selected = NULL,
-              multiple = TRUE,
-              options = pickerOptions(
-                actionsBox = TRUE,
-                selectAllText = "Select All",
-                deselectAllText = "Deselect All",
-                selectedTextFormat = "count > 2",
-                countSelectedText = "{0} scenarios selected",
-                liveSearch = TRUE,
-                liveSearchPlaceholder = "Search scenarios...",
-                size = 10
-              )
-            ),
-
             radioButtons(
               "lf_view_mode",
               "View:",
               choices = c(
-                "All years combined" = "all_years",
-                "Overlay scenarios" = "overlay",
-                "By scenario" = "by_scenario"
+                "All fisheries (years combined)" = "all_fisheries",
+                "Individual fishery" = "individual_fishery"
               ),
-              selected = "all_years"
+              selected = "all_fisheries"
             ),
+            numericInput("lf_facet_ncol", "Facet columns:", value = 3, min = 1, max = 12, step = 1),
             
-            helpText("💡 Only models with identical fishery structure and names can be overlaid", 
+            helpText("💡 Compatible models only. Check 1 model for single display, 2+ for overlay.", 
                      style = "font-size: 11px; color: #666; font-style: italic;"),
             
             shiny::hr(),
@@ -127,6 +122,18 @@ mod_lf_server <- function(input, output, session, rv) {
     # TAB 6: LENGTH FREQUENCY (DYNAMIC BOX HEIGHT)
     # ===========================================================================
   
+    observeEvent(input$lf_scenarios, {
+      req(rv$data_loaded)
+      sc <- input$lf_scenarios
+      if (is.null(sc) || length(sc) == 0) {
+        updateSelectInput(session, "lf_model", choices = character(0), selected = character(0))
+        return()
+      }
+      cur_base <- isolate(input$lf_model)
+      base_sel <- if (!is.null(cur_base) && cur_base %in% sc) cur_base else sc[1]
+      updateSelectInput(session, "lf_model", choices = sc, selected = base_sel)
+    }, ignoreInit = FALSE)
+
     # Update fishery choices when base model changes
     observeEvent(input$lf_model, {
       req(rv$data_loaded, input$lf_model, rv$LengOut_list[[input$lf_model]])
@@ -172,9 +179,16 @@ mod_lf_server <- function(input, output, session, rv) {
         )
       }
     
+      current_scenarios <- isolate(input$lf_scenarios)
+      if (is.null(current_scenarios) || length(current_scenarios) == 0) {
+        selected_scenarios <- compatible_models
+      } else {
+        selected_scenarios <- intersect(current_scenarios, compatible_models)
+        if (length(selected_scenarios) == 0) selected_scenarios <- compatible_models
+      }
       updatePickerInput(session, "lf_scenarios",
                         choices = compatible_models,
-                        selected = compatible_models)
+                        selected = selected_scenarios)
     })
   
     # Update year choices when fishery or scenarios change
@@ -185,7 +199,7 @@ mod_lf_server <- function(input, output, session, rv) {
       if (is.null(rv$LengOut_list[[input$lf_model]])) return()
     
       df <- rv$LengOut_list[[input$lf_model]]@lenfits
-      if (identical(input$lf_view_mode, "all_years")) {
+      if (identical(input$lf_view_mode, "all_fisheries")) {
         selected_fisheries <- suppressWarnings(as.numeric(input$lf_fisheries_all))
         years <- df %>%
           filter(fishery %in% selected_fisheries) %>%
@@ -226,7 +240,14 @@ mod_lf_server <- function(input, output, session, rv) {
 
       all_models <- names(rv$LengOut_list)[!sapply(rv$LengOut_list, is.null)]
       compatible_models <- check_lf_compatibility_global(rv, input$lf_model, all_models)
-      updatePickerInput(session, "lf_scenarios", choices = compatible_models, selected = compatible_models)
+      current_scenarios <- isolate(input$lf_scenarios)
+      if (is.null(current_scenarios) || length(current_scenarios) == 0) {
+        selected_scenarios <- compatible_models
+      } else {
+        selected_scenarios <- intersect(current_scenarios, compatible_models)
+        if (length(selected_scenarios) == 0) selected_scenarios <- compatible_models
+      }
+      updatePickerInput(session, "lf_scenarios", choices = compatible_models, selected = selected_scenarios)
 
       years <- sort(unique(df$year))
       updatePickerInput(session, "lf_years", choices = years, selected = years)
@@ -235,11 +256,13 @@ mod_lf_server <- function(input, output, session, rv) {
     # Reactive: calculate dynamic plot height for LF
     lf_plot_height <- reactive({
       req(rv$data_loaded, input$lf_years)
+      facet_ncol <- suppressWarnings(as.integer(input$lf_facet_ncol))
+      if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 3
+      facet_ncol <- min(max(facet_ncol, 1), 12)
 
-      if (identical(input$lf_view_mode, "all_years")) {
+      if (identical(input$lf_view_mode, "all_fisheries")) {
         n_fisheries <- length(input$lf_fisheries_all)
-        ncol_facet <- 3
-        n_rows <- ceiling(max(n_fisheries, 1) / ncol_facet)
+        n_rows <- ceiling(max(n_fisheries, 1) / facet_ncol)
         return(min(max(350 + n_rows * 240, 550), 3200))
       }
 
@@ -247,17 +270,8 @@ mod_lf_server <- function(input, output, session, rv) {
     
       if (n_years == 0) return(400)
     
-      # Determine number of columns based on year count
-      ncol_facet <- case_when(
-        n_years <= 6 ~ 2,
-        n_years <= 12 ~ 3,
-        n_years <= 20 ~ 4,
-        n_years <= 30 ~ 5,
-        TRUE ~ 6
-      )
-    
       # Calculate rows needed
-      n_rows <- ceiling(n_years / ncol_facet)
+      n_rows <- ceiling(n_years / facet_ncol)
     
       # Height formula: base + height per row
       base_height <- 150
@@ -272,11 +286,11 @@ mod_lf_server <- function(input, output, session, rv) {
     lf_plot_reactive <- reactive({
       req(rv$data_loaded, input$lf_model, input$lf_fishery, input$lf_years)
 
-      view_mode <- if (is.null(input$lf_view_mode)) "overlay" else input$lf_view_mode
-      scenarios_to_use <- if (identical(view_mode, "by_scenario")) input$lf_model else input$lf_scenarios
+      view_mode <- if (is.null(input$lf_view_mode)) "all_fisheries" else input$lf_view_mode
+      scenarios_to_use <- input$lf_scenarios
 
-      # Check if any scenarios selected (overlay/all-years)
-      if (!identical(view_mode, "by_scenario") && length(scenarios_to_use) == 0) {
+      # Check if any scenarios selected
+      if (length(scenarios_to_use) == 0) {
         p <- ggplot() + 
           annotate("text", x = 0.5, y = 0.5, label = "No scenarios selected", size = 6, color = "#999") +
           theme_void()
@@ -295,7 +309,7 @@ mod_lf_server <- function(input, output, session, rv) {
       combined_data <- map_dfr(scenarios_to_use, function(sc) {
         if (is.null(rv$LengOut_list[[sc]])) return(NULL)
         df <- rv$LengOut_list[[sc]]@lenfits
-        if (identical(input$lf_view_mode, "all_years")) {
+        if (identical(input$lf_view_mode, "all_fisheries")) {
           selected_fisheries <- suppressWarnings(as.numeric(input$lf_fisheries_all))
           df %>%
             filter(fishery %in% selected_fisheries) %>%
@@ -374,13 +388,9 @@ mod_lf_server <- function(input, output, session, rv) {
     
       # Determine optimal layout
       n_years <- length(unique(plot_data$year))
-      ncol_facet <- case_when(
-        n_years <= 6 ~ 2,
-        n_years <= 12 ~ 3,
-        n_years <= 20 ~ 4,
-        n_years <= 30 ~ 5,
-        TRUE ~ 6
-      )
+      ncol_facet <- suppressWarnings(as.integer(input$lf_facet_ncol))
+      if (!is.finite(ncol_facet) || ncol_facet < 1) ncol_facet <- 3
+      ncol_facet <- min(max(ncol_facet, 1), 12)
     
       strip_size <- case_when(
         n_years <= 12 ~ 10,
@@ -390,7 +400,7 @@ mod_lf_server <- function(input, output, session, rv) {
       )
       observed_fill <- "#08519C"
 
-      if (identical(view_mode, "all_years")) {
+      if (identical(view_mode, "all_fisheries")) {
         all_year_obs <- obs_data %>%
           group_by(fishery_name, length) %>%
           summarise(obs = sum(obs, na.rm = TRUE), .groups = "drop")
@@ -418,7 +428,7 @@ mod_lf_server <- function(input, output, session, rv) {
             aes(x = length, y = pred, color = Scenario),
             linewidth = 1.2
           ) +
-          facet_wrap(~fishery_name, scales = "free_y", ncol = 3) +
+          facet_wrap(~fishery_name, scales = "free_y", ncol = ncol_facet) +
           scale_fill_manual(values = c("Observed" = observed_fill)) +
           scale_color_viridis_d() +
           labs(
@@ -433,7 +443,7 @@ mod_lf_server <- function(input, output, session, rv) {
             plot.subtitle = element_text(hjust = 0.5, size = 10.5),
             strip.text = element_text(size = 9.5, face = "bold")
           )
-      } else if (identical(view_mode, "by_scenario")) {
+      } else if (length(unique(plot_data$Scenario)) <= 1) {
         panel_count <- dplyr::n_distinct(plot_data$year)
         border_lwd <- dplyr::case_when(
           panel_count >= 24 ~ 0.03,
@@ -456,7 +466,7 @@ mod_lf_server <- function(input, output, session, rv) {
           scale_fill_manual(values = c("Observed" = observed_fill)) +
           scale_color_manual(values = c("Predicted" = "#E31A1C")) +
           labs(
-            title = paste(fishery_name, "-", input$lf_model),
+            title = paste(fishery_name, "-", unique(as.character(plot_data$Scenario))[1]),
             x = "Length (cm)", y = "Sample count"
           ) +
           theme_bw(base_size = 12) +
@@ -508,7 +518,8 @@ mod_lf_server <- function(input, output, session, rv) {
       input$lf_fishery,
       input$lf_fisheries_all,
       input$lf_scenarios,
-      input$lf_years
+      input$lf_years,
+      input$lf_facet_ncol
     )
   
     # Render length frequency plot

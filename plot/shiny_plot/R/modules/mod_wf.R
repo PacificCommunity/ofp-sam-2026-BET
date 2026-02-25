@@ -11,18 +11,34 @@ mod_wf_ui <- function() {
             solidHeader = TRUE,
             status = "primary",
             
-            # Model selector (single selection)
-            selectInput(
-              "wf_model",
-              "Model:",
+            # Scenario selector (1 selected = single, 2+ selected = overlay)
+            pickerInput(
+              "wf_scenarios",
+              "Scenarios:",
               choices = NULL,
-              selected = NULL
+              selected = NULL,
+              multiple = TRUE,
+              options = pickerOptions(
+                actionsBox = TRUE,
+                selectAllText = "Select All",
+                deselectAllText = "Deselect All",
+                selectedTextFormat = "count > 2",
+                countSelectedText = "{0} scenarios selected",
+                liveSearch = TRUE,
+                liveSearchPlaceholder = "Search scenarios...",
+                size = 10
+              )
+            ),
+            # Hidden base model selector (first selected scenario) used by existing server logic.
+            tags$div(
+              style = "display:none;",
+              selectInput("wf_model", NULL, choices = NULL, selected = NULL)
             ),
             
             # Fishery selector with navigation buttons
             div(
               style = "margin-bottom: 15px;",
-              tags$label("Fishery:", style = "font-weight: bold; margin-bottom: 5px; display: block;"),
+              tags$label("Fishery (individual view):", style = "font-weight: bold; margin-bottom: 5px; display: block;"),
               div(
                 style = "display: flex; align-items: center; gap: 5px;",
                 actionButton("wf_prev", "", icon = icon("chevron-left"), 
@@ -74,39 +90,18 @@ mod_wf_ui <- function() {
               )
             ),
             
-            shiny::hr(),
-            
-            # Scenarios selector for overlay (only compatible models)
-            pickerInput(
-              "wf_scenarios",
-              "Overlay Scenarios:",
-              choices = NULL,
-              selected = NULL,
-              multiple = TRUE,
-              options = pickerOptions(
-                actionsBox = TRUE,
-                selectAllText = "Select All",
-                deselectAllText = "Deselect All",
-                selectedTextFormat = "count > 2",
-                countSelectedText = "{0} scenarios selected",
-                liveSearch = TRUE,
-                liveSearchPlaceholder = "Search scenarios...",
-                size = 10
-              )
-            ),
-
             radioButtons(
               "wf_view_mode",
               "View:",
               choices = c(
-                "All years combined" = "all_years",
-                "Overlay scenarios" = "overlay",
-                "By scenario" = "by_scenario"
+                "All fisheries (years combined)" = "all_fisheries",
+                "Individual fishery" = "individual_fishery"
               ),
-              selected = "all_years"
+              selected = "all_fisheries"
             ),
+            numericInput("wf_facet_ncol", "Facet columns:", value = 3, min = 1, max = 12, step = 1),
             
-            helpText("💡 Only models with identical fishery structure and names can be overlaid", 
+            helpText("💡 Compatible models only. Check 1 model for single display, 2+ for overlay.", 
                      style = "font-size: 11px; color: #666; font-style: italic;"),
             
             shiny::hr(),
@@ -128,6 +123,18 @@ mod_wf_server <- function(input, output, session, rv) {
     # TAB 7: WEIGHT FREQUENCY (DYNAMIC BOX HEIGHT)
     # ===========================================================================
   
+    observeEvent(input$wf_scenarios, {
+      req(rv$data_loaded)
+      sc <- input$wf_scenarios
+      if (is.null(sc) || length(sc) == 0) {
+        updateSelectInput(session, "wf_model", choices = character(0), selected = character(0))
+        return()
+      }
+      cur_base <- isolate(input$wf_model)
+      base_sel <- if (!is.null(cur_base) && cur_base %in% sc) cur_base else sc[1]
+      updateSelectInput(session, "wf_model", choices = sc, selected = base_sel)
+    }, ignoreInit = FALSE)
+
     # Update fishery choices when base model changes
     observeEvent(input$wf_model, {
       req(rv$data_loaded, input$wf_model, rv$WeightOut_list[[input$wf_model]])
@@ -173,9 +180,16 @@ mod_wf_server <- function(input, output, session, rv) {
         )
       }
     
+      current_scenarios <- isolate(input$wf_scenarios)
+      if (is.null(current_scenarios) || length(current_scenarios) == 0) {
+        selected_scenarios <- compatible_models
+      } else {
+        selected_scenarios <- intersect(current_scenarios, compatible_models)
+        if (length(selected_scenarios) == 0) selected_scenarios <- compatible_models
+      }
       updatePickerInput(session, "wf_scenarios",
                         choices = compatible_models,
-                        selected = compatible_models)
+                        selected = selected_scenarios)
     })
   
     # Update year choices when fishery or model change
@@ -186,7 +200,7 @@ mod_wf_server <- function(input, output, session, rv) {
       if (is.null(rv$WeightOut_list[[input$wf_model]])) return()
     
       df <- rv$WeightOut_list[[input$wf_model]]@wgtfits
-      if (identical(input$wf_view_mode, "all_years")) {
+      if (identical(input$wf_view_mode, "all_fisheries")) {
         selected_fisheries <- suppressWarnings(as.numeric(input$wf_fisheries_all))
         years <- df %>%
           filter(fishery %in% selected_fisheries) %>%
@@ -227,7 +241,14 @@ mod_wf_server <- function(input, output, session, rv) {
 
       all_models <- names(rv$WeightOut_list)[!sapply(rv$WeightOut_list, is.null)]
       compatible_models <- check_wf_compatibility_global(rv, input$wf_model, all_models)
-      updatePickerInput(session, "wf_scenarios", choices = compatible_models, selected = compatible_models)
+      current_scenarios <- isolate(input$wf_scenarios)
+      if (is.null(current_scenarios) || length(current_scenarios) == 0) {
+        selected_scenarios <- compatible_models
+      } else {
+        selected_scenarios <- intersect(current_scenarios, compatible_models)
+        if (length(selected_scenarios) == 0) selected_scenarios <- compatible_models
+      }
+      updatePickerInput(session, "wf_scenarios", choices = compatible_models, selected = selected_scenarios)
 
       years <- sort(unique(df$year))
       updatePickerInput(session, "wf_years", choices = years, selected = years)
@@ -236,11 +257,13 @@ mod_wf_server <- function(input, output, session, rv) {
     # Reactive: calculate dynamic plot height for WF
     wf_plot_height <- reactive({
       req(rv$data_loaded, input$wf_years)
+      facet_ncol <- suppressWarnings(as.integer(input$wf_facet_ncol))
+      if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 3
+      facet_ncol <- min(max(facet_ncol, 1), 12)
 
-      if (identical(input$wf_view_mode, "all_years")) {
+      if (identical(input$wf_view_mode, "all_fisheries")) {
         n_fisheries <- length(input$wf_fisheries_all)
-        ncol_facet <- 3
-        n_rows <- ceiling(max(n_fisheries, 1) / ncol_facet)
+        n_rows <- ceiling(max(n_fisheries, 1) / facet_ncol)
         return(min(max(350 + n_rows * 240, 550), 3200))
       }
 
@@ -248,17 +271,8 @@ mod_wf_server <- function(input, output, session, rv) {
     
       if (n_years == 0) return(400)
     
-      # Determine number of columns based on year count
-      ncol_facet <- case_when(
-        n_years <= 6 ~ 2,
-        n_years <= 12 ~ 3,
-        n_years <= 20 ~ 4,
-        n_years <= 30 ~ 5,
-        TRUE ~ 6
-      )
-    
       # Calculate rows needed
-      n_rows <- ceiling(n_years / ncol_facet)
+      n_rows <- ceiling(n_years / facet_ncol)
     
       # Height formula: base + height per row
       base_height <- 150
@@ -273,11 +287,11 @@ mod_wf_server <- function(input, output, session, rv) {
     wf_plot_reactive <- reactive({
       req(rv$data_loaded, input$wf_model, input$wf_fishery, input$wf_years)
 
-      view_mode <- if (is.null(input$wf_view_mode)) "overlay" else input$wf_view_mode
-      scenarios_to_use <- if (identical(view_mode, "by_scenario")) input$wf_model else input$wf_scenarios
+      view_mode <- if (is.null(input$wf_view_mode)) "all_fisheries" else input$wf_view_mode
+      scenarios_to_use <- input$wf_scenarios
 
-      # Check if any scenarios selected (overlay/all-years)
-      if (!identical(view_mode, "by_scenario") && length(scenarios_to_use) == 0) {
+      # Check if any scenarios selected
+      if (length(scenarios_to_use) == 0) {
         p <- ggplot() + 
           annotate("text", x = 0.5, y = 0.5, label = "No scenarios selected", size = 6, color = "#999") +
           theme_void()
@@ -312,7 +326,7 @@ mod_wf_server <- function(input, output, session, rv) {
         group_by(fishery_label_norm) %>%
         summarise(fishery_display = first(fishery_display), .groups = "drop")
 
-      selected_name_norm <- if (identical(input$wf_view_mode, "all_years")) {
+      selected_name_norm <- if (identical(input$wf_view_mode, "all_fisheries")) {
         sel_ids <- suppressWarnings(as.numeric(input$wf_fisheries_all))
         base_name_df %>%
           filter(fishery %in% sel_ids) %>%
@@ -413,13 +427,9 @@ mod_wf_server <- function(input, output, session, rv) {
     
       # Determine optimal layout
       n_years <- length(unique(plot_data$year))
-      ncol_facet <- case_when(
-        n_years <= 6 ~ 2,
-        n_years <= 12 ~ 3,
-        n_years <= 20 ~ 4,
-        n_years <= 30 ~ 5,
-        TRUE ~ 6
-      )
+      ncol_facet <- suppressWarnings(as.integer(input$wf_facet_ncol))
+      if (!is.finite(ncol_facet) || ncol_facet < 1) ncol_facet <- 3
+      ncol_facet <- min(max(ncol_facet, 1), 12)
     
       strip_size <- case_when(
         n_years <= 12 ~ 10,
@@ -429,7 +439,7 @@ mod_wf_server <- function(input, output, session, rv) {
       )
       observed_fill <- "#08519C"
 
-      if (identical(view_mode, "all_years")) {
+      if (identical(view_mode, "all_fisheries")) {
         all_year_obs <- obs_data %>%
           group_by(fishery_display, weight) %>%
           summarise(obs = sum(obs, na.rm = TRUE), .groups = "drop")
@@ -457,7 +467,7 @@ mod_wf_server <- function(input, output, session, rv) {
             aes(x = weight, y = pred, color = Scenario),
             linewidth = 1.2
           ) +
-          facet_wrap(~fishery_display, scales = "free_y", ncol = 3) +
+          facet_wrap(~fishery_display, scales = "free_y", ncol = ncol_facet) +
           scale_fill_manual(values = c("Observed" = observed_fill)) +
           scale_color_viridis_d() +
           labs(
@@ -472,7 +482,7 @@ mod_wf_server <- function(input, output, session, rv) {
             plot.subtitle = element_text(hjust = 0.5, size = 10),
             strip.text = element_text(size = 9, face = "bold")
           )
-      } else if (identical(view_mode, "by_scenario")) {
+      } else if (length(unique(plot_data$Scenario)) <= 1) {
         panel_count <- dplyr::n_distinct(plot_data$year)
         border_lwd <- dplyr::case_when(
           panel_count >= 24 ~ 0.03,
@@ -495,7 +505,7 @@ mod_wf_server <- function(input, output, session, rv) {
           scale_fill_manual(values = c("Observed" = observed_fill)) +
           scale_color_manual(values = c("Predicted" = "#E31A1C")) +
           labs(
-            title = paste(fishery_name, "-", input$wf_model),
+            title = paste(fishery_name, "-", unique(as.character(plot_data$Scenario))[1]),
             x = "Weight (kg)", y = "Sample count"
           ) +
           theme_bw(base_size = 12) +
@@ -546,7 +556,8 @@ mod_wf_server <- function(input, output, session, rv) {
       input$wf_fishery,
       input$wf_fisheries_all,
       input$wf_scenarios,
-      input$wf_years
+      input$wf_years,
+      input$wf_facet_ncol
     )
   
     # Render weight frequency plot

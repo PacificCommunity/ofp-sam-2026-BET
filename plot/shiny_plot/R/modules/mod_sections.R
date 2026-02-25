@@ -74,6 +74,7 @@ mod_harvest_ui <- function() {
           "Spawning Potential (with/without fishing)" = "sp_combined",
           "Total Biomass (with/without fishing)" = "tb_combined"
         )),
+        numericInput("harvest_facet_ncol", "Facet columns:", value = 2, min = 1, max = 12, step = 1),
         shiny::hr(),
         h5("Download Plot", style = "font-weight: bold;"),
         actionButton("show_harvest_download_modal", "📥 Download Plot...", class = "btn-info", style = "width: 100%;")
@@ -102,6 +103,9 @@ mod_harvest_server <- function(input, output, session, rv) {
     maxYear <- yw$maxYear
 
     config <- list(linewidth = 1.2, alpha = 0.9)
+    facet_ncol <- suppressWarnings(as.integer(input$harvest_facet_ncol))
+    if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 3
+    facet_ncol <- min(max(facet_ncol, 1), 12)
 
     plot_type <- if (is.null(input$harvest_plot)) "spawning" else input$harvest_plot
 
@@ -197,7 +201,12 @@ mod_harvest_server <- function(input, output, session, rv) {
           labs(color = "Scenario") + guides(color = guide_legend(override.aes = list(linewidth = 2)))
       )
 
-      combined_plot <- cowplot::plot_grid(SBdepPlot, RecPlot, SpawnPotPlot, FMPlot, ncol = 1, align = "v")
+      combined_ncol <- min(max(as.integer(facet_ncol), 1), 4)
+      combined_plot <- cowplot::plot_grid(
+        SBdepPlot, RecPlot, SpawnPotPlot, FMPlot,
+        ncol = combined_ncol,
+        align = "v"
+      )
       return(cowplot::plot_grid(combined_plot, scenario_legend, ncol = 2, rel_widths = c(4, 1)))
     }
 
@@ -230,7 +239,7 @@ mod_harvest_server <- function(input, output, session, rv) {
         geom_hline(yintercept = 0.2, linetype = "dashed", color = "darkred") +
         geom_hline(yintercept = 0.5, linetype = "dashed", color = "darkgreen") +
         scale_color_manual(values = scenario_colors) + coord_cartesian(ylim = c(0, 1)) +
-        facet_wrap(~ area, ncol = 3) + labs(x = "Year", y = bquote(SB/SB["F=0"])) +
+        facet_wrap(~ area, ncol = facet_ncol) + labs(x = "Year", y = bquote(SB/SB["F=0"])) +
         theme_bw() + theme(legend.position = "none", strip.text = element_text(size = 10, face = "bold"))
 
       scenario_legend <- cowplot::get_legend(
@@ -259,7 +268,7 @@ mod_harvest_server <- function(input, output, session, rv) {
 
       rec_plot <- ggplot(rec_combined, aes(x = year, y = data, color = scenario)) +
         geom_line(linewidth = config$linewidth, alpha = config$alpha) + scale_color_manual(values = scenario_colors) +
-        coord_cartesian(ylim = c(0, NA)) + facet_wrap(~ area, scales = "free_y", ncol = 3) +
+        coord_cartesian(ylim = c(0, NA)) + facet_wrap(~ area, scales = "free_y", ncol = facet_ncol) +
         labs(x = "Year", y = "Recruitment (Millions)") + theme_bw() +
         theme(legend.position = "none", strip.text = element_text(size = 10, face = "bold"))
 
@@ -324,7 +333,7 @@ mod_harvest_server <- function(input, output, session, rv) {
         geom_line(linewidth = config$linewidth, alpha = config$alpha) +
         scale_color_manual(values = scenario_colors) +
         scale_linetype_manual(name = "Life Stage", values = c("Juvenile F" = "dashed", "Adult F" = "solid")) +
-        coord_cartesian(ylim = c(0, NA)) + facet_wrap(~ area, scales = "free_y", ncol = 3) +
+        coord_cartesian(ylim = c(0, NA)) + facet_wrap(~ area, scales = "free_y", ncol = facet_ncol) +
         labs(x = "Year", y = "Annual Instantaneous F") +
         theme_bw() + theme(legend.position = "none", strip.text = element_text(size = 10, face = "bold"))
 
@@ -380,7 +389,7 @@ mod_harvest_server <- function(input, output, session, rv) {
         ggplot(area_contribution, aes(x = year, y = contribution, fill = area)) +
           geom_area(position = "stack", alpha = 0.8) +
           scale_fill_viridis_d(name = "Area") +
-          facet_wrap(~ scenario, ncol = 1) +
+          facet_wrap(~ scenario, ncol = facet_ncol) +
           labs(x = "Year", y = "Contribution to Total F (%)") +
           theme_bw() +
           theme(legend.position = "right", legend.title = element_text(face = "bold"), strip.text = element_text(size = 10, face = "bold"))
@@ -424,7 +433,7 @@ mod_harvest_server <- function(input, output, session, rv) {
         scale_color_manual(values = scenario_colors) +
         scale_linetype_manual(name = "Status", values = c("No fishing" = "dashed", "Fished" = "solid")) +
         coord_cartesian(ylim = c(0, NA)) +
-        facet_wrap(~ area, scales = "free_y", ncol = 3) +
+        facet_wrap(~ area, scales = "free_y", ncol = facet_ncol) +
         labs(x = "Year", y = y_label) +
         theme_bw() + theme(legend.position = "none", strip.text = element_text(size = 10, face = "bold"))
 
@@ -463,16 +472,6 @@ mod_tagging_ui <- function() {
         title = "Settings", width = 3, solidHeader = TRUE, status = "info",
         pickerInput("tag_scenarios", "Scenarios:", choices = NULL, selected = NULL, multiple = TRUE,
                     options = pickerOptions(actionsBox = TRUE, liveSearch = TRUE, selectedTextFormat = "count > 2")),
-        selectInput("tag_model_single", "Model to Display:", choices = NULL, selected = NULL),
-        radioButtons(
-          "tag_view_mode",
-          "Display:",
-          choices = c(
-            "Single model" = "single",
-            "Overlay selected models" = "overlay"
-          ),
-          selected = "single"
-        ),
         radioButtons(
           "tag_time_mode",
           "Time axis:",
@@ -498,7 +497,7 @@ mod_tagging_ui <- function() {
             liveSearchPlaceholder = "Search years..."
           )
         ),
-        numericInput("tag_facet_ncol", "Facet columns:", value = 2, min = 1, max = 6, step = 1),
+        numericInput("tag_facet_ncol", "Facet columns:", value = 4, min = 1, max = 6, step = 1),
         checkboxInput("tag_rr_nonneg_only", "Tag RR filter: exclude rr <= 0", value = FALSE),
         selectInput("tag_plot", "Plot:", choices = c(
           "Tag Reporting Rates by Group" = "report",
@@ -522,21 +521,7 @@ mod_tagging_server <- function(input, output, session, rv) {
   observeEvent(rv$data_loaded, {
     sc <- names(rv$FISHERY_MAPS)[!vapply(rv$FISHERY_MAPS, is.null, logical(1))]
     updatePickerInput(session, "tag_scenarios", choices = sc, selected = sc)
-    sel <- if (length(sc) > 0) sc[1] else character(0)
-    updateSelectInput(session, "tag_model_single", choices = sc, selected = sel)
   }, ignoreInit = TRUE)
-
-  observeEvent(input$tag_scenarios, {
-    req(rv$data_loaded)
-    sc <- input$tag_scenarios
-    if (is.null(sc) || length(sc) == 0) {
-      updateSelectInput(session, "tag_model_single", choices = character(0), selected = character(0))
-      return()
-    }
-    sel <- isolate(input$tag_model_single)
-    if (is.null(sel) || !(sel %in% sc)) sel <- sc[1]
-    updateSelectInput(session, "tag_model_single", choices = sc, selected = sel)
-  }, ignoreInit = FALSE)
 
   observe({
     req(rv$data_loaded)
@@ -559,17 +544,17 @@ mod_tagging_server <- function(input, output, session, rv) {
   })
 
   tagging_plot_reactive <- reactive({
-    req(rv$data_loaded, input$tag_scenarios, input$tag_model_single)
+    req(rv$data_loaded, input$tag_scenarios)
     scenarios_name <- input$tag_scenarios
     if (length(scenarios_name) == 0) return(ggplot() + theme_void() + annotate("text", x = 0.5, y = 0.5, label = "No scenarios selected"))
 
-    view_mode <- if (is.null(input$tag_view_mode)) "single" else input$tag_view_mode
     time_mode <- if (is.null(input$tag_time_mode)) "year" else input$tag_time_mode
     mode <- if (is.null(input$tag_plot)) "report" else input$tag_plot
     rr_nonneg_only <- isTRUE(input$tag_rr_nonneg_only)
 
-    selected_models <- if (identical(view_mode, "overlay")) scenarios_name else input$tag_model_single
-    selected_models <- selected_models[selected_models %in% names(rv$ParOut_list)]
+    # Tagging plots now use the Scenarios picker directly:
+    # 1 selected = single-model display, 2+ selected = overlay.
+    selected_models <- intersect(scenarios_name, names(rv$ParOut_list))
     if (length(selected_models) == 0) return(ggplot() + theme_void() + annotate("text", x = 0.5, y = 0.5, label = "No valid models selected"))
 
     has_tagtemp <- names(rv$TagTempOut_list)[!sapply(rv$TagTempOut_list, is.null)]
@@ -578,20 +563,12 @@ mod_tagging_server <- function(input, output, session, rv) {
 
     if (mode %in% c("returns_all", "returns_group")) {
       candidate <- intersect(in_scope, has_tagtemp)
-      if (identical(view_mode, "single")) {
-        if (!(selected_models[1] %in% candidate)) selected_models <- candidate[1]
-      } else {
-        selected_models <- intersect(selected_models, candidate)
-      }
+      selected_models <- intersect(selected_models, candidate)
     }
 
     if (mode %in% c("attr_all", "attr_program", "attr_region")) {
       candidate <- intersect(in_scope, intersect(has_tagtemp, has_tagout))
-      if (identical(view_mode, "single")) {
-        if (!(selected_models[1] %in% candidate)) selected_models <- candidate[1]
-      } else {
-        selected_models <- intersect(selected_models, candidate)
-      }
+      selected_models <- intersect(selected_models, candidate)
     }
 
     if (length(selected_models) == 0 || is.na(selected_models[1])) {
@@ -601,7 +578,7 @@ mod_tagging_server <- function(input, output, session, rv) {
       )
     }
 
-    overlay <- identical(view_mode, "overlay") && length(selected_models) > 1
+    overlay <- length(selected_models) > 1
     facet_ncol <- suppressWarnings(as.integer(input$tag_facet_ncol))
     if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 2
     facet_ncol <- min(max(facet_ncol, 1), 6)
@@ -761,7 +738,7 @@ mod_tagging_server <- function(input, output, session, rv) {
           geom_vline(data = tag_rr_all, aes(xintercept = upper_bound), color = "blue", linewidth = 0.9, linetype = "dashed") +
           coord_cartesian(xlim = c(0, 1), ylim = c(0, NA)) +
           scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05))) +
-          facet_wrap(~ panel, scales = "free_y", ncol = 4, labeller = as_labeller(panel_labels)) +
+          facet_wrap(~ panel, scales = "free_y", ncol = facet_ncol, labeller = as_labeller(panel_labels)) +
           scale_color_manual(values = scenario_colors, drop = FALSE) +
           labs(x = "Reporting rate", y = "Density",
                title = if (overlay) "Tag Reporting Rates (Overlay)" else paste("Tag Reporting Rates -", selected_models[1]),
@@ -781,7 +758,7 @@ mod_tagging_server <- function(input, output, session, rv) {
           geom_vline(data = tag_rr_all, aes(xintercept = upper_bound), color = "blue", linewidth = 0.9, linetype = "dashed") +
           coord_cartesian(xlim = c(0, 1), ylim = c(0, NA)) +
           scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05))) +
-          facet_wrap(~ panel, scales = "free_y", ncol = 4) +
+          facet_wrap(~ panel, scales = "free_y", ncol = facet_ncol) +
           labs(x = "Reporting rate", y = "Density", title = "Tag Reporting Rates (Model-specific panels; incompatible groups)") +
           theme_bw() +
           theme(strip.text = element_text(size = 8, face = "bold"), strip.background = element_rect(fill = "gray90"), panel.grid.minor = element_blank(), legend.position = "none")
@@ -828,7 +805,7 @@ mod_tagging_server <- function(input, output, session, rv) {
         ggplot(tag_summary, aes(x = x)) +
           geom_point(aes(y = recap_obs), color = "red", fill = "red", na.rm = TRUE, size = 1.5, alpha = 0.7, shape = 21) +
           geom_line(aes(y = recap_pred), na.rm = TRUE, linewidth = 0.9, color = "#2c7fb8") +
-          labs(x = unique(tag_summary$x_label)[1], y = "Tag recaptures (all fisheries combined)", title = paste("Tag Returns Over Time -", scenarios_name[1])) +
+          labs(x = unique(tag_summary$x_label)[1], y = "Tag recaptures (all fisheries combined)", title = paste("Tag Returns Over Time -", selected_models[1])) +
           theme_bw() +
           theme(panel.grid.minor = element_blank(), panel.grid.major = element_line(linewidth = 0.25, color = "gray85"), legend.position = "none")
       )
@@ -903,7 +880,7 @@ mod_tagging_server <- function(input, output, session, rv) {
           geom_point(aes(y = recap_obs), color = "red", fill = "red", na.rm = TRUE, size = 1, alpha = 0.7, shape = 21) +
           geom_line(aes(y = recap_pred), na.rm = TRUE, linewidth = 0.7, color = "#2c7fb8") +
           facet_wrap(~ tag_recapture_name, scales = "free_y", ncol = facet_ncol) +
-          labs(x = unique(tag_summary$x_label)[1], y = "Tag recaptures", title = paste("Tag Returns by Recapture Group -", scenarios_name[1])) +
+          labs(x = unique(tag_summary$x_label)[1], y = "Tag recaptures", title = paste("Tag Returns by Recapture Group -", selected_models[1])) +
           theme_bw() +
           theme(panel.grid.minor = element_blank(), panel.grid.major = element_line(linewidth = 0.25, color = "gray85"), strip.background = element_rect(fill = "gray90"), strip.text = element_text(face = "bold", size = 8), legend.position = "none")
       )
@@ -945,7 +922,7 @@ mod_tagging_server <- function(input, output, session, rv) {
         ggplot(tag_summary, aes(x = x)) +
           geom_point(data = tag_obs_only, aes(x = x, y = recap_obs), inherit.aes = FALSE, color = "red", fill = "red", na.rm = TRUE, size = 2, alpha = 0.7, shape = 21) +
           geom_line(aes(y = recap_pred), na.rm = TRUE, linewidth = 1, color = "#2c7fb8") +
-          labs(x = unique(tag_summary$x_label)[1], y = "Tag recaptures (all fisheries combined)", title = paste("Tag Attrition -", scenarios_name[1])) +
+          labs(x = unique(tag_summary$x_label)[1], y = "Tag recaptures (all fisheries combined)", title = paste("Tag Attrition -", selected_models[1])) +
           theme_bw() + theme(panel.grid.minor = element_blank(), panel.grid.major = element_line(linewidth = 0.25, color = "gray85"), legend.position = "none")
       )
     }
@@ -1002,7 +979,7 @@ mod_tagging_server <- function(input, output, session, rv) {
           geom_point(data = tag_obs_only, aes(x = x, y = recap_obs), inherit.aes = FALSE, color = "red", fill = "red", na.rm = TRUE, size = 1.5, alpha = 0.7, shape = 21) +
           geom_line(aes(y = recap_pred), na.rm = TRUE, linewidth = 0.8, color = "#2c7fb8") +
           facet_wrap(~ program, scales = "free_y", ncol = facet_ncol) +
-          labs(x = unique(tag_summary_program$x_label)[1], y = "Tag recaptures", title = paste("Tag Attrition by Program -", scenarios_name[1])) +
+          labs(x = unique(tag_summary_program$x_label)[1], y = "Tag recaptures", title = paste("Tag Attrition by Program -", selected_models[1])) +
           theme_bw() +
           theme(panel.grid.minor = element_blank(), panel.grid.major = element_line(linewidth = 0.25, color = "gray85"), legend.position = "none", strip.background = element_rect(fill = "gray90"), strip.text = element_text(face = "bold", size = 9))
       )
@@ -1061,7 +1038,7 @@ mod_tagging_server <- function(input, output, session, rv) {
           geom_point(data = tag_obs_only, aes(x = x, y = recap_obs), inherit.aes = FALSE, color = "red", fill = "red", na.rm = TRUE, size = 1.5, alpha = 0.7, shape = 21) +
           geom_line(aes(y = recap_pred), na.rm = TRUE, linewidth = 0.8, color = "#2c7fb8") +
           facet_wrap(~ recap.region, scales = "free_y", ncol = facet_ncol) +
-          labs(x = unique(tag_summary_region$x_label)[1], y = "Tag recaptures", title = paste("Tag Attrition by Recapture Region -", scenarios_name[1])) +
+          labs(x = unique(tag_summary_region$x_label)[1], y = "Tag recaptures", title = paste("Tag Attrition by Recapture Region -", selected_models[1])) +
           theme_bw() +
           theme(panel.grid.minor = element_blank(), panel.grid.major = element_line(linewidth = 0.25, color = "gray85"), legend.position = "none", strip.background = element_rect(fill = "gray90"), strip.text = element_text(face = "bold", size = 9))
       )
@@ -1106,7 +1083,7 @@ mod_fishery_process_ui <- function() {
             liveSearchPlaceholder = "Search fisheries..."
           )
         ),
-        numericInput("movement_facet_ncol", "Movement facet columns:", value = 4, min = 1, max = 12, step = 1),
+        numericInput("fishery_process_facet_ncol", "Facet columns:", value = 4, min = 1, max = 12, step = 1),
         shiny::hr(),
         h5("Download Plot", style = "font-weight: bold;"),
         actionButton("show_fishery_process_download_modal", "📥 Download Plot...", class = "btn-info", style = "width: 100%;")
@@ -1166,6 +1143,9 @@ mod_fishery_process_server <- function(input, output, session, rv) {
     fishery_map <- rv$FISHERY_MAPS[[scenarios_name[1]]]
     scenario_colors <- get_scenario_colors(scenarios_name)
     mode <- if (is.null(input$fishery_process_plot)) "selectivity_age" else input$fishery_process_plot
+    facet_ncol <- suppressWarnings(as.integer(input$fishery_process_facet_ncol))
+    if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 4
+    facet_ncol <- min(max(facet_ncol, 1), 12)
 
     if (mode %in% c("selectivity_age", "selectivity_length", "selectivity_weight")) {
       selected_fisheries <- suppressWarnings(as.numeric(input$fishery_process_fisheries))
@@ -1204,7 +1184,7 @@ mod_fishery_process_server <- function(input, output, session, rv) {
         return(
           ggplot(sel_data, aes(x = age, y = selectivity, color = Model)) +
             geom_line(linewidth = 1) +
-            facet_wrap(~ fishery_name, ncol = 4, scales = "free_y") +
+            facet_wrap(~ fishery_name, ncol = facet_ncol, scales = "free_y") +
             scale_color_manual("Model", values = scenario_colors) +
             labs(x = "Age class", y = "Selectivity", title = "Estimated Selectivity by Fishery (Age-based)") +
             theme_bw() +
@@ -1215,7 +1195,7 @@ mod_fishery_process_server <- function(input, output, session, rv) {
         return(
           ggplot(sel_data, aes(x = length, y = selectivity, color = Model)) +
             geom_line(linewidth = 1) +
-            facet_wrap(~ fishery_name, ncol = 4, scales = "free_y") +
+            facet_wrap(~ fishery_name, ncol = facet_ncol, scales = "free_y") +
             scale_color_manual("Model", values = scenario_colors) +
             labs(x = "Length (cm)", y = "Selectivity", title = "Estimated Selectivity by Fishery (Length-based)") +
             theme_bw() +
@@ -1226,17 +1206,13 @@ mod_fishery_process_server <- function(input, output, session, rv) {
       return(
         ggplot(sel_data, aes(x = weight, y = selectivity, color = Model)) +
           geom_line(linewidth = 1) +
-          facet_wrap(~ fishery_name, ncol = 4, scales = "free_y") +
+          facet_wrap(~ fishery_name, ncol = facet_ncol, scales = "free_y") +
           scale_color_manual("Model", values = scenario_colors) +
           labs(x = "Weight (kg)", y = "Selectivity", title = "Estimated Selectivity by Fishery (Weight-based)") +
           theme_bw() +
           theme(panel.grid.minor = element_blank(), panel.grid.major = element_line(linewidth = 0.25, color = "gray85"), legend.position = "bottom", legend.title = element_text(face = "bold"), strip.background = element_rect(fill = "gray90"), strip.text = element_text(face = "bold", size = 9))
       )
     }
-
-    facet_ncol <- suppressWarnings(as.integer(input$movement_facet_ncol))
-    if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 4
-    facet_ncol <- min(max(facet_ncol, 1), 12)
 
     move_all <- bind_rows(lapply(names(ParOut_list), function(model_name) {
       move_array <- diff_coffs_age_period(ParOut_list[[model_name]])
@@ -1277,6 +1253,7 @@ mod_population_biology_ui <- function() {
           "Natural Mortality at Age" = "natm",
           "Growth Curve" = "growth"
         )),
+        numericInput("population_biology_facet_ncol", "Facet columns:", value = 2, min = 1, max = 12, step = 1),
         shiny::hr(),
         h5("Download Plot", style = "font-weight: bold;"),
         actionButton("show_population_biology_download_modal", "📥 Download Plot...", class = "btn-info", style = "width: 100%;")
@@ -1302,6 +1279,9 @@ mod_population_biology_server <- function(input, output, session, rv) {
     ParOut_list <- subset_named(rv$ParOut_list, scenarios_name)
     scenario_colors <- get_scenario_colors(scenarios_name)
     mode <- if (is.null(input$population_biology_plot)) "srr" else input$population_biology_plot
+    facet_ncol <- suppressWarnings(as.integer(input$population_biology_facet_ncol))
+    if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 2
+    facet_ncol <- min(max(facet_ncol, 1), 12)
 
     if (mode == "srr") {
       adult_biomass <- bind_rows(lapply(names(RepOut_list), function(model_name) {
@@ -1338,7 +1318,7 @@ mod_population_biology_server <- function(input, output, session, rv) {
         ggplot() +
           geom_line(data = bh_data, aes(x = sb / sb_units, y = rec / rec_units), color = "black", linewidth = 1.2) +
           geom_point(data = srr_data, aes(x = sb / sb_units, y = rec / rec_units, fill = year), shape = 21, color = "black", size = 2.5) +
-          facet_wrap(~ Model, scales = "free") +
+          facet_wrap(~ Model, scales = "free", ncol = facet_ncol) +
           scale_fill_viridis_c("Year", option = "viridis") +
           ylim(c(0, NA)) +
           labs(x = paste0("Adult biomass (mt; ", format(sb_units, big.mark = ",", trim = TRUE, scientific = FALSE), "s)"),

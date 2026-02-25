@@ -63,6 +63,7 @@ mod_likelihood_ui <- function() {
             size = 10
           )
         ),
+        numericInput("lik_facet_ncol", "Facet columns:", value = 2, min = 1, max = 12, step = 1),
 
         shiny::hr(),
         h5("Download Plot", style = "font-weight: bold;"),
@@ -251,7 +252,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }
 
   # Create a standard likelihood profile plot
-  create_piner_plot <- function(data, group_var, label = NULL) {
+  create_piner_plot <- function(data, group_var, label = NULL, facet_ncol = 2) {
     if (nrow(data) == 0) return(NULL)
 
     unique_groups <- unique(data[[group_var]])
@@ -272,7 +273,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       scale_linewidth_manual(values = c("TRUE" = 1.5, "FALSE" = 0.7), guide = "none") +
       scale_size_manual(values = c("TRUE" = 3.5, "FALSE" = 2), guide = "none") +
       scale_shape_manual(values = rep(0:24, length.out = length(unique_groups))) +
-      facet_wrap(~scenario, scales = "free") +
+      facet_wrap(~scenario, scales = "free", ncol = facet_ncol) +
       scale_x_continuous(
         labels = function(x) x / 1000,
         name = bquote("Average biomass (" * 10^3 * " MT)")
@@ -1038,6 +1039,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
     group_col <- info$group_col
     label <- info$label
     plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else "piner"
+    facet_ncol <- suppressWarnings(as.integer(input$lik_facet_ncol))
+    if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 2
+    facet_ncol <- min(max(facet_ncol, 1), 12)
 
     if (!identical(plot_kind, "jitter") && !is.null(input$lik_groups) && length(input$lik_groups) > 0) {
       data <- data[data[[group_col]] %in% input$lik_groups, , drop = FALSE]
@@ -1097,7 +1101,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           geom_vline(xintercept = 0.001, linetype = "dotted", color = "gray50", linewidth = 0.6) +
           scale_x_log10() +
           coord_cartesian(ylim = c(-5, 20)) +
-          facet_wrap(~ scenario, scales = "free_x", ncol = 2) +
+          facet_wrap(~ scenario, scales = "free_x", ncol = facet_ncol) +
           scale_color_viridis_c(option = "D", name = "Jitter ID") +
           labs(
             x = "Maximum Gradient (log scale)",
@@ -1189,7 +1193,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           inherit.aes = FALSE,
           hjust = 1.05, vjust = 1.2, size = 3.4, fontface = "bold", color = "black"
         ) +
-        facet_wrap(~scenario, scales = "free_x", ncol = 2) +
+        facet_wrap(~scenario, scales = "free_x", ncol = facet_ncol) +
         scale_color_manual(values = peel_colors, breaks = peel_levels_chr, labels = peel_labels) +
         geom_hline(yintercept = 0.2, linetype = "dashed", color = "darkred") +
         geom_hline(yintercept = 0.5, linetype = "dashed", color = "darkgreen") +
@@ -1218,7 +1222,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           inherit.aes = FALSE,
           hjust = 1.05, vjust = 1.2, size = 3.4, fontface = "bold", color = "black"
         ) +
-        facet_wrap(~scenario, scales = "free_x", ncol = 2) +
+        facet_wrap(~scenario, scales = "free_x", ncol = facet_ncol) +
         scale_color_manual(values = peel_colors, breaks = peel_levels_chr, labels = peel_labels) +
         labs(
           x = "Year",
@@ -1239,7 +1243,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       )
     }
 
-    create_piner_plot(data, group_col, label)
+    create_piner_plot(data, group_col, label, facet_ncol = facet_ncol)
   })
 
   output$likelihood_plot <- renderPlot({
