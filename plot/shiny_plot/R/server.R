@@ -34,6 +34,7 @@ server <- function(input, output, session) {
     INDEX_FISHERIES_MAPS = NULL,      # Index fishery identifiers
     YearRanges = NULL,                # Year ranges for each scenario
     fishery_names_dfs = NULL,         # List of fishery names dataframes (one per model)
+    tag_rep_map_dfs = NULL,           # List of tag reporting maps (one per model)
     fishery_map_required = TRUE,      # Require fishery_map.R to enable map-dependent tabs
     fishery_map_missing_models = NULL # Models missing fishery_map.R
   )

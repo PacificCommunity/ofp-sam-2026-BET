@@ -362,6 +362,21 @@ server_data_load <- function(input, output, session, rv) {
           }
         })
         names(rv$fishery_names_dfs) <- names(rv$FISHERY_MAPS)
+
+        # Initialize tag reporting map dataframes (one per model) from tag_rep_map.R
+        rv$tag_rep_map_dfs <- lapply(names(results_named), function(model_name) {
+          map_path <- find_tag_rep_map_script(file.path(MODEL_DIR, model_name))
+          map_df <- load_tag_rep_map_from_r(map_path)
+          if (!is.data.frame(map_df)) {
+            return(data.frame(
+              tag_recapture_group = numeric(0),
+              tag_recapture_name = character(0),
+              stringsAsFactors = FALSE
+            ))
+          }
+          map_df
+        })
+        names(rv$tag_rep_map_dfs) <- names(results_named)
       
         incProgress(0.95, detail = "Finalizing...")
       

@@ -658,6 +658,27 @@ mod_tagging_server <- function(input, output, session, rv) {
 
     if (mode == "report") {
       get_reporting_group_labels <- function(model_name) {
+        tag_map_df <- NULL
+        if (!is.null(rv$tag_rep_map_dfs) && model_name %in% names(rv$tag_rep_map_dfs)) {
+          tag_map_df <- rv$tag_rep_map_dfs[[model_name]]
+        }
+        if (!is.data.frame(tag_map_df) || nrow(tag_map_df) == 0) {
+          scenario_dir <- tryCatch(file.path(input$model_dir, model_name), error = function(e) NULL)
+          tag_map_r <- find_tag_rep_map_script(scenario_dir)
+          tag_map_df <- load_tag_rep_map_from_r(tag_map_r)
+        }
+        if (is.data.frame(tag_map_df) && nrow(tag_map_df) > 0) {
+          return(
+            tag_map_df %>%
+              transmute(
+                group = as.numeric(tag_recapture_group),
+                group_name = as.character(tag_recapture_name)
+              ) %>%
+              filter(is.finite(group), !is.na(group_name), nzchar(group_name)) %>%
+              arrange(group)
+          )
+        }
+
         fmap <- rv$FISHERY_MAPS[[model_name]]
         if (is.null(fmap) || !is.data.frame(fmap)) {
           return(data.frame(group = numeric(0), group_name = character(0), stringsAsFactors = FALSE))

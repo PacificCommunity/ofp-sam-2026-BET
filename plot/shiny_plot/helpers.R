@@ -53,6 +53,18 @@ find_fishery_map_script <- function(model_path) {
   cands[1]
 }
 
+find_tag_rep_map_script <- function(model_path) {
+  if (is.null(model_path) || !dir.exists(model_path)) return(NULL)
+  cands <- list.files(
+    model_path,
+    pattern = "^tag_rep_map\\.[Rr]$",
+    full.names = TRUE,
+    ignore.case = TRUE
+  )
+  if (length(cands) == 0) return(NULL)
+  cands[1]
+}
+
 # Safely load fishery_map from an R script without executing unrelated side effects.
 # Supported patterns are assignments to `fishery_map` and updates via `$<-`.
 load_fishery_map_from_r <- function(map_r_path) {
@@ -82,6 +94,37 @@ load_fishery_map_from_r <- function(map_r_path) {
   out$tag_recapture_name <- as.character(out$tag_recapture_name)
   out <- out[is.finite(out$fishery), , drop = FALSE]
   out <- out[order(out$fishery), , drop = FALSE]
+  rownames(out) <- NULL
+  out
+}
+
+# Safely load tag reporting labels from tag_rep_map.R.
+# Expected object name is `tag_map`.
+load_tag_rep_map_from_r <- function(map_r_path) {
+  if (is.null(map_r_path) || !file.exists(map_r_path)) return(NULL)
+
+  env <- new.env(parent = globalenv())
+  env$save <- function(...) invisible(NULL)
+  ok <- tryCatch({
+    sys.source(map_r_path, envir = env, keep.source = FALSE)
+    TRUE
+  }, error = function(e) FALSE)
+  if (!ok) return(NULL)
+
+  if (!exists("tag_map", envir = env, inherits = FALSE)) return(NULL)
+  map_df <- get("tag_map", envir = env, inherits = FALSE)
+  if (!is.data.frame(map_df)) return(NULL)
+
+  required_cols <- c("tag_recapture_group", "tag_recapture_name")
+  if (!all(required_cols %in% names(map_df))) return(NULL)
+
+  out <- map_df[, required_cols, drop = FALSE]
+  out$tag_recapture_group <- suppressWarnings(as.numeric(out$tag_recapture_group))
+  out$tag_recapture_name <- as.character(out$tag_recapture_name)
+  out <- out[is.finite(out$tag_recapture_group), , drop = FALSE]
+  out <- out[!is.na(out$tag_recapture_name) & nzchar(out$tag_recapture_name), , drop = FALSE]
+  out <- out[order(out$tag_recapture_group), , drop = FALSE]
+  out <- out[!duplicated(out$tag_recapture_group), , drop = FALSE]
   rownames(out) <- NULL
   out
 }

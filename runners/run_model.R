@@ -99,7 +99,9 @@ keep_top <- c(
   "model_payload.rds",
   "model_info.rds",
   "fishery_map.R",
-  "fishery_map.r"
+  "fishery_map.r",
+  "tag_rep_map.r",
+  "tag_rep_map.R"
 )
 
 if (!is.null(payload$files$par) && file.exists(payload$files$par)) {
