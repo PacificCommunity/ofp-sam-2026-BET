@@ -14,7 +14,7 @@ mod_wf_ui <- function() {
             # Scenario selector (1 selected = single, 2+ selected = overlay)
             pickerInput(
               "wf_scenarios",
-              "Scenarios:",
+              "Models:",
               choices = NULL,
               selected = NULL,
               multiple = TRUE,
@@ -23,9 +23,9 @@ mod_wf_ui <- function() {
                 selectAllText = "Select All",
                 deselectAllText = "Deselect All",
                 selectedTextFormat = "count > 2",
-                countSelectedText = "{0} scenarios selected",
+                countSelectedText = "{0} models selected",
                 liveSearch = TRUE,
-                liveSearchPlaceholder = "Search scenarios...",
+                liveSearchPlaceholder = "Search models...",
                 size = 10
               )
             ),
@@ -329,7 +329,7 @@ mod_wf_server <- function(input, output, session, rv) {
       # Check if any scenarios selected
       if (length(scenarios_to_use) == 0) {
         p <- ggplot() + 
-          annotate("text", x = 0.5, y = 0.5, label = "No scenarios selected", size = 6, color = "#999") +
+          annotate("text", x = 0.5, y = 0.5, label = "No models selected", size = 6, color = "#999") +
           theme_void()
         return(p)
       }
@@ -677,8 +677,8 @@ mod_wf_server <- function(input, output, session, rv) {
             linewidth = 1.2
           ) +
           facet_wrap(~fishery_display, scales = "free_y", ncol = ncol_facet) +
-          scale_fill_manual(values = c("Observed" = observed_fill)) +
-          scale_color_viridis_d() +
+          scale_fill_manual(values = c("Observed" = observed_fill), guide = "none") +
+          scale_color_viridis_d(name = "Model") +
           labs(
             title = "All selected fisheries - all selected years combined",
             subtitle = paste0("Years: ", min(input$wf_years), " to ", max(input$wf_years)),
@@ -710,8 +710,8 @@ mod_wf_server <- function(input, output, session, rv) {
             linewidth = 1.2
           ) +
           facet_wrap(~year, scales = "free_y", ncol = ncol_facet) +
-          scale_fill_manual(values = c("Observed" = observed_fill)) +
-          scale_color_manual(values = c("Predicted" = "#E31A1C")) +
+          scale_fill_manual(values = c("Observed" = observed_fill), guide = "none") +
+          scale_color_manual(name = "Model", values = c("Predicted" = "#E31A1C")) +
           labs(
             title = paste(fishery_name, "-", unique(as.character(plot_data$Scenario))[1]),
             x = "Weight (kg)", y = "Sample count"
@@ -739,8 +739,8 @@ mod_wf_server <- function(input, output, session, rv) {
                     aes(x = weight, y = pred, color = Scenario),
                     linewidth = 1.2) +
           facet_wrap(~year, scales = "free_y", ncol = ncol_facet) +
-          scale_fill_manual(values = c("Observed" = observed_fill)) +
-          scale_color_viridis_d() +
+          scale_fill_manual(values = c("Observed" = observed_fill), guide = "none") +
+          scale_color_viridis_d(name = "Model") +
           labs(title = paste(fishery_name, "- Base:", input$wf_model,
                              paste0("(", n_years, " years)")),
                x = "Weight (kg)", y = "Sample count") +

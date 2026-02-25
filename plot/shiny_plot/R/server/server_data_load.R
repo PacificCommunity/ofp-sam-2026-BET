@@ -45,7 +45,7 @@ server_data_load <- function(input, output, session, rv) {
       
         # Check if any scenarios found
         if (length(model_folders) == 0) {
-          showNotification("No valid scenario folders found!", type = "error", duration = 5)
+          showNotification("No valid model folders found!", type = "error", duration = 5)
           return(NULL)
         }
       
@@ -431,7 +431,7 @@ server_data_load <- function(input, output, session, rv) {
           HTML(paste0(
             "<strong>✓ Successfully loaded (parallel mode)!</strong><br/>",
             "Directory: ", basename(MODEL_DIR), "<br/>",
-            "Scenarios: ", length(results_named), "<br/>",
+            "Models: ", length(results_named), "<br/>",
             "Workers: ", n_cores, " parallel core", if(n_cores > 1) "s" else "", "<br/>",
             "Names: ", paste(names(results_named), collapse = ", ")
           )), 

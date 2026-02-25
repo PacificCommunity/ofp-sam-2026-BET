@@ -14,7 +14,7 @@ mod_stock_ui <- function() {
             # Scenarios selector with dropdown
             pickerInput(
               "stock_scenarios",
-              "Scenarios:",
+              "Models:",
               choices = NULL,
               selected = NULL,
               multiple = TRUE,
@@ -23,9 +23,9 @@ mod_stock_ui <- function() {
                 selectAllText = "Select All",
                 deselectAllText = "Deselect All",
                 selectedTextFormat = "count > 2",
-                countSelectedText = "{0} scenarios selected",
+                countSelectedText = "{0} models selected",
                 liveSearch = TRUE,
-                liveSearchPlaceholder = "Search scenarios...",
+                liveSearchPlaceholder = "Search models...",
                 size = 10
               )
             ),
@@ -36,7 +36,7 @@ mod_stock_ui <- function() {
                          class = "btn-info", 
                          style = "width: 100%;",
                          icon = icon("download")),
-            helpText("Select scenarios to display", style = "margin-top: 10px;")
+            helpText("Select models to display", style = "margin-top: 10px;")
           ),
           
           # Stock status plots
@@ -63,7 +63,7 @@ mod_stock_server <- function(input, output, session, rv) {
       # Check if any scenarios selected
       if (length(input$stock_scenarios) == 0) {
         p <- ggplot() + 
-          annotate("text", x = 0.5, y = 0.5, label = "No scenarios selected", size = 6, color = "#999") +
+          annotate("text", x = 0.5, y = 0.5, label = "No models selected", size = 6, color = "#999") +
           theme_void()
         return(p)
       }

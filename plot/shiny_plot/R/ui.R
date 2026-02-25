@@ -21,10 +21,42 @@ ui <- dashboardPage(
   dashboardSidebar(
     div(
       style = "margin: 10px 12px 8px 12px; padding: 10px; background: #f7fbff; border: 1px solid #cfe3f2; border-left: 4px solid #3c8dbc; border-radius: 4px; color: #1f2d3d; line-height: 1.35;",
-      tags$div("Created by Kyuhan Kim (SPC)", style = "font-weight: 700; font-size: 12px;"),
-      tags$div("Contact info: kyuhank@spc.int", style = "font-size: 11px; margin-top: 2px;")
+      tags$div(
+        style = "margin-bottom: 6px;",
+        tags$img(src = "spc-logo.svg", alt = "Pacific Community (SPC) logo", style = "max-width: 100%; height: 34px; display: block;")
+      ),
+      tags$div("Created by Kyuhan Kim", style = "font-weight: 700; font-size: 12px;"),
+      tags$div(
+        style = "font-size: 11px; margin-top: 2px;",
+        "Contact info: ",
+        tags$a("kyuhank@spc.int", href = "mailto:kyuhank@spc.int", style = "color: #3c8dbc;")
+      ),
+      tags$div(
+        style = "font-size: 11px; margin-top: 2px;",
+        "GitHub: ",
+        tags$a("github.com/kyuhank", href = "https://github.com/kyuhank", target = "_blank", style = "color: #3c8dbc;")
+      )
     ),
     
+    # Global model filter (shown after data is loaded)
+    conditionalPanel(
+      condition = "output.data_loaded == true",
+      h5("🎯 Filter Models", style = "padding-left: 15px; font-weight: bold;"),
+      pickerInput("scenarios", NULL,
+                  choices = NULL,
+                  selected = NULL,
+                  multiple = TRUE,
+                  options = pickerOptions(
+                    actionsBox = TRUE,
+                    selectAllText = "All",
+                    deselectAllText = "None",
+                    selectedTextFormat = "count > 2",
+                    liveSearch = TRUE
+                  ))
+    ),
+
+    shiny::hr(),
+
     # Navigation menu
     sidebarMenu(
       id = "tabs",
@@ -67,7 +99,7 @@ ui <- dashboardPage(
                    style = "margin-left: 8px;")
     ),
     
-    helpText("Folder containing scenario subfolders", 
+    helpText("Folder containing model subfolders", 
              style = "margin: 0 15px 10px 15px; font-size: 11px; color: #777;"),
     
     # Display detected models before loading with dropdown selection
@@ -123,25 +155,6 @@ ui <- dashboardPage(
                    icon = icon("upload"),
                    class = "btn-primary",
                    style = "width: 100%;")
-    ),
-    
-    shiny::hr(),
-    
-    # Scenario filter (shown after data is loaded)
-    conditionalPanel(
-      condition = "output.data_loaded == true",
-      h5("🎯 Filter Scenarios", style = "padding-left: 15px; font-weight: bold;"),
-      pickerInput("scenarios", NULL,
-                  choices = NULL,
-                  selected = NULL,
-                  multiple = TRUE,
-                  options = pickerOptions(
-                    actionsBox = TRUE,
-                    selectAllText = "All",
-                    deselectAllText = "None",
-                    selectedTextFormat = "count > 2",
-                    liveSearch = TRUE
-                  ))
     )
   ),
   
@@ -268,6 +281,30 @@ ui <- dashboardPage(
         }
         .editable-cell:hover {
           background-color: #ffff99;
+        }
+
+        /* Make selected picker items easier to identify (models and other multi-selects) */
+        .bootstrap-select .dropdown-menu li.selected > a,
+        .bootstrap-select .dropdown-menu li.selected > a:hover,
+        .bootstrap-select .dropdown-menu li.selected > a:focus {
+          background-color: #d9ecfa !important;
+          color: #123a56 !important;
+          font-weight: 700;
+        }
+
+        .bootstrap-select .dropdown-menu li.selected .text {
+          color: #123a56 !important;
+          font-weight: 700;
+        }
+
+        .bootstrap-select .dropdown-menu li.selected .check-mark {
+          color: #1f78b4 !important;
+          opacity: 1 !important;
+          font-weight: 700;
+        }
+
+        .bootstrap-select .dropdown-toggle .filter-option {
+          font-weight: 600;
         }
       "))
     ),

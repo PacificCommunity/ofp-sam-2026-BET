@@ -12,7 +12,7 @@ mod_cpue_ui <- function() {
 
         pickerInput(
           "cpue_scenarios",
-          "Scenarios:",
+          "Models:",
           choices = NULL,
           selected = NULL,
           multiple = TRUE,
@@ -21,9 +21,9 @@ mod_cpue_ui <- function() {
             selectAllText = "Select All",
             deselectAllText = "Deselect All",
             selectedTextFormat = "count > 2",
-            countSelectedText = "{0} scenarios selected",
+            countSelectedText = "{0} models selected",
             liveSearch = TRUE,
-            liveSearchPlaceholder = "Search scenarios...",
+            liveSearchPlaceholder = "Search models...",
             size = 10
           )
         ),
@@ -32,8 +32,8 @@ mod_cpue_ui <- function() {
           "cpue_view_mode",
           "Display:",
           choices = c(
-            "Overlay all scenarios" = "overlay",
-            "By scenario" = "by_scenario"
+            "Overlay all models" = "overlay",
+            "By model" = "by_scenario"
           ),
           selected = "overlay"
         ),
@@ -73,7 +73,7 @@ mod_cpue_ui <- function() {
                      class = "btn-info",
                      style = "width: 100%;",
                      icon = icon("download")),
-        helpText("Select scenarios and fisheries to display", style = "margin-top: 10px;")
+        helpText("Select models and fisheries to display", style = "margin-top: 10px;")
       ),
 
       box(
@@ -153,7 +153,7 @@ mod_cpue_server <- function(input, output, session, rv) {
     available_fisheries <- get_available_cpue_fisheries(input$cpue_scenarios)
     if (length(available_fisheries) == 0) {
       updatePickerInput(session, "cpue_fisheries", choices = character(0), selected = character(0))
-      showNotification("No CPUE fisheries detected in selected scenarios", type = "warning", duration = 3)
+      showNotification("No CPUE fisheries detected in selected models", type = "warning", duration = 3)
       return()
     }
 
@@ -187,7 +187,7 @@ mod_cpue_server <- function(input, output, session, rv) {
     if (length(input$cpue_scenarios) == 0 || length(input$cpue_fisheries) == 0) {
       return(
         ggplot() +
-          annotate("text", x = 0.5, y = 0.5, label = "No scenarios or fisheries selected", size = 6, color = "#999") +
+          annotate("text", x = 0.5, y = 0.5, label = "No models or fisheries selected", size = 6, color = "#999") +
           theme_void()
       )
     }
@@ -230,7 +230,7 @@ mod_cpue_server <- function(input, output, session, rv) {
           geom_point(size = 1.2, alpha = 0.55) +
           facet_grid(Scenario ~ fishery_name, scales = "free_y") +
           scale_color_manual(values = scenario_colors) +
-          labs(x = "Year + Season", y = "Residual (obs - fit)", title = "CPUE Residuals by Scenario") +
+          labs(x = "Year + Season", y = "Residual (obs - fit)", title = "CPUE Residuals by Model") +
           theme_bw(base_size = 12) +
           theme(
             legend.position = "none",
@@ -273,7 +273,7 @@ mod_cpue_server <- function(input, output, session, rv) {
           geom_line(aes(y = fit, color = Scenario), linewidth = 1.1, alpha = 0.9) +
           facet_grid(Scenario ~ fishery_name, scales = "free_y") +
           scale_color_manual(values = scenario_colors) +
-          labs(x = "Year + Season", y = "CPUE", title = "CPUE Fits by Scenario") +
+          labs(x = "Year + Season", y = "CPUE", title = "CPUE Fits by Model") +
           theme_bw(base_size = 12) +
           theme(
             legend.position = "none",

@@ -63,7 +63,7 @@ mod_harvest_ui <- function() {
     fluidRow(
       box(
         title = "Settings", width = 3, solidHeader = TRUE, status = "success",
-        pickerInput("harvest_scenarios", "Scenarios:", choices = NULL, selected = NULL, multiple = TRUE,
+        pickerInput("harvest_scenarios", "Models:", choices = NULL, selected = NULL, multiple = TRUE,
                     options = pickerOptions(actionsBox = TRUE, liveSearch = TRUE, selectedTextFormat = "count > 2")),
         selectInput("harvest_plot", "Plot:", choices = c(
           "Spawning/Recruitment/SP/F (combined)" = "spawning",
@@ -94,7 +94,7 @@ mod_harvest_server <- function(input, output, session, rv) {
   harvest_plot_reactive <- reactive({
     req(rv$data_loaded, input$harvest_scenarios)
     scenarios_name <- input$harvest_scenarios
-    if (length(scenarios_name) == 0) return(ggplot() + theme_void() + annotate("text", x = 0.5, y = 0.5, label = "No scenarios selected"))
+    if (length(scenarios_name) == 0) return(ggplot() + theme_void() + annotate("text", x = 0.5, y = 0.5, label = "No models selected"))
 
     RepOut_list <- subset_named(rv$RepOut_list, scenarios_name)
     ParOut_list <- subset_named(rv$ParOut_list, scenarios_name)
@@ -198,7 +198,7 @@ mod_harvest_server <- function(input, output, session, rv) {
         ggplot(SBdep, aes(x = Year, y = Quant, color = Scenario)) + geom_line(linewidth = 2) +
           scale_color_manual(values = scenario_colors) + theme_bw() +
           theme(legend.position = "right", legend.title = element_text(face = "bold"), legend.key.width = unit(1.5, "cm")) +
-          labs(color = "Scenario") + guides(color = guide_legend(override.aes = list(linewidth = 2)))
+          labs(color = "Model") + guides(color = guide_legend(override.aes = list(linewidth = 2)))
       )
 
       combined_ncol <- min(max(as.integer(facet_ncol), 1), 4)
@@ -246,7 +246,7 @@ mod_harvest_server <- function(input, output, session, rv) {
         ggplot(depletion_combined, aes(x = year, y = depletion, color = scenario)) + geom_line(linewidth = 2) +
           scale_color_manual(values = scenario_colors) + theme_bw() +
           theme(legend.position = "right", legend.title = element_text(face = "bold"), legend.key.width = unit(1.5, "cm")) +
-          labs(color = "Scenario") + guides(color = guide_legend(override.aes = list(linewidth = 2)))
+          labs(color = "Model") + guides(color = guide_legend(override.aes = list(linewidth = 2)))
       )
       return(cowplot::plot_grid(depletion_plot, scenario_legend, ncol = 2, rel_widths = c(4, 0.8)))
     }
@@ -276,7 +276,7 @@ mod_harvest_server <- function(input, output, session, rv) {
         ggplot(rec_combined, aes(x = year, y = data, color = scenario)) + geom_line(linewidth = 2) +
           scale_color_manual(values = scenario_colors) + theme_bw() +
           theme(legend.position = "right", legend.title = element_text(face = "bold"), legend.key.width = unit(1.5, "cm")) +
-          labs(color = "Scenario") + guides(color = guide_legend(override.aes = list(linewidth = 2)))
+          labs(color = "Model") + guides(color = guide_legend(override.aes = list(linewidth = 2)))
       )
       return(cowplot::plot_grid(rec_plot, scenario_legend, ncol = 2, rel_widths = c(4, 0.8)))
     }
@@ -341,7 +341,7 @@ mod_harvest_server <- function(input, output, session, rv) {
         ggplot(fm_plot_data, aes(x = year, y = F, color = scenario)) + geom_line(linewidth = 2) +
           scale_color_manual(values = scenario_colors) + theme_bw() +
           theme(legend.position = "right", legend.title = element_text(face = "bold"), legend.key.width = unit(1.5, "cm")) +
-          labs(color = "Scenario") + guides(color = guide_legend(override.aes = list(linewidth = 2)))
+          labs(color = "Model") + guides(color = guide_legend(override.aes = list(linewidth = 2)))
       )
 
       lifestage_legend <- cowplot::get_legend(
@@ -441,7 +441,7 @@ mod_harvest_server <- function(input, output, session, rv) {
         ggplot(bio_combined, aes(x = year, y = data, color = scenario)) + geom_line(linewidth = 2) +
           scale_color_manual(values = scenario_colors) + theme_bw() +
           theme(legend.position = "right", legend.title = element_text(face = "bold"), legend.key.width = unit(1.5, "cm")) +
-          labs(color = "Scenario") + guides(color = guide_legend(override.aes = list(linewidth = 2)))
+          labs(color = "Model") + guides(color = guide_legend(override.aes = list(linewidth = 2)))
       )
 
       status_legend <- cowplot::get_legend(
@@ -470,35 +470,44 @@ mod_tagging_ui <- function() {
     fluidRow(
       box(
         title = "Settings", width = 3, solidHeader = TRUE, status = "info",
-        pickerInput("tag_scenarios", "Scenarios:", choices = NULL, selected = NULL, multiple = TRUE,
+        pickerInput("tag_scenarios", "Models:", choices = NULL, selected = NULL, multiple = TRUE,
                     options = pickerOptions(actionsBox = TRUE, liveSearch = TRUE, selectedTextFormat = "count > 2")),
-        radioButtons(
-          "tag_time_mode",
-          "Time axis:",
-          choices = c(
-            "By year" = "year",
-            "By model step" = "step"
-          ),
-          selected = "year"
+        conditionalPanel(
+          condition = "input.tag_plot != 'report'",
+          radioButtons(
+            "tag_time_mode",
+            "Time axis:",
+            choices = c(
+              "By year" = "year",
+              "By model step" = "step"
+            ),
+            selected = "year"
+          )
         ),
-        pickerInput(
-          "tag_years",
-          "Years:",
-          choices = NULL,
-          selected = NULL,
-          multiple = TRUE,
-          options = pickerOptions(
-            actionsBox = TRUE,
-            selectAllText = "Select All",
-            deselectAllText = "Deselect All",
-            selectedTextFormat = "count > 3",
-            countSelectedText = "{0} years selected",
-            liveSearch = TRUE,
-            liveSearchPlaceholder = "Search years..."
+        conditionalPanel(
+          condition = "input.tag_plot == 'returns_all' || input.tag_plot == 'returns_group'",
+          pickerInput(
+            "tag_years",
+            "Years:",
+            choices = NULL,
+            selected = NULL,
+            multiple = TRUE,
+            options = pickerOptions(
+              actionsBox = TRUE,
+              selectAllText = "Select All",
+              deselectAllText = "Deselect All",
+              selectedTextFormat = "count > 3",
+              countSelectedText = "{0} years selected",
+              liveSearch = TRUE,
+              liveSearchPlaceholder = "Search years..."
+            )
           )
         ),
         numericInput("tag_facet_ncol", "Facet columns:", value = 4, min = 1, max = 6, step = 1),
-        checkboxInput("tag_rr_nonneg_only", "Tag RR filter: exclude rr <= 0", value = FALSE),
+        conditionalPanel(
+          condition = "input.tag_plot == 'report'",
+          checkboxInput("tag_rr_nonneg_only", "Tag RR filter: exclude rr <= 0", value = FALSE)
+        ),
         selectInput("tag_plot", "Plot:", choices = c(
           "Tag Reporting Rates by Group" = "report",
           "Tag Returns Over Time (All Combined)" = "returns_all",
@@ -546,7 +555,7 @@ mod_tagging_server <- function(input, output, session, rv) {
   tagging_plot_reactive <- reactive({
     req(rv$data_loaded, input$tag_scenarios)
     scenarios_name <- input$tag_scenarios
-    if (length(scenarios_name) == 0) return(ggplot() + theme_void() + annotate("text", x = 0.5, y = 0.5, label = "No scenarios selected"))
+    if (length(scenarios_name) == 0) return(ggplot() + theme_void() + annotate("text", x = 0.5, y = 0.5, label = "No models selected"))
 
     time_mode <- if (is.null(input$tag_time_mode)) "year" else input$tag_time_mode
     mode <- if (is.null(input$tag_plot)) "report" else input$tag_plot
@@ -1059,7 +1068,7 @@ mod_fishery_process_ui <- function() {
     fluidRow(
       box(
         title = "Settings", width = 3, solidHeader = TRUE, status = "warning",
-        pickerInput("fishery_process_scenarios", "Scenarios:", choices = NULL, selected = NULL, multiple = TRUE,
+        pickerInput("fishery_process_scenarios", "Models:", choices = NULL, selected = NULL, multiple = TRUE,
                     options = pickerOptions(actionsBox = TRUE, liveSearch = TRUE, selectedTextFormat = "count > 2")),
         selectInput("fishery_process_plot", "Plot:", choices = c(
           "Fishery Selectivity (Age)" = "selectivity_age",
@@ -1136,7 +1145,7 @@ mod_fishery_process_server <- function(input, output, session, rv) {
   fishery_process_plot_reactive <- reactive({
     req(rv$data_loaded, input$fishery_process_scenarios)
     scenarios_name <- input$fishery_process_scenarios
-    if (length(scenarios_name) == 0) return(ggplot() + theme_void() + annotate("text", x = 0.5, y = 0.5, label = "No scenarios selected"))
+    if (length(scenarios_name) == 0) return(ggplot() + theme_void() + annotate("text", x = 0.5, y = 0.5, label = "No models selected"))
 
     RepOut_list <- subset_named(rv$RepOut_list, scenarios_name)
     ParOut_list <- subset_named(rv$ParOut_list, scenarios_name)
@@ -1245,7 +1254,7 @@ mod_population_biology_ui <- function() {
     fluidRow(
       box(
         title = "Settings", width = 3, solidHeader = TRUE, status = "primary",
-        pickerInput("population_biology_scenarios", "Scenarios:", choices = NULL, selected = NULL, multiple = TRUE,
+        pickerInput("population_biology_scenarios", "Models:", choices = NULL, selected = NULL, multiple = TRUE,
                     options = pickerOptions(actionsBox = TRUE, liveSearch = TRUE, selectedTextFormat = "count > 2")),
         selectInput("population_biology_plot", "Plot:", choices = c(
           "Stock-Recruitment Relationship" = "srr",
@@ -1253,6 +1262,10 @@ mod_population_biology_ui <- function() {
           "Natural Mortality at Age" = "natm",
           "Growth Curve" = "growth"
         )),
+        conditionalPanel(
+          condition = "input.population_biology_plot == 'growth'",
+          checkboxInput("population_biology_show_growth_band", "Show growth band (LAA +/- 1.96 SD)", value = TRUE)
+        ),
         numericInput("population_biology_facet_ncol", "Facet columns:", value = 2, min = 1, max = 12, step = 1),
         shiny::hr(),
         h5("Download Plot", style = "font-weight: bold;"),
@@ -1273,7 +1286,7 @@ mod_population_biology_server <- function(input, output, session, rv) {
   population_biology_plot_reactive <- reactive({
     req(rv$data_loaded, input$population_biology_scenarios)
     scenarios_name <- input$population_biology_scenarios
-    if (length(scenarios_name) == 0) return(ggplot() + theme_void() + annotate("text", x = 0.5, y = 0.5, label = "No scenarios selected"))
+    if (length(scenarios_name) == 0) return(ggplot() + theme_void() + annotate("text", x = 0.5, y = 0.5, label = "No models selected"))
 
     RepOut_list <- subset_named(rv$RepOut_list, scenarios_name)
     ParOut_list <- subset_named(rv$ParOut_list, scenarios_name)
@@ -1372,18 +1385,16 @@ mod_population_biology_server <- function(input, output, session, rv) {
       model_name <- names(RepOut_list)[i]
       tmp_laa <- c(aperm(mean_laa(tmp_rep), c(4, 1, 2, 3, 5, 6)))
       tmp_sd_laa <- c(aperm(sd_laa(tmp_rep), c(4, 1, 2, 3, 5, 6)))
-      if (length(RepOut_list) == 1) {
-        tmp_lower <- tmp_laa - 1.96 * tmp_sd_laa
-        tmp_upper <- tmp_laa + 1.96 * tmp_sd_laa
-      } else {
-        tmp_lower <- tmp_laa
-        tmp_upper <- tmp_laa
-      }
+      tmp_lower <- tmp_laa - 1.96 * tmp_sd_laa
+      tmp_upper <- tmp_laa + 1.96 * tmp_sd_laa
       data.frame(Model = model_name, age = 1:length(tmp_laa), length = tmp_laa, lower = tmp_lower, upper = tmp_upper)
     })) %>% mutate(Model = factor(Model, levels = scenarios_name))
 
-    ggplot(growth_data, aes(x = age, y = length, color = Model, fill = Model)) +
-      geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = NA) +
+    p_growth <- ggplot(growth_data, aes(x = age, y = length, color = Model, fill = Model))
+    if (isTRUE(input$population_biology_show_growth_band)) {
+      p_growth <- p_growth + geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.15, color = NA)
+    }
+    p_growth +
       geom_line(linewidth = 1.5) +
       scale_color_manual("Model", values = scenario_colors) +
       scale_fill_manual("Model", values = scenario_colors) +

@@ -53,4 +53,42 @@ server <- function(input, output, session) {
   mod_fishery_process_server(input, output, session, rv)
   mod_population_biology_server(input, output, session, rv)
   server_nav(input, output, session, rv)
+
+  # Keep per-tab model pickers aligned with the global "Filter Models" selection.
+  observeEvent(list(rv$data_loaded, input$scenarios), {
+    req(rv$data_loaded)
+    selected_models <- input$scenarios
+    if (is.null(selected_models)) selected_models <- character(0)
+
+    loaded_models <- names(rv$ParOut_list)
+    selected_models <- intersect(selected_models, loaded_models)
+
+    map_models <- names(rv$FISHERY_MAPS)[!vapply(rv$FISHERY_MAPS, is.null, logical(1))]
+    filtered_map_models <- intersect(selected_models, map_models)
+
+    picker_ids_all <- c(
+      "stock_scenarios",
+      "lik_scenarios",
+      "harvest_scenarios",
+      "tag_scenarios",
+      "fishery_process_scenarios",
+      "population_biology_scenarios"
+    )
+    for (id in picker_ids_all) {
+      updatePickerInput(session, id, choices = selected_models, selected = selected_models)
+    }
+
+    picker_ids_map <- c("cpue_scenarios", "lf_scenarios", "wf_scenarios")
+    for (id in picker_ids_map) {
+      updatePickerInput(session, id, choices = filtered_map_models, selected = filtered_map_models)
+    }
+
+    current_bound <- isolate(input$bound_model)
+    bound_selected <- if (!is.null(current_bound) && current_bound %in% selected_models) current_bound else selected_models[1]
+    updateSelectInput(session, "bound_model", choices = selected_models, selected = bound_selected)
+
+    current_fishery_names_model <- isolate(input$fishery_names_model)
+    fishery_names_selected <- if (!is.null(current_fishery_names_model) && current_fishery_names_model %in% selected_models) current_fishery_names_model else selected_models[1]
+    updateSelectInput(session, "fishery_names_model", choices = selected_models, selected = fishery_names_selected)
+  }, ignoreInit = TRUE)
 }
