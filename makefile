@@ -16,6 +16,9 @@ hessian:
 
 retro:
 	Rscript runners/run_retro.R
+	
+TagExclusion:
+	Rscript sensitivities/TagExclusion.R
 
 collate-hessian:
 	Rscript tools/collate_hessian_mfcl.R
