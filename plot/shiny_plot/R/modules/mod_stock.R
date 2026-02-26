@@ -197,6 +197,12 @@ mod_stock_server <- function(input, output, session, rv) {
         return(p)
       })
     })
+    stock_plot_reactive <- bindCache(
+      stock_plot_reactive,
+      rv$data_loaded,
+      input$model_dir,
+      input$stock_scenarios
+    )
   
     # Render stock status plot
     output$stock_plot <- renderPlot({

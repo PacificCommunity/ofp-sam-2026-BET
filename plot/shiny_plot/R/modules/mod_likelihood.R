@@ -1245,6 +1245,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     create_piner_plot(data, group_col, label, facet_ncol = facet_ncol)
   })
+  likelihood_plot_reactive <- bindCache(
+    likelihood_plot_reactive,
+    rv$data_loaded,
+    input$model_dir,
+    input$lik_scenarios,
+    input$lik_profile_type,
+    input$lik_groups,
+    input$lik_facet_ncol
+  )
 
   output$likelihood_plot <- renderPlot({
     likelihood_plot_reactive()

@@ -63,8 +63,9 @@ server <- function(input, output, session) {
     loaded_models <- names(rv$ParOut_list)
     selected_models <- intersect(selected_models, loaded_models)
 
-    map_models <- names(rv$FISHERY_MAPS)[!vapply(rv$FISHERY_MAPS, is.null, logical(1))]
-    filtered_map_models <- intersect(selected_models, map_models)
+    cpue_models <- intersect(selected_models, names(rv$RepOut_list))
+    lf_models <- intersect(selected_models, names(rv$LengOut_list)[!vapply(rv$LengOut_list, is.null, logical(1))])
+    wf_models <- intersect(selected_models, names(rv$WeightOut_list)[!vapply(rv$WeightOut_list, is.null, logical(1))])
 
     picker_ids_all <- c(
       "stock_scenarios",
@@ -78,10 +79,9 @@ server <- function(input, output, session) {
       updatePickerInput(session, id, choices = selected_models, selected = selected_models)
     }
 
-    picker_ids_map <- c("cpue_scenarios", "lf_scenarios", "wf_scenarios")
-    for (id in picker_ids_map) {
-      updatePickerInput(session, id, choices = filtered_map_models, selected = filtered_map_models)
-    }
+    updatePickerInput(session, "cpue_scenarios", choices = cpue_models, selected = cpue_models)
+    updatePickerInput(session, "lf_scenarios", choices = lf_models, selected = lf_models)
+    updatePickerInput(session, "wf_scenarios", choices = wf_models, selected = wf_models)
 
     current_bound <- isolate(input$bound_model)
     bound_selected <- if (!is.null(current_bound) && current_bound %in% selected_models) current_bound else selected_models[1]

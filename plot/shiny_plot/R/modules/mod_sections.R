@@ -458,6 +458,14 @@ mod_harvest_server <- function(input, output, session, rv) {
 
     ggplot() + theme_void()
   })
+  harvest_plot_reactive <- bindCache(
+    harvest_plot_reactive,
+    rv$data_loaded,
+    input$model_dir,
+    input$harvest_scenarios,
+    input$harvest_plot,
+    input$harvest_facet_ncol
+  )
 
 
   output$harvest_plot_output <- renderPlot({
@@ -736,11 +744,30 @@ mod_tagging_server <- function(input, output, session, rv) {
         data.frame(Model = tag_rr_all$Model[i], group = tag_rr_all$group[i], names = tag_rr_all$names[i], x = x_seq,
                    density = dnorm(x_seq, mean = tag_rr_all$prior_mean[i], sd = tag_rr_all$prior_sd[i]))
       }))
-      tag_rr_all <- tag_rr_all %>% mutate(panel = paste0("G", group))
-      prior_curve <- prior_curve %>% mutate(panel = paste0("G", group))
+      # Keep numeric panel IDs for ordering, and keep model-specific names for labels.
+      tag_rr_all <- tag_rr_all %>%
+        mutate(
+          panel_id = paste0("G", group),
+          panel_order = as.numeric(group),
+          panel = panel_id
+        )
+      prior_curve <- prior_curve %>%
+        mutate(
+          panel_id = paste0("G", group),
+          panel_order = as.numeric(group),
+          panel = panel_id
+        )
       panel_labels <- tag_rr_all %>%
         distinct(panel, names) %>%
         { stats::setNames(.$names, .$panel) }
+      panel_levels <- tag_rr_all %>%
+        distinct(panel, panel_order) %>%
+        arrange(panel_order, panel) %>%
+        pull(panel)
+      if (length(panel_levels) > 0) {
+        tag_rr_all <- tag_rr_all %>% mutate(panel = factor(panel, levels = panel_levels))
+        prior_curve <- prior_curve %>% mutate(panel = factor(panel, levels = panel_levels))
+      }
 
       compatible <- is_compatible_by(tag_rr_all, "names")
       if (!overlay || compatible) {
@@ -761,8 +788,19 @@ mod_tagging_server <- function(input, output, session, rv) {
         return(p)
       }
 
-      tag_rr_all <- tag_rr_all %>% mutate(panel = paste(Model, panel, sep = " | "))
-      prior_curve <- prior_curve %>% mutate(panel = paste(Model, panel, sep = " | "))
+      tag_rr_all <- tag_rr_all %>%
+        mutate(panel = paste(Model, names, sep = " | "))
+      prior_curve <- prior_curve %>%
+        mutate(panel = paste(Model, names, sep = " | "))
+      panel_levels_incompat <- tag_rr_all %>%
+        distinct(Model, group, panel) %>%
+        arrange(factor(Model, levels = selected_models), as.numeric(group), panel) %>%
+        pull(panel)
+      if (length(panel_levels_incompat) > 0) {
+        panel_levels_incompat <- unique(panel_levels_incompat)
+        tag_rr_all <- tag_rr_all %>% mutate(panel = factor(panel, levels = panel_levels_incompat))
+        prior_curve <- prior_curve %>% mutate(panel = factor(panel, levels = panel_levels_incompat))
+      }
       return(
         ggplot() +
           geom_line(data = prior_curve, aes(x = x, y = density), color = "black", linewidth = 1) +
@@ -1059,6 +1097,17 @@ mod_tagging_server <- function(input, output, session, rv) {
     ggplot() + theme_void() +
       annotate("text", x = 0.5, y = 0.5, label = paste("Unknown tag plot mode:", mode))
   })
+  tagging_plot_reactive <- bindCache(
+    tagging_plot_reactive,
+    rv$data_loaded,
+    input$model_dir,
+    input$tag_scenarios,
+    input$tag_plot,
+    input$tag_time_mode,
+    input$tag_years,
+    input$tag_facet_ncol,
+    input$tag_rr_nonneg_only
+  )
 
 
   output$tagging_plot_output <- renderPlot({
@@ -1136,14 +1185,16 @@ mod_fishery_process_server <- function(input, output, session, rv) {
     })))
     fish_ids <- sort(fish_ids[is.finite(fish_ids)])
 
-    base_map <- rv$FISHERY_MAPS[[sc[1]]]
-    fish_labels <- sapply(as.character(fish_ids), function(fid) get_fishery_name(fid, base_map))
-    choices <- setNames(as.character(fish_ids), fish_labels)
+    choices <- build_fishery_picker_choices(
+      fish_ids = fish_ids,
+      model_names = sc,
+      fishery_maps = rv$FISHERY_MAPS
+    )
 
     cur <- isolate(input$fishery_process_fisheries)
-    if (is.null(cur) || length(cur) == 0) cur <- as.character(fish_ids)
-    cur <- intersect(cur, as.character(fish_ids))
-    if (length(cur) == 0) cur <- as.character(fish_ids)
+    if (is.null(cur) || length(cur) == 0) cur <- unname(choices)
+    cur <- intersect(cur, unname(choices))
+    if (length(cur) == 0) cur <- unname(choices)
 
     updatePickerInput(session, "fishery_process_fisheries", choices = choices, selected = cur)
   }, ignoreInit = FALSE)
@@ -1155,7 +1206,6 @@ mod_fishery_process_server <- function(input, output, session, rv) {
 
     RepOut_list <- subset_named(rv$RepOut_list, scenarios_name)
     ParOut_list <- subset_named(rv$ParOut_list, scenarios_name)
-    fishery_map <- rv$FISHERY_MAPS[[scenarios_name[1]]]
     scenario_colors <- get_scenario_colors(scenarios_name)
     mode <- if (is.null(input$fishery_process_plot)) "selectivity_age" else input$fishery_process_plot
     facet_ncol <- suppressWarnings(as.integer(input$fishery_process_facet_ncol))
@@ -1163,11 +1213,11 @@ mod_fishery_process_server <- function(input, output, session, rv) {
     facet_ncol <- min(max(facet_ncol, 1), 12)
 
     if (mode %in% c("selectivity_age", "selectivity_length", "selectivity_weight")) {
-      selected_fisheries <- suppressWarnings(as.numeric(input$fishery_process_fisheries))
-      selected_fisheries <- selected_fisheries[is.finite(selected_fisheries)]
+      selected_specs <- parse_fishery_picker_values(input$fishery_process_fisheries)
 
       sel_list <- lapply(names(RepOut_list), function(model_name) {
         tmp_rep <- RepOut_list[[model_name]]
+        tmp_map <- rv$FISHERY_MAPS[[model_name]]
         tmp_sel <- sel(tmp_rep)
         tmp_df <- as.data.frame(tmp_sel, drop = TRUE) %>%
           mutate(age = as.numeric(as.character(age)), fishery = as.numeric(as.character(unit)), selectivity = data, Model = model_name) %>%
@@ -1182,24 +1232,72 @@ mod_fishery_process_server <- function(input, output, session, rv) {
           tmp_df$weight <- tmp_waa[tmp_df$age]
         }
 
+        tmp_df <- tmp_df %>%
+          mutate(
+            fishery_name = sapply(fishery, function(f) get_fishery_name(f, tmp_map)),
+            fishery_label = ifelse(
+              as.character(fishery_name) == as.character(fishery),
+              as.character(fishery),
+              as.character(fishery_name)
+            ),
+            fishery_panel = fishery_label
+          )
+
         tmp_df
       })
 
       sel_data <- bind_rows(sel_list) %>%
-        left_join(fishery_map[, c("fishery", "fishery_name", "group")], by = "fishery") %>%
         mutate(Model = factor(Model, levels = scenarios_name))
-      if (length(selected_fisheries) > 0) {
-        sel_data <- sel_data %>% filter(fishery %in% selected_fisheries)
+      if (nrow(selected_specs) > 0) {
+        any_model_specific <- any(!is.na(selected_specs$Model) & nzchar(selected_specs$Model))
+        if (any_model_specific) {
+          plain_ids <- selected_specs$fishery[is.na(selected_specs$Model) | !nzchar(selected_specs$Model)]
+          model_specs <- selected_specs[!is.na(selected_specs$Model) & nzchar(selected_specs$Model), , drop = FALSE]
+          sel_data <- sel_data %>%
+            mutate(.keep_selected = fishery %in% plain_ids)
+          if (nrow(model_specs) > 0) {
+            key_df <- unique(model_specs[, c("Model", "fishery"), drop = FALSE])
+            key_df$.keep_pair <- TRUE
+            sel_data <- sel_data %>%
+              left_join(key_df, by = c("Model", "fishery")) %>%
+              mutate(.keep_selected = .keep_selected | (!is.na(.keep_pair) & .keep_pair))
+          }
+          sel_data <- sel_data %>%
+            filter(.keep_selected) %>%
+            select(-any_of(c(".keep_selected", ".keep_pair")))
+        } else {
+          sel_data <- sel_data %>% filter(fishery %in% selected_specs$fishery)
+        }
       }
       if (nrow(sel_data) == 0) {
         return(ggplot() + theme_void() + annotate("text", x = 0.5, y = 0.5, label = "No selectivity data for selected fisheries"))
+      }
+
+      sel_data <- build_overlay_fishery_panel_labels(
+        sel_data,
+        scenario_col = "Model",
+        id_col = "fishery",
+        label_col = "fishery_label",
+        out_col = "fishery_panel"
+      )
+
+      panel_levels_df <- sel_data %>%
+        distinct(Model, fishery, fishery_panel) %>%
+        mutate(
+          Model = factor(Model, levels = scenarios_name),
+          fishery_num = suppressWarnings(as.numeric(fishery))
+        ) %>%
+        arrange(fishery_num, Model, fishery_panel)
+      panel_levels <- unique(as.character(panel_levels_df$fishery_panel))
+      if (length(panel_levels) > 0) {
+        sel_data <- sel_data %>% mutate(fishery_panel = factor(fishery_panel, levels = panel_levels))
       }
 
       if (mode == "selectivity_age") {
         return(
           ggplot(sel_data, aes(x = age, y = selectivity, color = Model)) +
             geom_line(linewidth = 1) +
-            facet_wrap(~ fishery_name, ncol = facet_ncol, scales = "free_y") +
+            facet_wrap(~ fishery_panel, ncol = facet_ncol, scales = "free_y") +
             scale_color_manual("Model", values = scenario_colors) +
             labs(x = "Age class", y = "Selectivity", title = "Estimated Selectivity by Fishery (Age-based)") +
             theme_bw() +
@@ -1210,7 +1308,7 @@ mod_fishery_process_server <- function(input, output, session, rv) {
         return(
           ggplot(sel_data, aes(x = length, y = selectivity, color = Model)) +
             geom_line(linewidth = 1) +
-            facet_wrap(~ fishery_name, ncol = facet_ncol, scales = "free_y") +
+            facet_wrap(~ fishery_panel, ncol = facet_ncol, scales = "free_y") +
             scale_color_manual("Model", values = scenario_colors) +
             labs(x = "Length (cm)", y = "Selectivity", title = "Estimated Selectivity by Fishery (Length-based)") +
             theme_bw() +
@@ -1221,7 +1319,7 @@ mod_fishery_process_server <- function(input, output, session, rv) {
       return(
         ggplot(sel_data, aes(x = weight, y = selectivity, color = Model)) +
           geom_line(linewidth = 1) +
-          facet_wrap(~ fishery_name, ncol = facet_ncol, scales = "free_y") +
+          facet_wrap(~ fishery_panel, ncol = facet_ncol, scales = "free_y") +
           scale_color_manual("Model", values = scenario_colors) +
           labs(x = "Weight (kg)", y = "Selectivity", title = "Estimated Selectivity by Fishery (Weight-based)") +
           theme_bw() +
@@ -1248,6 +1346,15 @@ mod_fishery_process_server <- function(input, output, session, rv) {
       theme_bw() +
       theme(panel.grid = element_blank(), legend.position = "right", legend.title = element_text(face = "bold", size = 10), strip.background = element_rect(fill = "gray90"), strip.text = element_text(face = "bold", size = 9), axis.text = element_text(size = 8))
   })
+  fishery_process_plot_reactive <- bindCache(
+    fishery_process_plot_reactive,
+    rv$data_loaded,
+    input$model_dir,
+    input$fishery_process_scenarios,
+    input$fishery_process_plot,
+    input$fishery_process_fisheries,
+    input$fishery_process_facet_ncol
+  )
 
 
   output$fishery_process_plot_output <- renderPlot({
@@ -1411,6 +1518,15 @@ mod_population_biology_server <- function(input, output, session, rv) {
       theme_bw() +
       theme(panel.grid.minor = element_blank(), panel.grid.major = element_line(linewidth = 0.25, color = "gray85"), legend.position = "bottom", legend.title = element_text(face = "bold"))
   })
+  population_biology_plot_reactive <- bindCache(
+    population_biology_plot_reactive,
+    rv$data_loaded,
+    input$model_dir,
+    input$population_biology_scenarios,
+    input$population_biology_plot,
+    input$population_biology_facet_ncol,
+    input$population_biology_show_growth_band
+  )
 
 
   output$population_biology_plot_output <- renderPlot({

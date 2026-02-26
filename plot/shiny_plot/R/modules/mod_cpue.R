@@ -213,6 +213,11 @@ mod_cpue_server <- function(input, output, session, rv) {
           residual = obs - fit
         )
 
+      fishery_levels <- ordered_fishery_label_levels(cpue_all$unit, cpue_all$fishery_name)
+      if (length(fishery_levels) > 0) {
+        cpue_all <- cpue_all %>% mutate(fishery_name = factor(fishery_name, levels = fishery_levels))
+      }
+
       obs_points <- cpue_all %>%
         group_by(fishery_name, year_season) %>%
         summarise(obs = first(obs), .groups = "drop")
@@ -313,6 +318,16 @@ mod_cpue_server <- function(input, output, session, rv) {
         theme_void()
     })
   })
+  cpue_plot_reactive <- bindCache(
+    cpue_plot_reactive,
+    rv$data_loaded,
+    input$model_dir,
+    input$cpue_scenarios,
+    input$cpue_fisheries,
+    input$cpue_view_mode,
+    input$cpue_metric,
+    input$cpue_facet_ncol
+  )
 
   output$cpue_plot <- renderPlot({
     cpue_plot_reactive()

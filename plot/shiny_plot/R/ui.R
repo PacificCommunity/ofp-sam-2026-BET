@@ -64,17 +64,17 @@ ui <- dashboardPage(
     # Navigation menu
     sidebarMenu(
       id = "tabs",
-      menuItem("📊 Model Summary", tabName = "summary", icon = icon("table")),
-      menuItem("⚙️ Fishery Names", tabName = "fishery_names", icon = icon("fish")),
-      menuItem("⚠️ Bound Hits", tabName = "bounds", icon = icon("exclamation-triangle")),
-      menuItem("📈 CPUE Fits", tabName = "cpue", icon = icon("chart-area")),
-      menuItem("📏 Length Frequency", tabName = "lf", icon = icon("ruler-horizontal")),
-      menuItem("⚖️ Weight Frequency", tabName = "wf", icon = icon("weight-hanging")),
-      menuItem("📉 Diagnostics", tabName = "diagnostics", icon = icon("stethoscope")),
-      menuItem("🌊 Key Quantities", tabName = "harvest", icon = icon("water")),
-      menuItem("🏷️ Tagging Dynamics", tabName = "tagging", icon = icon("tags")),
-      menuItem("🧭 Fishery Process", tabName = "fishery_process", icon = icon("project-diagram")),
-      menuItem("🧬 Population Biology", tabName = "population_biology", icon = icon("dna"))
+      menuItem("📊 Model Summary", tabName = "summary", icon = NULL),
+      menuItem("🏷️ Fishery Names", tabName = "fishery_names", icon = NULL),
+      menuItem("⚠️ Bound Hits", tabName = "bounds", icon = NULL),
+      menuItem("📈 CPUE Fits", tabName = "cpue", icon = NULL),
+      menuItem("📏 Length Frequency", tabName = "lf", icon = NULL),
+      menuItem("⚖️ Weight Frequency", tabName = "wf", icon = NULL),
+      menuItem("📉 Diagnostics", tabName = "diagnostics", icon = NULL),
+      menuItem("⭐ Key Quantities", tabName = "harvest", icon = NULL),
+      menuItem("🎣 Tagging Dynamics", tabName = "tagging", icon = NULL),
+      menuItem("🚢 Fishery Process", tabName = "fishery_process", icon = NULL),
+      menuItem("🧬 Population Biology", tabName = "population_biology", icon = NULL)
     ),
     
     shiny::hr(),

@@ -208,6 +208,154 @@ get_fishery_name <- function(fishery_num, mapping = NULL) {
   if (is.na(name) || is.null(name)) as.character(fishery_num) else unname(name)
 }
 
+ordered_fishery_label_levels <- function(ids, labels) {
+  ids_num <- suppressWarnings(as.numeric(ids))
+  labels_chr <- as.character(labels)
+  df <- data.frame(
+    fishery_id = ids_num,
+    fishery_label = labels_chr,
+    stringsAsFactors = FALSE
+  )
+  df <- df[!is.na(df$fishery_label) & nzchar(df$fishery_label), , drop = FALSE]
+  if (nrow(df) == 0) return(character(0))
+  df <- unique(df)
+  df$label_num <- suppressWarnings(as.numeric(df$fishery_label))
+  df$label_is_num <- is.finite(df$label_num)
+  df <- df[order(df$fishery_id, !df$label_is_num, df$label_num, df$fishery_label), , drop = FALSE]
+  unique(df$fishery_label)
+}
+
+# For overlay fishery facets: keep a shared panel label when fishery names match
+# across models, but prefix with "Model | " when names differ for the same ID.
+build_overlay_fishery_panel_labels <- function(df, scenario_col = "Scenario", id_col = "fishery",
+                                               label_col = "fishery_name", out_col = "fishery_panel") {
+  if (!is.data.frame(df)) return(df)
+  need <- c(scenario_col, id_col, label_col)
+  if (!all(need %in% names(df))) return(df)
+
+  out <- df
+  out[[scenario_col]] <- as.character(out[[scenario_col]])
+  out[[label_col]] <- as.character(out[[label_col]])
+  out[[out_col]] <- out[[label_col]]
+
+  if (length(unique(out[[scenario_col]])) > 1) {
+    meta <- data.frame(
+      fishery_id = suppressWarnings(as.numeric(as.character(out[[id_col]]))),
+      scenario = out[[scenario_col]],
+      label = out[[label_col]],
+      stringsAsFactors = FALSE
+    )
+    meta <- unique(meta[is.finite(meta$fishery_id) & !is.na(meta$label) & nzchar(meta$label), , drop = FALSE])
+    if (nrow(meta) > 0) {
+      conflict_ids <- names(which(tapply(meta$label, meta$fishery_id, function(x) length(unique(x)) > 1)))
+      if (length(conflict_ids) > 0) {
+        mask <- as.character(out[[id_col]]) %in% conflict_ids
+        out[[out_col]][mask] <- paste(out[[scenario_col]][mask], out[[label_col]][mask], sep = " | ")
+      }
+    }
+  }
+
+  out
+}
+
+# Build picker labels for fishery IDs across multiple models.
+# If names differ by model, include model-prefixed labels in one combined choice label.
+build_fishery_picker_choices <- function(fish_ids, model_names = NULL, fishery_maps = NULL) {
+  ids_num <- suppressWarnings(as.numeric(fish_ids))
+  ids_num <- sort(unique(ids_num[is.finite(ids_num)]))
+  if (length(ids_num) == 0) return(setNames(character(0), character(0)))
+
+  models <- unique(as.character(model_names))
+  models <- models[!is.na(models) & nzchar(models)]
+  if (length(models) == 0 || is.null(fishery_maps)) {
+    labels <- as.character(ids_num)
+    return(setNames(as.character(ids_num), labels))
+  }
+
+  if (length(models) == 1) {
+    m <- models[1]
+    map_obj <- fishery_maps[[m]]
+    labels <- vapply(ids_num, function(fid) get_fishery_name(fid, map_obj), character(1))
+    return(setNames(as.character(ids_num), labels))
+  }
+
+  meta <- do.call(rbind, lapply(models, function(m) {
+    map_obj <- fishery_maps[[m]]
+    data.frame(
+      Model = m,
+      fishery = ids_num,
+      fishery_label = vapply(ids_num, function(fid) get_fishery_name(fid, map_obj), character(1)),
+      stringsAsFactors = FALSE
+    )
+  }))
+  if (is.null(meta) || nrow(meta) == 0) {
+    labels <- as.character(ids_num)
+    return(setNames(as.character(ids_num), labels))
+  }
+
+  meta$fishery <- suppressWarnings(as.numeric(meta$fishery))
+  meta <- meta[is.finite(meta$fishery), , drop = FALSE]
+
+  meta$Model <- factor(meta$Model, levels = models)
+  meta <- meta[order(meta$fishery, meta$Model, meta$fishery_label), , drop = FALSE]
+
+  out_rows <- do.call(rbind, lapply(split(meta, meta$fishery), function(d) {
+    d <- unique(d[, c("Model", "fishery", "fishery_label"), drop = FALSE])
+    labels_u <- unique(as.character(d$fishery_label))
+    fish_id <- suppressWarnings(as.numeric(d$fishery[1]))
+
+    if (length(labels_u) <= 1) {
+      data.frame(
+        display = labels_u[1],
+        value = as.character(fish_id),
+        fishery = fish_id,
+        ord = 0,
+        stringsAsFactors = FALSE
+      )
+    } else {
+      d$display <- paste(as.character(d$Model), as.character(d$fishery_label), sep = " | ")
+      d$value <- paste(as.character(d$Model), as.character(d$fishery), sep = "::")
+      data.frame(
+        display = as.character(d$display),
+        value = as.character(d$value),
+        fishery = fish_id,
+        ord = seq_len(nrow(d)),
+        stringsAsFactors = FALSE
+      )
+    }
+  }))
+
+  if (is.null(out_rows) || nrow(out_rows) == 0) {
+    labels <- as.character(ids_num)
+    return(setNames(as.character(ids_num), labels))
+  }
+  out_rows <- out_rows[order(out_rows$fishery, out_rows$ord, out_rows$display), , drop = FALSE]
+  out_rows <- unique(out_rows[, c("display", "value"), drop = FALSE])
+  setNames(as.character(out_rows$value), as.character(out_rows$display))
+}
+
+parse_fishery_picker_values <- function(values) {
+  vals <- as.character(values)
+  vals <- vals[!is.na(vals) & nzchar(vals)]
+  if (length(vals) == 0) {
+    return(data.frame(Model = character(0), fishery = numeric(0), stringsAsFactors = FALSE))
+  }
+
+  has_model <- grepl("::", vals, fixed = TRUE)
+  out <- data.frame(
+    Model = rep(NA_character_, length(vals)),
+    fishery = suppressWarnings(as.numeric(vals)),
+    stringsAsFactors = FALSE
+  )
+  if (any(has_model)) {
+    parts <- strsplit(vals[has_model], "::", fixed = TRUE)
+    out$Model[has_model] <- vapply(parts, `[`, character(1), 1)
+    out$fishery[has_model] <- suppressWarnings(as.numeric(vapply(parts, function(x) if (length(x) >= 2) x[2] else NA_character_, character(1))))
+  }
+  out <- out[is.finite(out$fishery), , drop = FALSE]
+  unique(out)
+}
+
 detect_index_fisheries <- function(fishery_map) {
   if (is.data.frame(fishery_map) && all(c("fishery", "group", "fishery_name") %in% names(fishery_map))) {
     idx <- fishery_map$group == "Index" | grepl("index", fishery_map$fishery_name, ignore.case = TRUE)
@@ -301,25 +449,12 @@ safe_array_to_df <- function(x, value_col = "data") {
 check_lf_compatibility_global <- function(rv, base_model, compare_models) {
   if (is.null(rv$LengOut_list[[base_model]])) return(character(0))
 
-  normalize_name <- function(x) {
-    x <- as.character(x)
-    x <- trimws(x)
-    x <- gsub("\\s+", " ", x)
-    tolower(x)
-  }
-
   base_fisheries <- unique(rv$LengOut_list[[base_model]]@lenfits$fishery)
-  base_map <- rv$FISHERY_MAPS[[base_model]]
-  base_fishery_names <- normalize_name(sapply(base_fisheries, function(f) get_fishery_name(f, base_map)))
 
   compatible <- sapply(compare_models, function(m) {
     if (is.null(rv$LengOut_list[[m]])) return(FALSE)
     m_fisheries <- unique(rv$LengOut_list[[m]]@lenfits$fishery)
-    m_map <- rv$FISHERY_MAPS[[m]]
-    m_fishery_names <- normalize_name(sapply(m_fisheries, function(f) get_fishery_name(f, m_map)))
-
-    setequal(base_fisheries, m_fisheries) &&
-      setequal(base_fishery_names, m_fishery_names)
+    setequal(base_fisheries, m_fisheries)
   })
 
   names(compatible)[compatible]
@@ -328,23 +463,12 @@ check_lf_compatibility_global <- function(rv, base_model, compare_models) {
 check_wf_compatibility_global <- function(rv, base_model, compare_models) {
   if (is.null(rv$WeightOut_list[[base_model]])) return(character(0))
 
-  normalize_name <- function(x) {
-    x <- as.character(x)
-    x <- trimws(x)
-    x <- gsub("\\s+", " ", x)
-    tolower(x)
-  }
-
   base_fisheries <- unique(rv$WeightOut_list[[base_model]]@wgtfits$fishery)
-  base_map <- rv$FISHERY_MAPS[[base_model]]
-  base_fishery_names <- normalize_name(sapply(base_fisheries, function(f) get_fishery_name(f, base_map)))
 
   compatible <- sapply(compare_models, function(m) {
     if (is.null(rv$WeightOut_list[[m]])) return(FALSE)
-    m_map <- rv$FISHERY_MAPS[[m]]
     m_fisheries <- unique(rv$WeightOut_list[[m]]@wgtfits$fishery)
-    m_fishery_names <- normalize_name(sapply(m_fisheries, function(f) get_fishery_name(f, m_map)))
-    setequal(base_fishery_names, m_fishery_names)
+    setequal(base_fisheries, m_fisheries)
   })
 
   names(compatible)[compatible]

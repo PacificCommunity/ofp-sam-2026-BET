@@ -148,17 +148,15 @@ mod_lf_server <- function(input, output, session, rv) {
       req(rv$data_loaded, input$lf_model, rv$LengOut_list[[input$lf_model]])
     
       # Get fisheries from selected model
-      fisheries <- unique(rv$LengOut_list[[input$lf_model]]@lenfits$fishery)
+      fisheries <- sort(unique(suppressWarnings(as.numeric(rv$LengOut_list[[input$lf_model]]@lenfits$fishery))))
     
       if (length(fisheries) == 0) {
         updateSelectInput(session, "lf_fishery", choices = character(0))
         return()
       }
     
-      # Create named choices
       fishery_map <- rv$FISHERY_MAPS[[input$lf_model]]
-      choices <- setNames(fisheries, 
-                          sapply(fisheries, function(x) get_fishery_name(x, fishery_map)))
+      choices_single <- setNames(fisheries, sapply(fisheries, function(x) get_fishery_name(x, fishery_map)))
     
       # Preserve current selection if valid
       current_selection <- isolate(input$lf_fishery)
@@ -168,35 +166,36 @@ mod_lf_server <- function(input, output, session, rv) {
         selected <- fisheries[1]
       }
     
-      updateSelectInput(session, "lf_fishery", choices = choices, selected = selected)
-      updatePickerInput(session, "lf_fisheries_all", choices = choices, selected = fisheries)
+      updateSelectInput(session, "lf_fishery", choices = choices_single, selected = selected)
     
-      # Update compatible scenarios for overlay
+      # Keep model list aligned with global Filter Models and available LF outputs.
       all_models <- names(rv$LengOut_list)[!sapply(rv$LengOut_list, is.null)]
-      compatible_models <- check_lf_compatibility_global(rv, input$lf_model, all_models)
-    
-      # Show notification if some models are incompatible
-      n_incompatible <- length(all_models) - length(compatible_models)
-      if (n_incompatible > 0) {
-        showNotification(
-          HTML(paste0(
-            "⚠️ <strong>", n_incompatible, " model(s) excluded from overlay</strong><br/>",
-            "Reason: Different fishery structure or names"
-          )),
-          type = "warning",
-          duration = 4
-        )
+      global_models <- isolate(input$scenarios)
+      if (!is.null(global_models) && length(global_models) > 0) {
+        all_models <- intersect(global_models, all_models)
       }
-    
+
       current_scenarios <- isolate(input$lf_scenarios)
       if (is.null(current_scenarios) || length(current_scenarios) == 0) {
-        selected_scenarios <- compatible_models
+        selected_scenarios <- all_models
       } else {
-        selected_scenarios <- intersect(current_scenarios, compatible_models)
-        if (length(selected_scenarios) == 0) selected_scenarios <- compatible_models
+        selected_scenarios <- intersect(current_scenarios, all_models)
+        if (length(selected_scenarios) == 0) selected_scenarios <- all_models
       }
+      fishery_union <- sort(unique(unlist(lapply(selected_scenarios, function(m) {
+        obj <- rv$LengOut_list[[m]]
+        if (is.null(obj)) return(numeric(0))
+        suppressWarnings(as.numeric(unique(obj@lenfits$fishery)))
+      }))))
+      fishery_union <- fishery_union[is.finite(fishery_union)]
+      choices_all <- build_fishery_picker_choices(fishery_union, selected_scenarios, rv$FISHERY_MAPS)
+      current_all <- isolate(input$lf_fisheries_all)
+      if (is.null(current_all) || length(current_all) == 0) current_all <- unname(choices_all)
+      current_all <- intersect(current_all, unname(choices_all))
+      if (length(current_all) == 0) current_all <- unname(choices_all)
+      updatePickerInput(session, "lf_fisheries_all", choices = choices_all, selected = current_all)
       updatePickerInput(session, "lf_scenarios",
-                        choices = compatible_models,
+                        choices = all_models,
                         selected = selected_scenarios)
     })
   
@@ -209,7 +208,8 @@ mod_lf_server <- function(input, output, session, rv) {
     
       df <- rv$LengOut_list[[input$lf_model]]@lenfits
       if (identical(input$lf_view_mode, "all_fisheries")) {
-        selected_fisheries <- suppressWarnings(as.numeric(input$lf_fisheries_all))
+        selected_specs <- parse_fishery_picker_values(input$lf_fisheries_all)
+        selected_fisheries <- unique(selected_specs$fishery)
         years <- df %>%
           filter(fishery %in% selected_fisheries) %>%
           pull(year) %>%
@@ -251,24 +251,34 @@ mod_lf_server <- function(input, output, session, rv) {
       req(input$lf_model, rv$LengOut_list[[input$lf_model]])
 
       df <- rv$LengOut_list[[input$lf_model]]@lenfits
-      fisheries <- sort(unique(df$fishery))
+      fisheries <- sort(unique(suppressWarnings(as.numeric(df$fishery))))
       fishery_map <- rv$FISHERY_MAPS[[input$lf_model]]
       choices <- setNames(fisheries, sapply(fisheries, function(x) get_fishery_name(x, fishery_map)))
       selected_fishery <- if (length(fisheries) > 0) fisheries[1] else NULL
 
       updateSelectInput(session, "lf_fishery", choices = choices, selected = selected_fishery)
-      updatePickerInput(session, "lf_fisheries_all", choices = choices, selected = fisheries)
 
       all_models <- names(rv$LengOut_list)[!sapply(rv$LengOut_list, is.null)]
-      compatible_models <- check_lf_compatibility_global(rv, input$lf_model, all_models)
+      global_models <- isolate(input$scenarios)
+      if (!is.null(global_models) && length(global_models) > 0) {
+        all_models <- intersect(global_models, all_models)
+      }
       current_scenarios <- isolate(input$lf_scenarios)
       if (is.null(current_scenarios) || length(current_scenarios) == 0) {
-        selected_scenarios <- compatible_models
+        selected_scenarios <- all_models
       } else {
-        selected_scenarios <- intersect(current_scenarios, compatible_models)
-        if (length(selected_scenarios) == 0) selected_scenarios <- compatible_models
+        selected_scenarios <- intersect(current_scenarios, all_models)
+        if (length(selected_scenarios) == 0) selected_scenarios <- all_models
       }
-      updatePickerInput(session, "lf_scenarios", choices = compatible_models, selected = selected_scenarios)
+      fishery_union <- sort(unique(unlist(lapply(selected_scenarios, function(m) {
+        obj <- rv$LengOut_list[[m]]
+        if (is.null(obj)) return(numeric(0))
+        suppressWarnings(as.numeric(unique(obj@lenfits$fishery)))
+      }))))
+      fishery_union <- fishery_union[is.finite(fishery_union)]
+      choices_all <- build_fishery_picker_choices(fishery_union, selected_scenarios, rv$FISHERY_MAPS)
+      updatePickerInput(session, "lf_fisheries_all", choices = choices_all, selected = unname(choices_all))
+      updatePickerInput(session, "lf_scenarios", choices = all_models, selected = selected_scenarios)
 
       years <- sort(unique(df$year))
       updatePickerInput(session, "lf_years", choices = years, selected = years)
@@ -340,25 +350,52 @@ mod_lf_server <- function(input, output, session, rv) {
           theme_void()
         return(p)
       }
+
+      selected_years_num <- suppressWarnings(as.numeric(input$lf_years))
+      selected_years_num <- selected_years_num[is.finite(selected_years_num)]
     
       # Combine data from selected scenarios
       combined_data <- map_dfr(scenarios_to_use, function(sc) {
         if (is.null(rv$LengOut_list[[sc]])) return(NULL)
-        df <- rv$LengOut_list[[sc]]@lenfits
+        df <- rv$LengOut_list[[sc]]@lenfits %>%
+          mutate(fishery = suppressWarnings(as.numeric(as.character(fishery))))
+
         if (identical(input$lf_view_mode, "all_fisheries")) {
-          selected_fisheries <- suppressWarnings(as.numeric(input$lf_fisheries_all))
-          df %>%
-            filter(fishery %in% selected_fisheries) %>%
-            mutate(Scenario = sc)
-        } else {
-          if (as.numeric(input$lf_fishery) %in% unique(df$fishery)) {
-            df %>% 
-              filter(fishery == as.numeric(input$lf_fishery)) %>% 
-              mutate(Scenario = sc)
+          selected_specs <- parse_fishery_picker_values(input$lf_fisheries_all)
+          if (nrow(selected_specs) > 0) {
+            any_model_specific <- any(!is.na(selected_specs$Model) & nzchar(selected_specs$Model))
+            if (any_model_specific) {
+              plain_ids <- selected_specs$fishery[is.na(selected_specs$Model) | !nzchar(selected_specs$Model)]
+              model_ids <- selected_specs$fishery[!is.na(selected_specs$Model) & nzchar(selected_specs$Model) & selected_specs$Model == sc]
+              keep_ids <- unique(c(plain_ids, model_ids))
+              df <- df %>% filter(fishery %in% keep_ids)
+            } else {
+              df <- df %>% filter(fishery %in% selected_specs$fishery)
+            }
           } else {
-            NULL
+            df <- df[0, , drop = FALSE]
           }
+        } else {
+          df <- df %>% filter(fishery == as.numeric(input$lf_fishery))
         }
+        if (length(selected_years_num) > 0) {
+          df <- df %>% filter(year %in% selected_years_num)
+        }
+        if (nrow(df) == 0) return(NULL)
+
+        fish_lookup <- data.frame(
+          fishery = sort(unique(df$fishery)),
+          fishery_name_lookup = vapply(
+            sort(unique(df$fishery)),
+            function(f) get_fishery_name(f, rv$FISHERY_MAPS[[sc]]),
+            character(1)
+          ),
+          stringsAsFactors = FALSE
+        )
+
+        df %>%
+          left_join(fish_lookup, by = "fishery") %>%
+          mutate(Scenario = sc)
       })
     
       # Check if data exists
@@ -380,24 +417,12 @@ mod_lf_server <- function(input, output, session, rv) {
     
       # Aggregate by scenario/fishery/year/length
       plot_data <- combined_data %>%
-        group_by(Scenario, fishery, year, length) %>%
+        group_by(Scenario, fishery, fishery_name_lookup, year, length) %>%
         summarise(obs = sum(obs, na.rm = TRUE), 
                   pred = sum(pred, na.rm = TRUE), 
                   .groups = "drop") %>%
         filter(obs > 0 | pred > 0)
     
-      # Apply year filter
-      plot_data <- plot_data %>%
-        filter(year %in% input$lf_years)
-    
-      # Check if data exists after filtering
-      if (nrow(plot_data) == 0) {
-        p <- ggplot() + 
-          annotate("text", x = 0.5, y = 0.5, label = "No data for selected years", size = 6, color = "#999") +
-          theme_void()
-        return(p)
-      }
-
       # Dynamic bar width close to bin spacing; use a subtle stroke for separation.
       lf_bar_width <- {
         lvals <- sort(unique(plot_data$length))
@@ -415,12 +440,44 @@ mod_lf_server <- function(input, output, session, rv) {
         group_by(fishery, year, length) %>%
         summarise(obs = first(obs), .groups = "drop")
     
-      fishery_map <- rv$FISHERY_MAPS[[input$lf_model]]
-      fishery_name <- get_fishery_name(input$lf_fishery, fishery_map)
+      base_fishery_map <- rv$FISHERY_MAPS[[input$lf_model]]
+      fishery_name <- get_fishery_name(input$lf_fishery, base_fishery_map)
       obs_data <- obs_data %>%
-        mutate(fishery_name = sapply(fishery, function(f) get_fishery_name(f, fishery_map)))
-      plot_data <- plot_data %>%
-        mutate(fishery_name = sapply(fishery, function(f) get_fishery_name(f, fishery_map)))
+        mutate(fishery_name = sapply(fishery, function(f) get_fishery_name(f, base_fishery_map)))
+      if ("fishery_name_lookup" %in% names(plot_data)) {
+        plot_data <- plot_data %>% mutate(fishery_name = as.character(fishery_name_lookup))
+      } else {
+        plot_data <- plot_data %>% mutate(fishery_name = as.character(fishery))
+      }
+
+      if (identical(view_mode, "all_fisheries")) {
+        plot_data <- build_overlay_fishery_panel_labels(
+          plot_data,
+          scenario_col = "Scenario",
+          id_col = "fishery",
+          label_col = "fishery_name",
+          out_col = "fishery_panel"
+        )
+      } else {
+        plot_data <- plot_data %>% mutate(fishery_panel = fishery_name)
+      }
+
+      # For all-fisheries overlay, keep observed bars aligned with the displayed label
+      # (including model-specific fallback/default names).
+      obs_data_all_labels <- plot_data %>%
+        group_by(fishery, fishery_panel, year, length) %>%
+        summarise(obs = first(obs), .groups = "drop")
+
+      fishery_levels <- ordered_fishery_label_levels(
+        ids = c(plot_data$fishery, obs_data$fishery, obs_data_all_labels$fishery),
+        labels = c(plot_data$fishery_panel, obs_data$fishery_name, obs_data_all_labels$fishery_panel)
+      )
+      if (length(fishery_levels) > 0) {
+        plot_data <- plot_data %>% mutate(fishery_name = factor(fishery_name, levels = fishery_levels))
+        plot_data <- plot_data %>% mutate(fishery_panel = factor(as.character(fishery_panel), levels = fishery_levels))
+        obs_data <- obs_data %>% mutate(fishery_name = factor(fishery_name, levels = fishery_levels))
+        obs_data_all_labels <- obs_data_all_labels %>% mutate(fishery_panel = factor(as.character(fishery_panel), levels = fishery_levels))
+      }
     
       # Determine optimal layout
       n_years <- length(unique(plot_data$year))
@@ -442,7 +499,7 @@ mod_lf_server <- function(input, output, session, rv) {
       if (identical(plot_style, "bubble")) {
         if (identical(view_mode, "all_fisheries")) {
           bubble_data <- plot_data %>%
-            group_by(Scenario, fishery_name, length) %>%
+            group_by(Scenario, fishery_panel, length) %>%
             summarise(
               obs = sum(obs, na.rm = TRUE),
               pred = sum(pred, na.rm = TRUE),
@@ -462,7 +519,7 @@ mod_lf_server <- function(input, output, session, rv) {
           }
 
           if (length(unique(bubble_data$Scenario)) <= 1) {
-            p <- ggplot(bubble_data, aes(x = length, y = fishery_name)) +
+            p <- ggplot(bubble_data, aes(x = length, y = fishery_panel)) +
               geom_point(
                 aes(size = abs_resid, fill = resid),
                 shape = 21, color = "#1f1f1f", stroke = 0.18, alpha = 0.9
@@ -492,7 +549,7 @@ mod_lf_server <- function(input, output, session, rv) {
                 panel.grid.minor = element_blank()
               )
           } else {
-            p <- ggplot(bubble_data, aes(x = length, y = fishery_name)) +
+            p <- ggplot(bubble_data, aes(x = length, y = fishery_panel)) +
               geom_point(
                 aes(size = abs_resid, fill = resid),
                 shape = 21, color = "#1f1f1f", stroke = 0.18, alpha = 0.9
@@ -614,12 +671,14 @@ mod_lf_server <- function(input, output, session, rv) {
       }
 
       if (identical(view_mode, "all_fisheries")) {
-        all_year_obs <- obs_data %>%
-          group_by(fishery_name, length) %>%
+        all_year_obs <- obs_data_all_labels %>%
+          group_by(fishery_panel, year, length) %>%
+          summarise(obs = first(obs), .groups = "drop") %>%
+          group_by(fishery_panel, length) %>%
           summarise(obs = sum(obs, na.rm = TRUE), .groups = "drop")
 
         all_year_pred <- plot_data %>%
-          group_by(Scenario, fishery_name, length) %>%
+          group_by(Scenario, fishery_panel, length) %>%
           summarise(pred = sum(pred, na.rm = TRUE), .groups = "drop")
 
         p <- ggplot() +
@@ -637,7 +696,7 @@ mod_lf_server <- function(input, output, session, rv) {
             aes(x = length, y = pred, color = Scenario),
             linewidth = 1.2
           ) +
-          facet_wrap(~fishery_name, scales = "free_y", ncol = ncol_facet) +
+          facet_wrap(~fishery_panel, scales = "free_y", ncol = ncol_facet) +
           scale_fill_manual(values = c("Observed" = observed_fill), guide = "none") +
           scale_color_viridis_d(name = "Model") +
           labs(

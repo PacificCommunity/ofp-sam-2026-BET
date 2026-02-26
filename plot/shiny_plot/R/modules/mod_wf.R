@@ -149,17 +149,15 @@ mod_wf_server <- function(input, output, session, rv) {
       req(rv$data_loaded, input$wf_model, rv$WeightOut_list[[input$wf_model]])
     
       # Get fisheries from selected model
-      fisheries <- unique(rv$WeightOut_list[[input$wf_model]]@wgtfits$fishery)
+      fisheries <- sort(unique(suppressWarnings(as.numeric(rv$WeightOut_list[[input$wf_model]]@wgtfits$fishery))))
     
       if (length(fisheries) == 0) {
         updateSelectInput(session, "wf_fishery", choices = character(0))
         return()
       }
     
-      # Create named choices
       fishery_map <- rv$FISHERY_MAPS[[input$wf_model]]
-      choices <- setNames(fisheries, 
-                          sapply(fisheries, function(x) get_fishery_name(x, fishery_map)))
+      choices_single <- setNames(fisheries, sapply(fisheries, function(x) get_fishery_name(x, fishery_map)))
     
       # Preserve current selection if valid
       current_selection <- isolate(input$wf_fishery)
@@ -169,35 +167,36 @@ mod_wf_server <- function(input, output, session, rv) {
         selected <- fisheries[1]
       }
     
-      updateSelectInput(session, "wf_fishery", choices = choices, selected = selected)
-      updatePickerInput(session, "wf_fisheries_all", choices = choices, selected = fisheries)
+      updateSelectInput(session, "wf_fishery", choices = choices_single, selected = selected)
     
-      # Update compatible scenarios for overlay
+      # Keep model list aligned with global Filter Models and available WF outputs.
       all_models <- names(rv$WeightOut_list)[!sapply(rv$WeightOut_list, is.null)]
-      compatible_models <- check_wf_compatibility_global(rv, input$wf_model, all_models)
-    
-      # Show notification if some models are incompatible
-      n_incompatible <- length(all_models) - length(compatible_models)
-      if (n_incompatible > 0) {
-        showNotification(
-          HTML(paste0(
-            "⚠️ <strong>", n_incompatible, " model(s) excluded from overlay</strong><br/>",
-            "Reason: Different fishery structure or names"
-          )),
-          type = "warning",
-          duration = 4
-        )
+      global_models <- isolate(input$scenarios)
+      if (!is.null(global_models) && length(global_models) > 0) {
+        all_models <- intersect(global_models, all_models)
       }
-    
+
       current_scenarios <- isolate(input$wf_scenarios)
       if (is.null(current_scenarios) || length(current_scenarios) == 0) {
-        selected_scenarios <- compatible_models
+        selected_scenarios <- all_models
       } else {
-        selected_scenarios <- intersect(current_scenarios, compatible_models)
-        if (length(selected_scenarios) == 0) selected_scenarios <- compatible_models
+        selected_scenarios <- intersect(current_scenarios, all_models)
+        if (length(selected_scenarios) == 0) selected_scenarios <- all_models
       }
+      fishery_union <- sort(unique(unlist(lapply(selected_scenarios, function(m) {
+        obj <- rv$WeightOut_list[[m]]
+        if (is.null(obj)) return(numeric(0))
+        suppressWarnings(as.numeric(unique(obj@wgtfits$fishery)))
+      }))))
+      fishery_union <- fishery_union[is.finite(fishery_union)]
+      choices_all <- build_fishery_picker_choices(fishery_union, selected_scenarios, rv$FISHERY_MAPS)
+      current_all <- isolate(input$wf_fisheries_all)
+      if (is.null(current_all) || length(current_all) == 0) current_all <- unname(choices_all)
+      current_all <- intersect(current_all, unname(choices_all))
+      if (length(current_all) == 0) current_all <- unname(choices_all)
+      updatePickerInput(session, "wf_fisheries_all", choices = choices_all, selected = current_all)
       updatePickerInput(session, "wf_scenarios",
-                        choices = compatible_models,
+                        choices = all_models,
                         selected = selected_scenarios)
     })
   
@@ -210,7 +209,8 @@ mod_wf_server <- function(input, output, session, rv) {
     
       df <- rv$WeightOut_list[[input$wf_model]]@wgtfits
       if (identical(input$wf_view_mode, "all_fisheries")) {
-        selected_fisheries <- suppressWarnings(as.numeric(input$wf_fisheries_all))
+        selected_specs <- parse_fishery_picker_values(input$wf_fisheries_all)
+        selected_fisheries <- unique(selected_specs$fishery)
         years <- df %>%
           filter(fishery %in% selected_fisheries) %>%
           pull(year) %>%
@@ -252,24 +252,34 @@ mod_wf_server <- function(input, output, session, rv) {
       req(input$wf_model, rv$WeightOut_list[[input$wf_model]])
 
       df <- rv$WeightOut_list[[input$wf_model]]@wgtfits
-      fisheries <- sort(unique(df$fishery))
+      fisheries <- sort(unique(suppressWarnings(as.numeric(df$fishery))))
       fishery_map <- rv$FISHERY_MAPS[[input$wf_model]]
       choices <- setNames(fisheries, sapply(fisheries, function(x) get_fishery_name(x, fishery_map)))
       selected_fishery <- if (length(fisheries) > 0) fisheries[1] else NULL
 
       updateSelectInput(session, "wf_fishery", choices = choices, selected = selected_fishery)
-      updatePickerInput(session, "wf_fisheries_all", choices = choices, selected = fisheries)
 
       all_models <- names(rv$WeightOut_list)[!sapply(rv$WeightOut_list, is.null)]
-      compatible_models <- check_wf_compatibility_global(rv, input$wf_model, all_models)
+      global_models <- isolate(input$scenarios)
+      if (!is.null(global_models) && length(global_models) > 0) {
+        all_models <- intersect(global_models, all_models)
+      }
       current_scenarios <- isolate(input$wf_scenarios)
       if (is.null(current_scenarios) || length(current_scenarios) == 0) {
-        selected_scenarios <- compatible_models
+        selected_scenarios <- all_models
       } else {
-        selected_scenarios <- intersect(current_scenarios, compatible_models)
-        if (length(selected_scenarios) == 0) selected_scenarios <- compatible_models
+        selected_scenarios <- intersect(current_scenarios, all_models)
+        if (length(selected_scenarios) == 0) selected_scenarios <- all_models
       }
-      updatePickerInput(session, "wf_scenarios", choices = compatible_models, selected = selected_scenarios)
+      fishery_union <- sort(unique(unlist(lapply(selected_scenarios, function(m) {
+        obj <- rv$WeightOut_list[[m]]
+        if (is.null(obj)) return(numeric(0))
+        suppressWarnings(as.numeric(unique(obj@wgtfits$fishery)))
+      }))))
+      fishery_union <- fishery_union[is.finite(fishery_union)]
+      choices_all <- build_fishery_picker_choices(fishery_union, selected_scenarios, rv$FISHERY_MAPS)
+      updatePickerInput(session, "wf_fisheries_all", choices = choices_all, selected = unname(choices_all))
+      updatePickerInput(session, "wf_scenarios", choices = all_models, selected = selected_scenarios)
 
       years <- sort(unique(df$year))
       updatePickerInput(session, "wf_years", choices = years, selected = years)
@@ -341,66 +351,67 @@ mod_wf_server <- function(input, output, session, rv) {
           theme_void()
         return(p)
       }
+
+      selected_years_num <- suppressWarnings(as.numeric(input$wf_years))
+      selected_years_num <- selected_years_num[is.finite(selected_years_num)]
     
-      normalize_name <- function(x) {
-        x <- as.character(x)
-        x <- trimws(x)
-        x <- gsub("\\s+", " ", x)
-        tolower(x)
-      }
-
-      base_map <- rv$FISHERY_MAPS[[input$wf_model]]
-      base_fisheries <- unique(rv$WeightOut_list[[input$wf_model]]@wgtfits$fishery)
-      base_name_df <- data.frame(
-        fishery = as.numeric(base_fisheries),
-        fishery_display = sapply(base_fisheries, function(f) get_fishery_name(f, base_map)),
-        stringsAsFactors = FALSE
-      ) %>%
-        mutate(fishery_label_norm = normalize_name(fishery_display))
-
-      base_lookup <- base_name_df %>%
-        group_by(fishery_label_norm) %>%
-        summarise(fishery_display = first(fishery_display), .groups = "drop")
-
-      selected_name_norm <- if (identical(input$wf_view_mode, "all_fisheries")) {
-        sel_ids <- suppressWarnings(as.numeric(input$wf_fisheries_all))
-        base_name_df %>%
-          filter(fishery %in% sel_ids) %>%
-          pull(fishery_label_norm) %>%
-          unique()
+      selected_fishery_ids <- if (identical(input$wf_view_mode, "all_fisheries")) {
+        unique(parse_fishery_picker_values(input$wf_fisheries_all)$fishery)
       } else {
-        base_name_df %>%
-          filter(fishery == as.numeric(input$wf_fishery)) %>%
-          pull(fishery_label_norm) %>%
-          unique()
+        suppressWarnings(as.numeric(input$wf_fishery))
       }
-      if (length(selected_name_norm) == 0) {
+      selected_fishery_ids <- selected_fishery_ids[is.finite(selected_fishery_ids)]
+
+      if (length(selected_fishery_ids) == 0) {
         p <- ggplot() +
           annotate("text", x = 0.5, y = 0.5, label = "No fisheries selected", size = 6, color = "#999") +
           theme_void()
         return(p)
       }
 
-      # Combine data from selected scenarios (name-based fishery matching across models).
-      # Join-based lookup is much faster than row-wise name lookup.
+      # Combine data from selected scenarios using fishery IDs.
+      # Names can differ by model; those differences are kept as separate facet labels.
       combined_data <- map_dfr(scenarios_to_use, function(sc) {
         if (is.null(rv$WeightOut_list[[sc]])) return(NULL)
-        df <- rv$WeightOut_list[[sc]]@wgtfits
-        sc_lookup <- rv$FISHERY_MAPS[[sc]] %>%
-          transmute(
-            fishery = as.numeric(fishery),
-            fishery_display_sc = as.character(fishery_name),
-            fishery_label_norm = normalize_name(fishery_display_sc)
-          ) %>%
-          distinct(fishery, .keep_all = TRUE)
+        df <- rv$WeightOut_list[[sc]]@wgtfits %>%
+          mutate(fishery = suppressWarnings(as.numeric(as.character(fishery))))
+
+        if (identical(input$wf_view_mode, "all_fisheries")) {
+          selected_specs <- parse_fishery_picker_values(input$wf_fisheries_all)
+          if (nrow(selected_specs) > 0) {
+            any_model_specific <- any(!is.na(selected_specs$Model) & nzchar(selected_specs$Model))
+            if (any_model_specific) {
+              plain_ids <- selected_specs$fishery[is.na(selected_specs$Model) | !nzchar(selected_specs$Model)]
+              model_ids <- selected_specs$fishery[!is.na(selected_specs$Model) & nzchar(selected_specs$Model) & selected_specs$Model == sc]
+              keep_ids <- unique(c(plain_ids, model_ids))
+              df <- df %>% filter(fishery %in% keep_ids)
+            } else {
+              df <- df %>% filter(fishery %in% selected_specs$fishery)
+            }
+          } else {
+            df <- df[0, , drop = FALSE]
+          }
+        } else if (length(selected_fishery_ids) > 0) {
+          df <- df %>% filter(fishery %in% selected_fishery_ids)
+        }
+        if (length(selected_years_num) > 0) {
+          df <- df %>% filter(year %in% selected_years_num)
+        }
+        if (nrow(df) == 0) return(NULL)
+
+        fish_lookup <- data.frame(
+          fishery = sort(unique(df$fishery)),
+          fishery_display = vapply(
+            sort(unique(df$fishery)),
+            function(f) get_fishery_name(f, rv$FISHERY_MAPS[[sc]]),
+            character(1)
+          ),
+          stringsAsFactors = FALSE
+        )
 
         df %>%
-          left_join(sc_lookup, by = "fishery") %>%
-          filter(!is.na(fishery_label_norm)) %>%
-          filter(fishery_label_norm %in% selected_name_norm) %>%
-          left_join(base_lookup, by = "fishery_label_norm") %>%
+          left_join(fish_lookup, by = "fishery") %>%
           mutate(
-            fishery_display = ifelse(is.na(fishery_display), fishery_display_sc, fishery_display),
             Scenario = sc
           )
       })
@@ -424,24 +435,14 @@ mod_wf_server <- function(input, output, session, rv) {
     
       # Aggregate by scenario/fishery/year/weight
       plot_data <- combined_data %>%
-        group_by(Scenario, fishery_display, fishery_label_norm, year, weight) %>%
+        group_by(Scenario, fishery, fishery_display, year, weight) %>%
         summarise(obs = sum(obs, na.rm = TRUE), 
                   pred = sum(pred, na.rm = TRUE), 
                   .groups = "drop") %>%
         filter(obs > 0 | pred > 0)
-    
-      # Apply year filter
-      plot_data <- plot_data %>%
-        filter(year %in% input$wf_years)
-    
-      # Check if data exists after filtering
-      if (nrow(plot_data) == 0) {
-        p <- ggplot() + 
-          annotate("text", x = 0.5, y = 0.5, label = "No data for selected years", size = 6, color = "#999") +
-          theme_void()
-        return(p)
-      }
 
+      plot_data <- plot_data %>% mutate(fishery_panel = fishery_display)
+    
       # Use bin spacing close to full width; use a subtle stroke for separation.
       wf_bar_width <- {
         wvals <- sort(unique(plot_data$weight))
@@ -454,10 +455,26 @@ mod_wf_server <- function(input, output, session, rv) {
         }
       }
     
-      # Separate observed data
-      obs_data <- plot_data %>%
-        group_by(fishery_display, year, weight) %>%
-        summarise(obs = median(obs, na.rm = TRUE), .groups = "drop")
+      if (identical(view_mode, "all_fisheries")) {
+        plot_data <- build_overlay_fishery_panel_labels(
+          plot_data,
+          scenario_col = "Scenario",
+          id_col = "fishery",
+          label_col = "fishery_display",
+          out_col = "fishery_panel"
+        )
+      } else {
+        plot_data <- plot_data %>% mutate(fishery_panel = fishery_display)
+      }
+
+      fishery_levels <- ordered_fishery_label_levels(
+        ids = plot_data$fishery,
+        labels = plot_data$fishery_panel
+      )
+      if (length(fishery_levels) > 0) {
+        plot_data <- plot_data %>% mutate(fishery_display = factor(fishery_display, levels = fishery_levels))
+        plot_data <- plot_data %>% mutate(fishery_panel = factor(as.character(fishery_panel), levels = fishery_levels))
+      }
     
       fishery_name <- get_fishery_name(input$wf_fishery, rv$FISHERY_MAPS[[input$wf_model]])
     
@@ -481,7 +498,7 @@ mod_wf_server <- function(input, output, session, rv) {
       if (identical(plot_style, "bubble")) {
         if (identical(view_mode, "all_fisheries")) {
           bubble_data <- plot_data %>%
-            group_by(Scenario, fishery_display, weight) %>%
+            group_by(Scenario, fishery_panel, weight) %>%
             summarise(
               obs = sum(obs, na.rm = TRUE),
               pred = sum(pred, na.rm = TRUE),
@@ -501,7 +518,7 @@ mod_wf_server <- function(input, output, session, rv) {
           }
 
           if (length(unique(bubble_data$Scenario)) <= 1) {
-            p <- ggplot(bubble_data, aes(x = weight, y = fishery_display)) +
+            p <- ggplot(bubble_data, aes(x = weight, y = fishery_panel)) +
               geom_point(
                 aes(size = abs_resid, fill = resid),
                 shape = 21, color = "#1f1f1f", stroke = 0.18, alpha = 0.9
@@ -531,7 +548,7 @@ mod_wf_server <- function(input, output, session, rv) {
                 panel.grid.minor = element_blank()
               )
           } else {
-            p <- ggplot(bubble_data, aes(x = weight, y = fishery_display)) +
+            p <- ggplot(bubble_data, aes(x = weight, y = fishery_panel)) +
               geom_point(
                 aes(size = abs_resid, fill = resid),
                 shape = 21, color = "#1f1f1f", stroke = 0.18, alpha = 0.9
@@ -652,14 +669,35 @@ mod_wf_server <- function(input, output, session, rv) {
         return(p)
       }
 
+      # Histogram mode only: build observed summaries.
+      obs_data <- plot_data %>%
+        group_by(fishery, fishery_display, year, weight) %>%
+        summarise(obs = median(obs, na.rm = TRUE), .groups = "drop")
+
+      obs_data_all_labels <- plot_data %>%
+        group_by(fishery, fishery_panel, year, weight) %>%
+        summarise(obs = first(obs), .groups = "drop")
+
+      if (length(fishery_levels) > 0) {
+        obs_data <- obs_data %>% mutate(fishery_display = factor(fishery_display, levels = fishery_levels))
+        obs_data_all_labels <- obs_data_all_labels %>% mutate(fishery_panel = factor(as.character(fishery_panel), levels = fishery_levels))
+      }
+
       if (identical(view_mode, "all_fisheries")) {
-        all_year_obs <- obs_data %>%
-          group_by(fishery_display, weight) %>%
+        all_year_obs <- obs_data_all_labels %>%
+          group_by(fishery_panel, year, weight) %>%
+          summarise(obs = first(obs), .groups = "drop") %>%
+          group_by(fishery_panel, weight) %>%
           summarise(obs = sum(obs, na.rm = TRUE), .groups = "drop")
 
         all_year_pred <- plot_data %>%
-          group_by(Scenario, fishery_display, weight) %>%
+          group_by(Scenario, fishery_panel, weight) %>%
           summarise(pred = sum(pred, na.rm = TRUE), .groups = "drop")
+
+        if (length(fishery_levels) > 0) {
+          all_year_obs <- all_year_obs %>% mutate(fishery_panel = factor(as.character(fishery_panel), levels = fishery_levels))
+          all_year_pred <- all_year_pred %>% mutate(fishery_panel = factor(as.character(fishery_panel), levels = fishery_levels))
+        }
 
         p <- ggplot() +
           geom_col(
@@ -676,7 +714,7 @@ mod_wf_server <- function(input, output, session, rv) {
             aes(x = weight, y = pred, color = Scenario),
             linewidth = 1.2
           ) +
-          facet_wrap(~fishery_display, scales = "free_y", ncol = ncol_facet) +
+          facet_wrap(~fishery_panel, scales = "free_y", ncol = ncol_facet) +
           scale_fill_manual(values = c("Observed" = observed_fill), guide = "none") +
           scale_color_viridis_d(name = "Model") +
           labs(

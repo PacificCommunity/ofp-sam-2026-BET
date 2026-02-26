@@ -400,24 +400,27 @@ server_data_load <- function(input, output, session, rv) {
       
         updateSelectInput(session, "bound_model", choices = names(results_named))
       
-        available_map_models <- names(rv$FISHERY_MAPS)[!vapply(rv$FISHERY_MAPS, is.null, logical(1))]
+        available_cpue_models <- names(rv$RepOut_list)[!vapply(rv$RepOut_list, is.null, logical(1))]
+        available_lf_models <- names(rv$LengOut_list)[!vapply(rv$LengOut_list, is.null, logical(1))]
+        available_wf_models <- names(rv$WeightOut_list)[!vapply(rv$WeightOut_list, is.null, logical(1))]
 
         # Update scenario pickers for all tabs (select all by default)
         updatePickerInput(session, "stock_scenarios", 
                           choices = names(results_named), 
                           selected = names(results_named))
         updatePickerInput(session, "cpue_scenarios", 
-                          choices = available_map_models, 
-                          selected = available_map_models)
+                          choices = available_cpue_models, 
+                          selected = available_cpue_models)
       
         # Update model selectors for LF/WF tabs (single selection)
-        map_selected <- if (length(available_map_models) > 0) available_map_models[1] else character(0)
+        lf_selected <- if (length(available_lf_models) > 0) available_lf_models[1] else character(0)
+        wf_selected <- if (length(available_wf_models) > 0) available_wf_models[1] else character(0)
         updateSelectInput(session, "lf_model", 
-                          choices = available_map_models,
-                          selected = map_selected)
+                          choices = available_lf_models,
+                          selected = lf_selected)
         updateSelectInput(session, "wf_model", 
-                          choices = available_map_models,
-                          selected = map_selected)
+                          choices = available_wf_models,
+                          selected = wf_selected)
       
         # Update fishery names model selector
         updateSelectInput(session, "fishery_names_model",
