@@ -20,7 +20,7 @@ source("tools/condor_archive_cleanup.R")
 ## 1) Environment + paths
 ## -------------------------
 program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_02_04_vsn2278")
-base_dir     <- Sys.getenv("base_dir", "mfcl/inputs/2023_6region")
+base_dir     <- Sys.getenv("base_dir", "mfcl/inputs/2023_rep")
 model_dir    <- Sys.getenv("model_dir", "model/base")
 
 n_mixing_periods <- as.numeric(Sys.getenv("n_mixing_periods", ""))
