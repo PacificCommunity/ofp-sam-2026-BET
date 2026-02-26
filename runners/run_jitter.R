@@ -84,7 +84,7 @@ cat("Jittered par file written:", jittered_par_name, "\n")
 ##############
 
 defaultswitch <- paste("-switch 1",
-                       "1 1 2",
+                       "1 1 5000",
                        sep=" ")
 
 output_par_name <- paste0("jittered_out_", jitter_seed, ".par")
