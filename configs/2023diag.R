@@ -6,13 +6,16 @@ models <- list(
     
     "description"="2023 BET diagnostic model",
     
-    mfcl_commands = "./doitall.sh",
+    mfcl_commands = paste("bet.frq 11.par 12.par",
+                          "-switch 1",
+                          "1 1 100",
+                          sep = " "),
     program_path = "mfcl/exe/mfclo64_2026_02_04_vsn2278",  # Model-specific path
     base_dir = "mfcl/inputs/2023_rep",                   # Model-specific dir
     
     ## configuration for profiling
     Reps = "15 25 25 1000 500 500",
-    scalers = paste0((seq(170, 50, by=-5)), collapse = " "),
+    scalers = paste0((seq(140, 60, by=-5)), collapse = " "),
     
     ## retrospective configuration
     retro_peels = "1 2 3 4 5 6 7",
