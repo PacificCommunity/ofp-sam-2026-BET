@@ -147,12 +147,35 @@ mp_build_profile_payload <- function(scaler_dir) {
     avg_bio <- suppressWarnings(as.numeric(read.table(avg_bio_file)))
   }
 
+  max_grad <- NA_real_
+  sorted_grad_file <- file.path(scaler_dir, "sorted_gradient.rpt")
+  grad_file <- file.path(scaler_dir, "gradient.rpt")
+
+  if (file.exists(sorted_grad_file)) {
+    grad_lines <- readLines(sorted_grad_file, warn = FALSE)
+    if (length(grad_lines) > 0) {
+      last_fields <- strsplit(trimws(grad_lines[length(grad_lines)]), "\\s+")[[1]]
+      if (length(last_fields) >= 2) {
+        max_grad <- suppressWarnings(as.numeric(last_fields[2]))
+      }
+    }
+  } else if (file.exists(grad_file)) {
+    grad_lines <- readLines(grad_file, warn = FALSE)
+    if (length(grad_lines) >= 2) {
+      grad_vals <- suppressWarnings(as.numeric(strsplit(trimws(grad_lines[2]), "\\s+")[[1]]))
+      if (length(grad_vals) > 0 && !all(is.na(grad_vals))) {
+        max_grad <- max(abs(grad_vals), na.rm = TRUE)
+      }
+    }
+  }
+
   list(
     version = "v1",
     created_at = as.character(Sys.time()),
     scaler_dir = scaler_dir,
     scaler = suppressWarnings(as.numeric(sub(".*?(\\d+)$", "\\1", basename(scaler_dir)))),
     avg_bio = avg_bio,
+    max_grad = max_grad,
     lik_out = mp_safe(read.MFCLLikelihood(out_file)),
     lik_raw = mp_safe(readLines(out_file))
   )
