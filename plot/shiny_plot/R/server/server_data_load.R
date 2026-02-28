@@ -21,6 +21,8 @@ server_data_load <- function(input, output, session, rv) {
         showNotification("Model directory not found!", type = "error", duration = 5)
         return(NULL)
       }
+
+      reset_loaded_data_state(rv)
     
       # Show progress bar
       withProgress(message = "Loading model data...", value = 0, {

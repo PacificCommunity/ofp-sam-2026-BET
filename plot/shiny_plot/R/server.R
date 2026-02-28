@@ -11,6 +11,28 @@ source("R/server/server_dir_detection.R")
 source("R/server/server_data_load.R")
 source("R/server/server_nav.R")
 
+reset_loaded_data_state <- function(rv) {
+  rv$data_loaded <- FALSE
+  rv$ParOut_list <- NULL
+  rv$RepOut_list <- NULL
+  rv$LengOut_list <- NULL
+  rv$WeightOut_list <- NULL
+  rv$TagOut_list <- NULL
+  rv$TagRepOut_list <- NULL
+  rv$TagTempOut_list <- NULL
+  rv$AgeOut_list <- NULL
+  rv$IndepOut_list <- NULL
+  rv$Info_list <- NULL
+  rv$JitterPars_list <- NULL
+  rv$JitterInfos_list <- NULL
+  rv$FISHERY_MAPS <- NULL
+  rv$INDEX_FISHERIES_MAPS <- NULL
+  rv$YearRanges <- NULL
+  rv$fishery_names_dfs <- NULL
+  rv$tag_rep_map_dfs <- NULL
+  rv$fishery_map_missing_models <- NULL
+}
+
 server <- function(input, output, session) {
   # ---------------------------------------------------------------------------
   # Reactive Values Storage
@@ -38,6 +60,11 @@ server <- function(input, output, session) {
     fishery_map_required = TRUE,      # Require fishery_map.R to enable map-dependent tabs
     fishery_map_missing_models = NULL # Models missing fishery_map.R
   )
+
+  session$allowReconnect(FALSE)
+  session$onSessionEnded(function() {
+    reset_loaded_data_state(rv)
+  })
 
   server_dir_detection(input, output, session, rv)
   server_data_load(input, output, session, rv)
