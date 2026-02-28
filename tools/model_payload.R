@@ -11,7 +11,47 @@ mp_first_or_null <- function(x) {
   if (length(x) > 0) x[[1]] else NULL
 }
 
+mp_extract_par_obj_fun <- function(par_file) {
+  par_obj <- mp_safe(read.MFCLPar(par_file))
+  obj_fun <- suppressWarnings(tryCatch(as.numeric(par_obj@obj_fun), error = function(e) NA_real_))
+  if (is.finite(obj_fun)) return(obj_fun)
+
+  lines <- mp_safe_read_lines(par_file)
+  if (is.null(lines)) return(NA_real_)
+  idx <- grep("^#\\s*Objective function value\\s*$", lines)
+  if (length(idx) == 0 || idx[1] >= length(lines)) return(NA_real_)
+  suppressWarnings(as.numeric(trimws(lines[idx[1] + 1])))
+}
+
+mp_extract_par_max_grad <- function(par_file) {
+  par_obj <- mp_safe(read.MFCLPar(par_file))
+  max_grad <- suppressWarnings(tryCatch(as.numeric(par_obj@max_grad), error = function(e) NA_real_))
+  if (is.finite(max_grad)) return(max_grad)
+
+  lines <- mp_safe_read_lines(par_file)
+  if (is.null(lines)) return(NA_real_)
+  idx <- grep("^#\\s*Maximum magnitude gradient value\\s*$", lines)
+  if (length(idx) == 0 || idx[1] >= length(lines)) return(NA_real_)
+  suppressWarnings(as.numeric(trimws(lines[idx[1] + 1])))
+}
+
 mp_final_par <- function(folder) {
+  profile_priority <- c(
+    "*finalmle.par",
+    "*finalz.par",
+    "*finalzz.par",
+    "*finaly.par",
+    "*finalx.par",
+    "*final.par"
+  )
+  for (pat in profile_priority) {
+    hits <- list.files(folder, pattern = glob2rx(pat), full.names = TRUE)
+    if (length(hits) > 0) {
+      file_info <- file.info(hits)
+      return(rownames(file_info)[which.max(file_info$mtime)])
+    }
+  }
+
   f <- mp_safe(finalPar(folder))
   if (!is.null(f) && file.exists(f)) return(f)
 
@@ -140,42 +180,25 @@ mp_build_model_payload <- function(folder, tag_report_year1 = "auto") {
 mp_build_profile_payload <- function(scaler_dir) {
   out_file <- file.path(scaler_dir, "test_plot_output")
   if (!file.exists(out_file)) return(NULL)
-
-  avg_bio <- NA_real_
-  avg_bio_file <- file.path(scaler_dir, "avg_bio")
-  if (file.exists(avg_bio_file)) {
-    avg_bio <- suppressWarnings(as.numeric(read.table(avg_bio_file)))
-  }
-
-  max_grad <- NA_real_
-  sorted_grad_file <- file.path(scaler_dir, "sorted_gradient.rpt")
-  grad_file <- file.path(scaler_dir, "gradient.rpt")
-
-  if (file.exists(sorted_grad_file)) {
-    grad_lines <- readLines(sorted_grad_file, warn = FALSE)
-    if (length(grad_lines) > 0) {
-      last_fields <- strsplit(trimws(grad_lines[length(grad_lines)]), "\\s+")[[1]]
-      if (length(last_fields) >= 2) {
-        max_grad <- suppressWarnings(as.numeric(last_fields[2]))
-      }
-    }
-  } else if (file.exists(grad_file)) {
-    grad_lines <- readLines(grad_file, warn = FALSE)
-    if (length(grad_lines) >= 2) {
-      grad_vals <- suppressWarnings(as.numeric(strsplit(trimws(grad_lines[2]), "\\s+")[[1]]))
-      if (length(grad_vals) > 0 && !all(is.na(grad_vals))) {
-        max_grad <- max(abs(grad_vals), na.rm = TRUE)
-      }
-    }
-  }
+  info_file <- file.path(scaler_dir, "info.rds")
+  info_out <- if (file.exists(info_file)) mp_safe(readRDS(info_file)) else NULL
+  par_file <- mp_final_par(scaler_dir)
 
   list(
     version = "v1",
     created_at = as.character(Sys.time()),
     scaler_dir = scaler_dir,
     scaler = suppressWarnings(as.numeric(sub(".*?(\\d+)$", "\\1", basename(scaler_dir)))),
-    avg_bio = avg_bio,
-    max_grad = max_grad,
+    quantity_label = mp_safe(info_out$quantity_label),
+    reference_quantity = suppressWarnings(as.numeric(info_out$reference_quantity)),
+    target_quantity = suppressWarnings(as.numeric(info_out$target_quantity)),
+    actual_quantity = suppressWarnings(as.numeric(info_out$actual_quantity)),
+    target_rel_err = suppressWarnings(as.numeric(info_out$target_rel_err)),
+    af172 = suppressWarnings(as.numeric(mp_safe(info_out$AgeFlags["Af172"]))),
+    avg_bio = suppressWarnings(as.numeric(info_out$actual_quantity)),
+    obj_fun = if (!is.null(par_file) && file.exists(par_file)) mp_extract_par_obj_fun(par_file) else NA_real_,
+    max_grad = if (!is.null(par_file) && file.exists(par_file)) mp_extract_par_max_grad(par_file) else NA_real_,
+    output_par = if (!is.null(par_file)) basename(par_file) else NA_character_,
     lik_out = mp_safe(read.MFCLLikelihood(out_file)),
     lik_raw = mp_safe(readLines(out_file))
   )

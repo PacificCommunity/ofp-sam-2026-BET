@@ -153,26 +153,18 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (file.exists(path)) suppressWarnings(as.numeric(read.table(path))) else NA_real_
   }
 
-  # Read average biomass values for a scenario
-  read_avg_bio <- function(model_dir, scenario) {
-    prof_dir <- file.path(model_dir, scenario, "prof")
-    scaler_dirs <- list.dirs(prof_dir, full.names = TRUE, recursive = FALSE)
-    scaler_dirs <- grep("scaler_\\d+$", scaler_dirs, value = TRUE)
-
-    if (length(scaler_dirs) > 0) {
-      avg_bio_file <- file.path(scaler_dirs[1], "avg_bio")
-      if (file.exists(avg_bio_file)) return(safe_read_scalar(avg_bio_file))
-    }
-
-    avg_bio_file <- file.path(model_dir, scenario, "avg_bio")
-    if (file.exists(avg_bio_file)) return(safe_read_scalar(avg_bio_file))
-
-    NA_real_
+  quantity_axis_label <- function(profile_data) {
+    af172_vals <- unlist(lapply(profile_data, function(x) x$af172), use.names = FALSE)
+    af172_vals <- af172_vals[is.finite(af172_vals)]
+    if (length(af172_vals) == 0) return(bquote("Average biomass (" * 10^3 * " MT)"))
+    if (all(af172_vals > 0)) return(bquote("Average adult biomass (" * 10^3 * " MT)"))
+    if (all(af172_vals == 0)) return(bquote("Average total biomass (" * 10^3 * " MT)"))
+    bquote("Average biomass (" * 10^3 * " MT)")
   }
 
-  # Convert scaler to biomass units
-  scale_to_biomass <- function(scaler, avg_bio) {
-    as.numeric(scaler) * 0.01 * avg_bio
+  scaler_quantity <- function(profile_entry, scl) {
+    key <- as.character(scl)
+    suppressWarnings(as.numeric(profile_entry$actual_quantity[[key]]))
   }
 
   # Load profile outputs for a scenario
@@ -194,17 +186,23 @@ mod_likelihood_server <- function(input, output, session, rv) {
           existing_scales <- as.character(vapply(payloads, function(x) as.numeric(x$scaler), numeric(1)))
           lik_out <- setNames(map(payloads, "lik_out"), existing_scales)
           lik_raw <- setNames(map(payloads, "lik_raw"), existing_scales)
-          max_grad <- setNames(
-            vapply(payloads, function(x) suppressWarnings(as.numeric(x$max_grad)), numeric(1)),
-            existing_scales
-          )
-          avg_bio_payload <- suppressWarnings(as.numeric(payloads[[1]]$avg_bio))
+          max_grad <- setNames(vapply(payloads, function(x) suppressWarnings(as.numeric(x$max_grad)), numeric(1)), existing_scales)
+          obj_fun <- setNames(vapply(payloads, function(x) suppressWarnings(as.numeric(x$obj_fun)), numeric(1)), existing_scales)
+          actual_quantity <- setNames(vapply(payloads, function(x) suppressWarnings(as.numeric(x$actual_quantity)), numeric(1)), existing_scales)
+          target_quantity <- setNames(vapply(payloads, function(x) suppressWarnings(as.numeric(x$target_quantity)), numeric(1)), existing_scales)
+          target_rel_err <- setNames(vapply(payloads, function(x) suppressWarnings(as.numeric(x$target_rel_err)), numeric(1)), existing_scales)
+          af172_vals <- suppressWarnings(vapply(payloads, function(x) as.numeric(x$af172), numeric(1)))
+          af172 <- if (length(af172_vals) > 0) af172_vals[1] else NA_real_
         } else {
           lik_out <- list()
           lik_raw <- list()
           max_grad <- numeric(0)
+          obj_fun <- numeric(0)
+          actual_quantity <- numeric(0)
+          target_quantity <- numeric(0)
+          target_rel_err <- numeric(0)
           existing_scales <- character(0)
-          avg_bio_payload <- NA_real_
+          af172 <- NA_real_
         }
       } else {
         scales <- basename(scaler_dirs) %>% str_extract("\\d+$")
@@ -221,7 +219,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
           existing_scales <- character(0)
         }
         max_grad <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
-        avg_bio_payload <- NA_real_
+        obj_fun <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+        actual_quantity <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+        target_quantity <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+        target_rel_err <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+        af172 <- NA_real_
       }
     } else {
       output_files <- list.files(folder, pattern = "^test_plot_output_\\d+$", full.names = TRUE)
@@ -237,7 +239,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
         existing_scales <- character(0)
       }
       max_grad <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
-      avg_bio_payload <- NA_real_
+      obj_fun <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+      actual_quantity <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+      target_quantity <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+      target_rel_err <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+      af172 <- NA_real_
     }
 
     list(
@@ -245,7 +251,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
       lik_out = lik_out,
       lik_raw = lik_raw,
       max_grad = max_grad,
-      avg_bio = if (is.finite(avg_bio_payload)) avg_bio_payload else read_avg_bio(model_dir, scenario)
+      obj_fun = obj_fun,
+      actual_quantity = actual_quantity,
+      target_quantity = target_quantity,
+      target_rel_err = target_rel_err,
+      af172 = af172
     )
   }
 
@@ -268,12 +278,18 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
       for (scl in pd$scales) {
         grad_val <- pd$max_grad[[as.character(scl)]]
+        obj_fun <- pd$obj_fun[[as.character(scl)]]
+        actual_quantity <- pd$actual_quantity[[as.character(scl)]]
+        target_quantity <- pd$target_quantity[[as.character(scl)]]
+        target_rel_err <- pd$target_rel_err[[as.character(scl)]]
         rows[[length(rows) + 1]] <- data.frame(
           scenario = sc,
           scaler = suppressWarnings(as.numeric(scl)),
-          avg_bio = suppressWarnings(as.numeric(pd$avg_bio)),
+          actual_quantity = suppressWarnings(as.numeric(actual_quantity)),
+          target_quantity = suppressWarnings(as.numeric(target_quantity)),
+          target_rel_err = suppressWarnings(as.numeric(target_rel_err)),
+          obj_fun = suppressWarnings(as.numeric(obj_fun)),
           max_grad = suppressWarnings(as.numeric(grad_val)),
-          accepted = ifelse(is.finite(grad_val), grad_val < 0.001, NA),
           stringsAsFactors = FALSE
         )
       }
@@ -284,21 +300,20 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     out %>%
       mutate(
-        biomass = scaler * 0.01 * avg_bio,
-        biomass_kmt = biomass / 1000,
-        max_grad = ifelse(is.finite(max_grad), max_grad, NA_real_),
-        accepted = case_when(
-          is.na(accepted) ~ "NA",
-          accepted ~ "Yes",
-          TRUE ~ "No"
-        )
+        actual_quantity_kmt = actual_quantity / 1000,
+        target_quantity_kmt = target_quantity / 1000,
+        target_gap_pct = target_rel_err * 100,
+        obj_fun = ifelse(is.finite(obj_fun), obj_fun, NA_real_),
+        max_grad = ifelse(is.finite(max_grad), max_grad, NA_real_)
       ) %>%
       select(
         Model = scenario,
         Scaler = scaler,
-        `Avg Bio (k MT)` = biomass_kmt,
-        `Max Gradient` = max_grad,
-        `Accept (<0.001)` = accepted
+        `Actual Quantity (k MT)` = actual_quantity_kmt,
+        `Target Quantity (k MT)` = target_quantity_kmt,
+        `Gap (%)` = target_gap_pct,
+        `Objective Function` = obj_fun,
+        `Max Gradient` = max_grad
       ) %>%
       arrange(Model, Scaler)
   })
@@ -315,7 +330,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }
 
   # Create a standard likelihood profile plot
-  create_piner_plot <- function(data, group_var, label = NULL, facet_ncol = 2) {
+  create_piner_plot <- function(data, group_var, x_label, label = NULL, facet_ncol = 2) {
     if (nrow(data) == 0) return(NULL)
 
     unique_groups <- unique(data[[group_var]])
@@ -339,7 +354,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       facet_wrap(~scenario, scales = "free", ncol = facet_ncol) +
       scale_x_continuous(
         labels = function(x) x / 1000,
-        name = bquote("Average biomass (" * 10^3 * " MT)")
+        name = x_label
       ) +
       labs(y = "Changes in Likelihood", colour = group_var, shape = group_var) +
       theme_bw(base_size = 12) +
@@ -363,9 +378,6 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     rows <- list()
     for (sc in scenarios) {
-      avg_bio <- profile_data[[sc]]$avg_bio
-      if (!is.finite(avg_bio)) next
-
       for (scl in scales) {
         lik <- profile_data[[sc]]$lik_out[[scl]]
         raw <- profile_data[[sc]]$lik_raw[[scl]]
@@ -386,7 +398,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
         )
         values <- c(values, Total = sum(values, na.rm = TRUE))
 
-        scaler_bio <- scale_to_biomass(scl, avg_bio)
+        scaler_bio <- scaler_quantity(profile_data[[sc]], scl)
+        if (!is.finite(scaler_bio)) next
         rows[[length(rows) + 1]] <- data.frame(
           scenario = sc,
           scaler = scaler_bio,
@@ -406,12 +419,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     rows <- list()
     for (sc in scenarios) {
-      avg_bio <- profile_data[[sc]]$avg_bio
-      if (!is.finite(avg_bio)) next
-
       for (scl in scales) {
         lik <- profile_data[[sc]]$lik_out[[scl]]
         if (is.null(lik)) next
+        scaler_bio <- scaler_quantity(profile_data[[sc]], scl)
+        if (!is.finite(scaler_bio)) next
 
         vec <- slot(lik, slot_name)
         fish_ids <- as.character(seq_along(vec))
@@ -437,7 +449,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
         df <- data.frame(
           scenario = sc,
-          scaler = scale_to_biomass(scl, avg_bio),
+          scaler = scaler_bio,
           group = fish_names,
           value = as.numeric(vec),
           stringsAsFactors = FALSE
@@ -445,7 +457,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
         total_row <- data.frame(
           scenario = sc,
-          scaler = scale_to_biomass(scl, avg_bio),
+          scaler = scaler_bio,
           group = "Total",
           value = sum(vec),
           stringsAsFactors = FALSE
@@ -488,13 +500,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     rows <- list()
     for (sc in scenarios) {
-      avg_bio <- profile_data[[sc]]$avg_bio
-      if (!is.finite(avg_bio)) next
-
       for (scl in scales) {
         raw <- profile_data[[sc]]$lik_raw[[scl]]
         vec <- extract_survey_index_like_from_raw(raw)
         if (length(vec) == 0) next
+        scaler_bio <- scaler_quantity(profile_data[[sc]], scl)
+        if (!is.finite(scaler_bio)) next
 
         fish_ids <- as.character(seq_along(vec))
         keep_idx <- is.finite(vec) & abs(vec) > 0
@@ -507,7 +518,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
         df <- data.frame(
           scenario = sc,
-          scaler = scale_to_biomass(scl, avg_bio),
+          scaler = scaler_bio,
           Fishery = fish_names,
           value = as.numeric(vec),
           stringsAsFactors = FALSE
@@ -515,7 +526,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
         total_row <- data.frame(
           scenario = sc,
-          scaler = scale_to_biomass(scl, avg_bio),
+          scaler = scaler_bio,
           Fishery = "Total",
           value = sum(vec),
           stringsAsFactors = FALSE
@@ -533,9 +544,6 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     rows <- list()
     for (sc in scenarios) {
-      avg_bio <- profile_data[[sc]]$avg_bio
-      if (!is.finite(avg_bio)) next
-
       tag_out <- tag_out_list[[sc]]
       if (is.null(tag_out)) next
 
@@ -550,6 +558,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       for (scl in scales) {
         lik <- profile_data[[sc]]$lik_out[[scl]]
         if (is.null(lik)) next
+        scaler_bio <- scaler_quantity(profile_data[[sc]], scl)
+        if (!is.finite(scaler_bio)) next
 
         tag_rel <- lik@tag_rel_fish
         sums_vec <- sapply(tag_rel, function(g) sum(unlist(g)))
@@ -558,7 +568,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
         df <- data.frame(
           scenario = sc,
-          scaler = scale_to_biomass(scl, avg_bio),
+          scaler = scaler_bio,
           program = program_names,
           value = as.numeric(sums_vec),
           stringsAsFactors = FALSE
@@ -594,15 +604,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     rows <- list()
     for (sc in scenarios) {
-      avg_bio <- profile_data[[sc]]$avg_bio
-      if (!is.finite(avg_bio)) next
-
       alk_summary <- get_alk_summary(age_out_list[[sc]])
       if (is.null(alk_summary) || nrow(alk_summary) == 0) next
 
       for (scl in scales) {
         lik <- profile_data[[sc]]$lik_out[[scl]]
         if (is.null(lik)) next
+        scaler_bio <- scaler_quantity(profile_data[[sc]], scl)
+        if (!is.finite(scaler_bio)) next
 
         lik_vec <- lik@age_length
         n_use <- min(length(lik_vec), nrow(alk_summary))
@@ -611,7 +620,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         df <- alk_summary[seq_len(n_use), , drop = FALSE]
         df$Lik <- lik_vec[seq_len(n_use)]
         df$scenario <- sc
-        df$scaler <- scale_to_biomass(scl, avg_bio)
+        df$scaler <- scaler_bio
 
         if (by == "fishery") {
           fish_ids <- as.character(df$fishery)
@@ -980,7 +989,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No component data available"))
       }
       data <- calc_lik_change(data, "Likelihood")
-      return(list(data = data, group_col = "Likelihood", label = "Components", message = NULL))
+      return(list(data = data, group_col = "Likelihood", label = "Components", message = NULL, profile_data = profile_data))
     }
 
     if (type == "cpues") {
@@ -990,7 +999,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No CPUE profile data available"))
       }
       data <- calc_lik_change(data, "Fishery")
-      return(list(data = data, group_col = "Fishery", label = "CPUEs", message = NULL))
+      return(list(data = data, group_col = "Fishery", label = "CPUEs", message = NULL, profile_data = profile_data))
     }
 
     if (type == "lfs") {
@@ -1001,7 +1010,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No LF profile data available"))
       }
       data <- calc_lik_change(data, "Fishery")
-      return(list(data = data, group_col = "Fishery", label = "LFs", message = NULL))
+      return(list(data = data, group_col = "Fishery", label = "LFs", message = NULL, profile_data = profile_data))
     }
 
     if (type == "wfs") {
@@ -1012,7 +1021,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No WF profile data available"))
       }
       data <- calc_lik_change(data, "Fishery")
-      return(list(data = data, group_col = "Fishery", label = "WFs", message = NULL))
+      return(list(data = data, group_col = "Fishery", label = "WFs", message = NULL, profile_data = profile_data))
     }
 
     if (type == "tagging") {
@@ -1027,7 +1036,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         mutate(program = "Total")
       data <- bind_rows(data, total_row)
       data <- calc_lik_change(data, "program")
-      return(list(data = data, group_col = "program", label = "Tagging", message = NULL))
+      return(list(data = data, group_col = "program", label = "Tagging", message = NULL, profile_data = profile_data))
     }
 
     if (type == "cal_fishery") {
@@ -1038,7 +1047,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No CAL by fishery data available"))
       }
       data <- calc_lik_change(data, "fishery")
-      return(list(data = data, group_col = "fishery", label = "CAL", message = NULL))
+      return(list(data = data, group_col = "fishery", label = "CAL", message = NULL, profile_data = profile_data))
     }
 
     if (type == "cal_year") {
@@ -1049,7 +1058,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No CAL by year data available"))
       }
       data <- calc_lik_change(data, "year")
-      return(list(data = data, group_col = "year", label = "CAL", message = NULL))
+      return(list(data = data, group_col = "year", label = "CAL", message = NULL, profile_data = profile_data))
     }
 
     list(data = data.frame(), group_col = NULL, label = NULL, message = "Unsupported profile type")
@@ -1306,7 +1315,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       )
     }
 
-    create_piner_plot(data, group_col, label, facet_ncol = facet_ncol)
+    x_label <- quantity_axis_label(info$profile_data)
+    create_piner_plot(data, group_col, x_label, label, facet_ncol = facet_ncol)
   })
   likelihood_plot_reactive <- bindCache(
     likelihood_plot_reactive,
