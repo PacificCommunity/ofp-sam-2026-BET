@@ -300,17 +300,17 @@
 
 
 generate_proflike_script <- function(
-    Penalties = c(Pen1 = 100000, Pen2 = 1000000, Pen3 = 10000000),
-    Reps = c(Reps1 = 15, Reps2 = 25, Reps3 = 25, Reps4 = 1000, Reps5 = 100, Reps6 = 500),
+    Penalties = c(Pen1 = 5e4, Pen2 = 5e5, Pen3 = 5e6),
+    Reps = c(Reps1 = 5, Reps2 = 10, Reps3 = 15, Reps4 = 200, Reps5 = 50, Reps6 = 200),
     AgeFlags = c(Af172 = 0, Af173 = 0, Af174 = 0),
     Prog = "../../mfcl/exe/mfclo64_2026_01_22_vsn2278",
     Frq = "bet.frq",
     Initp = "12.par",
     Mults = c(90, 80, 70, 60, 50),
     QuantityType = 2,
-    DistanceBreaks = c(mid = 25, far = 50),
-    PenaltyScales = c(near = 1, mid = 3, far = 8),
-    RepsScales = c(near = 1, mid = 1.5, far = 2),
+    DistanceBreaks = c(mid = 20, far = 35),
+    PenaltyScales = c(near = 1, mid = 2, far = 4),
+    RepsScales = c(near = 1, mid = 1.25, far = 1.5),
     ExtraFarRefine = TRUE,
     filename = "ProfLike.sh") {
   
