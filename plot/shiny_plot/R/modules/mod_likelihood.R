@@ -88,6 +88,7 @@ mod_likelihood_ui <- function() {
         status = "warning",
         collapsible = TRUE,
         uiOutput("likelihood_table_ui"),
+        uiOutput("profile_gradient_table_ui"),
         plotOutput("likelihood_plot", height = "650px")
       )
     )
@@ -193,10 +194,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
           existing_scales <- as.character(vapply(payloads, function(x) as.numeric(x$scaler), numeric(1)))
           lik_out <- setNames(map(payloads, "lik_out"), existing_scales)
           lik_raw <- setNames(map(payloads, "lik_raw"), existing_scales)
+          max_grad <- setNames(
+            vapply(payloads, function(x) suppressWarnings(as.numeric(x$max_grad)), numeric(1)),
+            existing_scales
+          )
           avg_bio_payload <- suppressWarnings(as.numeric(payloads[[1]]$avg_bio))
         } else {
           lik_out <- list()
           lik_raw <- list()
+          max_grad <- numeric(0)
           existing_scales <- character(0)
           avg_bio_payload <- NA_real_
         }
@@ -214,6 +220,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           lik_raw <- list()
           existing_scales <- character(0)
         }
+        max_grad <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
         avg_bio_payload <- NA_real_
       }
     } else {
@@ -229,6 +236,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         lik_raw <- list()
         existing_scales <- character(0)
       }
+      max_grad <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
       avg_bio_payload <- NA_real_
     }
 
@@ -236,9 +244,64 @@ mod_likelihood_server <- function(input, output, session, rv) {
       scales = existing_scales,
       lik_out = lik_out,
       lik_raw = lik_raw,
+      max_grad = max_grad,
       avg_bio = if (is.finite(avg_bio_payload)) avg_bio_payload else read_avg_bio(model_dir, scenario)
     )
   }
+
+  profile_gradient_table_reactive <- reactive({
+    req(input$model_dir, input$lik_scenarios)
+
+    type <- input$lik_profile_type
+    if (type %in% c("jitter", "retro", "hessian")) return(NULL)
+
+    selected <- input$lik_scenarios
+    profile_data <- setNames(
+      lapply(selected, function(sc) load_profile_outputs(input$model_dir, sc)),
+      selected
+    )
+
+    rows <- list()
+    for (sc in names(profile_data)) {
+      pd <- profile_data[[sc]]
+      if (length(pd$scales) == 0) next
+
+      for (scl in pd$scales) {
+        grad_val <- pd$max_grad[[as.character(scl)]]
+        rows[[length(rows) + 1]] <- data.frame(
+          scenario = sc,
+          scaler = suppressWarnings(as.numeric(scl)),
+          avg_bio = suppressWarnings(as.numeric(pd$avg_bio)),
+          max_grad = suppressWarnings(as.numeric(grad_val)),
+          accepted = ifelse(is.finite(grad_val), grad_val < 0.001, NA),
+          stringsAsFactors = FALSE
+        )
+      }
+    }
+
+    out <- bind_rows(rows)
+    if (nrow(out) == 0) return(NULL)
+
+    out %>%
+      mutate(
+        biomass = scaler * 0.01 * avg_bio,
+        biomass_kmt = biomass / 1000,
+        max_grad = ifelse(is.finite(max_grad), max_grad, NA_real_),
+        accepted = case_when(
+          is.na(accepted) ~ "NA",
+          accepted ~ "Yes",
+          TRUE ~ "No"
+        )
+      ) %>%
+      select(
+        Model = scenario,
+        Scaler = scaler,
+        `Avg Bio (k MT)` = biomass_kmt,
+        `Max Gradient` = max_grad,
+        `Accept (<0.001)` = accepted
+      ) %>%
+      arrange(Model, Scaler)
+  })
 
   # Calculate likelihood change from minimum
   calc_lik_change <- function(df, group_col) {
@@ -1277,6 +1340,36 @@ mod_likelihood_server <- function(input, output, session, rv) {
       DTOutput("likelihood_table")
     )
   })
+
+  output$profile_gradient_table_ui <- renderUI({
+    grad_tbl <- profile_gradient_table_reactive()
+    if (!identical(input$lik_profile_type, "components")) return(NULL)
+    if (is.null(grad_tbl) || nrow(grad_tbl) == 0) return(NULL)
+
+    tagList(
+      tags$hr(),
+      tags$details(
+        style = "margin-top: 8px; margin-bottom: 8px;",
+        tags$summary(
+          HTML("<span style='font-weight:700;'>Profile Max Gradient by Scaler</span><span style='margin-left:10px; font-size:12px; color:#555;'>Click to expand/collapse</span>"),
+          style = paste(
+            "cursor: pointer;",
+            "font-size: 16px;",
+            "list-style: none;",
+            "background: #f4f6f9;",
+            "border: 1px solid #d2d6de;",
+            "border-radius: 4px;",
+            "padding: 10px 12px;",
+            "display: block;"
+          )
+        ),
+        tags$div(
+          style = "margin-top: 10px;",
+          DTOutput("profile_gradient_table")
+        )
+      )
+    )
+  })
   
   output$likelihood_table <- renderDT({
     info <- profile_data_reactive()
@@ -1285,6 +1378,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
     
     datatable(
       info$data,
+      options = list(pageLength = 10, scrollX = TRUE),
+      rownames = FALSE
+    )
+  })
+
+  output$profile_gradient_table <- renderDT({
+    grad_tbl <- profile_gradient_table_reactive()
+    if (is.null(grad_tbl) || nrow(grad_tbl) == 0) return(NULL)
+
+    datatable(
+      grad_tbl,
       options = list(pageLength = 10, scrollX = TRUE),
       rownames = FALSE
     )
