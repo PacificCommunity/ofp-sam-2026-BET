@@ -57,7 +57,6 @@
     
     possible_paths <- c(
       possible_paths,
-      "configs/set_model.R",
       "set_model.R"
     )
     
@@ -238,9 +237,7 @@
             possible_paths <- c(
               saved_settings$last_config_file,
               file.path(resolve_repo_path(".launcher_configs"), saved_settings$last_config_file),
-              file.path(resolve_repo_path(".launcher_configs"), basename(saved_settings$last_config_file)),
-              file.path(resolve_repo_path("configs"), saved_settings$last_config_file),
-              file.path(resolve_repo_path("configs"), basename(saved_settings$last_config_file))
+              file.path(resolve_repo_path(".launcher_configs"), basename(saved_settings$last_config_file))
             )
             
             for (path in possible_paths) {

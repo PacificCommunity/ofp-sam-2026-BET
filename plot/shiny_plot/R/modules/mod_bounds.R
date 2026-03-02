@@ -24,6 +24,7 @@ mod_bounds_ui <- function() {
             status = "danger",
             collapsible = TRUE,
             selectInput("bound_model", "Select Model:", choices = NULL),
+            DTOutput("bounds_type_summary"),
             DTOutput("bounds_detail"),
             downloadButton("download_bounds", "Download CSV", class = "btn-info")
           )
@@ -73,6 +74,8 @@ mod_bounds_server <- function(input, output, session, rv) {
         Model = names(bounds_data()),
         Total_Params = sapply(bounds_data(), function(x) x$total_params),
         Bound_Hits = sapply(bounds_data(), function(x) nrow(x$bound_hits)),
+        Lower_Hits = sapply(bounds_data(), function(x) sum(x$bound_hits$Hit_Type == "Lower", na.rm = TRUE)),
+        Upper_Hits = sapply(bounds_data(), function(x) sum(x$bound_hits$Hit_Type == "Upper", na.rm = TRUE)),
         Hit_Rate = sapply(bounds_data(), function(x) 
           sprintf("%.2f%%", nrow(x$bound_hits) / x$total_params * 100))
       )
@@ -80,6 +83,34 @@ mod_bounds_server <- function(input, output, session, rv) {
       datatable(overview, 
                 options = list(pageLength = 10, dom = 'tip'), 
                 rownames = FALSE)
+    })
+
+    output$bounds_type_summary <- renderDT({
+      req(input$bound_model, bounds_data())
+
+      if (!input$bound_model %in% names(bounds_data())) {
+        return(NULL)
+      }
+
+      bounds <- bounds_data()[[input$bound_model]]$bound_hits
+
+      if (nrow(bounds) == 0) {
+        return(datatable(
+          data.frame(Message = "✓ No bound hits detected"),
+          options = list(dom = "t"),
+          rownames = FALSE
+        ))
+      }
+
+      summary_tbl <- bounds %>%
+        count(Hit_Type, name = "Count") %>%
+        arrange(match(Hit_Type, c("Lower", "Upper")))
+
+      datatable(
+        summary_tbl,
+        options = list(dom = "t", paging = FALSE, ordering = FALSE),
+        rownames = FALSE
+      )
     })
   
     # Render detailed bound hits table

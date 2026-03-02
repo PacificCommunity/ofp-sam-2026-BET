@@ -2,6 +2,18 @@ mod_summary_ui <- function() {
       tabItem(
         tabName = "summary",
         h2("Model Summary", style = "color: #3c8dbc;"),
+
+        fluidRow(
+          box(
+            title = "Display Options",
+            width = 12,
+            solidHeader = TRUE,
+            status = "info",
+            collapsible = TRUE,
+            collapsed = TRUE,
+            checkboxInput("summary_show_run_description", "Show Run Description", value = FALSE)
+          )
+        ),
         
         # Overall summary value boxes
         fluidRow(
@@ -51,10 +63,9 @@ mod_summary_server <- function(input, output, session, rv) {
         info <- rv$Info_list[[model_name]]
         description <- if (!is.null(info$description) && nzchar(info$description)) info$description else NA_character_
         config_summary <- if (!is.null(info$config_summary) && nzchar(info$config_summary)) info$config_summary else NA_character_
-        data.frame(
+        out <- data.frame(
           Model = model_name,
-          Description = description,
-          Config_Summary = config_summary,
+          Model_Description = description,
           Max_Grad = sprintf("%.6f", as.numeric(par@max_grad)),
           Obj_Fun = sprintf("%.2f", as.numeric(par@obj_fun)),
           N_Pars = as.numeric(par@n_pars),
@@ -63,6 +74,10 @@ mod_summary_server <- function(input, output, session, rv) {
           Regions = dims$regions,
           Seasons = dims$seasons
         )
+        if (isTRUE(input$summary_show_run_description)) {
+          out$Run_Description <- config_summary
+        }
+        out
       })
     
       # Display as interactive table
@@ -133,14 +148,16 @@ mod_summary_server <- function(input, output, session, rv) {
               style = "padding: 5px;",
               tags$div(
                 style = "margin-bottom: 8px; padding: 8px 10px; background: #f4f8fb; border-left: 3px solid #3c8dbc; border-radius: 3px; font-size: 12px;",
-                tags$strong("Description: "),
+                tags$strong("Model Description: "),
                 description
               ),
-              tags$div(
-                style = "margin-bottom: 8px; padding: 8px 10px; background: #f8fafc; border-left: 3px solid #6b7280; border-radius: 3px; font-size: 12px;",
-                tags$strong("Config summary: "),
-                config_summary
-              ),
+              if (isTRUE(input$summary_show_run_description)) {
+                tags$div(
+                  style = "margin-bottom: 8px; padding: 8px 10px; background: #f8fafc; border-left: 3px solid #6b7280; border-radius: 3px; font-size: 12px;",
+                  tags$strong("Run Description: "),
+                  config_summary
+                )
+              },
               tags$table(
                 style = "width: 100%; font-size: 13px;",
                 tags$tr(

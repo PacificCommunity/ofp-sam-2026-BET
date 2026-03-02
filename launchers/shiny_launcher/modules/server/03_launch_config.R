@@ -14,8 +14,7 @@
     if (!is.null(rv$config_path)) {
       # Find the file
       possible_paths <- c(
-        rv$config_path,
-        file.path(resolve_repo_path("configs"), basename(rv$config_path))
+        rv$config_path
       )
       
       for (p in possible_paths) {

@@ -274,7 +274,7 @@ mod_cpue_server <- function(input, output, session, rv) {
 
       if (identical(view_mode, "by_scenario")) {
         p <- ggplot(cpue_all, aes(x = year_season)) +
-          geom_point(data = obs_points, aes(y = obs), size = 1.8, alpha = 0.65, color = "#E69F00") +
+          geom_point(data = obs_points, aes(y = obs), size = 1.8, alpha = 0.5, color = "#6b7280") +
           geom_line(aes(y = fit, color = Scenario), linewidth = 1.1, alpha = 0.9) +
           facet_grid(Scenario ~ fishery_name, scales = "free_y") +
           scale_color_manual(values = scenario_colors) +
@@ -292,7 +292,7 @@ mod_cpue_server <- function(input, output, session, rv) {
       }
 
       p <- ggplot(cpue_all, aes(x = year_season)) +
-        geom_point(data = obs_points, aes(y = obs), size = 2, alpha = 0.6, color = "#E69F00") +
+        geom_point(data = obs_points, aes(y = obs), size = 2, alpha = 0.5, color = "#6b7280") +
         geom_line(aes(y = fit, color = Scenario), linewidth = 1.2, alpha = 0.9) +
         facet_wrap(~fishery_name, scales = "free_y", ncol = facet_ncol) +
         scale_color_manual(values = scenario_colors) +

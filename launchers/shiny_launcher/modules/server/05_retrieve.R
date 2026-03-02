@@ -599,7 +599,7 @@
       
       removeNotification("download_all_progress")
       showNotification("✓ Download complete!", type = "message", duration = 5)
-      rv$action_status$download_all <- paste0(length(tar_files), "/", length(tar_files), " done")
+      rv$action_status$download_all <- paste0(length(folder_paths), "/", length(folder_paths), " done")
       shinyjs::enable("download_all")
       
     }, error = function(e) {
