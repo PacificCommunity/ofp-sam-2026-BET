@@ -92,6 +92,7 @@ mod_likelihood_ui <- function() {
     ),
 
     fluidRow(
+      uiOutput("profile_target_info_ui"),
       uiOutput("likelihood_table_ui"),
       uiOutput("profile_gradient_table_ui")
     )
@@ -157,8 +158,19 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }
 
   quantity_axis_label <- function(profile_data) {
+    quantity_labels <- unlist(lapply(profile_data, function(x) x$quantity_label), use.names = FALSE)
+    quantity_labels <- quantity_labels[nzchar(quantity_labels)]
     af172_vals <- unlist(lapply(profile_data, function(x) x$af172), use.names = FALSE)
     af172_vals <- af172_vals[is.finite(af172_vals)]
+    is_depletion <- length(quantity_labels) > 0 && all(quantity_labels == "relative_depletion")
+
+    if (is_depletion) {
+      if (length(af172_vals) == 0) return("Biomass depletion")
+      if (all(af172_vals > 0)) return("Adult biomass depletion")
+      if (all(af172_vals == 0)) return("Total biomass depletion")
+      return("Biomass depletion")
+    }
+
     if (length(af172_vals) == 0) return(bquote("Average biomass (" * 10^3 * " MT)"))
     if (all(af172_vals > 0)) return(bquote("Average adult biomass (" * 10^3 * " MT)"))
     if (all(af172_vals == 0)) return(bquote("Average total biomass (" * 10^3 * " MT)"))
@@ -168,6 +180,81 @@ mod_likelihood_server <- function(input, output, session, rv) {
   scaler_quantity <- function(profile_entry, scl) {
     key <- as.character(scl)
     suppressWarnings(as.numeric(profile_entry$actual_quantity[[key]]))
+  }
+
+  safe_payload_numeric <- function(x, field) {
+    value <- x[[field]]
+    if (is.null(value) || length(value) == 0) return(NA_real_)
+    suppressWarnings(as.numeric(value[[1]]))
+  }
+
+  profile_target_label <- function(quantity_label) {
+    if (identical(quantity_label, "relative_depletion")) return("Target biomass depletion")
+    if (identical(quantity_label, "avg_bio")) return("Average biomass")
+    "Unknown"
+  }
+
+  profile_biomass_label <- function(af172) {
+    if (!is.finite(af172)) return("Unknown")
+    if (af172 > 0) return("Adult")
+    "Total"
+  }
+
+  profile_period_window <- function(max_year, seasons, back_index) {
+    if (!is.finite(max_year) || !is.finite(seasons) || seasons <= 0 || !is.finite(back_index)) {
+      return(NA_character_)
+    }
+
+    end_step <- as.integer(round(max_year * seasons))
+    period_step <- end_step - as.integer(round(back_index))
+    if (!is.finite(period_step)) return(NA_character_)
+
+    year_val <- ((period_step - 1) %/% seasons) + 1
+    season_val <- ((period_step - 1) %% seasons) + 1
+    paste0(year_val, " S", season_val)
+  }
+
+  profile_period_range_label <- function(af173, af174, max_year, seasons) {
+    if (!is.finite(af173) || !is.finite(af174) || !is.finite(max_year) || !is.finite(seasons)) {
+      return("Not available")
+    }
+
+    older_back <- max(af173, af174)
+    recent_back <- min(af173, af174)
+    older_label <- profile_period_window(max_year, seasons, older_back)
+    recent_label <- profile_period_window(max_year, seasons, recent_back)
+
+    if (!nzchar(older_label) || !nzchar(recent_label) || is.na(older_label) || is.na(recent_label)) {
+      return("Not available")
+    }
+
+    if (older_label == recent_label) return(older_label)
+    paste0(older_label, " to ", recent_label)
+  }
+
+  profile_period_label <- function(quantity_label, af173, af174, max_year, seasons) {
+    if (!is.finite(af173) || !is.finite(af174)) return("Not available")
+
+    if (af173 == 0 && af174 == 0) {
+      if (identical(quantity_label, "relative_depletion")) {
+        return("Terminal biomass window: whole time series")
+      }
+      if (identical(quantity_label, "avg_bio")) {
+        return("Average biomass window: whole time series")
+      }
+      return("Whole time series")
+    }
+
+    period_core <- profile_period_range_label(af173, af174, max_year, seasons)
+
+    if (identical(quantity_label, "relative_depletion")) {
+      return(paste("Terminal biomass window:", period_core))
+    }
+    if (identical(quantity_label, "avg_bio")) {
+      return(paste("Average biomass window:", period_core))
+    }
+
+    period_core
   }
 
   # Load profile outputs for a scenario
@@ -184,6 +271,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
       if (any(has_payload)) {
         payloads <- map(payload_files[has_payload], ~ tryCatch(readRDS(.x), error = function(e) NULL))
         payloads <- payloads[!vapply(payloads, is.null, logical(1))]
+        info_files <- file.path(scaler_dirs[has_payload], "info.rds")
+        info_payloads <- map(info_files[file.exists(info_files)], ~ tryCatch(readRDS(.x), error = function(e) NULL))
+        info_payloads <- info_payloads[!vapply(info_payloads, is.null, logical(1))]
 
         if (length(payloads) > 0) {
           existing_scales <- as.character(vapply(payloads, function(x) as.numeric(x$scaler), numeric(1)))
@@ -194,8 +284,32 @@ mod_likelihood_server <- function(input, output, session, rv) {
           actual_quantity <- setNames(vapply(payloads, function(x) suppressWarnings(as.numeric(x$actual_quantity)), numeric(1)), existing_scales)
           target_quantity <- setNames(vapply(payloads, function(x) suppressWarnings(as.numeric(x$target_quantity)), numeric(1)), existing_scales)
           target_rel_err <- setNames(vapply(payloads, function(x) suppressWarnings(as.numeric(x$target_rel_err)), numeric(1)), existing_scales)
-          af172_vals <- suppressWarnings(vapply(payloads, function(x) as.numeric(x$af172), numeric(1)))
+          af172_vals <- suppressWarnings(vapply(payloads, function(x) safe_payload_numeric(x, "af172"), numeric(1)))
           af172 <- if (length(af172_vals) > 0) af172_vals[1] else NA_real_
+          af173_vals <- suppressWarnings(vapply(payloads, function(x) safe_payload_numeric(x, "af173"), numeric(1)))
+          af174_vals <- suppressWarnings(vapply(payloads, function(x) safe_payload_numeric(x, "af174"), numeric(1)))
+          if (length(af173_vals) == 0 && length(info_payloads) > 0) {
+            af173_vals <- suppressWarnings(vapply(info_payloads, function(x) as.numeric(x$AgeFlags["Af173"]), numeric(1)))
+          }
+          if (length(af174_vals) == 0 && length(info_payloads) > 0) {
+            af174_vals <- suppressWarnings(vapply(info_payloads, function(x) as.numeric(x$AgeFlags["Af174"]), numeric(1)))
+          }
+          if (!is.finite(af172) && length(info_payloads) > 0) {
+            af172_fallback <- suppressWarnings(vapply(info_payloads, function(x) as.numeric(x$AgeFlags["Af172"]), numeric(1)))
+            af172 <- if (length(af172_fallback) > 0) af172_fallback[1] else NA_real_
+          }
+          af173 <- if (length(af173_vals) > 0) af173_vals[1] else NA_real_
+          af174 <- if (length(af174_vals) > 0) af174_vals[1] else NA_real_
+          quantity_label_vals <- unlist(map(payloads, "quantity_label"), use.names = FALSE)
+          quantity_label_vals <- quantity_label_vals[nzchar(quantity_label_vals)]
+          if (length(quantity_label_vals) == 0 && length(info_payloads) > 0) {
+            quantity_label_vals <- unlist(map(info_payloads, "quantity_label"), use.names = FALSE)
+            quantity_label_vals <- quantity_label_vals[nzchar(quantity_label_vals)]
+          }
+          quantity_label <- if (length(quantity_label_vals) > 0) quantity_label_vals[1] else NA_character_
+          par_obj <- rv$ParOut_list[[scenario]]
+          max_year <- suppressWarnings(as.numeric(tryCatch(par_obj@range["maxyear"], error = function(e) NA_real_)))
+          seasons <- suppressWarnings(as.numeric(tryCatch(par_obj@dimensions["seasons"], error = function(e) NA_real_)))
         } else {
           lik_out <- list()
           lik_raw <- list()
@@ -206,6 +320,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
           target_rel_err <- numeric(0)
           existing_scales <- character(0)
           af172 <- NA_real_
+          af173 <- NA_real_
+          af174 <- NA_real_
+          quantity_label <- NA_character_
+          max_year <- NA_real_
+          seasons <- NA_real_
         }
       } else {
         scales <- basename(scaler_dirs) %>% str_extract("\\d+$")
@@ -227,6 +346,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
         target_quantity <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
         target_rel_err <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
         af172 <- NA_real_
+        af173 <- NA_real_
+        af174 <- NA_real_
+        quantity_label <- NA_character_
+        max_year <- NA_real_
+        seasons <- NA_real_
       }
     } else {
       output_files <- list.files(folder, pattern = "^test_plot_output_\\d+$", full.names = TRUE)
@@ -247,6 +371,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
       target_quantity <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
       target_rel_err <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
       af172 <- NA_real_
+      af173 <- NA_real_
+      af174 <- NA_real_
+      quantity_label <- NA_character_
+      max_year <- NA_real_
+      seasons <- NA_real_
     }
 
     list(
@@ -258,9 +387,59 @@ mod_likelihood_server <- function(input, output, session, rv) {
       actual_quantity = actual_quantity,
       target_quantity = target_quantity,
       target_rel_err = target_rel_err,
-      af172 = af172
+      af172 = af172,
+      af173 = af173,
+      af174 = af174,
+      quantity_label = quantity_label,
+      max_year = max_year,
+      seasons = seasons
     )
   }
+
+  profile_target_info_reactive <- reactive({
+    req(input$model_dir, input$lik_scenarios)
+
+    type <- input$lik_profile_type
+    if (type %in% c("jitter", "retro", "hessian")) return(NULL)
+
+    selected <- input$lik_scenarios
+    profile_data <- setNames(
+      lapply(selected, function(sc) load_profile_outputs(input$model_dir, sc)),
+      selected
+    )
+
+    rows <- lapply(names(profile_data), function(sc) {
+      pd <- profile_data[[sc]]
+      quantity_label <- pd$quantity_label
+      af172 <- suppressWarnings(as.numeric(pd$af172))
+      af173 <- suppressWarnings(as.numeric(pd$af173))
+      af174 <- suppressWarnings(as.numeric(pd$af174))
+      max_year <- suppressWarnings(as.numeric(pd$max_year))
+      seasons <- suppressWarnings(as.numeric(pd$seasons))
+
+      data.frame(
+        Model = sc,
+        `Profile target` = profile_target_label(quantity_label),
+        `Biomass type` = profile_biomass_label(af172),
+        Af172 = if (is.finite(af172)) as.integer(af172) else NA_integer_,
+        Af173 = if (is.finite(af173)) as.integer(af173) else NA_integer_,
+        Af174 = if (is.finite(af174)) as.integer(af174) else NA_integer_,
+        `Time-period window` = if (is.finite(af173) && is.finite(af174)) {
+          if (af173 == 0 && af174 == 0) {
+            "Whole time series"
+          } else {
+            profile_period_range_label(af173, af174, max_year, seasons)
+          }
+        } else {
+          "Not available"
+        },
+        `Period definition` = profile_period_label(quantity_label, af173, af174, max_year, seasons),
+        stringsAsFactors = FALSE
+      )
+    })
+
+    bind_rows(rows)
+  })
 
   profile_gradient_table_reactive <- reactive({
     req(input$model_dir, input$lik_scenarios)
@@ -1334,6 +1513,26 @@ mod_likelihood_server <- function(input, output, session, rv) {
   output$likelihood_plot <- renderPlot({
     likelihood_plot_reactive()
   })
+
+  output$profile_target_info_ui <- renderUI({
+    target_tbl <- profile_target_info_reactive()
+    if (is.null(target_tbl) || nrow(target_tbl) == 0) return(NULL)
+
+    box(
+      title = "Profile Target Information",
+      width = 12,
+      solidHeader = TRUE,
+      status = "warning",
+      collapsible = TRUE,
+      collapsed = TRUE,
+      div(
+        style = "margin-bottom: 10px; padding: 10px 12px; background: #fff8e1; border: 1px solid #f0d98c; border-left: 4px solid #f39c12; border-radius: 4px;",
+        tags$div("Shown from the profile setup flags saved with each model.", style = "font-weight: bold; margin-bottom: 4px;"),
+        tags$div("Af172 distinguishes adult vs total biomass. Af173 and Af174 define the time-period window, counting backwards from the end of the time series.", style = "font-size: 12px; color: #333;")
+      ),
+      DTOutput("profile_target_info_table")
+    )
+  })
   
   output$likelihood_table_ui <- renderUI({
     info <- profile_data_reactive()
@@ -1423,6 +1622,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
       } else {
         model_choices[[1]]
       }
+    )
+  })
+
+  output$profile_target_info_table <- renderDT({
+    target_tbl <- profile_target_info_reactive()
+    if (is.null(target_tbl) || nrow(target_tbl) == 0) return(NULL)
+
+    datatable(
+      target_tbl,
+      options = list(pageLength = 10, scrollX = TRUE),
+      rownames = FALSE
     )
   })
 

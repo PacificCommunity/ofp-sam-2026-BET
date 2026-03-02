@@ -35,6 +35,14 @@ mod_bounds_ui <- function() {
 mod_bounds_server <- function(input, output, session, rv) {
     # TAB 3: BOUND HITS
     # ===========================================================================
+
+    bound_var_type <- function(var_name) {
+      var_name <- as.character(var_name)
+      var_name <- trimws(var_name)
+      var_name <- sub("\\(.*$", "", var_name)
+      var_name <- sub("\\[.*$", "", var_name)
+      ifelse(nzchar(var_name), var_name, "Unknown")
+    }
   
     # Reactive: process bound hits data
     bounds_data <- reactive({
@@ -50,6 +58,7 @@ mod_bounds_server <- function(input, output, session, rv) {
           mutate(
             Distance_to_lower = abs(Estimate - L_bound),
             Distance_to_upper = abs(Estimate - U_bound),
+            Var_Type = bound_var_type(Var_name),
             Hit_Type = case_when(
               !Hit_Bound ~ "None",
               Distance_to_lower <= Distance_to_upper ~ "Lower",
@@ -103,14 +112,22 @@ mod_bounds_server <- function(input, output, session, rv) {
       }
 
       summary_tbl <- bounds %>%
-        count(Hit_Type, name = "Count") %>%
-        arrange(match(Hit_Type, c("Lower", "Upper")))
+        count(Var_Type, Hit_Type, name = "Count") %>%
+        arrange(Var_Type, match(Hit_Type, c("Lower", "Upper")))
 
       datatable(
         summary_tbl,
         options = list(dom = "t", paging = FALSE, ordering = FALSE),
         rownames = FALSE
-      )
+      ) %>%
+        formatStyle(
+          "Hit_Type",
+          color = styleEqual(
+            c("Lower", "Upper"),
+            c("#1d4ed8", "#dc2626")
+          ),
+          fontWeight = "600"
+        )
     })
   
     # Render detailed bound hits table
@@ -130,9 +147,17 @@ mod_bounds_server <- function(input, output, session, rv) {
       } else {
         # Display detailed bound hits
         bounds %>%
-          select(Index, Var_name, Estimate, Hit_Type, L_bound, U_bound) %>%
+          select(Index, Var_Type, Var_name, Estimate, Hit_Type, L_bound, U_bound) %>%
           datatable(options = list(pageLength = 20, scrollX = TRUE), 
-                    rownames = FALSE)
+                    rownames = FALSE) %>%
+          formatStyle(
+            "Hit_Type",
+            color = styleEqual(
+              c("Lower", "Upper"),
+              c("#1d4ed8", "#dc2626")
+            ),
+            fontWeight = "600"
+          )
       }
     })
   

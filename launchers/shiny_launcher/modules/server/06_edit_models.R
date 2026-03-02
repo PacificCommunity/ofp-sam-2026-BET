@@ -280,7 +280,22 @@
       div(class = "param-label", "Profile Scalers:"),
       textInput("edit_scalers", NULL, value = model$scalers, width = "100%"),
       div(class = "param-label", "Profile Reps:"),
-      textInput("edit_reps", NULL, value = model$Reps, width = "100%")
+      textInput("edit_reps", NULL, value = model$Reps, width = "100%"),
+      shiny::hr(),
+      div(class = "param-label", "Profile Biomass Options:"),
+      fluidRow(
+        column(4,
+               numericInput("edit_af172", "Af172", value = as.numeric(if (!is.null(model$Af172)) model$Af172 else 0), step = 1)
+        ),
+        column(4,
+               numericInput("edit_af173", "Af173", value = as.numeric(if (!is.null(model$Af173)) model$Af173 else 0), step = 1)
+        ),
+        column(4,
+               numericInput("edit_af174", "Af174", value = as.numeric(if (!is.null(model$Af174)) model$Af174 else 0), step = 1)
+        )
+      ),
+      p(style = "color: #666; font-size: 11px; margin-top: -6px;",
+        "Af172: 0 = total biomass, >0 = adult biomass. Af173/Af174 define the time-period window counting backwards from the end.")
     )
   })
   
@@ -322,6 +337,9 @@
     rv$models[[model_name]]$nsplit <- as.character(input$edit_nsplit)
     rv$models[[model_name]]$scalers <- input$edit_scalers
     rv$models[[model_name]]$Reps <- input$edit_reps
+    rv$models[[model_name]]$Af172 <- as.character(input$edit_af172)
+    rv$models[[model_name]]$Af173 <- as.character(input$edit_af173)
+    rv$models[[model_name]]$Af174 <- as.character(input$edit_af174)
     
     showNotification(paste("✓ Saved changes to", model_name), type = "message")
   })

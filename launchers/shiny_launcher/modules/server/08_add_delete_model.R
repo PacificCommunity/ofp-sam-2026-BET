@@ -33,7 +33,10 @@
         retro_peels = "1 2 3 4 5",
         nsplit = "5", 
         scalers = "110 100 90", 
-        Reps = "2 2 2 2 2 2"
+        Reps = "2 2 2 2 2 2",
+        Af172 = "0",
+        Af173 = "0",
+        Af174 = "0"
       )
     } else {
       new_model <- rv$models[[input$new_model_base]]

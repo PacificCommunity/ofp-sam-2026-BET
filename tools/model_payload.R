@@ -195,6 +195,8 @@ mp_build_profile_payload <- function(scaler_dir) {
     actual_quantity = suppressWarnings(as.numeric(info_out$actual_quantity)),
     target_rel_err = suppressWarnings(as.numeric(info_out$target_rel_err)),
     af172 = suppressWarnings(as.numeric(mp_safe(info_out$AgeFlags["Af172"]))),
+    af173 = suppressWarnings(as.numeric(mp_safe(info_out$AgeFlags["Af173"]))),
+    af174 = suppressWarnings(as.numeric(mp_safe(info_out$AgeFlags["Af174"]))),
     avg_bio = suppressWarnings(as.numeric(info_out$actual_quantity)),
     obj_fun = if (!is.null(par_file) && file.exists(par_file)) mp_extract_par_obj_fun(par_file) else NA_real_,
     max_grad = if (!is.null(par_file) && file.exists(par_file)) mp_extract_par_max_grad(par_file) else NA_real_,
