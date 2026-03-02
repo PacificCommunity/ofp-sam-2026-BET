@@ -108,7 +108,30 @@ mod_lf_ui <- function() {
               ),
               selected = "hist"
             ),
-            numericInput("lf_facet_ncol", "Facet columns:", value = 3, min = 1, max = 12, step = 1),
+            selectInput(
+              "lf_plot_scale",
+              "Plot size:",
+              choices = c(
+                "120%" = "1.20",
+                "110%" = "1.10",
+                "100%" = "1.00",
+                "95%" = "0.95",
+                "90%" = "0.90",
+                "85%" = "0.85",
+                "80%" = "0.80",
+                "75%" = "0.75",
+                "70%" = "0.70",
+                "65%" = "0.65",
+                "60%" = "0.60",
+                "55%" = "0.55",
+                "50%" = "0.50"
+              ),
+              selected = "1.00"
+            ),
+            selectInput("lf_facet_ncol", "Facet columns:", choices = as.character(1:12), selected = "3"),
+            actionButton("lf_apply_filters", "Apply", class = "btn-primary", style = "width: 100%;"),
+            tags$small("Selections update the plot when you click Apply.",
+                       style = "display:block; margin-top:6px; color:#666;"),
             
             helpText("💡 Compatible models only. Check 1 model for single display, 2+ for overlay.", 
                      style = "font-size: 11px; color: #666; font-style: italic;"),
@@ -122,7 +145,25 @@ mod_lf_ui <- function() {
           ),
           
           # Length frequency plot panel (DYNAMIC HEIGHT)
-          uiOutput("lf_plot_box")
+          box(
+            title = "Length Frequency",
+            width = 9,
+            solidHeader = TRUE,
+            status = "primary",
+            collapsible = TRUE,
+            div(
+              class = "plot-loading-container",
+              `data-output-id` = "lf_plot_box",
+              uiOutput("lf_plot_box"),
+              div(
+                class = "plot-loading-overlay",
+                div(
+                  class = "plot-loading-card",
+                  HTML("<span class='render-spinner'></span>Rendering length frequency plot...")
+                )
+              )
+            )
+          )
         )
       )
 }
@@ -130,6 +171,100 @@ mod_lf_ui <- function() {
 mod_lf_server <- function(input, output, session, rv) {
     # TAB 6: LENGTH FREQUENCY (DYNAMIC BOX HEIGHT)
     # ===========================================================================
+    lf_filters_current <- reactive({
+      list(
+        model = input$lf_model,
+        view_mode = if (is.null(input$lf_view_mode)) "all_fisheries" else input$lf_view_mode,
+        fishery = input$lf_fishery,
+        fisheries_all = input$lf_fisheries_all,
+        scenarios = input$lf_scenarios,
+        years = input$lf_years,
+        plot_scale = if (is.null(input$lf_plot_scale)) "1.00" else input$lf_plot_scale,
+        facet_ncol = input$lf_facet_ncol,
+        plot_style = if (is.null(input$lf_plot_style)) "hist" else input$lf_plot_style
+      )
+    })
+    lf_filters_applied <- reactiveVal(NULL)
+    lf_last_initialized_nonce <- reactiveVal(0)
+    lf_filters <- reactive({
+      lf_filters_applied()
+    })
+    lf_prepped_outputs <- reactive({
+      req(rv$data_loaded)
+      model_names <- names(rv$LengOut_list)
+      setNames(lapply(model_names, function(sc) {
+        obj <- rv$LengOut_list[[sc]]
+        if (is.null(obj)) return(NULL)
+        df <- obj@lenfits
+        if (is.null(df) || nrow(df) == 0) return(NULL)
+        df <- df %>%
+          mutate(fishery = suppressWarnings(as.numeric(as.character(fishery))))
+        fish_ids <- sort(unique(df$fishery))
+        fish_ids <- fish_ids[is.finite(fish_ids)]
+        fish_lookup <- data.frame(
+          fishery = fish_ids,
+          fishery_name_lookup = vapply(
+            fish_ids,
+            function(f) get_fishery_name(f, rv$FISHERY_MAPS[[sc]]),
+            character(1)
+          ),
+          stringsAsFactors = FALSE
+        )
+        df %>%
+          left_join(fish_lookup, by = "fishery") %>%
+          mutate(Scenario = sc)
+      }), model_names)
+    })
+    lf_prepped_outputs <- bindCache(lf_prepped_outputs, rv$data_loaded, input$model_dir)
+
+    observe({
+      req(rv$data_loaded)
+      pending <- !isTRUE(input$live_update_plots) &&
+        !filters_equal(lf_filters_current(), lf_filters())
+      set_apply_pending(session, "lf_apply_filters", pending)
+    })
+
+    observeEvent(input$lf_apply_filters, {
+      lf_filters_applied(isolate(lf_filters_current()))
+    }, ignoreInit = TRUE)
+
+    observeEvent(list(input$live_update_plots, input$lf_scenarios, input$lf_model, input$lf_years,
+                      input$lf_view_mode, input$lf_fishery, input$lf_fisheries_all,
+                      input$lf_plot_style, input$lf_plot_scale, input$lf_facet_ncol), {
+      req(rv$data_loaded)
+      if (!isTRUE(input$live_update_plots)) return()
+
+      ready <- !is.null(input$lf_model) &&
+        nzchar(input$lf_model) &&
+        length(input$lf_scenarios) > 0 &&
+        length(input$lf_years) > 0 &&
+        (
+          (identical(input$lf_view_mode, "all_fisheries") && length(input$lf_fisheries_all) > 0) ||
+          (!identical(input$lf_view_mode, "all_fisheries") && !is.null(input$lf_fishery) && nzchar(input$lf_fishery))
+        )
+
+      if (!ready) return()
+      lf_filters_applied(isolate(lf_filters_current()))
+    }, ignoreInit = TRUE)
+
+    observeEvent(list(rv$initial_render_nonce, input$lf_model, input$lf_years, input$lf_scenarios, input$lf_fishery, input$lf_fisheries_all), {
+      req(rv$data_loaded, rv$initial_render_nonce)
+      if (rv$initial_render_nonce <= lf_last_initialized_nonce()) return()
+
+      ready <- !is.null(input$lf_model) &&
+        nzchar(input$lf_model) &&
+        length(input$lf_scenarios) > 0 &&
+        length(input$lf_years) > 0 &&
+        (
+          (identical(input$lf_view_mode, "all_fisheries") && length(input$lf_fisheries_all) > 0) ||
+          (!identical(input$lf_view_mode, "all_fisheries") && !is.null(input$lf_fishery) && nzchar(input$lf_fishery))
+        )
+
+      if (!ready) return()
+
+      lf_last_initialized_nonce(rv$initial_render_nonce)
+      lf_filters_applied(isolate(lf_filters_current()))
+    }, ignoreInit = TRUE)
   
     observeEvent(input$lf_scenarios, {
       req(rv$data_loaded)
@@ -183,9 +318,9 @@ mod_lf_server <- function(input, output, session, rv) {
         if (length(selected_scenarios) == 0) selected_scenarios <- all_models
       }
       fishery_union <- sort(unique(unlist(lapply(selected_scenarios, function(m) {
-        obj <- rv$LengOut_list[[m]]
-        if (is.null(obj)) return(numeric(0))
-        suppressWarnings(as.numeric(unique(obj@lenfits$fishery)))
+        df <- lf_prepped_outputs()[[m]]
+        if (is.null(df)) return(numeric(0))
+        unique(df$fishery)
       }))))
       fishery_union <- fishery_union[is.finite(fishery_union)]
       choices_all <- build_fishery_picker_choices(fishery_union, selected_scenarios, rv$FISHERY_MAPS)
@@ -207,6 +342,7 @@ mod_lf_server <- function(input, output, session, rv) {
       if (is.null(rv$LengOut_list[[input$lf_model]])) return()
     
       df <- rv$LengOut_list[[input$lf_model]]@lenfits
+      df <- lf_prepped_outputs()[[input$lf_model]]
       if (identical(input$lf_view_mode, "all_fisheries")) {
         selected_specs <- parse_fishery_picker_values(input$lf_fisheries_all)
         selected_fisheries <- unique(selected_specs$fishery)
@@ -251,7 +387,8 @@ mod_lf_server <- function(input, output, session, rv) {
       req(input$lf_model, rv$LengOut_list[[input$lf_model]])
 
       df <- rv$LengOut_list[[input$lf_model]]@lenfits
-      fisheries <- sort(unique(suppressWarnings(as.numeric(df$fishery))))
+      df <- lf_prepped_outputs()[[input$lf_model]]
+      fisheries <- sort(unique(df$fishery))
       fishery_map <- rv$FISHERY_MAPS[[input$lf_model]]
       choices <- setNames(fisheries, sapply(fisheries, function(x) get_fishery_name(x, fishery_map)))
       selected_fishery <- if (length(fisheries) > 0) fisheries[1] else NULL
@@ -271,9 +408,9 @@ mod_lf_server <- function(input, output, session, rv) {
         if (length(selected_scenarios) == 0) selected_scenarios <- all_models
       }
       fishery_union <- sort(unique(unlist(lapply(selected_scenarios, function(m) {
-        obj <- rv$LengOut_list[[m]]
-        if (is.null(obj)) return(numeric(0))
-        suppressWarnings(as.numeric(unique(obj@lenfits$fishery)))
+        dfm <- lf_prepped_outputs()[[m]]
+        if (is.null(dfm)) return(numeric(0))
+        unique(dfm$fishery)
       }))))
       fishery_union <- fishery_union[is.finite(fishery_union)]
       choices_all <- build_fishery_picker_choices(fishery_union, selected_scenarios, rv$FISHERY_MAPS)
@@ -282,21 +419,25 @@ mod_lf_server <- function(input, output, session, rv) {
 
       years <- sort(unique(df$year))
       updatePickerInput(session, "lf_years", choices = years, selected = years)
+      if (is.null(lf_filters_applied())) {
+        lf_filters_applied(isolate(lf_filters_current()))
+      }
     }, ignoreInit = TRUE)
   
     # Reactive: calculate dynamic plot height for LF
     lf_plot_height <- reactive({
-      req(rv$data_loaded, input$lf_years)
-      facet_ncol <- suppressWarnings(as.integer(input$lf_facet_ncol))
+      filters <- lf_filters()
+      req(rv$data_loaded, filters, filters$years)
+      facet_ncol <- suppressWarnings(as.integer(filters$facet_ncol))
       if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 3
       facet_ncol <- min(max(facet_ncol, 1), 12)
-      plot_style <- if (is.null(input$lf_plot_style)) "hist" else input$lf_plot_style
+      plot_style <- filters$plot_style
 
-      if (identical(input$lf_view_mode, "all_fisheries")) {
-        n_fisheries <- length(input$lf_fisheries_all)
+      if (identical(filters$view_mode, "all_fisheries")) {
+        n_fisheries <- length(filters$fisheries_all)
         n_rows <- ceiling(max(n_fisheries, 1) / facet_ncol)
         if (identical(plot_style, "bubble")) {
-          n_scen <- max(length(input$lf_scenarios), 1)
+          n_scen <- max(length(filters$scenarios), 1)
           n_panel_rows <- ceiling(n_scen / facet_ncol)
           panel_height <- min(max(180 + max(n_fisheries, 1) * 16, 280), 760)
           return(min(max(120 + n_panel_rows * panel_height, 420), 2600))
@@ -304,12 +445,12 @@ mod_lf_server <- function(input, output, session, rv) {
         return(min(max(350 + n_rows * 240, 550), 3200))
       }
 
-      n_years <- length(input$lf_years)
+      n_years <- length(filters$years)
     
       if (n_years == 0) return(400)
 
         if (identical(plot_style, "bubble")) {
-          n_scen <- max(length(input$lf_scenarios), 1)
+          n_scen <- max(length(filters$scenarios), 1)
           n_panel_rows <- ceiling(n_scen / facet_ncol)
           panel_height <- min(max(220 + n_years * 8, 320), 820)
           return(min(max(140 + n_panel_rows * panel_height, 420), 2600))
@@ -329,11 +470,12 @@ mod_lf_server <- function(input, output, session, rv) {
   
     # Reactive: generate length frequency plot
     lf_plot_reactive <- reactive({
-      req(rv$data_loaded, input$lf_model, input$lf_fishery, input$lf_years)
+      filters <- lf_filters()
+      req(rv$data_loaded, filters, filters$model, filters$fishery, filters$years)
 
-      view_mode <- if (is.null(input$lf_view_mode)) "all_fisheries" else input$lf_view_mode
-      plot_style <- if (is.null(input$lf_plot_style)) "hist" else input$lf_plot_style
-      scenarios_to_use <- input$lf_scenarios
+      view_mode <- filters$view_mode
+      plot_style <- filters$plot_style
+      scenarios_to_use <- filters$scenarios
 
       # Check if any scenarios selected
       if (length(scenarios_to_use) == 0) {
@@ -344,24 +486,23 @@ mod_lf_server <- function(input, output, session, rv) {
       }
     
       # Check if any years selected
-      if (length(input$lf_years) == 0) {
+      if (length(filters$years) == 0) {
         p <- ggplot() + 
           annotate("text", x = 0.5, y = 0.5, label = "No years selected", size = 6, color = "#999") +
           theme_void()
         return(p)
       }
 
-      selected_years_num <- suppressWarnings(as.numeric(input$lf_years))
+      selected_years_num <- suppressWarnings(as.numeric(filters$years))
       selected_years_num <- selected_years_num[is.finite(selected_years_num)]
     
       # Combine data from selected scenarios
       combined_data <- map_dfr(scenarios_to_use, function(sc) {
-        if (is.null(rv$LengOut_list[[sc]])) return(NULL)
-        df <- rv$LengOut_list[[sc]]@lenfits %>%
-          mutate(fishery = suppressWarnings(as.numeric(as.character(fishery))))
+        df <- lf_prepped_outputs()[[sc]]
+        if (is.null(df)) return(NULL)
 
-        if (identical(input$lf_view_mode, "all_fisheries")) {
-          selected_specs <- parse_fishery_picker_values(input$lf_fisheries_all)
+        if (identical(filters$view_mode, "all_fisheries")) {
+          selected_specs <- parse_fishery_picker_values(filters$fisheries_all)
           if (nrow(selected_specs) > 0) {
             any_model_specific <- any(!is.na(selected_specs$Model) & nzchar(selected_specs$Model))
             if (any_model_specific) {
@@ -376,26 +517,13 @@ mod_lf_server <- function(input, output, session, rv) {
             df <- df[0, , drop = FALSE]
           }
         } else {
-          df <- df %>% filter(fishery == as.numeric(input$lf_fishery))
+          df <- df %>% filter(fishery == as.numeric(filters$fishery))
         }
         if (length(selected_years_num) > 0) {
           df <- df %>% filter(year %in% selected_years_num)
         }
         if (nrow(df) == 0) return(NULL)
-
-        fish_lookup <- data.frame(
-          fishery = sort(unique(df$fishery)),
-          fishery_name_lookup = vapply(
-            sort(unique(df$fishery)),
-            function(f) get_fishery_name(f, rv$FISHERY_MAPS[[sc]]),
-            character(1)
-          ),
-          stringsAsFactors = FALSE
-        )
-
-        df %>%
-          left_join(fish_lookup, by = "fishery") %>%
-          mutate(Scenario = sc)
+        df
       })
     
       # Check if data exists
@@ -440,8 +568,8 @@ mod_lf_server <- function(input, output, session, rv) {
         group_by(fishery, year, length) %>%
         summarise(obs = first(obs), .groups = "drop")
     
-      base_fishery_map <- rv$FISHERY_MAPS[[input$lf_model]]
-      fishery_name <- get_fishery_name(input$lf_fishery, base_fishery_map)
+      base_fishery_map <- rv$FISHERY_MAPS[[filters$model]]
+      fishery_name <- get_fishery_name(filters$fishery, base_fishery_map)
       obs_data <- obs_data %>%
         mutate(fishery_name = sapply(fishery, function(f) get_fishery_name(f, base_fishery_map)))
       if ("fishery_name_lookup" %in% names(plot_data)) {
@@ -481,7 +609,7 @@ mod_lf_server <- function(input, output, session, rv) {
     
       # Determine optimal layout
       n_years <- length(unique(plot_data$year))
-      ncol_facet <- suppressWarnings(as.integer(input$lf_facet_ncol))
+      ncol_facet <- suppressWarnings(as.integer(filters$facet_ncol))
       if (!is.finite(ncol_facet) || ncol_facet < 1) ncol_facet <- 3
       ncol_facet <- min(max(ncol_facet, 1), 12)
     
@@ -536,7 +664,7 @@ mod_lf_server <- function(input, output, session, rv) {
               labs(
                 title = "LF Bubble Residuals (all selected fisheries, years combined)",
                 subtitle = paste0("Scenario: ", unique(as.character(bubble_data$Scenario))[1],
-                                  " | Years: ", min(input$lf_years), " to ", max(input$lf_years)),
+                                  " | Years: ", min(filters$years), " to ", max(filters$years)),
                 x = "Length (cm)", y = "Fishery"
               ) +
               theme_bw(base_size = 12) +
@@ -566,7 +694,7 @@ mod_lf_server <- function(input, output, session, rv) {
               scale_y_discrete(expand = bubble_expand_all) +
               labs(
                 title = "LF Bubble Residuals (all selected fisheries, years combined)",
-                subtitle = paste0("Years: ", min(input$lf_years), " to ", max(input$lf_years)),
+                subtitle = paste0("Years: ", min(filters$years), " to ", max(filters$years)),
                 x = "Length (cm)", y = "Fishery"
               ) +
               theme_bw(base_size = 12) +
@@ -650,7 +778,7 @@ mod_lf_server <- function(input, output, session, rv) {
             scale_y_discrete(expand = bubble_expand_year) +
             labs(
               title = paste(fishery_name, "- LF Bubble Residuals"),
-              subtitle = paste0("Base: ", input$lf_model, " (", n_years, " years)"),
+              subtitle = paste0("Base: ", filters$model, " (", n_years, " years)"),
               x = "Length (cm)", y = "Year"
             ) +
             theme_bw(base_size = 12) +
@@ -701,7 +829,7 @@ mod_lf_server <- function(input, output, session, rv) {
           scale_color_viridis_d(name = "Model") +
           labs(
             title = "All selected fisheries - all selected years combined",
-            subtitle = paste0("Years: ", min(input$lf_years), " to ", max(input$lf_years)),
+            subtitle = paste0("Years: ", min(filters$years), " to ", max(filters$years)),
             x = "Length (cm)", y = "Sample count"
           ) +
           theme_bw(base_size = 12.5) +
@@ -714,6 +842,7 @@ mod_lf_server <- function(input, output, session, rv) {
             axis.text.y = element_text(size = 9.5, colour = "#111")
           )
       } else if (length(unique(plot_data$Scenario)) <= 1) {
+        single_model_label <- unique(as.character(plot_data$Scenario))[1]
         p <- ggplot() +
           geom_col(
             data = obs_data,
@@ -726,14 +855,14 @@ mod_lf_server <- function(input, output, session, rv) {
           ) +
           geom_line(
             data = plot_data,
-            aes(x = length, y = pred, color = "Predicted"),
+            aes(x = length, y = pred, color = single_model_label),
             linewidth = 1.2
           ) +
           facet_wrap(~year, scales = "free_y", ncol = ncol_facet) +
           scale_fill_manual(values = c("Observed" = observed_fill), guide = "none") +
-          scale_color_manual(name = "Model", values = c("Predicted" = "#E31A1C")) +
+          scale_color_manual(name = "Model", values = setNames("#E31A1C", single_model_label)) +
           labs(
-            title = paste(fishery_name, "-", unique(as.character(plot_data$Scenario))[1]),
+            title = paste(fishery_name, "-", single_model_label),
             x = "Length (cm)", y = "Sample count"
           ) +
           theme_bw(base_size = 12) +
@@ -761,7 +890,7 @@ mod_lf_server <- function(input, output, session, rv) {
           facet_wrap(~year, scales = "free_y", ncol = ncol_facet) +
           scale_fill_manual(values = c("Observed" = observed_fill), guide = "none") +
           scale_color_viridis_d(name = "Model") +
-          labs(title = paste(fishery_name, "- Base:", input$lf_model,
+          labs(title = paste(fishery_name, "- Base:", filters$model,
                              paste0("(", n_years, " years)")),
                x = "Length (cm)", y = "Sample count") +
           theme_bw(base_size = 12) +
@@ -780,14 +909,7 @@ mod_lf_server <- function(input, output, session, rv) {
     })
     lf_plot_reactive <- bindCache(
       lf_plot_reactive,
-      input$lf_model,
-      input$lf_view_mode,
-      input$lf_fishery,
-      input$lf_fisheries_all,
-      input$lf_scenarios,
-      input$lf_years,
-      input$lf_facet_ncol,
-      input$lf_plot_style
+      lf_filters()
     )
 
     # Render length frequency plot
@@ -798,16 +920,17 @@ mod_lf_server <- function(input, output, session, rv) {
     # Render dynamic box for LF with calculated height
     output$lf_plot_box <- renderUI({
       height <- lf_plot_height()
+      filters <- lf_filters()
+      scale_val <- suppressWarnings(as.numeric(filters$plot_scale))
+      if (!is.finite(scale_val) || scale_val <= 0) scale_val <- 1
+      scaled_height <- max(round(height * scale_val), 320)
+      scaled_width_pct <- max(min(round(scale_val * 100), 100), 60)
     
-      box(
-        title = "Length Frequency",
-        width = 9,
-        solidHeader = TRUE,
-        status = "primary",
-        collapsible = TRUE,
-      plotOutput("lf_plot", height = paste0(height, "px"))
-    )
-  })
+      div(
+        style = paste0("width:", scaled_width_pct, "%; margin: 0 auto;"),
+        plotOutput("lf_plot", height = paste0(scaled_height, "px"))
+      )
+    })
   
   # ===========================================================================
 
@@ -836,7 +959,8 @@ mod_lf_server <- function(input, output, session, rv) {
   output$lf_download_confirm <- downloadHandler(
     filename = function() {
       format <- input$lf_format
-      paste0("length_freq_", input$lf_model, "_", input$lf_fishery, "_",
+      filters <- lf_filters()
+      paste0("length_freq_", filters$model, "_", filters$fishery, "_",
              Sys.Date(), ".", format)
     },
     content = function(file) {
@@ -864,16 +988,17 @@ mod_lf_server <- function(input, output, session, rv) {
     }
   )
 
-  register_folder_save_button(
-    plot_type = "lf",
-    plot_reactive = lf_plot_reactive,
-    input = input,
-    session = session,
-    output = output,
-    filename_fun = function() {
-      format <- input$lf_format
-      paste0("length_freq_", input$lf_model, "_", input$lf_fishery, "_", Sys.Date(), ".", format)
-    }
-  )
+    register_folder_save_button(
+      plot_type = "lf",
+      plot_reactive = lf_plot_reactive,
+      input = input,
+      session = session,
+      output = output,
+      filename_fun = function() {
+        format <- input$lf_format
+        filters <- lf_filters()
+        paste0("length_freq_", filters$model, "_", filters$fishery, "_", Sys.Date(), ".", format)
+      }
+    )
 
 }

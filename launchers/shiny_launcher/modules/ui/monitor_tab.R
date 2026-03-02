@@ -25,7 +25,7 @@ monitor_tab_ui <- function() {
               column(2,
                      div(style = "margin-top: 5px;",
                          checkboxInput("auto_refresh_jobs", "Auto Refresh", 
-                                       value = TRUE)
+                                       value = FALSE)
                      )
               ),
               column(4,
@@ -44,6 +44,7 @@ monitor_tab_ui <- function() {
         fluidRow(
           box(
             title = "Job Details", status = "info", solidHeader = TRUE, width = 12,
+            selectInput("job_detail_batch", "Select Job:", choices = character(0)),
             verbatimTextOutput("job_details")
           )
         )

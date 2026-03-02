@@ -533,6 +533,56 @@ ui <- dashboardPage(
         }
       }
     });
+
+    (function() {
+      var lastCheckedByGroup = {};
+
+      function getGroupElement(el) {
+        return el.closest('.dataTables_wrapper, .box, .well, .tab-pane, .sidebar, .modal-content') || document.body;
+      }
+
+      function getGroupKey(group) {
+        if (group === document.body) return 'body';
+        if (group.id) return group.id;
+        if (!group.dataset.shiftGroupKey) {
+          group.dataset.shiftGroupKey = 'shift-group-' + Math.random().toString(36).slice(2);
+        }
+        return group.dataset.shiftGroupKey;
+      }
+
+      document.addEventListener('click', function(event) {
+        var target = event.target;
+        if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox' || target.disabled) {
+          return;
+        }
+
+        var group = getGroupElement(target);
+        var groupKey = getGroupKey(group);
+        var checkboxes = Array.prototype.filter.call(
+          group.querySelectorAll('input[type=\"checkbox\"]'),
+          function(box) {
+            return !box.disabled && box.offsetParent !== null;
+          }
+        );
+
+        if (event.shiftKey && lastCheckedByGroup[groupKey]) {
+          var start = checkboxes.indexOf(target);
+          var end = checkboxes.indexOf(lastCheckedByGroup[groupKey]);
+
+          if (start !== -1 && end !== -1) {
+            var checkedState = target.checked;
+            checkboxes.slice(Math.min(start, end), Math.max(start, end) + 1).forEach(function(box) {
+              if (box.checked !== checkedState) {
+                box.checked = checkedState;
+                box.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+            });
+          }
+        }
+
+        lastCheckedByGroup[groupKey] = target;
+      }, true);
+    })();
   "))
 ),
 

@@ -63,7 +63,10 @@ mod_likelihood_ui <- function() {
             size = 10
           )
         ),
-        numericInput("lik_facet_ncol", "Facet columns:", value = 2, min = 1, max = 12, step = 1),
+        selectInput("lik_facet_ncol", "Facet columns:", choices = as.character(1:12), selected = "2"),
+        actionButton("lik_apply_filters", "Apply", class = "btn-primary", style = "width: 100%;"),
+        tags$small("Selections update the plot and tables when you click Apply.",
+                   style = "display:block; margin-top:6px; color:#666;"),
 
         shiny::hr(),
         h5("Download Plot", style = "font-weight: bold;"),
@@ -87,7 +90,18 @@ mod_likelihood_ui <- function() {
         solidHeader = TRUE,
         status = "warning",
         collapsible = TRUE,
-        plotOutput("likelihood_plot", height = "650px")
+        div(
+          class = "plot-loading-container",
+          `data-output-id` = "likelihood_plot",
+          plotOutput("likelihood_plot", height = "650px"),
+          div(
+            class = "plot-loading-overlay",
+            div(
+              class = "plot-loading-card",
+              HTML("<span class='render-spinner'></span>Rendering diagnostics plot...")
+            )
+          )
+        )
       )
     ),
 
@@ -127,6 +141,27 @@ mod_likelihood_server <- function(input, output, session, rv) {
     heavy_cache$retro <- list()
     heavy_cache$hessian <- list()
   }
+  lik_live_update_nonce <- reactiveVal(0)
+  lik_filters_current <- reactive({
+    list(
+      scenarios = input$lik_scenarios,
+      profile_type = if (is.null(input$lik_profile_type)) "components" else input$lik_profile_type,
+      groups = input$lik_groups,
+      facet_ncol = input$lik_facet_ncol
+    )
+  })
+  lik_filters_applied <- reactiveVal(NULL)
+  lik_last_initialized_nonce <- reactiveVal(0)
+  lik_filters <- reactive({
+    lik_filters_applied()
+  })
+
+  observe({
+    req(rv$data_loaded)
+    pending <- !isTRUE(input$live_update_plots) &&
+      !filters_equal(lik_filters_current(), lik_filters_applied())
+    set_apply_pending(session, "lik_apply_filters", pending)
+  })
 
   observeEvent(input$model_dir, {
     clear_heavy_cache()
@@ -134,6 +169,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
   observeEvent(input$load_data, {
     clear_heavy_cache()
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$lik_apply_filters, {
+    lik_filters_applied(isolate(lik_filters_current()))
   }, ignoreInit = TRUE)
 
   # Update scenario choices when data is loaded
@@ -396,17 +435,37 @@ mod_likelihood_server <- function(input, output, session, rv) {
     )
   }
 
-  profile_target_info_reactive <- reactive({
-    req(input$model_dir, input$lik_scenarios)
+  profile_outputs_reactive <- reactive({
+    filters <- lik_filters()
+    req(rv$data_loaded, input$model_dir, filters, filters$scenarios)
 
-    type <- input$lik_profile_type
-    if (type %in% c("jitter", "retro", "hessian")) return(NULL)
+    selected <- filters$scenarios
+    if (length(selected) == 0) return(list())
 
-    selected <- input$lik_scenarios
     profile_data <- setNames(
       lapply(selected, function(sc) load_profile_outputs(input$model_dir, sc)),
       selected
     )
+
+    has_data <- vapply(profile_data, function(x) length(x$scales) > 0, logical(1))
+    profile_data[has_data]
+  })
+  profile_outputs_reactive <- bindCache(
+    profile_outputs_reactive,
+    rv$data_loaded,
+    input$model_dir,
+    lik_filters()
+  )
+
+  profile_target_info_reactive <- reactive({
+    filters <- lik_filters()
+    req(filters)
+
+    type <- filters$profile_type
+    if (type %in% c("jitter", "retro", "hessian")) return(NULL)
+
+    profile_data <- profile_outputs_reactive()
+    if (length(profile_data) == 0) return(NULL)
 
     rows <- lapply(names(profile_data), function(sc) {
       pd <- profile_data[[sc]]
@@ -440,18 +499,21 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     bind_rows(rows)
   })
+  profile_target_info_reactive <- bindCache(
+    profile_target_info_reactive,
+    input$model_dir,
+    lik_filters()
+  )
 
   profile_gradient_table_reactive <- reactive({
-    req(input$model_dir, input$lik_scenarios)
+    filters <- lik_filters()
+    req(filters)
 
-    type <- input$lik_profile_type
+    type <- filters$profile_type
     if (type %in% c("jitter", "retro", "hessian")) return(NULL)
 
-    selected <- input$lik_scenarios
-    profile_data <- setNames(
-      lapply(selected, function(sc) load_profile_outputs(input$model_dir, sc)),
-      selected
-    )
+    profile_data <- profile_outputs_reactive()
+    if (length(profile_data) == 0) return(NULL)
 
     rows <- list()
     for (sc in names(profile_data)) {
@@ -499,6 +561,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
       ) %>%
       arrange(Model, Scaler)
   })
+  profile_gradient_table_reactive <- bindCache(
+    profile_gradient_table_reactive,
+    input$model_dir,
+    lik_filters()
+  )
 
   # Calculate likelihood change from minimum
   calc_lik_change <- function(df, group_col) {
@@ -1047,14 +1114,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }
 
   profile_data_reactive <- reactive({
-    req(rv$data_loaded, input$lik_scenarios)
+    filters <- lik_filters()
+    req(rv$data_loaded, filters, filters$scenarios)
 
-    if (length(input$lik_scenarios) == 0) {
+    if (length(filters$scenarios) == 0) {
       return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No models selected"))
     }
 
-    type <- input$lik_profile_type
-    selected <- input$lik_scenarios
+    type <- filters$profile_type
+    selected <- filters$scenarios
 
     if (type == "jitter") {
       data <- build_jitter_data(selected, rv$ParOut_list, rv$JitterPars_list)
@@ -1144,16 +1212,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       return(list(data = data, group_col = NULL, label = "Hessian", message = NULL, plot_kind = "hessian"))
     }
 
-    req(input$model_dir)
-
-    selected <- input$lik_scenarios
-    profile_data <- setNames(
-      lapply(selected, function(sc) load_profile_outputs(input$model_dir, sc)),
-      selected
-    )
-
-    has_data <- sapply(profile_data, function(x) length(x$scales) > 0)
-    profile_data <- profile_data[has_data]
+    profile_data <- profile_outputs_reactive()
 
     if (length(profile_data) == 0) {
       return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No likelihood profile data found"))
@@ -1245,6 +1304,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     list(data = data.frame(), group_col = NULL, label = NULL, message = "Unsupported profile type")
   })
+  profile_data_reactive <- bindCache(
+    profile_data_reactive,
+    rv$data_loaded,
+    input$model_dir,
+    lik_filters()
+  )
 
   observeEvent(profile_data_reactive(), {
     info <- profile_data_reactive()
@@ -1257,7 +1322,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     groups <- sort(unique(info$data[[info$group_col]]))
     group_key <- paste(
-      input$lik_profile_type,
+      isolate(lik_filters_current()$profile_type),
       info$group_col,
       paste(groups, collapse = "||"),
       sep = "::"
@@ -1281,6 +1346,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
   likelihood_plot_reactive <- reactive({
     info <- profile_data_reactive()
+    filters <- lik_filters()
+    req(filters)
     if (!is.null(info$message)) {
       return(
         ggplot() +
@@ -1293,12 +1360,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
     group_col <- info$group_col
     label <- info$label
     plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else "piner"
-    facet_ncol <- suppressWarnings(as.integer(input$lik_facet_ncol))
+    facet_ncol <- suppressWarnings(as.integer(filters$facet_ncol))
     if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 2
     facet_ncol <- min(max(facet_ncol, 1), 12)
 
-    if (!identical(plot_kind, "jitter") && !is.null(input$lik_groups) && length(input$lik_groups) > 0) {
-      data <- data[data[[group_col]] %in% input$lik_groups, , drop = FALSE]
+    if (!identical(plot_kind, "jitter") && !is.null(filters$groups) && length(filters$groups) > 0) {
+      data <- data[data[[group_col]] %in% filters$groups, , drop = FALSE]
     }
 
     if (nrow(data) == 0) {
@@ -1500,14 +1567,26 @@ mod_likelihood_server <- function(input, output, session, rv) {
     x_label <- quantity_axis_label(info$profile_data)
     create_piner_plot(data, group_col, x_label, label, facet_ncol = facet_ncol)
   })
+  observeEvent(list(input$live_update_plots, input$lik_scenarios, input$lik_profile_type,
+                    input$lik_groups, input$lik_facet_ncol), {
+    req(rv$data_loaded)
+    if (!isTRUE(input$live_update_plots)) return()
+    if (length(input$lik_scenarios) == 0) return()
+    lik_filters_applied(isolate(lik_filters_current()))
+    lik_live_update_nonce(isolate(lik_live_update_nonce()) + 1)
+  }, ignoreInit = TRUE)
+  observeEvent(list(rv$initial_render_nonce, input$lik_scenarios), {
+    req(rv$data_loaded, rv$initial_render_nonce)
+    if (rv$initial_render_nonce <= lik_last_initialized_nonce()) return()
+    if (length(input$lik_scenarios) == 0) return()
+    lik_last_initialized_nonce(rv$initial_render_nonce)
+    lik_filters_applied(isolate(lik_filters_current()))
+  }, ignoreInit = TRUE)
   likelihood_plot_reactive <- bindCache(
     likelihood_plot_reactive,
     rv$data_loaded,
     input$model_dir,
-    input$lik_scenarios,
-    input$lik_profile_type,
-    input$lik_groups,
-    input$lik_facet_ncol
+    lik_filters()
   )
 
   output$likelihood_plot <- renderPlot({
@@ -1560,7 +1639,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
   output$profile_gradient_table_ui <- renderUI({
     grad_tbl <- profile_gradient_table_reactive()
-    if (!identical(input$lik_profile_type, "components")) return(NULL)
+    filters <- lik_filters()
+    if (is.null(filters) || !identical(filters$profile_type, "components")) return(NULL)
     if (is.null(grad_tbl) || nrow(grad_tbl) == 0) return(NULL)
 
     box(
@@ -1606,7 +1686,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
   output$profile_gradient_model_ui <- renderUI({
     grad_tbl <- profile_gradient_table_reactive()
-    if (!identical(input$lik_profile_type, "components")) return(NULL)
+    filters <- lik_filters()
+    if (is.null(filters) || !identical(filters$profile_type, "components")) return(NULL)
     if (is.null(grad_tbl) || nrow(grad_tbl) == 0) return(NULL)
 
     model_choices <- unique(grad_tbl$Model)

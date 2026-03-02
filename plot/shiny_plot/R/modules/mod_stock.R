@@ -29,6 +29,11 @@ mod_stock_ui <- function() {
                 size = 10
               )
             ),
+            actionButton("stock_apply_filters", "Apply",
+                         class = "btn-success",
+                         style = "width: 100%;"),
+            tags$small("Selections update the plot when you click Apply.",
+                       style = "display:block; margin-top:6px; color:#666;"),
             
             shiny::hr(),
             h5("Download Plot", style = "font-weight: bold;"),
@@ -203,6 +208,7 @@ mod_stock_server <- function(input, output, session, rv) {
       input$model_dir,
       input$stock_scenarios
     )
+    stock_plot_reactive <- bindEvent(stock_plot_reactive, rv$data_loaded, input$stock_apply_filters, ignoreInit = FALSE)
   
     # Render stock status plot
     output$stock_plot <- renderPlot({

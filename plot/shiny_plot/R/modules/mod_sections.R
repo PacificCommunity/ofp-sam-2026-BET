@@ -514,13 +514,33 @@ mod_harvest_ui <- function() {
           uiOutput("harvest_recent_diag_model_ui"),
           uiOutput("harvest_recent_summary_options_ui")
         ),
-        numericInput("harvest_facet_ncol", "Facet columns:", value = 2, min = 1, max = 12, step = 1),
+        selectInput("harvest_facet_ncol", "Facet columns:", choices = as.character(1:12), selected = "2"),
+        actionButton("harvest_apply_filters", "Apply", class = "btn-success", style = "width: 100%;"),
+        tags$small("Selections update the plot when you click Apply.",
+                   style = "display:block; margin-top:6px; color:#666;"),
         shiny::hr(),
         h5("Download Plot", style = "font-weight: bold;"),
         actionButton("show_harvest_download_modal", "📥 Download Plot...", class = "btn-info", style = "width: 100%;")
       ),
-      box(title = "Plot", width = 9, solidHeader = TRUE, status = "success", collapsible = TRUE,
-          plotOutput("harvest_plot_output", height = "730px"))
+      box(
+        title = "Plot",
+        width = 9,
+        solidHeader = TRUE,
+        status = "success",
+        collapsible = TRUE,
+        div(
+          class = "plot-loading-container",
+          `data-output-id` = "harvest_plot_output",
+          plotOutput("harvest_plot_output", height = "730px"),
+          div(
+            class = "plot-loading-overlay",
+            div(
+              class = "plot-loading-card",
+              HTML("<span class='render-spinner'></span>Rendering key quantities plot...")
+            )
+          )
+        )
+      )
     ),
     fluidRow(
       column(
@@ -574,10 +594,35 @@ mod_harvest_ui <- function() {
 }
 
 mod_harvest_server <- function(input, output, session, rv) {
+  harvest_live_update_nonce <- reactiveVal(0)
+  harvest_filters_current <- reactive({
+    list(
+      scenarios = input$harvest_scenarios,
+      plot = if (is.null(input$harvest_plot)) "depletion_rec" else input$harvest_plot,
+      reference_view = if (is.null(input$harvest_reference_view)) "trajectory" else input$harvest_reference_view,
+      recent_years = input$harvest_recent_years,
+      recent_diag_model = input$harvest_recent_diag_model,
+      recent_summary_options = input$harvest_recent_summary_options,
+      facet_ncol = input$harvest_facet_ncol,
+      ensemble = isTRUE(input$harvest_ensemble),
+      ensemble_levels = input$harvest_ensemble_levels,
+      ensemble_weighting = if (is.null(input$harvest_ensemble_weighting)) "equal" else input$harvest_ensemble_weighting,
+      ensemble_center = if (is.null(input$harvest_ensemble_center)) "quantile" else input$harvest_ensemble_center
+    )
+  })
+  harvest_filters_applied <- reactiveVal(NULL)
+  harvest_last_initialized_nonce <- reactiveVal(0)
   observeEvent(rv$data_loaded, {
     sc <- names(rv$ParOut_list)
     updatePickerInput(session, "harvest_scenarios", choices = sc, selected = sc)
   }, ignoreInit = TRUE)
+
+  observe({
+    req(rv$data_loaded)
+    pending <- !isTRUE(input$live_update_plots) &&
+      !filters_equal(harvest_filters_current(), harvest_filters_applied())
+    set_apply_pending(session, "harvest_apply_filters", pending)
+  })
 
   manual_weight_tbl <- reactiveVal(NULL)
   applied_manual_weight_tbl <- reactiveVal(NULL)
@@ -1381,6 +1426,29 @@ mod_harvest_server <- function(input, output, session, rv) {
     input$harvest_ensemble_center,
     applied_manual_weight_key()
   )
+  observeEvent(list(input$live_update_plots, input$harvest_scenarios, input$harvest_plot,
+                    input$harvest_reference_view, input$harvest_recent_years,
+                    input$harvest_recent_diag_model, input$harvest_recent_summary_options,
+                    input$harvest_facet_ncol, input$harvest_ensemble,
+                    input$harvest_ensemble_levels, input$harvest_ensemble_weighting,
+                    input$harvest_ensemble_center), {
+    req(rv$data_loaded)
+    if (!isTRUE(input$live_update_plots)) return()
+    if (length(input$harvest_scenarios) == 0) return()
+    harvest_filters_applied(isolate(harvest_filters_current()))
+    harvest_live_update_nonce(isolate(harvest_live_update_nonce()) + 1)
+  }, ignoreInit = TRUE)
+  observeEvent(input$harvest_apply_filters, {
+    harvest_filters_applied(isolate(harvest_filters_current()))
+  }, ignoreInit = TRUE)
+  observeEvent(list(rv$initial_render_nonce, input$harvest_scenarios), {
+    req(rv$data_loaded, rv$initial_render_nonce)
+    if (rv$initial_render_nonce <= harvest_last_initialized_nonce()) return()
+    if (length(input$harvest_scenarios) == 0) return()
+    harvest_last_initialized_nonce(rv$initial_render_nonce)
+    harvest_filters_applied(isolate(harvest_filters_current()))
+  }, ignoreInit = TRUE)
+  harvest_plot_reactive <- bindEvent(harvest_plot_reactive, rv$initial_render_nonce, input$harvest_apply_filters, harvest_live_update_nonce(), ignoreInit = FALSE)
 
 
   output$harvest_plot_output <- renderPlot({
@@ -1681,7 +1749,7 @@ mod_tagging_ui <- function() {
             )
           )
         ),
-        numericInput("tag_facet_ncol", "Facet columns:", value = 4, min = 1, max = 6, step = 1),
+        selectInput("tag_facet_ncol", "Facet columns:", choices = as.character(1:6), selected = "4"),
         conditionalPanel(
           condition = "input.tag_plot == 'report'",
           checkboxInput("tag_rr_nonneg_only", "Tag RR filter: exclude rr <= 0", value = FALSE)
@@ -1694,21 +1762,61 @@ mod_tagging_ui <- function() {
           "Tag Attrition (By Program)" = "attr_program",
           "Tag Attrition (By Region)" = "attr_region"
         )),
+        actionButton("tag_apply_filters", "Apply", class = "btn-info", style = "width: 100%;"),
+        tags$small("Selections update the plot when you click Apply.",
+                   style = "display:block; margin-top:6px; color:#666;"),
         shiny::hr(),
         h5("Download Plot", style = "font-weight: bold;"),
         actionButton("show_tagging_download_modal", "📥 Download Plot...", class = "btn-info", style = "width: 100%;")
       ),
-      box(title = "Plot", width = 9, solidHeader = TRUE, status = "info", collapsible = TRUE,
-          plotOutput("tagging_plot_output", height = "730px"))
+      box(
+        title = "Plot",
+        width = 9,
+        solidHeader = TRUE,
+        status = "info",
+        collapsible = TRUE,
+        div(
+          class = "plot-loading-container",
+          `data-output-id` = "tagging_plot_output",
+          plotOutput("tagging_plot_output", height = "730px"),
+          div(
+            class = "plot-loading-overlay",
+            div(
+              class = "plot-loading-card",
+              HTML("<span class='render-spinner'></span>Rendering tagging plot...")
+            )
+          )
+        )
+      )
     )
   )
 }
 
 mod_tagging_server <- function(input, output, session, rv) {
+  tag_live_update_nonce <- reactiveVal(0)
+  tag_filters_current <- reactive({
+    list(
+      scenarios = input$tag_scenarios,
+      time_mode = if (is.null(input$tag_time_mode)) "year" else input$tag_time_mode,
+      years = input$tag_years,
+      facet_ncol = input$tag_facet_ncol,
+      rr_nonneg_only = isTRUE(input$tag_rr_nonneg_only),
+      plot = if (is.null(input$tag_plot)) "report" else input$tag_plot
+    )
+  })
+  tag_filters_applied <- reactiveVal(NULL)
+  tag_last_initialized_nonce <- reactiveVal(0)
   observeEvent(rv$data_loaded, {
     sc <- names(rv$FISHERY_MAPS)[!vapply(rv$FISHERY_MAPS, is.null, logical(1))]
     updatePickerInput(session, "tag_scenarios", choices = sc, selected = sc)
   }, ignoreInit = TRUE)
+
+  observe({
+    req(rv$data_loaded)
+    pending <- !isTRUE(input$live_update_plots) &&
+      !filters_equal(tag_filters_current(), tag_filters_applied())
+    set_apply_pending(session, "tag_apply_filters", pending)
+  })
 
   observe({
     req(rv$data_loaded)
@@ -2275,6 +2383,26 @@ mod_tagging_server <- function(input, output, session, rv) {
     input$tag_facet_ncol,
     input$tag_rr_nonneg_only
   )
+  observeEvent(list(input$live_update_plots, input$tag_scenarios, input$tag_plot,
+                    input$tag_time_mode, input$tag_years, input$tag_facet_ncol,
+                    input$tag_rr_nonneg_only), {
+    req(rv$data_loaded)
+    if (!isTRUE(input$live_update_plots)) return()
+    if (length(input$tag_scenarios) == 0) return()
+    tag_filters_applied(isolate(tag_filters_current()))
+    tag_live_update_nonce(isolate(tag_live_update_nonce()) + 1)
+  }, ignoreInit = TRUE)
+  observeEvent(input$tag_apply_filters, {
+    tag_filters_applied(isolate(tag_filters_current()))
+  }, ignoreInit = TRUE)
+  observeEvent(list(rv$initial_render_nonce, input$tag_scenarios, input$tag_years), {
+    req(rv$data_loaded, rv$initial_render_nonce)
+    if (rv$initial_render_nonce <= tag_last_initialized_nonce()) return()
+    if (length(input$tag_scenarios) == 0 || length(input$tag_years) == 0) return()
+    tag_last_initialized_nonce(rv$initial_render_nonce)
+    tag_filters_applied(isolate(tag_filters_current()))
+  }, ignoreInit = TRUE)
+  tagging_plot_reactive <- bindEvent(tagging_plot_reactive, rv$initial_render_nonce, input$tag_apply_filters, tag_live_update_nonce(), ignoreInit = FALSE)
 
 
   output$tagging_plot_output <- renderPlot({
@@ -2314,22 +2442,60 @@ mod_fishery_process_ui <- function() {
             liveSearchPlaceholder = "Search fisheries..."
           )
         ),
-        numericInput("fishery_process_facet_ncol", "Facet columns:", value = 4, min = 1, max = 12, step = 1),
+        selectInput("fishery_process_facet_ncol", "Facet columns:", choices = as.character(1:12), selected = "4"),
+        actionButton("fishery_process_apply_filters", "Apply", class = "btn-warning", style = "width: 100%;"),
+        tags$small("Selections update the plot when you click Apply.",
+                   style = "display:block; margin-top:6px; color:#666;"),
         shiny::hr(),
         h5("Download Plot", style = "font-weight: bold;"),
         actionButton("show_fishery_process_download_modal", "📥 Download Plot...", class = "btn-info", style = "width: 100%;")
       ),
-      box(title = "Plot", width = 9, solidHeader = TRUE, status = "warning", collapsible = TRUE,
-          plotOutput("fishery_process_plot_output", height = "730px"))
+      box(
+        title = "Plot",
+        width = 9,
+        solidHeader = TRUE,
+        status = "warning",
+        collapsible = TRUE,
+        div(
+          class = "plot-loading-container",
+          `data-output-id` = "fishery_process_plot_output",
+          plotOutput("fishery_process_plot_output", height = "730px"),
+          div(
+            class = "plot-loading-overlay",
+            div(
+              class = "plot-loading-card",
+              HTML("<span class='render-spinner'></span>Rendering fishery process plot...")
+            )
+          )
+        )
+      )
     )
   )
 }
 
 mod_fishery_process_server <- function(input, output, session, rv) {
+  fishery_process_live_update_nonce <- reactiveVal(0)
+  fishery_process_filters_current <- reactive({
+    list(
+      scenarios = input$fishery_process_scenarios,
+      plot = if (is.null(input$fishery_process_plot)) "selectivity_age" else input$fishery_process_plot,
+      fisheries = input$fishery_process_fisheries,
+      facet_ncol = input$fishery_process_facet_ncol
+    )
+  })
+  fishery_process_filters_applied <- reactiveVal(NULL)
+  fishery_process_last_initialized_nonce <- reactiveVal(0)
   observeEvent(rv$data_loaded, {
     sc <- names(rv$FISHERY_MAPS)[!vapply(rv$FISHERY_MAPS, is.null, logical(1))]
     updatePickerInput(session, "fishery_process_scenarios", choices = sc, selected = sc)
   }, ignoreInit = TRUE)
+
+  observe({
+    req(rv$data_loaded)
+    pending <- !isTRUE(input$live_update_plots) &&
+      !filters_equal(fishery_process_filters_current(), fishery_process_filters_applied())
+    set_apply_pending(session, "fishery_process_apply_filters", pending)
+  })
 
   observeEvent(list(input$fishery_process_scenarios, input$fishery_process_plot, rv$data_loaded), {
     req(rv$data_loaded, input$fishery_process_scenarios)
@@ -2522,6 +2688,26 @@ mod_fishery_process_server <- function(input, output, session, rv) {
     input$fishery_process_fisheries,
     input$fishery_process_facet_ncol
   )
+  observeEvent(list(input$live_update_plots, input$fishery_process_scenarios,
+                    input$fishery_process_plot, input$fishery_process_fisheries,
+                    input$fishery_process_facet_ncol), {
+    req(rv$data_loaded)
+    if (!isTRUE(input$live_update_plots)) return()
+    if (length(input$fishery_process_scenarios) == 0) return()
+    fishery_process_filters_applied(isolate(fishery_process_filters_current()))
+    fishery_process_live_update_nonce(isolate(fishery_process_live_update_nonce()) + 1)
+  }, ignoreInit = TRUE)
+  observeEvent(input$fishery_process_apply_filters, {
+    fishery_process_filters_applied(isolate(fishery_process_filters_current()))
+  }, ignoreInit = TRUE)
+  observeEvent(list(rv$initial_render_nonce, input$fishery_process_scenarios, input$fishery_process_fisheries), {
+    req(rv$data_loaded, rv$initial_render_nonce)
+    if (rv$initial_render_nonce <= fishery_process_last_initialized_nonce()) return()
+    if (length(input$fishery_process_scenarios) == 0) return()
+    fishery_process_last_initialized_nonce(rv$initial_render_nonce)
+    fishery_process_filters_applied(isolate(fishery_process_filters_current()))
+  }, ignoreInit = TRUE)
+  fishery_process_plot_reactive <- bindEvent(fishery_process_plot_reactive, rv$initial_render_nonce, input$fishery_process_apply_filters, fishery_process_live_update_nonce(), ignoreInit = FALSE)
 
 
   output$fishery_process_plot_output <- renderPlot({
@@ -2549,22 +2735,60 @@ mod_population_biology_ui <- function() {
           condition = "input.population_biology_plot == 'growth'",
           checkboxInput("population_biology_show_growth_band", "Show growth band (LAA +/- 1.96 SD)", value = TRUE)
         ),
-        numericInput("population_biology_facet_ncol", "Facet columns:", value = 2, min = 1, max = 12, step = 1),
+        selectInput("population_biology_facet_ncol", "Facet columns:", choices = as.character(1:12), selected = "2"),
+        actionButton("population_biology_apply_filters", "Apply", class = "btn-primary", style = "width: 100%;"),
+        tags$small("Selections update the plot when you click Apply.",
+                   style = "display:block; margin-top:6px; color:#666;"),
         shiny::hr(),
         h5("Download Plot", style = "font-weight: bold;"),
         actionButton("show_population_biology_download_modal", "📥 Download Plot...", class = "btn-info", style = "width: 100%;")
       ),
-      box(title = "Plot", width = 9, solidHeader = TRUE, status = "primary", collapsible = TRUE,
-          plotOutput("population_biology_plot_output", height = "730px"))
+      box(
+        title = "Plot",
+        width = 9,
+        solidHeader = TRUE,
+        status = "primary",
+        collapsible = TRUE,
+        div(
+          class = "plot-loading-container",
+          `data-output-id` = "population_biology_plot_output",
+          plotOutput("population_biology_plot_output", height = "730px"),
+          div(
+            class = "plot-loading-overlay",
+            div(
+              class = "plot-loading-card",
+              HTML("<span class='render-spinner'></span>Rendering population biology plot...")
+            )
+          )
+        )
+      )
     )
   )
 }
 
 mod_population_biology_server <- function(input, output, session, rv) {
+  population_biology_live_update_nonce <- reactiveVal(0)
+  population_biology_filters_current <- reactive({
+    list(
+      scenarios = input$population_biology_scenarios,
+      plot = if (is.null(input$population_biology_plot)) "srr" else input$population_biology_plot,
+      facet_ncol = input$population_biology_facet_ncol,
+      show_growth_band = isTRUE(input$population_biology_show_growth_band)
+    )
+  })
+  population_biology_filters_applied <- reactiveVal(NULL)
+  population_biology_last_initialized_nonce <- reactiveVal(0)
   observeEvent(rv$data_loaded, {
     sc <- names(rv$ParOut_list)
     updatePickerInput(session, "population_biology_scenarios", choices = sc, selected = sc)
   }, ignoreInit = TRUE)
+
+  observe({
+    req(rv$data_loaded)
+    pending <- !isTRUE(input$live_update_plots) &&
+      !filters_equal(population_biology_filters_current(), population_biology_filters_applied())
+    set_apply_pending(session, "population_biology_apply_filters", pending)
+  })
 
   population_biology_plot_reactive <- reactive({
     req(rv$data_loaded, input$population_biology_scenarios)
@@ -2694,6 +2918,26 @@ mod_population_biology_server <- function(input, output, session, rv) {
     input$population_biology_facet_ncol,
     input$population_biology_show_growth_band
   )
+  observeEvent(list(input$live_update_plots, input$population_biology_scenarios,
+                    input$population_biology_plot, input$population_biology_facet_ncol,
+                    input$population_biology_show_growth_band), {
+    req(rv$data_loaded)
+    if (!isTRUE(input$live_update_plots)) return()
+    if (length(input$population_biology_scenarios) == 0) return()
+    population_biology_filters_applied(isolate(population_biology_filters_current()))
+    population_biology_live_update_nonce(isolate(population_biology_live_update_nonce()) + 1)
+  }, ignoreInit = TRUE)
+  observeEvent(input$population_biology_apply_filters, {
+    population_biology_filters_applied(isolate(population_biology_filters_current()))
+  }, ignoreInit = TRUE)
+  observeEvent(list(rv$initial_render_nonce, input$population_biology_scenarios), {
+    req(rv$data_loaded, rv$initial_render_nonce)
+    if (rv$initial_render_nonce <= population_biology_last_initialized_nonce()) return()
+    if (length(input$population_biology_scenarios) == 0) return()
+    population_biology_last_initialized_nonce(rv$initial_render_nonce)
+    population_biology_filters_applied(isolate(population_biology_filters_current()))
+  }, ignoreInit = TRUE)
+  population_biology_plot_reactive <- bindEvent(population_biology_plot_reactive, rv$initial_render_nonce, input$population_biology_apply_filters, population_biology_live_update_nonce(), ignoreInit = FALSE)
 
 
   output$population_biology_plot_output <- renderPlot({

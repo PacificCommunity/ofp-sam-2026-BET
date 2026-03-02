@@ -23,6 +23,8 @@ server_data_load <- function(input, output, session, rv) {
       }
 
       reset_loaded_data_state(rv)
+      rv$initial_render_pending <- TRUE
+      session$sendCustomMessage("toggleInitialRenderOverlay", TRUE)
     
       # Show progress bar
       withProgress(message = "Loading model data...", value = 0, {

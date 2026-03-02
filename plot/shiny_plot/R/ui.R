@@ -52,7 +52,13 @@ ui <- dashboardPage(
                     deselectAllText = "None",
                     selectedTextFormat = "count > 2",
                     liveSearch = TRUE
-                  ))
+                  )),
+      div(
+        style = "padding: 6px 15px 0 15px;",
+        checkboxInput("live_update_plots", "Live update plots", value = TRUE),
+        tags$small("When enabled, plots update immediately as selections change.",
+                   style = "display:block; margin-top:-6px; color:#666;")
+      )
     ),
 
     div(style = "display:none;",
@@ -310,6 +316,351 @@ ui <- dashboardPage(
         .bootstrap-select .dropdown-toggle .filter-option {
           font-weight: 600;
         }
+
+        body.live-update-on #cpue_apply_filters,
+        body.live-update-on #lf_apply_filters,
+        body.live-update-on #wf_apply_filters,
+        body.live-update-on #lik_apply_filters,
+        body.live-update-on #harvest_apply_filters,
+        body.live-update-on #tag_apply_filters,
+        body.live-update-on #fishery_process_apply_filters,
+        body.live-update-on #population_biology_apply_filters,
+        body.live-update-on #stock_apply_filters {
+          display: none !important;
+        }
+        .btn.apply-pending {
+          background-color: #f39c12 !important;
+          border-color: #d58512 !important;
+          color: #fff !important;
+          box-shadow: 0 0 0 3px rgba(243, 156, 18, 0.2);
+        }
+        .btn.apply-pending:hover,
+        .btn.apply-pending:focus {
+          background-color: #e08e0b !important;
+          border-color: #c5760a !important;
+          color: #fff !important;
+        }
+        .btn.apply-disabled,
+        .btn.apply-disabled:hover,
+        .btn.apply-disabled:focus {
+          background-color: #c7cdd4 !important;
+          border-color: #b5bcc4 !important;
+          color: #6b7280 !important;
+          box-shadow: none !important;
+          cursor: not-allowed !important;
+          opacity: 0.95 !important;
+        }
+        .plot-loading-container {
+          position: relative;
+        }
+        .plot-loading-overlay {
+          display: none;
+          position: absolute;
+          inset: 0;
+          z-index: 20;
+          align-items: center;
+          justify-content: center;
+          background: rgba(255, 255, 255, 0.78);
+          backdrop-filter: blur(1px);
+          pointer-events: none;
+        }
+        .plot-loading-container.is-loading .plot-loading-overlay {
+          display: flex;
+        }
+        .plot-loading-container > .recalculating {
+          opacity: 0.38;
+        }
+        .plot-loading-container > .recalculating ~ .plot-loading-overlay {
+          display: flex;
+        }
+        .plot-loading-card {
+          padding: 10px 14px;
+          border-radius: 8px;
+          background: rgba(24, 44, 72, 0.92);
+          color: #fff;
+          box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+          font-weight: 700;
+          letter-spacing: 0.2px;
+        }
+        .plot-loading-card .render-spinner {
+          display: inline-block;
+          width: 14px;
+          height: 14px;
+          margin-right: 8px;
+          border: 2px solid rgba(255, 255, 255, 0.35);
+          border-top-color: #fff;
+          border-radius: 50%;
+          animation: render-spin 0.9s linear infinite;
+          vertical-align: -2px;
+        }
+
+        #initial-render-overlay {
+          display: none;
+          position: fixed;
+          top: 18px;
+          right: 18px;
+          z-index: 9999;
+          min-width: 260px;
+          max-width: 360px;
+          padding: 12px 14px;
+          background: rgba(24, 44, 72, 0.94);
+          color: #fff;
+          border-radius: 8px;
+          box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+          border-left: 4px solid #3c8dbc;
+        }
+
+        #initial-render-overlay .render-title {
+          font-weight: 700;
+          margin-bottom: 4px;
+        }
+
+        #initial-render-overlay .render-subtitle {
+          font-size: 12px;
+          opacity: 0.92;
+        }
+
+        #initial-render-overlay .render-spinner {
+          display: inline-block;
+          width: 14px;
+          height: 14px;
+          margin-right: 8px;
+          border: 2px solid rgba(255, 255, 255, 0.35);
+          border-top-color: #fff;
+          border-radius: 50%;
+          animation: render-spin 0.9s linear infinite;
+          vertical-align: -2px;
+        }
+
+        body.initial-rendering #initial-render-overlay {
+          display: block;
+        }
+
+        @keyframes render-spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      "))
+    ),
+    tags$head(
+      tags$script(HTML("
+        (function() {
+          var lastCheckedByGroup = {};
+
+          function getGroupElement(el) {
+            return el.closest('.dataTables_wrapper, .box, .well, .tab-pane, .sidebar, .modal-content') || document.body;
+          }
+
+          function getGroupKey(group) {
+            if (group === document.body) return 'body';
+            if (group.id) return group.id;
+            if (!group.dataset.shiftGroupKey) {
+              group.dataset.shiftGroupKey = 'shift-group-' + Math.random().toString(36).slice(2);
+            }
+            return group.dataset.shiftGroupKey;
+          }
+
+          document.addEventListener('click', function(event) {
+            var target = event.target;
+            if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox' || target.disabled) {
+              return;
+            }
+
+            var group = getGroupElement(target);
+            var groupKey = getGroupKey(group);
+            var checkboxes = Array.prototype.filter.call(
+              group.querySelectorAll('input[type=\"checkbox\"]'),
+              function(box) {
+                return !box.disabled && box.offsetParent !== null;
+              }
+            );
+
+            if (event.shiftKey && lastCheckedByGroup[groupKey]) {
+              var start = checkboxes.indexOf(target);
+              var end = checkboxes.indexOf(lastCheckedByGroup[groupKey]);
+
+              if (start !== -1 && end !== -1) {
+                var checkedState = target.checked;
+                checkboxes.slice(Math.min(start, end), Math.max(start, end) + 1).forEach(function(box) {
+                  if (box.checked !== checkedState) {
+                    box.checked = checkedState;
+                    box.dispatchEvent(new Event('change', { bubbles: true }));
+                  }
+                });
+              }
+            }
+
+            lastCheckedByGroup[groupKey] = target;
+          }, true);
+        })();
+
+        (function() {
+          var lastPickerIndexById = {};
+
+          function findRelatedSelect(picker) {
+            if (!picker || !picker.parentElement) {
+              return null;
+            }
+            return picker.parentElement.querySelector('select');
+          }
+
+          document.addEventListener('click', function(event) {
+            var optionLink = event.target.closest('.bootstrap-select .dropdown-menu li a');
+            if (!optionLink) {
+              return;
+            }
+
+            var li = optionLink.closest('li');
+            var picker = optionLink.closest('.bootstrap-select');
+            var select = picker ? findRelatedSelect(picker) : null;
+
+            if (!li || !picker || !select || !select.multiple) {
+              return;
+            }
+
+            var visibleItems = Array.prototype.filter.call(
+              picker.querySelectorAll('.dropdown-menu li'),
+              function(item) {
+                return !item.classList.contains('divider') &&
+                  !item.classList.contains('dropdown-header') &&
+                  !item.classList.contains('hidden') &&
+                  item.querySelector('a');
+              }
+            );
+
+            var currentIndex = visibleItems.indexOf(li);
+            if (currentIndex === -1) {
+              return;
+            }
+
+            var selectId = select.id || select.name || 'picker-default';
+            var lastIndex = lastPickerIndexById[selectId];
+            lastPickerIndexById[selectId] = currentIndex;
+
+            if (!event.shiftKey || typeof lastIndex !== 'number' || lastIndex < 0 || lastIndex >= visibleItems.length) {
+              return;
+            }
+
+            window.setTimeout(function() {
+              var clickedSelected = li.classList.contains('selected');
+              var start = Math.min(lastIndex, currentIndex);
+              var end = Math.max(lastIndex, currentIndex);
+
+              for (var idx = start; idx <= end; idx++) {
+                if (idx === currentIndex) {
+                  continue;
+                }
+
+                var item = visibleItems[idx];
+                var itemAnchor = item.querySelector('a');
+                if (!itemAnchor) {
+                  continue;
+                }
+
+                var isSelected = item.classList.contains('selected');
+                if (isSelected !== clickedSelected) {
+                  itemAnchor.dispatchEvent(new MouseEvent('click', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window
+                  }));
+                }
+              }
+            }, 0);
+          }, true);
+        })();
+
+        Shiny.addCustomMessageHandler('triggerApplyButtons', function(ids) {
+          if (!Array.isArray(ids)) {
+            ids = ids ? [ids] : [];
+          }
+          ids.forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) {
+              el.click();
+            }
+          });
+        });
+
+        Shiny.addCustomMessageHandler('setApplyPending', function(payload) {
+          if (!payload || !payload.id) return;
+          var el = document.getElementById(payload.id);
+          if (!el) return;
+          var pending = !!payload.pending;
+          el.classList.toggle('apply-pending', pending);
+          el.classList.toggle('apply-disabled', !pending);
+          el.disabled = !pending;
+          el.setAttribute('aria-disabled', (!pending).toString());
+          el.setAttribute(
+            'title',
+            pending ? 'Selections changed. Click Apply to refresh this plot.' : 'Selections already applied.'
+          );
+        });
+
+        Shiny.addCustomMessageHandler('toggleInitialRenderOverlay', function(active) {
+          document.body.classList.toggle('initial-rendering', !!active);
+        });
+
+        (function() {
+          function setLoadingState(outputId, loading) {
+            var container = document.querySelector('.plot-loading-container[data-output-id=\"' + outputId + '\"]');
+            if (!container) return;
+            container.classList.toggle('is-loading', !!loading);
+          }
+
+          if (window.jQuery) {
+            $(document).on('shiny:outputinvalidated', function(event) {
+              if (event && event.name) {
+                setLoadingState(event.name, true);
+              }
+            });
+
+            $(document).on('shiny:value', function(event) {
+              if (event && event.name) {
+                setLoadingState(event.name, false);
+              }
+            });
+
+            $(document).on('shiny:error', function(event) {
+              if (event && event.name) {
+                setLoadingState(event.name, false);
+              }
+            });
+          }
+        })();
+
+        (function() {
+          function updateLiveUpdateClass() {
+            var checkbox = document.getElementById('live_update_plots');
+            var enabled = !!(checkbox && checkbox.checked);
+            document.body.classList.toggle('live-update-on', enabled);
+          }
+
+          document.addEventListener('change', function(event) {
+            if (event.target && event.target.id === 'live_update_plots') {
+              updateLiveUpdateClass();
+            }
+          }, true);
+
+          document.addEventListener('shiny:connected', function() {
+            setTimeout(updateLiveUpdateClass, 0);
+          });
+
+          document.addEventListener('shiny:value', function(event) {
+            if (event.name === 'live_update_plots') {
+              updateLiveUpdateClass();
+            }
+          });
+
+          var observer = new MutationObserver(function() {
+            updateLiveUpdateClass();
+          });
+
+          observer.observe(document.documentElement, {
+            childList: true,
+            subtree: true
+          });
+        })();
       "))
     ),
     
@@ -359,6 +710,11 @@ ui <- dashboardPage(
       # TAB 11: POPULATION BIOLOGY
       # -----------------------------------------------------------------------
       mod_population_biology_ui()
+    ),
+    div(
+      id = "initial-render-overlay",
+      tags$div(class = "render-title", HTML("<span class='render-spinner'></span>Rendering plots")),
+      tags$div(class = "render-subtitle", "Initial plots are being prepared across tabs.")
     )
   )
 )

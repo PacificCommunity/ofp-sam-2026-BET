@@ -90,43 +90,13 @@
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
     )
     
-    # Create reactive value for progress tracking
-    progress_text <- reactiveVal("")
     cancel_launch <- reactiveVal(FALSE)
-    
-    # Show persistent modal dialog with progress
-    showModal(modalDialog(
-      title = div(
-        style = "font-size: 18px; font-weight: bold;",
-        icon("rocket"), " Launching Jobs"
-      ),
-      size = "m",
-      
-      # Progress indicator
-      div(
-        style = "text-align: center; margin: 20px 0;",
-        div(class = "spinner"),
-        h4(
-          id = "launch_progress_text",
-          style = "color: #3c8dbc; margin-top: 20px;",
-          paste0("Starting... (0/", total_jobs, ")")
-        )
-      ),
-      
-      # Progress details box
-      div(
-        style = "background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px; padding: 15px; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 12px;",
-        div(id = "launch_progress_details", "Initializing...")
-      ),
-      
-      footer = actionButton("cancel_launch", "Cancel", class = "btn-warning"),
-      easyClose = FALSE  # Cannot close by clicking outside
-    ))
-    
-    observeEvent(input$cancel_launch, {
-      cancel_launch(TRUE)
-      showNotification("Cancellation requested. Forcing stop after current call...", type = "warning", duration = 3)
-    }, ignoreInit = TRUE)
+
+    update_launch_notification <- function(text, type = "message") {
+      showNotification(text, type = type, duration = NULL, id = "launch_progress")
+    }
+
+    update_launch_notification(sprintf("Launching jobs... (0/%d)", total_jobs))
     
     tryCatch({
       batch_names <- c()
@@ -167,19 +137,8 @@
         } else {
           rv$launch_log <- paste0(rv$launch_log, "⚡ Parallel launch ON (cores: ", cores, ")\n")
           
-          session$sendCustomMessage(
-            type = "updateProgress",
-            message = list(
-              id = "launch_progress_text",
-              text = sprintf("Launching %d jobs in parallel (cores: %d)", total_jobs, cores)
-            )
-          )
-          session$sendCustomMessage(
-            type = "updateProgress",
-            message = list(
-              id = "launch_progress_details",
-              text = "Submitting jobs in parallel..."
-            )
+          update_launch_notification(
+            sprintf("Launching %d jobs in parallel (cores: %d)", total_jobs, cores)
           )
           
           if (cancel_launch()) stop("Launch cancelled")
@@ -255,13 +214,9 @@
                 if (cancel_launch()) stop("Launch cancelled")
                 current_job <- current_job + 1
                 
-                session$sendCustomMessage(
-                  type = "updateProgress",
-                  message = list(
-                    id = "launch_progress_text",
-                    text = sprintf("Launching job %d/%d: %s (seed %d)", 
-                                   current_job, total_jobs, model_name, seed)
-                  )
+                update_launch_notification(
+                  sprintf("Launching job %d/%d: %s (seed %d)",
+                          current_job, total_jobs, model_name, seed)
                 )
                 
                 rv$launch_log <- paste0(
@@ -296,13 +251,9 @@
                 if (cancel_launch()) stop("Launch cancelled")
                 current_job <- current_job + 1
                 
-                session$sendCustomMessage(
-                  type = "updateProgress",
-                  message = list(
-                    id = "launch_progress_text",
-                    text = sprintf("Launching job %d/%d: %s (part %d)", 
-                                   current_job, total_jobs, model_name, part)
-                  )
+                update_launch_notification(
+                  sprintf("Launching job %d/%d: %s (part %d)",
+                          current_job, total_jobs, model_name, part)
                 )
                 
                 rv$launch_log <- paste0(
@@ -338,13 +289,9 @@
                 if (cancel_launch()) stop("Launch cancelled")
                 current_job <- current_job + 1
                 
-                session$sendCustomMessage(
-                  type = "updateProgress",
-                  message = list(
-                    id = "launch_progress_text",
-                    text = sprintf("Launching job %d/%d: %s (peel %d)", 
-                                   current_job, total_jobs, model_name, peel)
-                  )
+                update_launch_notification(
+                  sprintf("Launching job %d/%d: %s (peel %d)",
+                          current_job, total_jobs, model_name, peel)
                 )
                 
                 rv$launch_log <- paste0(
@@ -380,13 +327,9 @@
                 if (cancel_launch()) stop("Launch cancelled")
                 current_job <- current_job + 1
                 
-                session$sendCustomMessage(
-                  type = "updateProgress",
-                  message = list(
-                    id = "launch_progress_text",
-                    text = sprintf("Launching job %d/%d: %s (scaler %g)", 
-                                   current_job, total_jobs, model_name, sc)
-                  )
+                update_launch_notification(
+                  sprintf("Launching job %d/%d: %s (scaler %g)",
+                          current_job, total_jobs, model_name, sc)
                 )
                 
                 rv$launch_log <- paste0(
@@ -420,13 +363,9 @@
               if (cancel_launch()) stop("Launch cancelled")
               current_job <- current_job + 1
               
-              session$sendCustomMessage(
-                type = "updateProgress",
-                message = list(
-                  id = "launch_progress_text",
-                  text = sprintf("Launching job %d/%d: %s", 
-                                 current_job, total_jobs, model_name)
-                )
+              update_launch_notification(
+                sprintf("Launching job %d/%d: %s",
+                        current_job, total_jobs, model_name)
               )
               
               rv$launch_log <- paste0(
@@ -477,6 +416,7 @@
       }
       
       if (cancel_launch()) {
+        removeNotification("launch_progress")
         rv$launch_log <- paste0(
           rv$launch_log,
           "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
@@ -502,6 +442,7 @@
           )
         ))
       } else {
+        removeNotification("launch_progress")
         # Final completion message
         rv$launch_log <- paste0(
           rv$launch_log,
@@ -544,6 +485,7 @@
       }
       
     }, error = function(e) {
+      removeNotification("launch_progress")
       if (grepl("Launch cancelled", e$message)) {
         rv$launch_log <- paste0(
           rv$launch_log,

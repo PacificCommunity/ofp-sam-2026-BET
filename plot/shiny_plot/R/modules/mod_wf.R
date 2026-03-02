@@ -108,7 +108,30 @@ mod_wf_ui <- function() {
               ),
               selected = "hist"
             ),
-            numericInput("wf_facet_ncol", "Facet columns:", value = 3, min = 1, max = 12, step = 1),
+            selectInput(
+              "wf_plot_scale",
+              "Plot size:",
+              choices = c(
+                "120%" = "1.20",
+                "110%" = "1.10",
+                "100%" = "1.00",
+                "95%" = "0.95",
+                "90%" = "0.90",
+                "85%" = "0.85",
+                "80%" = "0.80",
+                "75%" = "0.75",
+                "70%" = "0.70",
+                "65%" = "0.65",
+                "60%" = "0.60",
+                "55%" = "0.55",
+                "50%" = "0.50"
+              ),
+              selected = "1.00"
+            ),
+            selectInput("wf_facet_ncol", "Facet columns:", choices = as.character(1:12), selected = "3"),
+            actionButton("wf_apply_filters", "Apply", class = "btn-primary", style = "width: 100%;"),
+            tags$small("Selections update the plot when you click Apply.",
+                       style = "display:block; margin-top:6px; color:#666;"),
             
             helpText("💡 Compatible models only. Check 1 model for single display, 2+ for overlay.", 
                      style = "font-size: 11px; color: #666; font-style: italic;"),
@@ -122,7 +145,25 @@ mod_wf_ui <- function() {
           ),
           
           # Weight frequency plot panel (DYNAMIC HEIGHT)
-          uiOutput("wf_plot_box")
+          box(
+            title = "Weight Frequency",
+            width = 9,
+            solidHeader = TRUE,
+            status = "primary",
+            collapsible = TRUE,
+            div(
+              class = "plot-loading-container",
+              `data-output-id` = "wf_plot_box",
+              uiOutput("wf_plot_box"),
+              div(
+                class = "plot-loading-overlay",
+                div(
+                  class = "plot-loading-card",
+                  HTML("<span class='render-spinner'></span>Rendering weight frequency plot...")
+                )
+              )
+            )
+          )
         )
       )
 
@@ -131,6 +172,100 @@ mod_wf_ui <- function() {
 mod_wf_server <- function(input, output, session, rv) {
     # TAB 7: WEIGHT FREQUENCY (DYNAMIC BOX HEIGHT)
     # ===========================================================================
+    wf_filters_current <- reactive({
+      list(
+        model = input$wf_model,
+        view_mode = if (is.null(input$wf_view_mode)) "all_fisheries" else input$wf_view_mode,
+        fishery = input$wf_fishery,
+        fisheries_all = input$wf_fisheries_all,
+        scenarios = input$wf_scenarios,
+        years = input$wf_years,
+        plot_scale = if (is.null(input$wf_plot_scale)) "1.00" else input$wf_plot_scale,
+        facet_ncol = input$wf_facet_ncol,
+        plot_style = if (is.null(input$wf_plot_style)) "hist" else input$wf_plot_style
+      )
+    })
+    wf_filters_applied <- reactiveVal(NULL)
+    wf_last_initialized_nonce <- reactiveVal(0)
+    wf_filters <- reactive({
+      wf_filters_applied()
+    })
+    wf_prepped_outputs <- reactive({
+      req(rv$data_loaded)
+      model_names <- names(rv$WeightOut_list)
+      setNames(lapply(model_names, function(sc) {
+        obj <- rv$WeightOut_list[[sc]]
+        if (is.null(obj)) return(NULL)
+        df <- obj@wgtfits
+        if (is.null(df) || nrow(df) == 0) return(NULL)
+        df <- df %>%
+          mutate(fishery = suppressWarnings(as.numeric(as.character(fishery))))
+        fish_ids <- sort(unique(df$fishery))
+        fish_ids <- fish_ids[is.finite(fish_ids)]
+        fish_lookup <- data.frame(
+          fishery = fish_ids,
+          fishery_display = vapply(
+            fish_ids,
+            function(f) get_fishery_name(f, rv$FISHERY_MAPS[[sc]]),
+            character(1)
+          ),
+          stringsAsFactors = FALSE
+        )
+        df %>%
+          left_join(fish_lookup, by = "fishery") %>%
+          mutate(Scenario = sc)
+      }), model_names)
+    })
+    wf_prepped_outputs <- bindCache(wf_prepped_outputs, rv$data_loaded, input$model_dir)
+
+    observe({
+      req(rv$data_loaded)
+      pending <- !isTRUE(input$live_update_plots) &&
+        !filters_equal(wf_filters_current(), wf_filters())
+      set_apply_pending(session, "wf_apply_filters", pending)
+    })
+
+    observeEvent(input$wf_apply_filters, {
+      wf_filters_applied(isolate(wf_filters_current()))
+    }, ignoreInit = TRUE)
+
+    observeEvent(list(input$live_update_plots, input$wf_scenarios, input$wf_model, input$wf_years,
+                      input$wf_view_mode, input$wf_fishery, input$wf_fisheries_all,
+                      input$wf_plot_style, input$wf_plot_scale, input$wf_facet_ncol), {
+      req(rv$data_loaded)
+      if (!isTRUE(input$live_update_plots)) return()
+
+      ready <- !is.null(input$wf_model) &&
+        nzchar(input$wf_model) &&
+        length(input$wf_scenarios) > 0 &&
+        length(input$wf_years) > 0 &&
+        (
+          (identical(input$wf_view_mode, "all_fisheries") && length(input$wf_fisheries_all) > 0) ||
+          (!identical(input$wf_view_mode, "all_fisheries") && !is.null(input$wf_fishery) && nzchar(input$wf_fishery))
+        )
+
+      if (!ready) return()
+      wf_filters_applied(isolate(wf_filters_current()))
+    }, ignoreInit = TRUE)
+
+    observeEvent(list(rv$initial_render_nonce, input$wf_model, input$wf_years, input$wf_scenarios, input$wf_fishery, input$wf_fisheries_all), {
+      req(rv$data_loaded, rv$initial_render_nonce)
+      if (rv$initial_render_nonce <= wf_last_initialized_nonce()) return()
+
+      ready <- !is.null(input$wf_model) &&
+        nzchar(input$wf_model) &&
+        length(input$wf_scenarios) > 0 &&
+        length(input$wf_years) > 0 &&
+        (
+          (identical(input$wf_view_mode, "all_fisheries") && length(input$wf_fisheries_all) > 0) ||
+          (!identical(input$wf_view_mode, "all_fisheries") && !is.null(input$wf_fishery) && nzchar(input$wf_fishery))
+        )
+
+      if (!ready) return()
+
+      wf_last_initialized_nonce(rv$initial_render_nonce)
+      wf_filters_applied(isolate(wf_filters_current()))
+    }, ignoreInit = TRUE)
   
     observeEvent(input$wf_scenarios, {
       req(rv$data_loaded)
@@ -184,9 +319,9 @@ mod_wf_server <- function(input, output, session, rv) {
         if (length(selected_scenarios) == 0) selected_scenarios <- all_models
       }
       fishery_union <- sort(unique(unlist(lapply(selected_scenarios, function(m) {
-        obj <- rv$WeightOut_list[[m]]
-        if (is.null(obj)) return(numeric(0))
-        suppressWarnings(as.numeric(unique(obj@wgtfits$fishery)))
+        df <- wf_prepped_outputs()[[m]]
+        if (is.null(df)) return(numeric(0))
+        unique(df$fishery)
       }))))
       fishery_union <- fishery_union[is.finite(fishery_union)]
       choices_all <- build_fishery_picker_choices(fishery_union, selected_scenarios, rv$FISHERY_MAPS)
@@ -207,7 +342,7 @@ mod_wf_server <- function(input, output, session, rv) {
       # Extract years for selected fishery from base model
       if (is.null(rv$WeightOut_list[[input$wf_model]])) return()
     
-      df <- rv$WeightOut_list[[input$wf_model]]@wgtfits
+      df <- wf_prepped_outputs()[[input$wf_model]]
       if (identical(input$wf_view_mode, "all_fisheries")) {
         selected_specs <- parse_fishery_picker_values(input$wf_fisheries_all)
         selected_fisheries <- unique(selected_specs$fishery)
@@ -251,8 +386,8 @@ mod_wf_server <- function(input, output, session, rv) {
       if (!identical(input$tabs, "wf")) return()
       req(input$wf_model, rv$WeightOut_list[[input$wf_model]])
 
-      df <- rv$WeightOut_list[[input$wf_model]]@wgtfits
-      fisheries <- sort(unique(suppressWarnings(as.numeric(df$fishery))))
+      df <- wf_prepped_outputs()[[input$wf_model]]
+      fisheries <- sort(unique(df$fishery))
       fishery_map <- rv$FISHERY_MAPS[[input$wf_model]]
       choices <- setNames(fisheries, sapply(fisheries, function(x) get_fishery_name(x, fishery_map)))
       selected_fishery <- if (length(fisheries) > 0) fisheries[1] else NULL
@@ -272,9 +407,9 @@ mod_wf_server <- function(input, output, session, rv) {
         if (length(selected_scenarios) == 0) selected_scenarios <- all_models
       }
       fishery_union <- sort(unique(unlist(lapply(selected_scenarios, function(m) {
-        obj <- rv$WeightOut_list[[m]]
-        if (is.null(obj)) return(numeric(0))
-        suppressWarnings(as.numeric(unique(obj@wgtfits$fishery)))
+        dfm <- wf_prepped_outputs()[[m]]
+        if (is.null(dfm)) return(numeric(0))
+        unique(dfm$fishery)
       }))))
       fishery_union <- fishery_union[is.finite(fishery_union)]
       choices_all <- build_fishery_picker_choices(fishery_union, selected_scenarios, rv$FISHERY_MAPS)
@@ -283,21 +418,25 @@ mod_wf_server <- function(input, output, session, rv) {
 
       years <- sort(unique(df$year))
       updatePickerInput(session, "wf_years", choices = years, selected = years)
+      if (is.null(wf_filters_applied())) {
+        wf_filters_applied(isolate(wf_filters_current()))
+      }
     }, ignoreInit = TRUE)
   
     # Reactive: calculate dynamic plot height for WF
     wf_plot_height <- reactive({
-      req(rv$data_loaded, input$wf_years)
-      facet_ncol <- suppressWarnings(as.integer(input$wf_facet_ncol))
+      filters <- wf_filters()
+      req(rv$data_loaded, filters, filters$years)
+      facet_ncol <- suppressWarnings(as.integer(filters$facet_ncol))
       if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 3
       facet_ncol <- min(max(facet_ncol, 1), 12)
-      plot_style <- if (is.null(input$wf_plot_style)) "hist" else input$wf_plot_style
+      plot_style <- filters$plot_style
 
-      if (identical(input$wf_view_mode, "all_fisheries")) {
-        n_fisheries <- length(input$wf_fisheries_all)
+      if (identical(filters$view_mode, "all_fisheries")) {
+        n_fisheries <- length(filters$fisheries_all)
         n_rows <- ceiling(max(n_fisheries, 1) / facet_ncol)
         if (identical(plot_style, "bubble")) {
-          n_scen <- max(length(input$wf_scenarios), 1)
+          n_scen <- max(length(filters$scenarios), 1)
           n_panel_rows <- ceiling(n_scen / facet_ncol)
           panel_height <- min(max(180 + max(n_fisheries, 1) * 16, 280), 760)
           return(min(max(120 + n_panel_rows * panel_height, 420), 2600))
@@ -305,12 +444,12 @@ mod_wf_server <- function(input, output, session, rv) {
         return(min(max(350 + n_rows * 240, 550), 3200))
       }
 
-      n_years <- length(input$wf_years)
+      n_years <- length(filters$years)
     
       if (n_years == 0) return(400)
 
         if (identical(plot_style, "bubble")) {
-          n_scen <- max(length(input$wf_scenarios), 1)
+          n_scen <- max(length(filters$scenarios), 1)
           n_panel_rows <- ceiling(n_scen / facet_ncol)
           panel_height <- min(max(220 + n_years * 8, 320), 820)
           return(min(max(140 + n_panel_rows * panel_height, 420), 2600))
@@ -330,11 +469,12 @@ mod_wf_server <- function(input, output, session, rv) {
   
     # Reactive: generate weight frequency plot
     wf_plot_reactive <- reactive({
-      req(rv$data_loaded, input$wf_model, input$wf_fishery, input$wf_years)
+      filters <- wf_filters()
+      req(rv$data_loaded, filters, filters$model, filters$fishery, filters$years)
 
-      view_mode <- if (is.null(input$wf_view_mode)) "all_fisheries" else input$wf_view_mode
-      plot_style <- if (is.null(input$wf_plot_style)) "hist" else input$wf_plot_style
-      scenarios_to_use <- input$wf_scenarios
+      view_mode <- filters$view_mode
+      plot_style <- filters$plot_style
+      scenarios_to_use <- filters$scenarios
 
       # Check if any scenarios selected
       if (length(scenarios_to_use) == 0) {
@@ -345,20 +485,20 @@ mod_wf_server <- function(input, output, session, rv) {
       }
     
       # Check if any years selected
-      if (length(input$wf_years) == 0) {
+      if (length(filters$years) == 0) {
         p <- ggplot() + 
           annotate("text", x = 0.5, y = 0.5, label = "No years selected", size = 6, color = "#999") +
           theme_void()
         return(p)
       }
 
-      selected_years_num <- suppressWarnings(as.numeric(input$wf_years))
+      selected_years_num <- suppressWarnings(as.numeric(filters$years))
       selected_years_num <- selected_years_num[is.finite(selected_years_num)]
     
-      selected_fishery_ids <- if (identical(input$wf_view_mode, "all_fisheries")) {
-        unique(parse_fishery_picker_values(input$wf_fisheries_all)$fishery)
+      selected_fishery_ids <- if (identical(filters$view_mode, "all_fisheries")) {
+        unique(parse_fishery_picker_values(filters$fisheries_all)$fishery)
       } else {
-        suppressWarnings(as.numeric(input$wf_fishery))
+        suppressWarnings(as.numeric(filters$fishery))
       }
       selected_fishery_ids <- selected_fishery_ids[is.finite(selected_fishery_ids)]
 
@@ -372,12 +512,11 @@ mod_wf_server <- function(input, output, session, rv) {
       # Combine data from selected scenarios using fishery IDs.
       # Names can differ by model; those differences are kept as separate facet labels.
       combined_data <- map_dfr(scenarios_to_use, function(sc) {
-        if (is.null(rv$WeightOut_list[[sc]])) return(NULL)
-        df <- rv$WeightOut_list[[sc]]@wgtfits %>%
-          mutate(fishery = suppressWarnings(as.numeric(as.character(fishery))))
+        df <- wf_prepped_outputs()[[sc]]
+        if (is.null(df)) return(NULL)
 
-        if (identical(input$wf_view_mode, "all_fisheries")) {
-          selected_specs <- parse_fishery_picker_values(input$wf_fisheries_all)
+        if (identical(filters$view_mode, "all_fisheries")) {
+          selected_specs <- parse_fishery_picker_values(filters$fisheries_all)
           if (nrow(selected_specs) > 0) {
             any_model_specific <- any(!is.na(selected_specs$Model) & nzchar(selected_specs$Model))
             if (any_model_specific) {
@@ -398,22 +537,7 @@ mod_wf_server <- function(input, output, session, rv) {
           df <- df %>% filter(year %in% selected_years_num)
         }
         if (nrow(df) == 0) return(NULL)
-
-        fish_lookup <- data.frame(
-          fishery = sort(unique(df$fishery)),
-          fishery_display = vapply(
-            sort(unique(df$fishery)),
-            function(f) get_fishery_name(f, rv$FISHERY_MAPS[[sc]]),
-            character(1)
-          ),
-          stringsAsFactors = FALSE
-        )
-
-        df %>%
-          left_join(fish_lookup, by = "fishery") %>%
-          mutate(
-            Scenario = sc
-          )
+        df
       })
     
       # Check if data exists
@@ -476,11 +600,11 @@ mod_wf_server <- function(input, output, session, rv) {
         plot_data <- plot_data %>% mutate(fishery_panel = factor(as.character(fishery_panel), levels = fishery_levels))
       }
     
-      fishery_name <- get_fishery_name(input$wf_fishery, rv$FISHERY_MAPS[[input$wf_model]])
+      fishery_name <- get_fishery_name(filters$fishery, rv$FISHERY_MAPS[[filters$model]])
     
       # Determine optimal layout
       n_years <- length(unique(plot_data$year))
-      ncol_facet <- suppressWarnings(as.integer(input$wf_facet_ncol))
+      ncol_facet <- suppressWarnings(as.integer(filters$facet_ncol))
       if (!is.finite(ncol_facet) || ncol_facet < 1) ncol_facet <- 3
       ncol_facet <- min(max(ncol_facet, 1), 12)
     
@@ -535,7 +659,7 @@ mod_wf_server <- function(input, output, session, rv) {
               labs(
                 title = "WF Bubble Residuals (all selected fisheries, years combined)",
                 subtitle = paste0("Scenario: ", unique(as.character(bubble_data$Scenario))[1],
-                                  " | Years: ", min(input$wf_years), " to ", max(input$wf_years)),
+                                  " | Years: ", min(filters$years), " to ", max(filters$years)),
                 x = "Weight (kg)", y = "Fishery"
               ) +
               theme_bw(base_size = 12) +
@@ -565,7 +689,7 @@ mod_wf_server <- function(input, output, session, rv) {
               scale_y_discrete(expand = bubble_expand_all) +
               labs(
                 title = "WF Bubble Residuals (all selected fisheries, years combined)",
-                subtitle = paste0("Years: ", min(input$wf_years), " to ", max(input$wf_years)),
+                subtitle = paste0("Years: ", min(filters$years), " to ", max(filters$years)),
                 x = "Weight (kg)", y = "Fishery"
               ) +
               theme_bw(base_size = 12) +
@@ -649,7 +773,7 @@ mod_wf_server <- function(input, output, session, rv) {
             scale_y_discrete(expand = bubble_expand_year) +
             labs(
               title = paste(fishery_name, "- WF Bubble Residuals"),
-              subtitle = paste0("Base: ", input$wf_model, " (", n_years, " years)"),
+              subtitle = paste0("Base: ", filters$model, " (", n_years, " years)"),
               x = "Weight (kg)", y = "Year"
             ) +
             theme_bw(base_size = 12) +
@@ -719,7 +843,7 @@ mod_wf_server <- function(input, output, session, rv) {
           scale_color_viridis_d(name = "Model") +
           labs(
             title = "All selected fisheries - all selected years combined",
-            subtitle = paste0("Years: ", min(input$wf_years), " to ", max(input$wf_years)),
+            subtitle = paste0("Years: ", min(filters$years), " to ", max(filters$years)),
             x = "Weight (kg)", y = "Sample count"
           ) +
           theme_bw(base_size = 12) +
@@ -732,6 +856,7 @@ mod_wf_server <- function(input, output, session, rv) {
             axis.text.y = element_text(size = 9.5, colour = "#111")
           )
       } else if (length(unique(plot_data$Scenario)) <= 1) {
+        single_model_label <- unique(as.character(plot_data$Scenario))[1]
         p <- ggplot() +
           geom_col(
             data = obs_data,
@@ -744,14 +869,14 @@ mod_wf_server <- function(input, output, session, rv) {
           ) +
           geom_line(
             data = plot_data,
-            aes(x = weight, y = pred, color = "Predicted"),
+            aes(x = weight, y = pred, color = single_model_label),
             linewidth = 1.2
           ) +
           facet_wrap(~year, scales = "free_y", ncol = ncol_facet) +
           scale_fill_manual(values = c("Observed" = observed_fill), guide = "none") +
-          scale_color_manual(name = "Model", values = c("Predicted" = "#E31A1C")) +
+          scale_color_manual(name = "Model", values = setNames("#E31A1C", single_model_label)) +
           labs(
-            title = paste(fishery_name, "-", unique(as.character(plot_data$Scenario))[1]),
+            title = paste(fishery_name, "-", single_model_label),
             x = "Weight (kg)", y = "Sample count"
           ) +
           theme_bw(base_size = 12) +
@@ -779,7 +904,7 @@ mod_wf_server <- function(input, output, session, rv) {
           facet_wrap(~year, scales = "free_y", ncol = ncol_facet) +
           scale_fill_manual(values = c("Observed" = observed_fill), guide = "none") +
           scale_color_viridis_d(name = "Model") +
-          labs(title = paste(fishery_name, "- Base:", input$wf_model,
+          labs(title = paste(fishery_name, "- Base:", filters$model,
                              paste0("(", n_years, " years)")),
                x = "Weight (kg)", y = "Sample count") +
           theme_bw(base_size = 12) +
@@ -798,14 +923,7 @@ mod_wf_server <- function(input, output, session, rv) {
     })
   wf_plot_reactive <- bindCache(
     wf_plot_reactive,
-      input$wf_model,
-      input$wf_view_mode,
-      input$wf_fishery,
-      input$wf_fisheries_all,
-      input$wf_scenarios,
-      input$wf_years,
-      input$wf_facet_ncol,
-    input$wf_plot_style
+      wf_filters()
   )
 
   # Render weight frequency plot
@@ -816,16 +934,17 @@ mod_wf_server <- function(input, output, session, rv) {
   # Render dynamic box for WF with calculated height
     output$wf_plot_box <- renderUI({
       height <- wf_plot_height()
+      filters <- wf_filters()
+      scale_val <- suppressWarnings(as.numeric(filters$plot_scale))
+      if (!is.finite(scale_val) || scale_val <= 0) scale_val <- 1
+      scaled_height <- max(round(height * scale_val), 320)
+      scaled_width_pct <- max(min(round(scale_val * 100), 100), 60)
     
-      box(
-        title = "Weight Frequency",
-        width = 9,
-        solidHeader = TRUE,
-        status = "primary",
-        collapsible = TRUE,
-      plotOutput("wf_plot", height = paste0(height, "px"))
-    )
-  })
+      div(
+        style = paste0("width:", scaled_width_pct, "%; margin: 0 auto;"),
+        plotOutput("wf_plot", height = paste0(scaled_height, "px"))
+      )
+    })
   
   # ===========================================================================
 
@@ -854,7 +973,8 @@ mod_wf_server <- function(input, output, session, rv) {
   output$wf_download_confirm <- downloadHandler(
     filename = function() {
       format <- input$wf_format
-      paste0("weight_freq_", input$wf_model, "_", input$wf_fishery, "_",
+      filters <- wf_filters()
+      paste0("weight_freq_", filters$model, "_", filters$fishery, "_",
              Sys.Date(), ".", format)
     },
     content = function(file) {
@@ -890,7 +1010,8 @@ mod_wf_server <- function(input, output, session, rv) {
     output = output,
     filename_fun = function() {
       format <- input$wf_format
-      paste0("weight_freq_", input$wf_model, "_", input$wf_fishery, "_", Sys.Date(), ".", format)
+      filters <- wf_filters()
+      paste0("weight_freq_", filters$model, "_", filters$fishery, "_", Sys.Date(), ".", format)
     }
   )
 

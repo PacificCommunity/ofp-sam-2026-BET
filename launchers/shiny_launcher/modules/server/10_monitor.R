@@ -122,17 +122,64 @@
   
   
   output$jobs_table <- renderDT({
+    jobs_df <- rv$jobs_status
+
+    if (nrow(jobs_df) > 0) {
+      jobs_df$Select <- sprintf(
+        '<input type="checkbox" class="job-select-checkbox" value="%s"/>',
+        seq_len(nrow(jobs_df))
+      )
+      jobs_df <- jobs_df[, c("Select", setdiff(names(jobs_df), "Select")), drop = FALSE]
+    }
+
     datatable(
-      rv$jobs_status, 
-      selection = 'multiple',
+      jobs_df,
+      selection = "none",
+      escape = FALSE,
       options = list(
         pageLength = 20,
         columnDefs = list(
-          list(className = 'dt-center', targets = '_all')
+          list(className = 'dt-center', targets = '_all'),
+          list(orderable = FALSE, targets = 0)
         )
+      ),
+      callback = JS(
+        "var updateChecked = function() {",
+        "  var checked = [];",
+        "  table.$('.job-select-checkbox:checked', {page: 'all'}).each(function(){",
+        "    checked.push(parseInt($(this).val()));",
+        "  });",
+        "  Shiny.setInputValue('jobs_checked_rows', checked, {priority: 'event'});",
+        "};",
+        "updateChecked();",
+        "table.on('change', '.job-select-checkbox', updateChecked);",
+        "table.on('draw.dt', updateChecked);"
       ),
       class = 'cell-border stripe'
     )
+  })
+
+  observe({
+    jobs_df <- rv$jobs_status
+    if (is.null(jobs_df) || nrow(jobs_df) == 0) {
+      updateSelectInput(session, "job_detail_batch", choices = character(0), selected = character(0))
+      return()
+    }
+
+    detail_keys <- paste(jobs_df$Owner, jobs_df$BatchName, sep = "::")
+    choices <- stats::setNames(
+      detail_keys,
+      paste0(jobs_df$BatchName, " (", jobs_df$Owner, ")")
+    )
+
+    current <- isolate(input$job_detail_batch)
+    selected <- if (!is.null(current) && nzchar(current) && current %in% detail_keys) {
+      current
+    } else {
+      detail_keys[[1]]
+    }
+
+    updateSelectInput(session, "job_detail_batch", choices = choices, selected = selected)
   })
   
   output$job_details <- renderPrint({
@@ -140,93 +187,43 @@
       cat("No jobs found. Click 'Refresh' to check job status.\n")
       return()
     }
-    
-    # DEBUG: Print raw data structure
-    #cat("========== DEBUG INFO ==========\n\n")
-    #cat("Structure of rv$jobs_status:\n")
-    #print(str(rv$jobs_status))
-    #cat("\n")
-    #cat("First few rows:\n")
-    #print(head(rv$jobs_status, 3))
-    #cat("\n")
-    #cat("Column classes:\n")
-    #print(sapply(rv$jobs_status, class))
-    #cat("\n================================\n\n")
-    
-    # Get full condor_q output
+
     tryCatch({
-      if (input$show_all_jobs) {
-        cmd <- sprintf("ssh %s@%s 'condor_q -all'", 
-                       input$remote_user, 
-                       input$remote_host)
-      } else {
-        cmd <- sprintf("ssh %s@%s 'condor_q'", 
-                       input$remote_user, 
-                       input$remote_host)
-      }
-      
-      result <- system(cmd, intern = TRUE)
-      
-      if (length(result) == 0) {
-        cat("No jobs currently in queue.\n")
-        return()
-      }
-      
-      # Extract summary lines
-      summary_lines <- grep("^Total for", result, value = TRUE)
-      
-      if (length(summary_lines) > 0) {
-        cat("========== Condor Queue Summary ==========\n\n")
-        for (line in summary_lines) {
-          cat(line, "\n")
+      cat("========== Jobs by User ==========\n\n")
+
+      owners <- unique(rv$jobs_status$Owner)
+      my_user <- input$remote_user
+
+      for (owner in owners) {
+        owner_jobs <- rv$jobs_status[rv$jobs_status$Owner == owner, , drop = FALSE]
+        n_jobs <- nrow(owner_jobs)
+
+        if (owner == my_user) {
+          cat(sprintf("➤ %s (YOU):\n", owner))
+        } else {
+          cat(sprintf("  %s:\n", owner))
         }
-        cat("\n==========================================\n\n")
-      }
-      
-      # Simple user count without aggregation
-      if (nrow(rv$jobs_status) > 0) {
-        cat("========== Jobs by User ==========\n\n")
-        
-        # Get unique owners
-        owners <- unique(rv$jobs_status$Owner)
-        my_user <- input$remote_user
-        
-        for (owner in owners) {
-          # Filter jobs for this owner
-          owner_jobs <- rv$jobs_status[rv$jobs_status$Owner == owner, ]
-          
-          # Count jobs
-          n_jobs <- nrow(owner_jobs)
-          
-          # Mark current user
-          if (owner == my_user) {
-            cat(sprintf("➤ %s (YOU):\n", owner))
-          } else {
-            cat(sprintf("  %s:\n", owner))
-          }
-          
-          cat(sprintf("    %d job(s) in queue\n", n_jobs))
-          
-          # Show batch names
-          batch_names <- owner_jobs$BatchName
-          if (length(batch_names) > 0) {
-            cat(sprintf("    Batches: %s\n", paste(batch_names, collapse = ", ")))
-          }
-          
-          cat("\n")
+
+        cat(sprintf("    %d job(s) in last refresh\n", n_jobs))
+        batch_names <- owner_jobs$BatchName
+        if (length(batch_names) > 0) {
+          cat(sprintf("    Batches: %s\n", paste(batch_names, collapse = ", ")))
         }
-        
-        cat("======================================\n\n")
+
+        cat("\n")
       }
-      
-      # Show selected job info
-      selected_jobs <- input$jobs_table_rows_selected
-      
-      if (!is.null(selected_jobs) && length(selected_jobs) > 0) {
-        cat("========== Selected Jobs ==========\n\n")
+
+      cat("==================================\n\n")
+
+      selected_batch <- input$job_detail_batch
+      detail_keys <- paste(rv$jobs_status$Owner, rv$jobs_status$BatchName, sep = "::")
+
+      if (!is.null(selected_batch) && nzchar(selected_batch) && selected_batch %in% detail_keys) {
+        cat("========== Selected Job ==========\n\n")
+        selected_jobs <- rv$jobs_status[detail_keys == selected_batch, , drop = FALSE]
         
-        for (i in selected_jobs) {
-          job <- rv$jobs_status[i, ]
+        for (i in seq_len(nrow(selected_jobs))) {
+          job <- selected_jobs[i, ]
           cat(sprintf("• %s\n", job$BatchName))
           cat(sprintf("  Owner: %s | Submitted: %s\n", job$Owner, job$Submitted))
           cat(sprintf("  Status: %s done, %s running, %s idle (%s total)\n",
@@ -238,9 +235,9 @@
           cat("\n")
         }
       } else {
-        cat("💡 Tip: Select a job from the table above to see details\n")
+        cat("💡 Tip: Choose a job from the dropdown above to see details\n")
       }
-      
+
     }, error = function(e) {
       cat(sprintf("❌ Error: %s\n", e$message))
     })
@@ -250,7 +247,7 @@
   
   
   output$selected_jobs_info <- renderText({
-    selected_rows <- input$jobs_table_rows_selected
+    selected_rows <- input$jobs_checked_rows
     if (length(selected_rows) > 0) {
       paste(length(selected_rows), "job(s) selected")
     } else {
@@ -259,7 +256,7 @@
   })
   
   observeEvent(input$remove_selected_jobs, {
-    selected_rows <- input$jobs_table_rows_selected
+    selected_rows <- input$jobs_checked_rows
     
     if (length(selected_rows) == 0) {
       showNotification("No jobs selected", type = "warning")
@@ -309,7 +306,7 @@
   })
   
   observeEvent(input$confirm_remove_jobs, {
-    selected_rows <- input$jobs_table_rows_selected
+    selected_rows <- input$jobs_checked_rows
     if (length(selected_rows) == 0) {
       removeModal()
       return()
@@ -322,6 +319,10 @@
     
     # Disable remove button during processing
     shinyjs::disable("remove_selected_jobs")
+
+    update_delete_notification <- function(text, type = "message") {
+      showNotification(text, type = type, duration = NULL, id = "delete_progress")
+    }
     
     # Count total jobs to remove
     total_to_remove <- sum(sapply(job_ids, function(x) {
@@ -332,170 +333,61 @@
       }
     }))
     
-    # Show persistent modal dialog with progress
-    showModal(modalDialog(
-      title = div(
-        style = "font-size: 18px; font-weight: bold;",
-        icon("trash"), " Deleting Jobs"
-      ),
-      size = "m",
-      
-      # Progress indicator
-      div(
-        style = "text-align: center; margin: 20px 0;",
-        div(class = "spinner"),
-        h4(
-          id = "delete_progress_text",
-          style = "color: #dd4b39; margin-top: 20px;",
-          paste0("Starting... (0/", total_to_remove, ")")
-        )
-      ),
-      
-      # Progress details box
-      div(
-        style = "background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px; padding: 15px; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 12px;",
-        div(id = "delete_progress_details", "Initializing...")
-      ),
-      
-      footer = NULL,  # No footer buttons - modal stays until complete
-      easyClose = FALSE  # Cannot close by clicking outside
-    ))
+    update_delete_notification(sprintf("Deleting jobs... (0/%d)", total_to_remove))
     
     tryCatch({
-      removed_count <- 0
-      failed_count <- 0
-      current_job <- 0
-      progress_details <- c()  # Store progress messages
-      
-      for (jobid in job_ids) {
-        if (nzchar(jobid) && !is.na(jobid)) {
-          # Handle multiple job IDs (comma-separated)
-          individual_ids <- strsplit(jobid, ",")[[1]]
-          
-          for (single_id in individual_ids) {
-            single_id <- trimws(single_id)
-            current_job <- current_job + 1
-            
-            # Update progress text in modal
-            session$sendCustomMessage(
-              type = "updateProgress",
-              message = list(
-                id = "delete_progress_text",
-                text = sprintf("Deleting job %d/%d (ID: %s)", 
-                               current_job, total_to_remove, single_id)
-              )
-            )
-            
-            # Add to progress details
-            progress_details <- c(
-              progress_details,
-              sprintf("[%d/%d] 🗑️ Job ID: %s", 
-                      current_job, total_to_remove, single_id)
-            )
-            
-            # Update progress details in modal
-            session$sendCustomMessage(
-              type = "updateProgress",
-              message = list(
-                id = "delete_progress_details",
-                text = paste(progress_details, collapse = "<br/>")
-              )
-            )
-            
-            # Remove job using condor_rm
-            cmd <- sprintf("ssh %s@%s 'condor_rm %s'", 
-                           input$remote_user, input$remote_host, single_id)
-            result <- system(cmd, intern = TRUE, ignore.stderr = FALSE)
-            
-            if (length(result) == 0 || !grepl("ERROR|Error", result[1])) {
-              removed_count <- removed_count + 1
-              progress_details[length(progress_details)] <- paste0(
-                progress_details[length(progress_details)], " ✓"
-              )
-            } else {
-              failed_count <- failed_count + 1
-              progress_details[length(progress_details)] <- paste0(
-                progress_details[length(progress_details)], " ❌"
-              )
-            }
-            
-            # Update with success/failure marker
-            session$sendCustomMessage(
-              type = "updateProgress",
-              message = list(
-                id = "delete_progress_details",
-                text = paste(progress_details, collapse = "<br/>")
-              )
-            )
-          }
-        }
+      all_ids <- unique(trimws(unlist(strsplit(paste(job_ids[nzchar(job_ids) & !is.na(job_ids)], collapse = ","), ","))))
+      all_ids <- all_ids[nzchar(all_ids)]
+
+      if (length(all_ids) == 0) {
+        stop("No valid job IDs found")
       }
-      
-      # Show completion modal
-      showModal(modalDialog(
-        title = div(
-          style = sprintf("font-size: 18px; font-weight: bold; color: %s;",
-                          ifelse(failed_count == 0, "#00a65a", "#f39c12")),
-          icon(ifelse(failed_count == 0, "check-circle", "exclamation-triangle")), 
-          " Deletion Complete"
+
+      update_delete_notification(
+        sprintf("Deleting %d jobs in one command...", length(all_ids))
+      )
+
+      cmd <- sprintf(
+        "ssh %s@%s 'condor_rm %s'",
+        input$remote_user,
+        input$remote_host,
+        paste(all_ids, collapse = " ")
+      )
+      result <- system(cmd, intern = TRUE, ignore.stderr = FALSE)
+
+      result_text <- paste(result, collapse = "\n")
+      has_error <- grepl("ERROR|Error|Failed|not found", result_text)
+      removed_count <- if (has_error) 0 else length(all_ids)
+      failed_count <- if (has_error) length(all_ids) else 0
+
+      removeNotification("delete_progress")
+
+      removed_rows <- sort(unique(selected_rows[selected_rows <= nrow(rv$jobs_status)]))
+      if (length(removed_rows) > 0) {
+        rv$jobs_status <- rv$jobs_status[-removed_rows, , drop = FALSE]
+      }
+
+      showNotification(
+        sprintf(
+          "Deletion complete: %d/%d removed%s. Current table updated locally.",
+          removed_count,
+          total_to_remove,
+          if (failed_count > 0) sprintf(", %d failed", failed_count) else ""
         ),
-        size = "m",
-        
-        div(
-          style = "text-align: center; margin: 20px 0;",
-          h3(
-            style = sprintf("color: %s;", ifelse(failed_count == 0, "#00a65a", "#f39c12")),
-            sprintf("Deleted %d/%d jobs", removed_count, total_to_remove)
-          )
-        ),
-        
-        div(
-          style = sprintf("background: %s; border: 1px solid %s; border-radius: 4px; padding: 15px; margin: 15px 0;",
-                          ifelse(failed_count == 0, "#f0f9f0", "#fff3cd"),
-                          ifelse(failed_count == 0, "#c3e6cb", "#ffc107")),
-          tags$ul(
-            tags$li(paste("✅ Successfully removed:", removed_count)),
-            if (failed_count > 0) tags$li(paste("❌ Failed to remove:", failed_count))
-          )
-        ),
-        
-        footer = actionButton("close_delete_modal", "Close", 
-                              class = ifelse(failed_count == 0, "btn-success", "btn-warning"))
-      ))
-      
-      # Refresh job list after a short delay
-      Sys.sleep(1)
-      shinyjs::click("refresh_jobs")
+        type = if (failed_count > 0) "warning" else "message",
+        duration = 5
+      )
       
     }, error = function(e) {
-      showModal(modalDialog(
-        title = div(
-          style = "font-size: 18px; font-weight: bold; color: #dd4b39;",
-          icon("times-circle"), " Deletion Failed"
-        ),
-        size = "m",
-        
-        div(
-          style = "background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; padding: 15px; margin: 15px 0;",
-          h4(style = "color: #721c24;", "Error occurred during job deletion:"),
-          p(style = "font-family: monospace; color: #721c24;", e$message)
-        ),
-        
-        footer = actionButton("close_delete_error_modal", "Close", class = "btn-danger")
-      ))
+      removeNotification("delete_progress")
+      showNotification(
+        paste("Deletion failed:", e$message),
+        type = "error",
+        duration = 6
+      )
     }, finally = {
       # Re-enable button after completion or error
       shinyjs::enable("remove_selected_jobs")
     })
-  })
-  
-  # Handler to close delete completion modal
-  observeEvent(input$close_delete_modal, {
-    removeModal()
-  })
-  
-  # Handler to close delete error modal
-  observeEvent(input$close_delete_error_modal, {
-    removeModal()
   })
   

@@ -13,6 +13,8 @@ source("R/server/server_nav.R")
 
 reset_loaded_data_state <- function(rv) {
   rv$data_loaded <- FALSE
+  rv$initial_render_pending <- FALSE
+  rv$initial_render_nonce <- 0
   rv$ParOut_list <- NULL
   rv$RepOut_list <- NULL
   rv$LengOut_list <- NULL
@@ -33,12 +35,49 @@ reset_loaded_data_state <- function(rv) {
   rv$fishery_map_missing_models <- NULL
 }
 
+filters_equal <- function(a, b) {
+  if (is.null(a) && is.null(b)) return(TRUE)
+  isTRUE(all.equal(normalize_filter_state(a), normalize_filter_state(b), check.attributes = FALSE))
+}
+
+normalize_filter_state <- function(x) {
+  if (is.null(x)) return(NULL)
+
+  if (is.list(x)) {
+    out <- lapply(x, normalize_filter_state)
+    nms <- names(out)
+    if (!is.null(nms) && length(nms) > 0) {
+      out <- out[order(nms)]
+    }
+    return(out)
+  }
+
+  if (is.factor(x)) {
+    x <- as.character(x)
+  }
+
+  if (is.atomic(x) && length(x) > 1 && is.null(names(x))) {
+    return(sort(x, na.last = TRUE))
+  }
+
+  x
+}
+
+set_apply_pending <- function(session, id, pending) {
+  session$sendCustomMessage(
+    "setApplyPending",
+    list(id = id, pending = isTRUE(pending))
+  )
+}
+
 server <- function(input, output, session) {
   # ---------------------------------------------------------------------------
   # Reactive Values Storage
   # ---------------------------------------------------------------------------
   rv <- reactiveValues(
     data_loaded = FALSE,              # Flag: data successfully loaded
+    initial_render_pending = FALSE,   # Flag: run one initial full render after load
+    initial_render_nonce = 0,         # Counter: triggers one full render after inputs are ready
     scenarios_detected = FALSE,       # Flag: scenarios found in directory
     detected_scenario_names = NULL,   # List of detected scenario names
     ParOut_list = NULL,               # List of MFCLPar objects
@@ -81,6 +120,47 @@ server <- function(input, output, session) {
   mod_population_biology_server(input, output, session, rv)
   server_nav(input, output, session, rv)
 
+  preload_outputs <- c(
+    "summary_table",
+    "model_info_boxes",
+    "bounds_overview",
+    "bounds_type_summary",
+    "bounds_detail",
+    "cpue_plot",
+    "lf_plot",
+    "lf_plot_box",
+    "wf_plot",
+    "wf_plot_box",
+    "likelihood_plot",
+    "profile_target_info_ui",
+    "likelihood_table_ui",
+    "profile_gradient_table_ui",
+    "likelihood_table",
+    "profile_gradient_table",
+    "profile_gradient_model_ui",
+    "profile_target_info_table",
+    "harvest_plot_output",
+    "harvest_weight_table",
+    "harvest_weighting_note",
+    "harvest_method_table",
+    "harvest_reference_table",
+    "harvest_reference_note",
+    "harvest_recent_years_ui",
+    "harvest_recent_diag_model_ui",
+    "harvest_recent_summary_options_ui",
+    "harvest_reference_model_ui",
+    "tagging_plot_output",
+    "fishery_process_plot_output",
+    "population_biology_plot_output",
+    "fishery_map_warning",
+    "tag_rep_map_warning",
+    "fishery_names_table",
+    "tag_rep_map_table"
+  )
+  invisible(lapply(preload_outputs, function(id) {
+    outputOptions(output, id, suspendWhenHidden = FALSE)
+  }))
+
   # Keep per-tab model pickers aligned with the global "Filter Models" selection.
   observeEvent(list(rv$data_loaded, input$scenarios), {
     req(rv$data_loaded)
@@ -95,7 +175,6 @@ server <- function(input, output, session) {
     wf_models <- intersect(selected_models, names(rv$WeightOut_list)[!vapply(rv$WeightOut_list, is.null, logical(1))])
 
     picker_ids_all <- c(
-      "stock_scenarios",
       "lik_scenarios",
       "harvest_scenarios",
       "tag_scenarios",
@@ -117,5 +196,44 @@ server <- function(input, output, session) {
     current_fishery_names_model <- isolate(input$fishery_names_model)
     fishery_names_selected <- if (!is.null(current_fishery_names_model) && current_fishery_names_model %in% selected_models) current_fishery_names_model else selected_models[1]
     updateSelectInput(session, "fishery_names_model", choices = selected_models, selected = fishery_names_selected)
+
   }, ignoreInit = TRUE)
+
+  observeEvent(
+    list(
+      rv$data_loaded,
+      input$scenarios,
+      input$cpue_scenarios,
+      input$lik_scenarios,
+      input$harvest_scenarios,
+      input$tag_scenarios,
+      input$fishery_process_scenarios,
+      input$population_biology_scenarios,
+      input$lf_model,
+      input$wf_model
+    ),
+    {
+      req(rv$data_loaded)
+      if (!isTRUE(rv$initial_render_pending)) return()
+
+      ready <- length(input$scenarios) > 0 &&
+        length(input$cpue_scenarios) > 0 &&
+        length(input$lik_scenarios) > 0 &&
+        length(input$harvest_scenarios) > 0 &&
+        length(input$tag_scenarios) > 0 &&
+        length(input$fishery_process_scenarios) > 0 &&
+        length(input$population_biology_scenarios) > 0 &&
+        !is.null(input$lf_model) && nzchar(input$lf_model) &&
+        !is.null(input$wf_model) && nzchar(input$wf_model)
+
+      if (!ready) return()
+
+      rv$initial_render_pending <- FALSE
+      rv$initial_render_nonce <- isolate(rv$initial_render_nonce) + 1
+      session$onFlushed(function() {
+        session$sendCustomMessage("toggleInitialRenderOverlay", FALSE)
+      }, once = TRUE)
+    },
+    ignoreInit = TRUE
+  )
 }

@@ -65,7 +65,10 @@ mod_cpue_ui <- function() {
             size = 10
           )
         ),
-        numericInput("cpue_facet_ncol", "Facet columns:", value = 3, min = 1, max = 12, step = 1),
+        selectInput("cpue_facet_ncol", "Facet columns:", choices = as.character(1:12), selected = "3"),
+        actionButton("cpue_apply_filters", "Apply", class = "btn-primary", style = "width: 100%;"),
+        tags$small("Selections update the plot when you click Apply.",
+                   style = "display:block; margin-top:6px; color:#666;"),
 
         shiny::hr(),
         h5("Download Plot", style = "font-weight: bold;"),
@@ -82,7 +85,18 @@ mod_cpue_ui <- function() {
         solidHeader = TRUE,
         status = "primary",
         collapsible = TRUE,
-        plotOutput("cpue_plot", height = "650px")
+        div(
+          class = "plot-loading-container",
+          `data-output-id` = "cpue_plot",
+          plotOutput("cpue_plot", height = "650px"),
+          div(
+            class = "plot-loading-overlay",
+            div(
+              class = "plot-loading-card",
+              HTML("<span class='render-spinner'></span>Rendering CPUE plot...")
+            )
+          )
+        )
       )
     )
   )
@@ -91,6 +105,28 @@ mod_cpue_ui <- function() {
 mod_cpue_server <- function(input, output, session, rv) {
   # TAB 5: CPUE FITS
   # ===========================================================================
+
+  cpue_filters_current <- reactive({
+    list(
+      scenarios = input$cpue_scenarios,
+      fisheries = input$cpue_fisheries,
+      view_mode = if (is.null(input$cpue_view_mode)) "overlay" else input$cpue_view_mode,
+      metric = if (is.null(input$cpue_metric)) "fits" else input$cpue_metric,
+      facet_ncol = input$cpue_facet_ncol
+    )
+  })
+  cpue_filters_applied <- reactiveVal(NULL)
+  cpue_last_initialized_nonce <- reactiveVal(0)
+  cpue_filters <- reactive({
+    cpue_filters_applied()
+  })
+
+  observe({
+    req(rv$data_loaded)
+    pending <- !isTRUE(input$live_update_plots) &&
+      !filters_equal(cpue_filters_current(), cpue_filters())
+    set_apply_pending(session, "cpue_apply_filters", pending)
+  })
 
   get_available_cpue_fisheries <- function(scenarios) {
     # Prefer index fisheries from fishery map; fallback to CPUE units in outputs.
@@ -181,10 +217,34 @@ mod_cpue_server <- function(input, output, session, rv) {
     )
   }, ignoreInit = FALSE)
 
-  cpue_plot_reactive <- reactive({
-    req(rv$data_loaded, input$cpue_scenarios, input$cpue_fisheries)
+  observeEvent(input$cpue_apply_filters, {
+    cpue_filters_applied(isolate(cpue_filters_current()))
+  }, ignoreInit = TRUE)
 
-    if (length(input$cpue_scenarios) == 0 || length(input$cpue_fisheries) == 0) {
+  observeEvent(list(input$live_update_plots, input$cpue_scenarios, input$cpue_fisheries,
+                    input$cpue_view_mode, input$cpue_metric, input$cpue_facet_ncol), {
+    req(rv$data_loaded)
+    if (!isTRUE(input$live_update_plots)) return()
+    if (length(input$cpue_scenarios) == 0 || length(input$cpue_fisheries) == 0) return()
+    cpue_filters_applied(isolate(cpue_filters_current()))
+  }, ignoreInit = TRUE)
+
+  observeEvent(list(rv$initial_render_nonce, input$cpue_scenarios, input$cpue_fisheries), {
+    req(rv$data_loaded, rv$initial_render_nonce)
+    if (rv$initial_render_nonce <= cpue_last_initialized_nonce()) return()
+
+    ready <- length(input$cpue_scenarios) > 0 && length(input$cpue_fisheries) > 0
+    if (!ready) return()
+
+    cpue_last_initialized_nonce(rv$initial_render_nonce)
+    cpue_filters_applied(isolate(cpue_filters_current()))
+  }, ignoreInit = TRUE)
+
+  cpue_plot_reactive <- reactive({
+    filters <- cpue_filters()
+    req(rv$data_loaded, filters, filters$scenarios, filters$fisheries)
+
+    if (length(filters$scenarios) == 0 || length(filters$fisheries) == 0) {
       return(
         ggplot() +
           annotate("text", x = 0.5, y = 0.5, label = "No models or fisheries selected", size = 6, color = "#999") +
@@ -193,7 +253,7 @@ mod_cpue_server <- function(input, output, session, rv) {
     }
 
     tryCatch({
-      cpue_all <- build_cpue_df(input$cpue_scenarios, input$cpue_fisheries)
+      cpue_all <- build_cpue_df(filters$scenarios, filters$fisheries)
 
       if (is.null(cpue_all) || nrow(cpue_all) == 0) {
         return(
@@ -222,10 +282,10 @@ mod_cpue_server <- function(input, output, session, rv) {
         group_by(fishery_name, year_season) %>%
         summarise(obs = first(obs), .groups = "drop")
 
-      scenario_colors <- get_scenario_colors(input$cpue_scenarios)
-      view_mode <- if (is.null(input$cpue_view_mode)) "overlay" else input$cpue_view_mode
-      metric <- if (is.null(input$cpue_metric)) "fits" else input$cpue_metric
-      facet_ncol <- suppressWarnings(as.integer(input$cpue_facet_ncol))
+      scenario_colors <- get_scenario_colors(filters$scenarios)
+      view_mode <- filters$view_mode
+      metric <- filters$metric
+      facet_ncol <- suppressWarnings(as.integer(filters$facet_ncol))
       if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 3
       facet_ncol <- min(max(facet_ncol, 1), 12)
 
@@ -257,7 +317,7 @@ mod_cpue_server <- function(input, output, session, rv) {
           labs(
             x = "Year + Season",
             y = "Residual (obs - fit)",
-            title = paste("CPUE Residuals -", paste(input$cpue_scenarios, collapse = ", "))
+            title = paste("CPUE Residuals -", paste(filters$scenarios, collapse = ", "))
           ) +
           theme_bw(base_size = 13) +
           theme(
@@ -299,7 +359,7 @@ mod_cpue_server <- function(input, output, session, rv) {
         labs(
           x = "Year + Season",
           y = "CPUE",
-          title = paste("CPUE Fits -", paste(input$cpue_scenarios, collapse = ", "))
+          title = paste("CPUE Fits -", paste(filters$scenarios, collapse = ", "))
         ) +
         theme_bw(base_size = 13) +
         theme(
@@ -320,13 +380,7 @@ mod_cpue_server <- function(input, output, session, rv) {
   })
   cpue_plot_reactive <- bindCache(
     cpue_plot_reactive,
-    rv$data_loaded,
-    input$model_dir,
-    input$cpue_scenarios,
-    input$cpue_fisheries,
-    input$cpue_view_mode,
-    input$cpue_metric,
-    input$cpue_facet_ncol
+    cpue_filters()
   )
 
   output$cpue_plot <- renderPlot({
