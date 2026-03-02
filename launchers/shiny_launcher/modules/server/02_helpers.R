@@ -177,6 +177,17 @@
           stop("No 'models' list object found in the R script.")
         }
       }
+
+      if (!is.null(rv$models) && length(rv$models) > 0) {
+        rv$models <- lapply(rv$models, function(x) {
+          x$config_summary <- if (!is.null(rv$run_metadata$summary)) rv$run_metadata$summary else ""
+          x
+        })
+        rv$models_original <- lapply(rv$models_original, function(x) {
+          x$config_summary <- if (!is.null(rv$run_metadata$summary)) rv$run_metadata$summary else ""
+          x
+        })
+      }
       
       rv$config_loaded <- TRUE
       

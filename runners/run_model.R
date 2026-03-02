@@ -22,6 +22,8 @@ source("tools/condor_archive_cleanup.R")
 program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_02_04_vsn2278")
 base_dir     <- Sys.getenv("base_dir", "mfcl/inputs/2023_rep")
 model_dir    <- Sys.getenv("model_dir", "model/base")
+description  <- Sys.getenv("description", "")
+config_summary <- Sys.getenv("config_summary", "")
 
 n_mixing_periods <- as.numeric(Sys.getenv("n_mixing_periods", ""))
 min_year         <- as.numeric(Sys.getenv("min_year", ""))
@@ -139,6 +141,8 @@ run_commands(
 ## 8) Save model run info
 ## -------------------------
 info_list <- list(
+  description      = description,
+  config_summary   = config_summary,
   program_path     = program_path,
   mfcl_commands    = mfcl_commands_raw,  # raw (without ../../) is usually easier to inspect later
   frq_file         = frq_file,
@@ -189,4 +193,3 @@ cat("Cleanup removed", deleted_n, "non-core top-level files in", model_dir, "\n"
 cb_condor_keep_only_model_cleanup()
 
 cat("✅ Model run completed for", basename(model_dir), "\n")
-

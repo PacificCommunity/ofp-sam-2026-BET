@@ -20,7 +20,7 @@ base_dir_abs <- file.path(project_root, base_dir)
 ## Profile likelihood settings
 ## Single scaler value for parallel execution via condor
 scaler <- as.numeric(Sys.getenv("scaler", "90"))
-Reps <- as.integer(unlist(strsplit(Sys.getenv("Reps", "5 1 1 1 1 1"), "\\s+")))
+Reps <- as.integer(unlist(strsplit(Sys.getenv("Reps", "1 1 1 1 1 1"), "\\s+")))
 names(Reps) <- paste0("Reps", 1:length(Reps))
 QuantityType <- as.numeric(Sys.getenv("QuantityType", "2"))
 AgeFlags <- c(

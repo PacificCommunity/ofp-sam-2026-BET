@@ -48,8 +48,13 @@ mod_summary_server <- function(input, output, session, rv) {
       params_df <- imap_dfr(rv$ParOut_list[input$scenarios], function(par, model_name) {
         dims <- as.list(par@dimensions)
         year_range <- rv$YearRanges[[model_name]]
+        info <- rv$Info_list[[model_name]]
+        description <- if (!is.null(info$description) && nzchar(info$description)) info$description else NA_character_
+        config_summary <- if (!is.null(info$config_summary) && nzchar(info$config_summary)) info$config_summary else NA_character_
         data.frame(
           Model = model_name,
+          Description = description,
+          Config_Summary = config_summary,
           Max_Grad = sprintf("%.6f", as.numeric(par@max_grad)),
           Obj_Fun = sprintf("%.2f", as.numeric(par@obj_fun)),
           N_Pars = as.numeric(par@n_pars),
@@ -107,6 +112,9 @@ mod_summary_server <- function(input, output, session, rv) {
         par <- rv$ParOut_list[[model_name]]
         dims <- as.list(par@dimensions)
         year_range <- rv$YearRanges[[model_name]]
+        info <- rv$Info_list[[model_name]]
+        description <- if (!is.null(info$description) && nzchar(info$description)) info$description else "No description available"
+        config_summary <- if (!is.null(info$config_summary) && nzchar(info$config_summary)) info$config_summary else "No config summary available"
       
         # Count index fisheries
         n_index <- length(rv$INDEX_FISHERIES_MAPS[[model_name]])
@@ -123,6 +131,16 @@ mod_summary_server <- function(input, output, session, rv) {
             collapsed = FALSE,
             tags$div(
               style = "padding: 5px;",
+              tags$div(
+                style = "margin-bottom: 8px; padding: 8px 10px; background: #f4f8fb; border-left: 3px solid #3c8dbc; border-radius: 3px; font-size: 12px;",
+                tags$strong("Description: "),
+                description
+              ),
+              tags$div(
+                style = "margin-bottom: 8px; padding: 8px 10px; background: #f8fafc; border-left: 3px solid #6b7280; border-radius: 3px; font-size: 12px;",
+                tags$strong("Config summary: "),
+                config_summary
+              ),
               tags$table(
                 style = "width: 100%; font-size: 13px;",
                 tags$tr(

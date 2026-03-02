@@ -216,6 +216,247 @@ build_ensemble_bands <- function(df, group_cols, value_col, intervals = c(0.95, 
   }))
 }
 
+standardize_year_df <- function(df) {
+  if (is.null(df)) return(NULL)
+  year_name <- names(df)[tolower(names(df)) == "year"][1]
+  if (is.na(year_name) || !nzchar(year_name)) return(NULL)
+  df %>%
+    rename(year = all_of(year_name)) %>%
+    mutate(year = suppressWarnings(as.numeric(as.character(year))))
+}
+
+extract_reference_slice <- function(mfcl_array_obj) {
+  full_array <- tryCatch(mfcl_array_obj@.Data, error = function(e) NULL)
+  if (is.null(full_array) || length(dim(full_array)) < 6) {
+    return(NULL)
+  }
+
+  years <- tryCatch(dimnames(full_array)[[2]], error = function(e) NULL)
+  years <- suppressWarnings(as.numeric(years))
+  if (length(years) != dim(full_array)[2]) {
+    years <- seq_len(dim(full_array)[2])
+  }
+
+  sliced <- tryCatch(full_array[1, , 1, , , 1, drop = FALSE], error = function(e) NULL)
+  if (is.null(sliced)) {
+    return(NULL)
+  }
+
+  list(values = sliced, years = years)
+}
+
+collapse_reference_biomass <- function(mfcl_array_obj, scale = 1000) {
+  sliced <- extract_reference_slice(mfcl_array_obj)
+  if (is.null(sliced)) {
+    return(NULL)
+  }
+
+  vals <- vapply(seq_along(sliced$years), function(i) {
+    year_slice <- sliced$values[1, i, 1, , , 1, drop = FALSE]
+    season_n <- dim(year_slice)[4]
+    area_n <- dim(year_slice)[5]
+    year_matrix <- matrix(as.numeric(year_slice), nrow = season_n, ncol = area_n)
+    sum(colMeans(year_matrix, na.rm = TRUE), na.rm = TRUE) / scale
+  }, numeric(1))
+
+  tibble(year = sliced$years, value = as.numeric(vals))
+}
+
+collapse_reference_mean <- function(mfcl_array_obj) {
+  sliced <- extract_reference_slice(mfcl_array_obj)
+  if (is.null(sliced)) {
+    return(NULL)
+  }
+
+  dims <- dim(sliced$values)
+  vals <- vapply(seq_along(sliced$years), function(i) {
+    year_slice <- sliced$values[1, i, 1, , , 1, drop = FALSE]
+    mean(as.numeric(year_slice), na.rm = TRUE)
+  }, numeric(1))
+
+  tibble(year = sliced$years, value = as.numeric(vals))
+}
+
+collapse_annual_f <- function(rep_obj) {
+  agg_f_year <- tryCatch(collapse_reference_mean(AggregateF(rep_obj)), error = function(e) NULL)
+  if (is.null(agg_f_year)) {
+    return(NULL)
+  }
+
+  agg_f_year %>%
+    rename(annual_f = value) %>%
+    filter(is.finite(year), is.finite(annual_f)) %>%
+    arrange(year)
+}
+
+extract_kobe_series <- function(rep_obj, scenario_name) {
+  ffmsy_year <- tryCatch(collapse_reference_mean(FFMSY_ts(rep_obj)), error = function(e) NULL)
+  abbmsy_year <- tryCatch(collapse_reference_mean(ABBMSY_ts(rep_obj)), error = function(e) NULL)
+  bio_fish_year <- tryCatch(collapse_reference_biomass(adultBiomass(rep_obj)), error = function(e) NULL)
+  bio_nofish_year <- tryCatch(collapse_reference_biomass(adultBiomass_nofish(rep_obj)), error = function(e) NULL)
+  annual_f_year <- tryCatch(collapse_annual_f(rep_obj), error = function(e) NULL)
+
+  if (is.null(ffmsy_year) || is.null(abbmsy_year) || is.null(bio_fish_year) || is.null(bio_nofish_year)) {
+    return(NULL)
+  }
+
+  ffmsy_year %>%
+    rename(f_fmsy = value) %>%
+    inner_join(abbmsy_year, by = "year") %>%
+    rename(sb_sbmsy = value) %>%
+    inner_join(bio_fish_year, by = "year") %>%
+    rename(bio_fish = value) %>%
+    inner_join(bio_nofish_year, by = "year") %>%
+    rename(bio_nofish = value) %>%
+    mutate(dep = bio_fish / pmax(bio_nofish, .Machine$double.eps)) %>%
+    left_join(annual_f_year, by = "year") %>%
+    mutate(
+      f_msy = ifelse(is.finite(annual_f) & is.finite(f_fmsy) & f_fmsy > 0, annual_f / f_fmsy, NA_real_),
+      sb_msy = ifelse(is.finite(bio_fish) & is.finite(sb_sbmsy) & sb_sbmsy > 0, bio_fish / sb_sbmsy, NA_real_)
+    ) %>%
+    filter(is.finite(f_fmsy), is.finite(sb_sbmsy)) %>%
+    arrange(year) %>%
+    mutate(scenario = scenario_name)
+}
+
+extract_majuro_series <- function(rep_obj, scenario_name) {
+  ffmsy_year <- tryCatch(collapse_reference_mean(FFMSY_ts(rep_obj)), error = function(e) NULL)
+  bio_fish_year <- tryCatch(collapse_reference_biomass(adultBiomass(rep_obj)), error = function(e) NULL)
+  bio_nofish_year <- tryCatch(collapse_reference_biomass(adultBiomass_nofish(rep_obj)), error = function(e) NULL)
+  annual_f_year <- tryCatch(collapse_annual_f(rep_obj), error = function(e) NULL)
+
+  if (is.null(ffmsy_year) || is.null(bio_fish_year) || is.null(bio_nofish_year)) {
+    return(NULL)
+  }
+
+  ffmsy_year %>%
+    rename(f_fmsy = value) %>%
+    inner_join(bio_fish_year, by = "year") %>%
+    rename(bio_fish = value) %>%
+    inner_join(bio_nofish_year, by = "year") %>%
+    rename(bio_nofish = value) %>%
+    mutate(dep = bio_fish / pmax(bio_nofish, .Machine$double.eps)) %>%
+    left_join(annual_f_year, by = "year") %>%
+    mutate(
+      f_msy = ifelse(is.finite(annual_f) & is.finite(f_fmsy) & f_fmsy > 0, annual_f / f_fmsy, NA_real_)
+    ) %>%
+    filter(is.finite(f_fmsy), is.finite(dep)) %>%
+    arrange(year) %>%
+    mutate(scenario = scenario_name)
+}
+
+default_recent_year_window <- function(years, n_years = 4) {
+  years <- sort(unique(as.integer(years[is.finite(years)])))
+  if (length(years) == 0) {
+    return(c(0L, 0L))
+  }
+
+  n_years <- max(1L, min(as.integer(n_years), length(years)))
+  c(years[length(years) - n_years + 1], years[length(years)])
+}
+
+summarise_recent_reference <- function(data, x_col, y_col, year_range, diagnostic_model = NULL) {
+  if (is.null(data) || nrow(data) == 0) {
+    return(list(points = data.frame(), median_point = data.frame(), mean_point = data.frame(), years = integer(0)))
+  }
+
+  year_min <- min(year_range, na.rm = TRUE)
+  year_max <- max(year_range, na.rm = TRUE)
+
+  recent_data <- data %>%
+    filter(is.finite(year), year >= year_min, year <= year_max)
+
+  if (nrow(recent_data) == 0) {
+    return(list(points = data.frame(), median_point = data.frame(), mean_point = data.frame(), years = integer(0)))
+  }
+
+  points <- recent_data %>%
+    group_by(scenario) %>%
+    summarise(
+      x = mean(.data[[x_col]], na.rm = TRUE),
+      y = mean(.data[[y_col]], na.rm = TRUE),
+      year_start = min(year, na.rm = TRUE),
+      year_end = max(year, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    filter(is.finite(x), is.finite(y))
+
+  if (nrow(points) == 0) {
+    return(list(points = data.frame(), median_point = data.frame(), mean_point = data.frame(), years = integer(0)))
+  }
+
+  if (!is.null(diagnostic_model) && nzchar(diagnostic_model)) {
+    diag_idx <- points$scenario == diagnostic_model
+  } else {
+    diag_idx <- grepl("^2023diag$", points$scenario, ignore.case = TRUE) |
+      grepl("diag", points$scenario, ignore.case = TRUE)
+  }
+  points <- points %>%
+    mutate(
+      point_role = case_when(
+        diag_idx ~ "Diagnostic model",
+        TRUE ~ "Model"
+      )
+    )
+
+  median_point <- tibble(
+    x = median(points$x, na.rm = TRUE),
+    y = median(points$y, na.rm = TRUE),
+    point_role = "Median"
+  )
+
+  mean_point <- tibble(
+    x = mean(points$x, na.rm = TRUE),
+    y = mean(points$y, na.rm = TRUE),
+    point_role = "Mean"
+  )
+
+  list(
+    points = points,
+    median_point = median_point,
+    mean_point = mean_point,
+    years = sort(unique(recent_data$year))
+  )
+}
+
+reference_axis_limits <- function(values, threshold, hard_min = 0, hard_max = NULL,
+                                  lower_pad_frac = 0.08, upper_pad_frac = 0.08,
+                                  min_span = 0.6, min_below_threshold = 0.2,
+                                  min_above_threshold = 0.2) {
+  vals <- values[is.finite(values)]
+  if (length(vals) == 0) {
+    upper_default <- if (is.null(hard_max)) threshold + min_span else hard_max
+    return(c(hard_min, upper_default))
+  }
+
+  lower_base <- min(c(vals, threshold), na.rm = TRUE)
+  upper_base <- max(c(vals, threshold), na.rm = TRUE)
+  span <- max(upper_base - lower_base, min_span)
+
+  lower <- lower_base - span * lower_pad_frac
+  upper <- upper_base + span * upper_pad_frac
+
+  lower <- min(lower, threshold - min_below_threshold)
+  upper <- max(upper, threshold + min_above_threshold)
+
+  if (!is.null(hard_min)) {
+    lower <- max(lower, hard_min)
+  }
+  if (!is.null(hard_max)) {
+    upper <- min(upper, hard_max)
+  }
+
+  if (upper <= lower) {
+    upper <- lower + min_span
+    if (!is.null(hard_max)) {
+      upper <- min(upper, hard_max)
+      lower <- min(lower, upper - min_span / 2)
+    }
+  }
+
+  c(lower, upper)
+}
+
 mod_harvest_ui <- function() {
   tabItem(
     tabName = "harvest",
@@ -229,6 +470,8 @@ mod_harvest_ui <- function() {
           "Depletion/Recruitment/SP/F (combined)" = "spawning",
           "Depletion by Area" = "depletion_area",
           "Recruitment by Area" = "rec_area",
+          "Kobe Plot" = "kobe",
+          "Majuro Plot" = "majuro",
           "Juvenile & Adult F by Area" = "fm_juv_adult",
           "Area Contribution to Total F" = "fm_area_contrib",
           "Spawning Potential (with/without fishing)" = "sp_combined",
@@ -258,6 +501,18 @@ mod_harvest_ui <- function() {
             choices = c("95%" = "0.95", "80%" = "0.80", "50%" = "0.50"),
             selected = c("0.95", "0.80", "0.50")
           )
+        ),
+        conditionalPanel(
+          condition = "input.harvest_plot == 'kobe' || input.harvest_plot == 'majuro'",
+          selectInput(
+            "harvest_reference_view",
+            "Reference view:",
+            choices = c("Trajectory" = "trajectory", "Period-average summary" = "recent"),
+            selected = "trajectory"
+          ),
+          uiOutput("harvest_recent_years_ui"),
+          uiOutput("harvest_recent_diag_model_ui"),
+          uiOutput("harvest_recent_summary_options_ui")
         ),
         numericInput("harvest_facet_ncol", "Facet columns:", value = 2, min = 1, max = 12, step = 1),
         shiny::hr(),
@@ -297,6 +552,20 @@ mod_harvest_ui <- function() {
             collapsible = TRUE,
             collapsed = TRUE,
             DTOutput("harvest_method_table")
+          )
+        ),
+        conditionalPanel(
+          condition = "input.harvest_plot == 'kobe' || input.harvest_plot == 'majuro'",
+          box(
+            title = "Reference Values",
+            width = NULL,
+            solidHeader = TRUE,
+            status = "success",
+            collapsible = TRUE,
+            collapsed = TRUE,
+            uiOutput("harvest_reference_note"),
+            uiOutput("harvest_reference_model_ui"),
+            DTOutput("harvest_reference_table")
           )
         )
       )
@@ -670,6 +939,254 @@ mod_harvest_server <- function(input, output, session, rv) {
       return(cowplot::plot_grid(rec_plot, scenario_legend, ncol = 2, rel_widths = c(4, 0.8)))
     }
 
+    if (plot_type == "kobe") {
+      kobe_data <- bind_rows(lapply(seq_along(RepOut_list), function(i) {
+        extract_kobe_series(RepOut_list[[i]], scenarios_name[i])
+      }))
+
+      validate(need(nrow(kobe_data) > 0, "Kobe plot inputs are not available for the selected models"))
+
+      kobe_data <- kobe_data %>%
+        mutate(
+          scenario = factor(scenario, levels = scenarios_name),
+          year = as.numeric(year)
+        ) %>%
+        filter(is.finite(year), is.finite(sb_sbmsy), is.finite(f_fmsy))
+
+      validate(need(nrow(kobe_data) > 0, "Kobe plot inputs are not available for the selected models"))
+
+      x_limits <- reference_axis_limits(kobe_data$sb_sbmsy, threshold = 1, hard_min = 0, min_span = 0.75)
+      y_limits <- reference_axis_limits(kobe_data$f_fmsy, threshold = 1, hard_min = 0, min_span = 0.75)
+      x_min <- x_limits[1]
+      x_max <- x_limits[2]
+      y_min <- y_limits[1]
+      y_max <- y_limits[2]
+
+      if (identical(input$harvest_reference_view, "recent")) {
+        recent_year_range <- input$harvest_recent_years
+        if (is.null(recent_year_range) || length(recent_year_range) != 2) {
+          recent_year_range <- default_recent_year_window(kobe_data$year, 4)
+        }
+
+        recent_summary <- summarise_recent_reference(
+          kobe_data,
+          "sb_sbmsy",
+          "f_fmsy",
+          recent_year_range,
+          diagnostic_model = input$harvest_recent_diag_model
+        )
+        recent_points <- recent_summary$points
+        median_point <- recent_summary$median_point
+        mean_point <- recent_summary$mean_point
+
+        validate(need(nrow(recent_points) > 0, "No Kobe summary values available for the selected years"))
+
+        years_label <- paste0(min(recent_summary$years), "-", max(recent_summary$years))
+        summary_options <- input$harvest_recent_summary_options
+        if (is.null(summary_options)) {
+          summary_options <- c("points", "median", "mean", "diagnostic")
+        }
+        model_points <- recent_points %>% filter(point_role == "Model")
+        diagnostic_points <- recent_points %>% filter(point_role == "Diagnostic model")
+
+        p <- ggplot() +
+          geom_polygon(data = data.frame(x = c(x_max, 1, 1, x_max), y = c(y_max, y_max, 1, 1)), aes(x = x, y = y), inherit.aes = FALSE, fill = "#f4a261", alpha = 0.7) +
+          geom_polygon(data = data.frame(x = c(1, x_min, x_min, 1), y = c(y_max, y_max, 1, 1)), aes(x = x, y = y), inherit.aes = FALSE, fill = "#e76f51", alpha = 0.72) +
+          geom_polygon(data = data.frame(x = c(x_max, 1, 1, x_max), y = c(1, 1, y_min, y_min)), aes(x = x, y = y), inherit.aes = FALSE, fill = "#2a9d8f", alpha = 0.72) +
+          geom_polygon(data = data.frame(x = c(1, x_min, x_min, 1), y = c(1, 1, y_min, y_min)), aes(x = x, y = y), inherit.aes = FALSE, fill = "#e9c46a", alpha = 0.72) +
+          geom_hline(yintercept = 1, color = "#1f2937", linewidth = 1) +
+          geom_vline(xintercept = 1, color = "#1f2937", linewidth = 1) +
+          geom_blank(data = recent_points, aes(x = x, y = y))
+
+        if ("points" %in% summary_options && nrow(model_points) > 0) {
+          p <- p + geom_point(data = model_points, aes(x = x, y = y), size = 3.8, shape = 21, stroke = 0.55, fill = "#64748b", color = "#334155", alpha = 0.72)
+        }
+        if ("diagnostic" %in% summary_options && nrow(diagnostic_points) > 0) {
+          p <- p + geom_point(data = diagnostic_points, aes(x = x, y = y), size = 4.8, shape = 21, stroke = 0.8, fill = "#facc15", color = "#111827", alpha = 0.9)
+        }
+        if ("median" %in% summary_options) {
+          p <- p + geom_point(data = median_point, aes(x = x, y = y), size = 5.2, shape = 21, stroke = 0.9, fill = "#dc2626", color = "#7f1d1d", alpha = 0.9)
+        }
+        if ("mean" %in% summary_options) {
+          p <- p + geom_point(data = mean_point, aes(x = x, y = y), size = 5, shape = 23, stroke = 0.9, fill = "#2563eb", color = "#1e3a8a", alpha = 0.9)
+        }
+
+        return(
+          p +
+            scale_x_continuous(expression("SB"["t"] / "SB"["MSY,t"]), expand = c(0, 0), limits = c(x_min, x_max)) +
+            scale_y_continuous(expression("F"["t"] / "F"["MSY,t"]), expand = c(0, 0), limits = c(y_min, y_max)) +
+            labs(title = paste0("Kobe Period-average Summary (", years_label, ")")) +
+            theme_bw() +
+            theme(
+              panel.grid.minor = element_blank(),
+              panel.grid.major = element_line(linewidth = 0.25, color = "#d1d5db"),
+              panel.background = element_rect(fill = "#fcfcf8", color = NA),
+              plot.title = element_text(face = "bold")
+            )
+        )
+      }
+
+      kobe_end <- kobe_data %>% group_by(scenario) %>% slice_max(order_by = year, n = 1, with_ties = FALSE) %>% ungroup()
+
+      return(
+        ggplot(kobe_data, aes(x = sb_sbmsy, y = f_fmsy)) +
+          geom_polygon(data = data.frame(x = c(x_max, 1, 1, x_max), y = c(y_max, y_max, 1, 1)), aes(x = x, y = y), inherit.aes = FALSE, fill = "#f4a261", alpha = 0.7) +
+          geom_polygon(data = data.frame(x = c(1, x_min, x_min, 1), y = c(y_max, y_max, 1, 1)), aes(x = x, y = y), inherit.aes = FALSE, fill = "#e76f51", alpha = 0.72) +
+          geom_polygon(data = data.frame(x = c(x_max, 1, 1, x_max), y = c(1, 1, y_min, y_min)), aes(x = x, y = y), inherit.aes = FALSE, fill = "#2a9d8f", alpha = 0.72) +
+          geom_polygon(data = data.frame(x = c(1, x_min, x_min, 1), y = c(1, 1, y_min, y_min)), aes(x = x, y = y), inherit.aes = FALSE, fill = "#e9c46a", alpha = 0.72) +
+          geom_hline(yintercept = 1, color = "#1f2937", linewidth = 1) +
+          geom_vline(xintercept = 1, color = "#1f2937", linewidth = 1) +
+          geom_path(linewidth = 0.7, color = "#264653", alpha = 0.45) +
+          geom_point(aes(fill = year), size = 3.8, shape = 21, stroke = 0.25, color = "#f8fafc") +
+          geom_point(data = kobe_end, aes(fill = year), size = 4.8, shape = 21, stroke = 0.7, color = "#0f172a") +
+          scale_fill_viridis_c("Year", option = "C", begin = 0.12, end = 0.95, direction = -1) +
+          scale_x_continuous(expression("SB"["t"] / "SB"["MSY,t"]), expand = c(0, 0), limits = c(x_min, x_max)) +
+          scale_y_continuous(expression("F"["t"] / "F"["MSY,t"]), expand = c(0, 0), limits = c(y_min, y_max)) +
+          facet_wrap(~ scenario, ncol = facet_ncol) +
+          labs(title = "Kobe (time-dynamic)") +
+          theme_bw() +
+          theme(
+            panel.grid.minor = element_blank(),
+            panel.grid.major = element_line(linewidth = 0.25, color = "#d1d5db"),
+            panel.background = element_rect(fill = "#fcfcf8", color = NA),
+            strip.text = element_text(size = 10, face = "bold"),
+            strip.background = element_rect(fill = "#f3f4f6", color = "#d1d5db"),
+            legend.position = "right",
+            legend.title = element_text(face = "bold"),
+            plot.title = element_text(face = "bold")
+          )
+      )
+    }
+
+    if (plot_type == "majuro") {
+      majuro_data <- bind_rows(lapply(seq_along(RepOut_list), function(i) {
+        extract_majuro_series(RepOut_list[[i]], scenarios_name[i])
+      }))
+
+      validate(need(nrow(majuro_data) > 0, "Majuro plot inputs are not available for the selected models"))
+
+      majuro_data <- majuro_data %>%
+        mutate(
+          scenario = factor(scenario, levels = scenarios_name),
+          year = as.numeric(year)
+        ) %>%
+        filter(is.finite(year), is.finite(dep), is.finite(f_fmsy))
+
+      validate(need(nrow(majuro_data) > 0, "Majuro plot inputs are not available for the selected models"))
+
+      x_limits <- reference_axis_limits(majuro_data$dep, threshold = 0.2, hard_min = 0, hard_max = 1, min_span = 0.35)
+      y_limits <- reference_axis_limits(majuro_data$f_fmsy, threshold = 1, hard_min = 0, min_span = 0.75)
+      x_min <- x_limits[1]
+      x_max <- x_limits[2]
+      y_min <- y_limits[1]
+      y_max <- y_limits[2]
+
+      if (identical(input$harvest_reference_view, "recent")) {
+        recent_year_range <- input$harvest_recent_years
+        if (is.null(recent_year_range) || length(recent_year_range) != 2) {
+          recent_year_range <- default_recent_year_window(majuro_data$year, 4)
+        }
+
+        recent_summary <- summarise_recent_reference(
+          majuro_data,
+          "dep",
+          "f_fmsy",
+          recent_year_range,
+          diagnostic_model = input$harvest_recent_diag_model
+        )
+        recent_points <- recent_summary$points
+        median_point <- recent_summary$median_point
+        mean_point <- recent_summary$mean_point
+
+        validate(need(nrow(recent_points) > 0, "No Majuro summary values available for the selected years"))
+
+        years_label <- paste0(min(recent_summary$years), "-", max(recent_summary$years))
+        summary_options <- input$harvest_recent_summary_options
+        if (is.null(summary_options)) {
+          summary_options <- c("points", "median", "mean", "diagnostic")
+        }
+        model_points <- recent_points %>% filter(point_role == "Model")
+        diagnostic_points <- recent_points %>% filter(point_role == "Diagnostic model")
+
+        p <- ggplot() +
+          geom_polygon(data = data.frame(x = c(x_max, 0.2, 0.2, x_max), y = c(y_max, y_max, 1, 1)), aes(x = x, y = y), inherit.aes = FALSE, fill = "#f4a261", alpha = 0.7) +
+          geom_polygon(data = data.frame(x = c(0.2, x_min, x_min, 0.2), y = c(y_max, y_max, y_min, y_min)), aes(x = x, y = y), inherit.aes = FALSE, fill = "#e76f51", alpha = 0.72) +
+          geom_polygon(data = data.frame(x = c(x_max, 0.2, 0.2, x_max), y = c(1, 1, y_min, y_min)), aes(x = x, y = y), inherit.aes = FALSE, fill = "#2a9d8f", alpha = 0.72) +
+          geom_segment(
+            data = data.frame(x = 0.2, xend = 1, y = 1, yend = 1),
+            aes(x = x, xend = xend, y = y, yend = yend),
+            inherit.aes = FALSE,
+            color = "#1f2937",
+            linewidth = 1
+          ) +
+          geom_vline(xintercept = 0.2, color = "#1f2937", linewidth = 1) +
+          geom_blank(data = recent_points, aes(x = x, y = y))
+
+        if ("points" %in% summary_options && nrow(model_points) > 0) {
+          p <- p + geom_point(data = model_points, aes(x = x, y = y), size = 3.8, shape = 21, stroke = 0.55, fill = "#64748b", color = "#334155", alpha = 0.72)
+        }
+        if ("diagnostic" %in% summary_options && nrow(diagnostic_points) > 0) {
+          p <- p + geom_point(data = diagnostic_points, aes(x = x, y = y), size = 4.8, shape = 21, stroke = 0.8, fill = "#facc15", color = "#111827", alpha = 0.9)
+        }
+        if ("median" %in% summary_options) {
+          p <- p + geom_point(data = median_point, aes(x = x, y = y), size = 5.2, shape = 21, stroke = 0.9, fill = "#dc2626", color = "#7f1d1d", alpha = 0.9)
+        }
+        if ("mean" %in% summary_options) {
+          p <- p + geom_point(data = mean_point, aes(x = x, y = y), size = 5, shape = 23, stroke = 0.9, fill = "#2563eb", color = "#1e3a8a", alpha = 0.9)
+        }
+
+        return(
+          p +
+            scale_x_continuous(expression("SB"["t"] / "SB"["F=0,t"]), expand = c(0, 0), limits = c(x_min, x_max)) +
+            scale_y_continuous(expression("F"["t"] / "F"["MSY,t"]), expand = c(0, 0), limits = c(y_min, y_max)) +
+            labs(title = paste0("Majuro Period-average Summary (", years_label, ")")) +
+            theme_bw() +
+            theme(
+              panel.grid.minor = element_blank(),
+              panel.grid.major = element_line(linewidth = 0.25, color = "#d1d5db"),
+              panel.background = element_rect(fill = "#fcfcf8", color = NA),
+              plot.title = element_text(face = "bold")
+            )
+        )
+      }
+
+      majuro_end <- majuro_data %>% group_by(scenario) %>% slice_max(order_by = year, n = 1, with_ties = FALSE) %>% ungroup()
+
+      return(
+        ggplot(majuro_data, aes(x = dep, y = f_fmsy)) +
+          geom_polygon(data = data.frame(x = c(x_max, 0.2, 0.2, x_max), y = c(y_max, y_max, 1, 1)), aes(x = x, y = y), inherit.aes = FALSE, fill = "#f4a261", alpha = 0.7) +
+          geom_polygon(data = data.frame(x = c(0.2, x_min, x_min, 0.2), y = c(y_max, y_max, y_min, y_min)), aes(x = x, y = y), inherit.aes = FALSE, fill = "#e76f51", alpha = 0.72) +
+          geom_polygon(data = data.frame(x = c(x_max, 0.2, 0.2, x_max), y = c(1, 1, y_min, y_min)), aes(x = x, y = y), inherit.aes = FALSE, fill = "#2a9d8f", alpha = 0.72) +
+          geom_segment(
+            data = data.frame(x = 0.2, xend = 1, y = 1, yend = 1),
+            aes(x = x, xend = xend, y = y, yend = yend),
+            inherit.aes = FALSE,
+            color = "#1f2937",
+            linewidth = 1
+          ) +
+          geom_vline(xintercept = 0.2, color = "#1f2937", linewidth = 1) +
+          geom_path(linewidth = 0.7, color = "#264653", alpha = 0.45) +
+          geom_point(aes(fill = year), size = 3.8, shape = 21, stroke = 0.25, color = "#f8fafc") +
+          geom_point(data = majuro_end, aes(fill = year), size = 4.8, shape = 21, stroke = 0.7, color = "#0f172a") +
+          scale_fill_viridis_c("Year", option = "C", begin = 0.12, end = 0.95, direction = -1) +
+          scale_x_continuous(expression("SB"["t"] / "SB"["F=0,t"]), expand = c(0, 0), limits = c(x_min, x_max)) +
+          scale_y_continuous(expression("F"["t"] / "F"["MSY,t"]), expand = c(0, 0), limits = c(y_min, y_max)) +
+          facet_wrap(~ scenario, ncol = facet_ncol) +
+          labs(title = "Majuro (time-dynamic)") +
+          theme_bw() +
+          theme(
+            panel.grid.minor = element_blank(),
+            panel.grid.major = element_line(linewidth = 0.25, color = "#d1d5db"),
+            panel.background = element_rect(fill = "#fcfcf8", color = NA),
+            strip.text = element_text(size = 10, face = "bold"),
+            strip.background = element_rect(fill = "#f3f4f6", color = "#d1d5db"),
+            legend.position = "right",
+            legend.title = element_text(face = "bold"),
+            plot.title = element_text(face = "bold")
+          )
+      )
+    }
+
     if (plot_type == "fm_juv_adult") {
       fm_all <- data.frame(); mat_all <- data.frame(); popn_all <- data.frame()
 
@@ -853,6 +1370,10 @@ mod_harvest_server <- function(input, output, session, rv) {
     input$model_dir,
     input$harvest_scenarios,
     input$harvest_plot,
+    input$harvest_reference_view,
+    input$harvest_recent_years,
+    input$harvest_recent_diag_model,
+    input$harvest_recent_summary_options,
     input$harvest_facet_ncol,
     input$harvest_ensemble,
     input$harvest_ensemble_levels,
@@ -959,6 +1480,164 @@ mod_harvest_server <- function(input, output, session, rv) {
       options = list(dom = "t", paging = FALSE, ordering = FALSE, autoWidth = TRUE)
     )
   })
+
+  output$harvest_reference_table <- renderDT({
+    req(rv$data_loaded, input$harvest_scenarios)
+    req(input$harvest_plot %in% c("kobe", "majuro"))
+
+    scenarios_name <- input$harvest_scenarios
+    validate(need(length(scenarios_name) > 0, "No models selected"))
+    RepOut_list <- subset_named(rv$RepOut_list, scenarios_name)
+
+    tbl <- if (identical(input$harvest_plot, "kobe")) {
+      bind_rows(lapply(seq_along(RepOut_list), function(i) {
+        extract_kobe_series(RepOut_list[[i]], scenarios_name[i])
+      })) %>%
+        transmute(
+          Model = scenario,
+          Year = year,
+          `SB/SBMSY` = round(sb_sbmsy, 4),
+          `F/FMSY` = round(f_fmsy, 4)
+        )
+    } else {
+      bind_rows(lapply(seq_along(RepOut_list), function(i) {
+        extract_majuro_series(RepOut_list[[i]], scenarios_name[i])
+      })) %>%
+        transmute(
+          Model = scenario,
+          Year = year,
+          `SB/SBF0` = round(dep, 4),
+          `F/FMSY` = round(f_fmsy, 4)
+        )
+    }
+
+    if (!is.null(input$harvest_reference_model) &&
+        nzchar(input$harvest_reference_model) &&
+        input$harvest_reference_model %in% tbl$Model) {
+      tbl <- tbl %>% filter(Model == input$harvest_reference_model)
+    }
+
+    validate(need(nrow(tbl) > 0, "No Kobe/Majuro values available for the selected models"))
+
+    datatable(
+      tbl,
+      rownames = FALSE,
+      class = "compact nowrap",
+      options = list(pageLength = 15, scrollX = TRUE, autoWidth = FALSE, order = list(list(0, "asc"), list(1, "asc"))))
+  })
+
+  output$harvest_reference_note <- renderUI({
+    req(input$harvest_plot %in% c("kobe", "majuro"))
+    if (identical(input$harvest_plot, "kobe")) {
+      return(tags$p("Kobe Values", style = "font-weight: 600; margin-bottom: 10px;"))
+    }
+    tags$p("Majuro Values", style = "font-weight: 600; margin-bottom: 10px;")
+  })
+
+  output$harvest_recent_years_ui <- renderUI({
+    req(input$harvest_plot %in% c("kobe", "majuro"))
+    req(identical(input$harvest_reference_view, "recent"))
+    req(rv$data_loaded, input$harvest_scenarios)
+
+    scenarios_name <- input$harvest_scenarios
+    validate(need(length(scenarios_name) > 0, "No models selected"))
+    RepOut_list <- subset_named(rv$RepOut_list, scenarios_name)
+
+    ref_data <- if (identical(input$harvest_plot, "kobe")) {
+      bind_rows(lapply(seq_along(RepOut_list), function(i) {
+        extract_kobe_series(RepOut_list[[i]], scenarios_name[i])
+      }))
+    } else {
+      bind_rows(lapply(seq_along(RepOut_list), function(i) {
+        extract_majuro_series(RepOut_list[[i]], scenarios_name[i])
+      }))
+    }
+
+    validate(need(nrow(ref_data) > 0, "No reference years available"))
+
+    years <- sort(unique(as.integer(ref_data$year[is.finite(ref_data$year)])))
+    validate(need(length(years) > 0, "No reference years available"))
+
+    default_years <- default_recent_year_window(years, 4)
+    selected_years <- isolate(input$harvest_recent_years)
+    if (is.null(selected_years) || length(selected_years) != 2) {
+      selected_years <- default_years
+    } else {
+      selected_years[1] <- max(min(selected_years[1], max(years)), min(years))
+      selected_years[2] <- max(min(selected_years[2], max(years)), min(years))
+      if (selected_years[1] > selected_years[2]) {
+        selected_years <- sort(selected_years)
+      }
+    }
+
+    sliderInput(
+      "harvest_recent_years",
+      "Averaged over years:",
+      min = min(years),
+      max = max(years),
+      value = selected_years,
+      step = 1,
+      sep = ""
+    )
+  })
+
+  output$harvest_recent_diag_model_ui <- renderUI({
+    req(input$harvest_plot %in% c("kobe", "majuro"))
+    req(identical(input$harvest_reference_view, "recent"))
+    scenarios_name <- input$harvest_scenarios
+    req(length(scenarios_name) > 1)
+
+    default_diag <- if (!is.null(input$harvest_recent_diag_model) &&
+      input$harvest_recent_diag_model %in% scenarios_name) {
+      input$harvest_recent_diag_model
+    } else {
+      diag_match <- scenarios_name[grepl("diag|diagnostic", scenarios_name, ignore.case = TRUE)]
+      if (length(diag_match) > 0) diag_match[[1]] else scenarios_name[[1]]
+    }
+
+    selectInput(
+      "harvest_recent_diag_model",
+      "Diagnostic model:",
+      choices = scenarios_name,
+      selected = default_diag
+    )
+  })
+
+  output$harvest_recent_summary_options_ui <- renderUI({
+    req(input$harvest_plot %in% c("kobe", "majuro"))
+    req(identical(input$harvest_reference_view, "recent"))
+
+    checkboxGroupInput(
+      "harvest_recent_summary_options",
+      "Show:",
+      choices = c(
+        "Model points" = "points",
+        "Median" = "median",
+        "Mean" = "mean",
+        "Diagnostic model" = "diagnostic"
+      ),
+      selected = c("points", "median", "mean", "diagnostic")
+    )
+  })
+
+  output$harvest_reference_model_ui <- renderUI({
+    req(input$harvest_plot %in% c("kobe", "majuro"))
+    scenarios_name <- input$harvest_scenarios
+    req(length(scenarios_name) > 1)
+
+    selectInput(
+      "harvest_reference_model",
+      "Model:",
+      choices = scenarios_name,
+      selected = if (!is.null(input$harvest_reference_model) &&
+        input$harvest_reference_model %in% scenarios_name) {
+        input$harvest_reference_model
+      } else {
+        scenarios_name[[1]]
+      }
+    )
+  })
+
   mod_sections_download("harvest", "Key Quantities Plot", harvest_plot_reactive, input, session, output)
 }
 

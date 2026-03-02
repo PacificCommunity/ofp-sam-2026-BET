@@ -87,10 +87,13 @@ mod_likelihood_ui <- function() {
         solidHeader = TRUE,
         status = "warning",
         collapsible = TRUE,
-        uiOutput("likelihood_table_ui"),
-        uiOutput("profile_gradient_table_ui"),
         plotOutput("likelihood_plot", height = "650px")
       )
+    ),
+
+    fluidRow(
+      uiOutput("likelihood_table_ui"),
+      uiOutput("profile_gradient_table_ui")
     )
   )
 }
@@ -977,13 +980,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
       return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No likelihood profile data found"))
     }
 
-    common_scales <- Reduce(intersect, lapply(profile_data, function(x) x$scales))
-    if (length(common_scales) == 0) {
-      return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No shared scaler values across selected scenarios"))
+    all_scales <- sort(unique(unlist(lapply(profile_data, function(x) x$scales))))
+    if (length(all_scales) == 0) {
+      return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No scaler values found for the selected scenarios"))
     }
 
     if (type == "components") {
-      data <- build_components_data(profile_data, names(profile_data), common_scales)
+      data <- build_components_data(profile_data, names(profile_data), all_scales)
       data <- data %>% filter(is.finite(value) & is.finite(scaler))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No component data available"))
@@ -993,7 +996,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     if (type == "cpues") {
-      data <- build_cpue_fishery_data(profile_data, names(profile_data), rv$FISHERY_MAPS, common_scales)
+      data <- build_cpue_fishery_data(profile_data, names(profile_data), rv$FISHERY_MAPS, all_scales)
       data <- data %>% filter(is.finite(value) & is.finite(scaler))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No CPUE profile data available"))
@@ -1004,7 +1007,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     if (type == "lfs") {
       data <- build_fishery_data(profile_data, names(profile_data), rv$FISHERY_MAPS,
-                                 "total_length_fish", "Fishery", common_scales)
+                                 "total_length_fish", "Fishery", all_scales)
       data <- data %>% filter(is.finite(value) & is.finite(scaler))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No LF profile data available"))
@@ -1015,7 +1018,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     if (type == "wfs") {
       data <- build_fishery_data(profile_data, names(profile_data), rv$FISHERY_MAPS,
-                                 "total_weight_fish", "Fishery", common_scales)
+                                 "total_weight_fish", "Fishery", all_scales)
       data <- data %>% filter(is.finite(value) & is.finite(scaler))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No WF profile data available"))
@@ -1025,7 +1028,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     if (type == "tagging") {
-      data <- build_tagging_data(profile_data, names(profile_data), rv$TagOut_list, common_scales)
+      data <- build_tagging_data(profile_data, names(profile_data), rv$TagOut_list, all_scales)
       data <- data %>% filter(is.finite(value) & is.finite(scaler))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No tagging profile data available"))
@@ -1041,7 +1044,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     if (type == "cal_fishery") {
       data <- build_cal_data(profile_data, names(profile_data), rv$AgeOut_list,
-                             rv$FISHERY_MAPS, by = "fishery", common_scales)
+                             rv$FISHERY_MAPS, by = "fishery", all_scales)
       data <- data %>% filter(is.finite(value) & is.finite(scaler))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No CAL by fishery data available"))
@@ -1052,7 +1055,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     if (type == "cal_year") {
       data <- build_cal_data(profile_data, names(profile_data), rv$AgeOut_list,
-                             rv$FISHERY_MAPS, by = "year", common_scales)
+                             rv$FISHERY_MAPS, by = "year", all_scales)
       data <- data %>% filter(is.finite(value) & is.finite(scaler))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No CAL by year data available"))
@@ -1336,7 +1339,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
     info <- profile_data_reactive()
     plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else "piner"
     if (!identical(plot_kind, "hessian")) return(NULL)
-    tagList(
+    box(
+      title = "Hessian Diagnostics Table",
+      width = 12,
+      solidHeader = TRUE,
+      status = "warning",
+      collapsible = TRUE,
+      collapsed = TRUE,
       div(
         style = "margin-bottom: 10px; padding: 10px 12px; background: #fff8e1; border: 1px solid #f0d98c; border-left: 4px solid #f39c12; border-radius: 4px;",
         tags$div("Hessian Diagnostics (PDH / SPD)", style = "font-weight: bold; margin-bottom: 4px;"),
@@ -1346,7 +1355,6 @@ mod_likelihood_server <- function(input, output, session, rv) {
         tags$div("Hessian Status: Read from hessian/hessian_info.rds (generated by tools/collate_hessian_mfcl.R). The pipeline reads the first line of neigenvalues and uses n_negative and n_total to classify: PDH if n_negative = 0, Near-PDH if n_negative < 1% of n_total, otherwise Non-PDH; Unknown if unavailable.", style = "font-size: 12px; color: #333;"),
         tags$div("Reliability: Also read from hessian/hessian_info.rds and assigned by the same pipeline from the same eigenvalue rule: HIGH for PDH (0 negative eigenvalues), MODERATE for Near-PDH (<1% negative eigenvalues), LOW for Non-PDH, and UNKNOWN when eigenvalue summary is unavailable. This Shiny table does not recompute the label.", style = "font-size: 12px; color: #333;")
       ),
-      h4("Hessian Diagnostics Table", style = "margin-top: 0;"),
       DTOutput("likelihood_table")
     )
   })
@@ -1356,28 +1364,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (!identical(input$lik_profile_type, "components")) return(NULL)
     if (is.null(grad_tbl) || nrow(grad_tbl) == 0) return(NULL)
 
-    tagList(
-      tags$hr(),
-      tags$details(
-        style = "margin-top: 8px; margin-bottom: 8px;",
-        tags$summary(
-          HTML("<span style='font-weight:700;'>Profile Max Gradient by Scaler</span><span style='margin-left:10px; font-size:12px; color:#555;'>Click to expand/collapse</span>"),
-          style = paste(
-            "cursor: pointer;",
-            "font-size: 16px;",
-            "list-style: none;",
-            "background: #f4f6f9;",
-            "border: 1px solid #d2d6de;",
-            "border-radius: 4px;",
-            "padding: 10px 12px;",
-            "display: block;"
-          )
-        ),
-        tags$div(
-          style = "margin-top: 10px;",
-          DTOutput("profile_gradient_table")
-        )
-      )
+    box(
+      title = "Total Profile Scaler Diagnostics",
+      width = 12,
+      solidHeader = TRUE,
+      status = "warning",
+      collapsible = TRUE,
+      collapsed = TRUE,
+      uiOutput("profile_gradient_model_ui"),
+      DTOutput("profile_gradient_table")
     )
   })
   
@@ -1397,10 +1392,37 @@ mod_likelihood_server <- function(input, output, session, rv) {
     grad_tbl <- profile_gradient_table_reactive()
     if (is.null(grad_tbl) || nrow(grad_tbl) == 0) return(NULL)
 
+    if (!is.null(input$profile_gradient_model) &&
+        nzchar(input$profile_gradient_model) &&
+        input$profile_gradient_model %in% grad_tbl$Model) {
+      grad_tbl <- grad_tbl %>% filter(Model == input$profile_gradient_model)
+    }
+
     datatable(
       grad_tbl,
       options = list(pageLength = 10, scrollX = TRUE),
       rownames = FALSE
+    )
+  })
+
+  output$profile_gradient_model_ui <- renderUI({
+    grad_tbl <- profile_gradient_table_reactive()
+    if (!identical(input$lik_profile_type, "components")) return(NULL)
+    if (is.null(grad_tbl) || nrow(grad_tbl) == 0) return(NULL)
+
+    model_choices <- unique(grad_tbl$Model)
+    if (length(model_choices) <= 1) return(NULL)
+
+    selectInput(
+      "profile_gradient_model",
+      "Model:",
+      choices = model_choices,
+      selected = if (!is.null(input$profile_gradient_model) &&
+        input$profile_gradient_model %in% model_choices) {
+        input$profile_gradient_model
+      } else {
+        model_choices[[1]]
+      }
     )
   })
 
