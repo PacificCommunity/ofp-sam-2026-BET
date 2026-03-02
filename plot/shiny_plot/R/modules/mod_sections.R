@@ -56,6 +56,166 @@ selected_window <- function(par_list) {
   list(minYear = minYear, maxYear = maxYear)
 }
 
+weighted_quantile <- function(x, w = NULL, probs = 0.5) {
+  keep <- is.finite(x)
+  if (!is.null(w)) keep <- keep & is.finite(w)
+  x <- x[keep]
+  if (length(x) == 0) return(rep(NA_real_, length(probs)))
+
+  if (is.null(w)) {
+    return(as.numeric(stats::quantile(x, probs = probs, na.rm = TRUE, names = FALSE, type = 7)))
+  }
+
+  w <- w[keep]
+  positive <- w > 0
+  x <- x[positive]
+  w <- w[positive]
+
+  if (length(x) == 0 || sum(w, na.rm = TRUE) <= 0) {
+    w <- rep(1, length(x))
+  }
+
+  if (length(x) == 0) return(rep(NA_real_, length(probs)))
+  if (length(x) == 1) return(rep(x, length(probs)))
+
+  ord <- order(x)
+  x <- x[ord]
+  w <- w[ord]
+  total_w <- sum(w)
+  if (!is.finite(total_w) || total_w <= 0) {
+    return(as.numeric(stats::quantile(x, probs = probs, na.rm = TRUE, names = FALSE, type = 7)))
+  }
+  cum_w <- cumsum(w)
+  mid_p <- (cum_w - 0.5 * w) / total_w
+  stats::approx(x = mid_p, y = x, xout = probs, method = "linear", rule = 2, ties = "ordered")$y
+}
+
+weighted_mean_safe <- function(x, w = NULL) {
+  keep <- is.finite(x)
+  if (!is.null(w)) keep <- keep & is.finite(w)
+  x <- x[keep]
+  if (length(x) == 0) return(NA_real_)
+
+  if (is.null(w)) return(mean(x, na.rm = TRUE))
+
+  w <- w[keep]
+  positive <- w > 0
+  x <- x[positive]
+  w <- w[positive]
+  if (length(x) == 0) return(NA_real_)
+
+  total_w <- sum(w, na.rm = TRUE)
+  if (!is.finite(total_w) || total_w <= 0) return(mean(x, na.rm = TRUE))
+  sum(x * w, na.rm = TRUE) / total_w
+}
+
+compute_ensemble_weights <- function(par_list, method = "equal") {
+  scenario_names <- names(par_list)
+  equal_weights <- rep(1 / length(scenario_names), length(scenario_names))
+  names(equal_weights) <- scenario_names
+  aic_values <- vapply(par_list, function(par_obj) {
+    obj_fun <- suppressWarnings(tryCatch(as.numeric(par_obj@obj_fun), error = function(e) NA_real_))
+    n_pars <- suppressWarnings(tryCatch(as.numeric(par_obj@n_pars), error = function(e) NA_real_))
+    if (!is.finite(obj_fun) || !is.finite(n_pars)) return(NA_real_)
+    2 * n_pars + 2 * obj_fun
+  }, numeric(1))
+  delta_aic <- aic_values - min(aic_values, na.rm = TRUE)
+  rel_likelihood <- exp(-0.5 * delta_aic)
+
+  if (!identical(method, "aic")) {
+    return(tibble(
+      scenario = scenario_names,
+      weight = equal_weights,
+      aic = as.numeric(aic_values),
+      delta_aic = as.numeric(delta_aic),
+      rel_likelihood = as.numeric(rel_likelihood),
+      method_used = "equal"
+    ))
+  }
+
+  if (!all(is.finite(aic_values))) {
+    return(tibble(
+      scenario = scenario_names,
+      weight = equal_weights,
+      aic = as.numeric(aic_values),
+      delta_aic = as.numeric(delta_aic),
+      rel_likelihood = as.numeric(rel_likelihood),
+      method_used = "equal"
+    ))
+  }
+
+  aic_weights <- rel_likelihood
+  if (sum(aic_weights, na.rm = TRUE) <= 0) {
+    aic_weights <- equal_weights
+    method_used <- "equal"
+  } else {
+    aic_weights <- aic_weights / sum(aic_weights)
+    method_used <- "aic"
+  }
+
+  tibble(
+    scenario = scenario_names,
+    weight = as.numeric(aic_weights),
+    aic = as.numeric(aic_values),
+    delta_aic = as.numeric(delta_aic),
+    rel_likelihood = as.numeric(rel_likelihood),
+    method_used = method_used
+  )
+}
+
+compute_manual_weights <- function(scenarios, input_weights = NULL) {
+  n <- length(scenarios)
+  base_weights <- rep(1, n)
+  names(base_weights) <- scenarios
+
+  if (!is.null(input_weights)) {
+    matched <- input_weights[scenarios]
+    keep <- is.finite(matched)
+    base_weights[keep] <- matched[keep]
+  }
+
+  base_weights[!is.finite(base_weights) | base_weights < 0] <- 0
+  total_weight <- sum(base_weights, na.rm = TRUE)
+  if (!is.finite(total_weight) || total_weight <= 0) {
+    base_weights <- rep(1, n)
+    names(base_weights) <- scenarios
+    total_weight <- sum(base_weights)
+  }
+
+  tibble(
+    scenario = scenarios,
+    weight_input = as.numeric(base_weights),
+    weight = as.numeric(base_weights / total_weight),
+    aic = NA_real_,
+    delta_aic = NA_real_,
+    rel_likelihood = NA_real_,
+    method_used = "manual"
+  )
+}
+
+summarise_ensemble <- function(df, group_cols, value_col, interval = 0.95, weight_col = NULL, center_method = "quantile") {
+  tail_prob <- (1 - interval) / 2
+  df %>%
+    group_by(across(all_of(group_cols))) %>%
+    summarise(
+      median = if (identical(center_method, "mean")) {
+        weighted_mean_safe(.data[[value_col]], if (!is.null(weight_col)) .data[[weight_col]] else NULL)
+      } else {
+        weighted_quantile(.data[[value_col]], if (!is.null(weight_col)) .data[[weight_col]] else NULL, probs = 0.5)
+      },
+      lower = weighted_quantile(.data[[value_col]], if (!is.null(weight_col)) .data[[weight_col]] else NULL, probs = tail_prob),
+      upper = weighted_quantile(.data[[value_col]], if (!is.null(weight_col)) .data[[weight_col]] else NULL, probs = 1 - tail_prob),
+      .groups = "drop"
+    )
+}
+
+build_ensemble_bands <- function(df, group_cols, value_col, intervals = c(0.95, 0.8, 0.5), weight_col = NULL, center_method = "quantile") {
+  bind_rows(lapply(intervals, function(interval) {
+    summarise_ensemble(df, group_cols = group_cols, value_col = value_col, interval = interval, weight_col = weight_col, center_method = center_method) %>%
+      mutate(interval = interval)
+  }))
+}
+
 mod_harvest_ui <- function() {
   tabItem(
     tabName = "harvest",
@@ -66,7 +226,7 @@ mod_harvest_ui <- function() {
         pickerInput("harvest_scenarios", "Models:", choices = NULL, selected = NULL, multiple = TRUE,
                     options = pickerOptions(actionsBox = TRUE, liveSearch = TRUE, selectedTextFormat = "count > 2")),
         selectInput("harvest_plot", "Plot:", choices = c(
-          "Spawning/Recruitment/SP/F (combined)" = "spawning",
+          "Depletion/Recruitment/SP/F (combined)" = "spawning",
           "Depletion by Area" = "depletion_area",
           "Recruitment by Area" = "rec_area",
           "Juvenile & Adult F by Area" = "fm_juv_adult",
@@ -74,6 +234,31 @@ mod_harvest_ui <- function() {
           "Spawning Potential (with/without fishing)" = "sp_combined",
           "Total Biomass (with/without fishing)" = "tb_combined"
         )),
+        conditionalPanel(
+          condition = "input.harvest_plot == 'spawning' || input.harvest_plot == 'depletion_area' || input.harvest_plot == 'rec_area'",
+          checkboxInput("harvest_ensemble", "Ensemble", value = FALSE)
+        ),
+        conditionalPanel(
+          condition = "input.harvest_ensemble && (input.harvest_plot == 'spawning' || input.harvest_plot == 'depletion_area' || input.harvest_plot == 'rec_area')",
+          selectInput(
+            "harvest_ensemble_weighting",
+              "Weighting:",
+            choices = c("Equal" = "equal", "AIC" = "aic", "Manual" = "manual"),
+            selected = "equal"
+          ),
+          selectInput(
+            "harvest_ensemble_center",
+            "Center line:",
+            choices = c("Weighted quantile" = "quantile", "Weighted mean" = "mean"),
+            selected = "quantile"
+          ),
+          checkboxGroupInput(
+            "harvest_ensemble_levels",
+            "Ensemble bands:",
+            choices = c("95%" = "0.95", "80%" = "0.80", "50%" = "0.50"),
+            selected = c("0.95", "0.80", "0.50")
+          )
+        ),
         numericInput("harvest_facet_ncol", "Facet columns:", value = 2, min = 1, max = 12, step = 1),
         shiny::hr(),
         h5("Download Plot", style = "font-weight: bold;"),
@@ -81,6 +266,40 @@ mod_harvest_ui <- function() {
       ),
       box(title = "Plot", width = 9, solidHeader = TRUE, status = "success", collapsible = TRUE,
           plotOutput("harvest_plot_output", height = "730px"))
+    ),
+    fluidRow(
+      column(
+        width = 9, offset = 3,
+        conditionalPanel(
+          condition = "input.harvest_ensemble && (input.harvest_ensemble_weighting == 'aic' || input.harvest_ensemble_weighting == 'manual')",
+          box(
+            title = "Ensemble Weights",
+            width = NULL,
+            solidHeader = TRUE,
+            status = "success",
+            collapsible = TRUE,
+            collapsed = TRUE,
+            uiOutput("harvest_weighting_note"),
+            conditionalPanel(
+              condition = "input.harvest_ensemble_weighting == 'manual'",
+              actionButton("harvest_manual_weights_apply", "Apply", class = "btn-success", style = "margin-bottom: 12px;")
+            ),
+            DTOutput("harvest_weight_table")
+          )
+        ),
+        conditionalPanel(
+          condition = "input.harvest_ensemble",
+          box(
+            title = "Ensemble Method Guide",
+            width = NULL,
+            solidHeader = TRUE,
+            status = "success",
+            collapsible = TRUE,
+            collapsed = TRUE,
+            DTOutput("harvest_method_table")
+          )
+        )
+      )
     )
   )
 }
@@ -90,6 +309,82 @@ mod_harvest_server <- function(input, output, session, rv) {
     sc <- names(rv$ParOut_list)
     updatePickerInput(session, "harvest_scenarios", choices = sc, selected = sc)
   }, ignoreInit = TRUE)
+
+  manual_weight_tbl <- reactiveVal(NULL)
+  applied_manual_weight_tbl <- reactiveVal(NULL)
+
+  observeEvent(list(rv$data_loaded, input$harvest_scenarios), {
+    req(rv$data_loaded)
+    scenarios <- input$harvest_scenarios
+    if (is.null(scenarios) || length(scenarios) == 0) {
+      manual_weight_tbl(NULL)
+      applied_manual_weight_tbl(NULL)
+      return()
+    }
+
+    existing <- manual_weight_tbl()
+    existing_weights <- NULL
+    if (!is.null(existing) && nrow(existing) > 0) {
+      existing_weights <- existing$weight_input
+      names(existing_weights) <- existing$scenario
+    }
+    updated_tbl <- compute_manual_weights(scenarios, existing_weights)
+    manual_weight_tbl(updated_tbl)
+
+    existing_applied <- applied_manual_weight_tbl()
+    applied_weights <- NULL
+    if (!is.null(existing_applied) && nrow(existing_applied) > 0) {
+      applied_weights <- existing_applied$weight_input
+      names(applied_weights) <- existing_applied$scenario
+    }
+    applied_manual_weight_tbl(compute_manual_weights(scenarios, applied_weights))
+  }, ignoreInit = FALSE)
+
+  observeEvent(input$harvest_weight_table_cell_edit, {
+    req(identical(input$harvest_ensemble_weighting, "manual"))
+    info <- input$harvest_weight_table_cell_edit
+    tbl <- manual_weight_tbl()
+    req(!is.null(tbl), info$col == 1)
+
+    new_value <- suppressWarnings(as.numeric(info$value))
+    if (!is.finite(new_value)) new_value <- tbl$weight_input[info$row]
+    tbl$weight_input[info$row] <- max(new_value, 0)
+    manual_weight_tbl(compute_manual_weights(tbl$scenario, setNames(tbl$weight_input, tbl$scenario)))
+  })
+
+  observeEvent(input$harvest_manual_weights_apply, {
+    req(identical(input$harvest_ensemble_weighting, "manual"))
+    tbl <- manual_weight_tbl()
+    req(!is.null(tbl), nrow(tbl) > 0)
+    applied_manual_weight_tbl(tbl)
+  })
+
+  ensemble_weights_reactive <- reactive({
+    req(rv$data_loaded, input$harvest_scenarios)
+    scenarios <- input$harvest_scenarios
+    validate(need(length(scenarios) > 0, "No models selected"))
+    ParOut_list <- subset_named(rv$ParOut_list, scenarios)
+    method <- if (is.null(input$harvest_ensemble_weighting)) "equal" else input$harvest_ensemble_weighting
+
+    if (identical(method, "manual")) {
+      tbl <- applied_manual_weight_tbl()
+      if (is.null(tbl) || nrow(tbl) == 0) {
+        return(compute_manual_weights(scenarios))
+      }
+      return(tbl %>% filter(scenario %in% scenarios))
+    }
+
+    compute_ensemble_weights(ParOut_list, method = method)
+  })
+
+  applied_manual_weight_key <- reactive({
+    tbl <- applied_manual_weight_tbl()
+    if (is.null(tbl) || nrow(tbl) == 0) {
+      return(NULL)
+    }
+    tbl %>%
+      transmute(scenario, weight_input, weight)
+  })
 
   harvest_plot_reactive <- reactive({
     req(rv$data_loaded, input$harvest_scenarios)
@@ -103,11 +398,24 @@ mod_harvest_server <- function(input, output, session, rv) {
     maxYear <- yw$maxYear
 
     config <- list(linewidth = 1.2, alpha = 0.9)
+    ensemble_style <- list(
+      line = "#003049",
+      fill = c("0.95" = "#005f73", "0.80" = "#005f73", "0.50" = "#005f73"),
+      alpha = c("0.95" = 0.22, "0.80" = 0.26, "0.50" = 0.34)
+    )
     facet_ncol <- suppressWarnings(as.integer(input$harvest_facet_ncol))
     if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 3
     facet_ncol <- min(max(facet_ncol, 1), 12)
 
     plot_type <- if (is.null(input$harvest_plot)) "spawning" else input$harvest_plot
+    show_ensemble <- isTRUE(input$harvest_ensemble) && plot_type %in% c("spawning", "depletion_area", "rec_area")
+    selected_intervals <- suppressWarnings(as.numeric(input$harvest_ensemble_levels))
+    selected_intervals <- selected_intervals[is.finite(selected_intervals)]
+    if (length(selected_intervals) == 0) selected_intervals <- c(0.95, 0.8, 0.5)
+    selected_intervals <- sort(unique(selected_intervals), decreasing = TRUE)
+    ensemble_weighting <- if (is.null(input$harvest_ensemble_weighting)) "equal" else input$harvest_ensemble_weighting
+    ensemble_center <- if (is.null(input$harvest_ensemble_center)) "quantile" else input$harvest_ensemble_center
+    ensemble_weights <- ensemble_weights_reactive()
 
     if (plot_type == "spawning") {
       SBdep <- tryCatch(GetQuantSimple(SBSBF0, RepOut_list, minYear, maxYear), error = function(e) {
@@ -176,36 +484,85 @@ mod_harvest_server <- function(input, output, session, rv) {
       FM$Scenario <- factor(FM$Scenario, levels = scenario_levels)
 
       common_theme <- theme_bw() + theme(legend.position = "none")
-      SBdepPlot <- ggplot(SBdep, aes(x = Year, y = Quant, color = Scenario, group = Scenario)) +
-        geom_line(linewidth = 1.2) + scale_color_manual(values = scenario_colors) +
-        labs(x = "Year", y = bquote(SB/SB["F=0"])) + coord_cartesian(ylim = c(0, 1)) +
-        geom_hline(yintercept = 0.2, linetype = "dashed", color = "darkred") +
-        geom_hline(yintercept = 0.5, linetype = "dashed", color = "darkgreen") + common_theme
+      if (show_ensemble) {
+        SBdep_ens <- SBdep %>%
+          left_join(ensemble_weights, by = c("Scenario" = "scenario")) %>%
+          build_ensemble_bands("Year", "Quant", selected_intervals, weight_col = "weight", center_method = ensemble_center)
+        Rec_ens <- Rec %>%
+          left_join(ensemble_weights, by = c("Scenario" = "scenario")) %>%
+          build_ensemble_bands("Year", "Quant", selected_intervals, weight_col = "weight", center_method = ensemble_center)
+        SpawnPot_ens <- SpawnPot %>%
+          left_join(ensemble_weights, by = c("Scenario" = "scenario")) %>%
+          build_ensemble_bands("Year", "Quant", selected_intervals, weight_col = "weight", center_method = ensemble_center)
+        FM_ens <- FM %>%
+          left_join(ensemble_weights, by = c("Scenario" = "scenario")) %>%
+          build_ensemble_bands("Year", "Quant", selected_intervals, weight_col = "weight", center_method = ensemble_center)
 
-      RecPlot <- ggplot(Rec, aes(x = Year, y = Quant, color = Scenario, group = Scenario)) +
-        geom_line(linewidth = 1.2) + coord_cartesian(ylim = c(0, NA)) +
-        scale_color_manual(values = scenario_colors) + labs(x = "Year", y = "Recruitment (Millions)") + common_theme
+        SBdepPlot <- ggplot(SBdep_ens, aes(x = Year, y = median)) +
+          geom_ribbon(data = filter(SBdep_ens, interval == 0.95), aes(ymin = lower, ymax = upper), fill = ensemble_style$fill[["0.95"]], alpha = ensemble_style$alpha[["0.95"]]) +
+          geom_ribbon(data = filter(SBdep_ens, interval == 0.80), aes(ymin = lower, ymax = upper), fill = ensemble_style$fill[["0.80"]], alpha = ensemble_style$alpha[["0.80"]]) +
+          geom_ribbon(data = filter(SBdep_ens, interval == 0.50), aes(ymin = lower, ymax = upper), fill = ensemble_style$fill[["0.50"]], alpha = ensemble_style$alpha[["0.50"]]) +
+          geom_line(data = distinct(SBdep_ens, Year, median), linewidth = 1.2, color = ensemble_style$line) +
+          labs(x = "Year", y = bquote(SB/SB["F=0"])) + coord_cartesian(ylim = c(0, 1)) +
+          geom_hline(yintercept = 0.2, linetype = "dashed", color = "darkred") +
+          geom_hline(yintercept = 0.5, linetype = "dashed", color = "darkgreen") + common_theme
 
-      SpawnPotPlot <- ggplot(SpawnPot, aes(x = Year, y = Quant, color = Scenario, group = Scenario)) +
-        geom_line(linewidth = 1.2) + scale_color_manual(values = scenario_colors) +
-        labs(x = "Year", y = bquote("Spawning Potential (" * 10^3 * " MT)")) + coord_cartesian(ylim = c(0, NA)) + common_theme
+        RecPlot <- ggplot(Rec_ens, aes(x = Year, y = median)) +
+          geom_ribbon(data = filter(Rec_ens, interval == 0.95), aes(ymin = lower, ymax = upper), fill = ensemble_style$fill[["0.95"]], alpha = ensemble_style$alpha[["0.95"]]) +
+          geom_ribbon(data = filter(Rec_ens, interval == 0.80), aes(ymin = lower, ymax = upper), fill = ensemble_style$fill[["0.80"]], alpha = ensemble_style$alpha[["0.80"]]) +
+          geom_ribbon(data = filter(Rec_ens, interval == 0.50), aes(ymin = lower, ymax = upper), fill = ensemble_style$fill[["0.50"]], alpha = ensemble_style$alpha[["0.50"]]) +
+          geom_line(data = distinct(Rec_ens, Year, median), linewidth = 1.2, color = ensemble_style$line) +
+          coord_cartesian(ylim = c(0, NA)) +
+          labs(x = "Year", y = "Recruitment (Millions)") + common_theme
 
-      FMPlot <- ggplot(FM, aes(x = Year, y = Quant, color = Scenario, group = Scenario)) +
-        geom_line(linewidth = 1.2) + scale_color_manual(values = scenario_colors) +
-        labs(x = "Year", y = "Annual Instantaneous F") + coord_cartesian(ylim = c(0, NA)) + common_theme
+        SpawnPotPlot <- ggplot(SpawnPot_ens, aes(x = Year, y = median)) +
+          geom_ribbon(data = filter(SpawnPot_ens, interval == 0.95), aes(ymin = lower, ymax = upper), fill = ensemble_style$fill[["0.95"]], alpha = ensemble_style$alpha[["0.95"]]) +
+          geom_ribbon(data = filter(SpawnPot_ens, interval == 0.80), aes(ymin = lower, ymax = upper), fill = ensemble_style$fill[["0.80"]], alpha = ensemble_style$alpha[["0.80"]]) +
+          geom_ribbon(data = filter(SpawnPot_ens, interval == 0.50), aes(ymin = lower, ymax = upper), fill = ensemble_style$fill[["0.50"]], alpha = ensemble_style$alpha[["0.50"]]) +
+          geom_line(data = distinct(SpawnPot_ens, Year, median), linewidth = 1.2, color = ensemble_style$line) +
+          labs(x = "Year", y = bquote("Spawning Potential (" * 10^3 * " MT)")) + coord_cartesian(ylim = c(0, NA)) + common_theme
 
-      scenario_legend <- cowplot::get_legend(
-        ggplot(SBdep, aes(x = Year, y = Quant, color = Scenario)) + geom_line(linewidth = 2) +
-          scale_color_manual(values = scenario_colors) + theme_bw() +
-          theme(legend.position = "right", legend.title = element_text(face = "bold"), legend.key.width = unit(1.5, "cm")) +
-          labs(color = "Model") + guides(color = guide_legend(override.aes = list(linewidth = 2)))
-      )
+        FMPlot <- ggplot(FM_ens, aes(x = Year, y = median)) +
+          geom_ribbon(data = filter(FM_ens, interval == 0.95), aes(ymin = lower, ymax = upper), fill = ensemble_style$fill[["0.95"]], alpha = ensemble_style$alpha[["0.95"]]) +
+          geom_ribbon(data = filter(FM_ens, interval == 0.80), aes(ymin = lower, ymax = upper), fill = ensemble_style$fill[["0.80"]], alpha = ensemble_style$alpha[["0.80"]]) +
+          geom_ribbon(data = filter(FM_ens, interval == 0.50), aes(ymin = lower, ymax = upper), fill = ensemble_style$fill[["0.50"]], alpha = ensemble_style$alpha[["0.50"]]) +
+          geom_line(data = distinct(FM_ens, Year, median), linewidth = 1.2, color = ensemble_style$line) +
+          labs(x = "Year", y = "Annual Instantaneous F") + coord_cartesian(ylim = c(0, NA)) + common_theme
+      } else {
+        SBdepPlot <- ggplot(SBdep, aes(x = Year, y = Quant, color = Scenario, group = Scenario)) +
+          geom_line(linewidth = 1.2) + scale_color_manual(values = scenario_colors) +
+          labs(x = "Year", y = bquote(SB/SB["F=0"])) + coord_cartesian(ylim = c(0, 1)) +
+          geom_hline(yintercept = 0.2, linetype = "dashed", color = "darkred") +
+          geom_hline(yintercept = 0.5, linetype = "dashed", color = "darkgreen") + common_theme
+
+        RecPlot <- ggplot(Rec, aes(x = Year, y = Quant, color = Scenario, group = Scenario)) +
+          geom_line(linewidth = 1.2) + coord_cartesian(ylim = c(0, NA)) +
+          scale_color_manual(values = scenario_colors) + labs(x = "Year", y = "Recruitment (Millions)") + common_theme
+
+        SpawnPotPlot <- ggplot(SpawnPot, aes(x = Year, y = Quant, color = Scenario, group = Scenario)) +
+          geom_line(linewidth = 1.2) + scale_color_manual(values = scenario_colors) +
+          labs(x = "Year", y = bquote("Spawning Potential (" * 10^3 * " MT)")) + coord_cartesian(ylim = c(0, NA)) + common_theme
+
+        FMPlot <- ggplot(FM, aes(x = Year, y = Quant, color = Scenario, group = Scenario)) +
+          geom_line(linewidth = 1.2) + scale_color_manual(values = scenario_colors) +
+          labs(x = "Year", y = "Annual Instantaneous F") + coord_cartesian(ylim = c(0, NA)) + common_theme
+      }
 
       combined_ncol <- min(max(as.integer(facet_ncol), 1), 4)
       combined_plot <- cowplot::plot_grid(
         SBdepPlot, RecPlot, SpawnPotPlot, FMPlot,
         ncol = combined_ncol,
         align = "v"
+      )
+      if (show_ensemble) {
+        return(combined_plot)
+      }
+
+      scenario_legend <- cowplot::get_legend(
+        ggplot(SBdep, aes(x = Year, y = Quant, color = Scenario)) + geom_line(linewidth = 2) +
+          scale_color_manual(values = scenario_colors) + theme_bw() +
+          theme(legend.position = "right", legend.title = element_text(face = "bold"), legend.key.width = unit(1.5, "cm")) +
+          labs(color = "Model") + guides(color = guide_legend(override.aes = list(linewidth = 2)))
       )
       return(cowplot::plot_grid(combined_plot, scenario_legend, ncol = 2, rel_widths = c(4, 1)))
     }
@@ -233,6 +590,23 @@ mod_harvest_server <- function(input, output, session, rv) {
       scenario_levels <- unique(depletion_combined$scenario)
       scenario_colors <- get_scenario_colors(scenario_levels)
       depletion_combined$scenario <- factor(depletion_combined$scenario, levels = scenario_levels)
+
+      if (show_ensemble) {
+        depletion_ens <- depletion_combined %>%
+          left_join(ensemble_weights, by = "scenario") %>%
+          build_ensemble_bands(c("year", "area"), "depletion", selected_intervals, weight_col = "weight", center_method = ensemble_center)
+        depletion_plot <- ggplot(depletion_ens, aes(x = year, y = median)) +
+          geom_ribbon(data = filter(depletion_ens, interval == 0.95), aes(ymin = lower, ymax = upper), fill = ensemble_style$fill[["0.95"]], alpha = ensemble_style$alpha[["0.95"]]) +
+          geom_ribbon(data = filter(depletion_ens, interval == 0.80), aes(ymin = lower, ymax = upper), fill = ensemble_style$fill[["0.80"]], alpha = ensemble_style$alpha[["0.80"]]) +
+          geom_ribbon(data = filter(depletion_ens, interval == 0.50), aes(ymin = lower, ymax = upper), fill = ensemble_style$fill[["0.50"]], alpha = ensemble_style$alpha[["0.50"]]) +
+          geom_line(data = distinct(depletion_ens, year, area, median), linewidth = config$linewidth, color = ensemble_style$line) +
+          geom_hline(yintercept = 0.2, linetype = "dashed", color = "darkred") +
+          geom_hline(yintercept = 0.5, linetype = "dashed", color = "darkgreen") +
+          coord_cartesian(ylim = c(0, 1)) +
+          facet_wrap(~ area, ncol = facet_ncol) + labs(x = "Year", y = bquote(SB/SB["F=0"])) +
+          theme_bw() + theme(legend.position = "none", strip.text = element_text(size = 10, face = "bold"))
+        return(depletion_plot)
+      }
 
       depletion_plot <- ggplot(depletion_combined, aes(x = year, y = depletion, color = scenario)) +
         geom_line(linewidth = config$linewidth, alpha = config$alpha) +
@@ -265,6 +639,21 @@ mod_harvest_server <- function(input, output, session, rv) {
       scenario_levels <- unique(rec_combined$scenario)
       scenario_colors <- get_scenario_colors(scenario_levels)
       rec_combined$scenario <- factor(rec_combined$scenario, levels = scenario_levels)
+
+      if (show_ensemble) {
+        rec_ens <- rec_combined %>%
+          left_join(ensemble_weights, by = "scenario") %>%
+          build_ensemble_bands(c("year", "area"), "data", selected_intervals, weight_col = "weight", center_method = ensemble_center)
+        rec_plot <- ggplot(rec_ens, aes(x = year, y = median)) +
+          geom_ribbon(data = filter(rec_ens, interval == 0.95), aes(ymin = lower, ymax = upper), fill = ensemble_style$fill[["0.95"]], alpha = ensemble_style$alpha[["0.95"]]) +
+          geom_ribbon(data = filter(rec_ens, interval == 0.80), aes(ymin = lower, ymax = upper), fill = ensemble_style$fill[["0.80"]], alpha = ensemble_style$alpha[["0.80"]]) +
+          geom_ribbon(data = filter(rec_ens, interval == 0.50), aes(ymin = lower, ymax = upper), fill = ensemble_style$fill[["0.50"]], alpha = ensemble_style$alpha[["0.50"]]) +
+          geom_line(data = distinct(rec_ens, year, area, median), linewidth = config$linewidth, color = ensemble_style$line) +
+          coord_cartesian(ylim = c(0, NA)) + facet_wrap(~ area, scales = "free_y", ncol = facet_ncol) +
+          labs(x = "Year", y = "Recruitment (Millions)") + theme_bw() +
+          theme(legend.position = "none", strip.text = element_text(size = 10, face = "bold"))
+        return(rec_plot)
+      }
 
       rec_plot <- ggplot(rec_combined, aes(x = year, y = data, color = scenario)) +
         geom_line(linewidth = config$linewidth, alpha = config$alpha) + scale_color_manual(values = scenario_colors) +
@@ -464,12 +853,111 @@ mod_harvest_server <- function(input, output, session, rv) {
     input$model_dir,
     input$harvest_scenarios,
     input$harvest_plot,
-    input$harvest_facet_ncol
+    input$harvest_facet_ncol,
+    input$harvest_ensemble,
+    input$harvest_ensemble_levels,
+    input$harvest_ensemble_weighting,
+    input$harvest_ensemble_center,
+    applied_manual_weight_key()
   )
 
 
   output$harvest_plot_output <- renderPlot({
     harvest_plot_reactive()
+  })
+
+  output$harvest_weight_table <- renderDT({
+    req(rv$data_loaded, input$harvest_scenarios)
+    req(isTRUE(input$harvest_ensemble))
+    req(input$harvest_ensemble_weighting %in% c("aic", "manual"))
+
+    scenarios_name <- input$harvest_scenarios
+    validate(need(length(scenarios_name) > 0, "No models selected"))
+
+    if (identical(input$harvest_ensemble_weighting, "manual")) {
+      draft_tbl <- manual_weight_tbl()
+      if (is.null(draft_tbl) || nrow(draft_tbl) == 0) {
+        draft_tbl <- compute_manual_weights(scenarios_name)
+      }
+
+      weight_tbl <- draft_tbl %>%
+        mutate(
+          `Input Weight` = round(weight_input, 6),
+          Weight = sprintf("%.4f", weight),
+          Percent = sprintf("%.2f%%", 100 * weight)
+        ) %>%
+        transmute(Model = scenario, `Input Weight`, Weight, Percent)
+
+      return(datatable(
+        weight_tbl,
+        rownames = FALSE,
+        editable = list(target = "cell", disable = list(columns = c(0, 2, 3))),
+        options = list(dom = "t", paging = FALSE, ordering = FALSE)
+      ))
+    }
+
+    ParOut_list <- subset_named(rv$ParOut_list, scenarios_name)
+    weight_tbl <- compute_ensemble_weights(ParOut_list, method = "aic") %>%
+      mutate(
+        Weight = sprintf("%.4f", weight),
+        Percent = sprintf("%.2f%%", 100 * weight),
+        AIC = ifelse(is.finite(aic), sprintf("%.2f", aic), NA_character_),
+        `Delta AIC` = ifelse(is.finite(delta_aic), sprintf("%.2f", delta_aic), NA_character_),
+        `Relative Likelihood` = ifelse(is.finite(rel_likelihood), sprintf("%.6f", rel_likelihood), NA_character_)
+      ) %>%
+      transmute(Model = scenario, Weight, Percent, AIC, `Delta AIC`, `Relative Likelihood`, `Method Used` = method_used)
+
+    datatable(
+      weight_tbl,
+      rownames = FALSE,
+      options = list(dom = "t", paging = FALSE, ordering = FALSE)
+    )
+  })
+
+  output$harvest_weighting_note <- renderUI({
+    req(isTRUE(input$harvest_ensemble))
+
+    if (identical(input$harvest_ensemble_weighting, "aic")) {
+      return(
+        tags$p(
+          HTML("Official AIC weighting is used here: <code>AIC_i = 2k_i - 2 log L_i</code>, <code>&Delta;AIC_i = AIC_i - min(AIC)</code>, <code>RL_i = exp(-0.5 * &Delta;AIC_i)</code>, and <code>w_i = RL_i / sum(RL)</code>."),
+          style = "margin-bottom: 12px;"
+        )
+      )
+    }
+
+    if (identical(input$harvest_ensemble_weighting, "manual")) {
+      return(
+        tags$p(
+          "Edit Input Weight directly. Weight and Percent update immediately; the plot updates when you click Apply.",
+          style = "margin-bottom: 12px;"
+        )
+      )
+    }
+
+    NULL
+  })
+
+  output$harvest_method_table <- renderDT({
+    req(isTRUE(input$harvest_ensemble))
+
+    method_tbl <- data.frame(
+      Method = c("Weighted quantile", "Weighted mean"),
+      `Center line` = c("Weighted median (50% quantile)", "Weighted mean"),
+      Bands = c("Weighted 50/80/95% quantile intervals", "Weighted 50/80/95% quantile intervals"),
+      Interpretation = c(
+        "Robust to outliers and follows the weighted distribution directly.",
+        "Averages model values, but uncertainty bands still come from weighted quantiles."
+      ),
+      check.names = FALSE,
+      stringsAsFactors = FALSE
+    )
+
+    datatable(
+      method_tbl,
+      rownames = FALSE,
+      options = list(dom = "t", paging = FALSE, ordering = FALSE, autoWidth = TRUE)
+    )
   })
   mod_sections_download("harvest", "Key Quantities Plot", harvest_plot_reactive, input, session, output)
 }
