@@ -108,6 +108,27 @@ mod_likelihood_ui <- function() {
               ),
               selected = "input"
             ),
+            selectInput(
+              "lik_jitter_param_scope",
+              "Jitter Param Coverage:",
+              choices = c(
+                "Top ~20 parameters" = "top",
+                "All parameters window" = "all"
+              ),
+              selected = "top"
+            ),
+            conditionalPanel(
+              condition = "input.lik_jitter_param_scope == 'all'",
+              sliderInput(
+                "lik_jitter_param_window",
+                "Parameter percentile window:",
+                min = 1,
+                max = 100,
+                value = c(1, 100),
+                step = 1,
+                round = TRUE
+              )
+            ),
             conditionalPanel(
               condition = "input.lik_jitter_param_view == 'final'",
               checkboxInput(
@@ -125,6 +146,18 @@ mod_likelihood_ui <- function() {
                 "% change from original" = "pct_change"
               ),
               selected = "pct_change"
+            ),
+            conditionalPanel(
+              condition = "input.lik_jitter_param_metric != 'value'",
+              selectInput(
+                "lik_jitter_param_range",
+                "Jitter Param Range:",
+                choices = c(
+                  "Focused range" = "focused",
+                  "Full range" = "full"
+                ),
+                selected = "focused"
+              )
             )
           )
         ),
@@ -182,6 +215,20 @@ mod_likelihood_server <- function(input, output, session, rv) {
     retro = list(),
     hessian = list()
   )
+  fishery_diag_cache <- reactiveValues(
+    cpue = list(),
+    fishery_slot = list(),
+    cal = list(),
+    alk_summary = list(),
+    fishery_lookup = list()
+  )
+  jitter_data_cache <- reactiveValues(
+    diagnostics = list(),
+    derived = list()
+  )
+  jitter_param_cache <- reactiveValues(
+    rows = list()
+  )
   last_group_key <- reactiveVal(NULL)
 
   scenario_cache_key <- function(model_dir, scenario) {
@@ -205,25 +252,65 @@ mod_likelihood_server <- function(input, output, session, rv) {
     heavy_cache$retro <- list()
     heavy_cache$hessian <- list()
   }
+  clear_fishery_diag_cache <- function() {
+    fishery_diag_cache$cpue <- list()
+    fishery_diag_cache$fishery_slot <- list()
+    fishery_diag_cache$cal <- list()
+    fishery_diag_cache$alk_summary <- list()
+    fishery_diag_cache$fishery_lookup <- list()
+  }
+  clear_jitter_data_cache <- function() {
+    jitter_data_cache$diagnostics <- list()
+    jitter_data_cache$derived <- list()
+  }
+  clear_jitter_param_cache <- function() {
+    jitter_param_cache$rows <- list()
+  }
   lik_live_update_nonce <- reactiveVal(0)
   fishery_region_types <- c("cpues", "lfs", "wfs", "cal_fishery")
   lik_filters_current <- reactive({
     list(
-      scenarios = input$lik_scenarios,
+      scenarios = sort(input$lik_scenarios),
       profile_type = if (is.null(input$lik_profile_type)) "components" else input$lik_profile_type,
       groups = input$lik_groups,
       regions = input$lik_regions,
       split_by_region = isTRUE(input$lik_split_by_region),
       facet_ncol = input$lik_facet_ncol,
       jitter_param_view = if (is.null(input$lik_jitter_param_view)) "input" else input$lik_jitter_param_view,
+      jitter_param_scope = if (is.null(input$lik_jitter_param_scope)) "top" else input$lik_jitter_param_scope,
+      jitter_param_window = if (is.null(input$lik_jitter_param_window)) c(1L, 100L) else pmax(1L, pmin(100L, as.integer(input$lik_jitter_param_window))),
       jitter_final_converged_only = isTRUE(input$lik_jitter_final_converged_only),
-      jitter_param_metric = if (is.null(input$lik_jitter_param_metric)) "pct_change" else input$lik_jitter_param_metric
+      jitter_param_metric = if (is.null(input$lik_jitter_param_metric)) "pct_change" else input$lik_jitter_param_metric,
+      jitter_param_range = if (is.null(input$lik_jitter_param_range)) "focused" else input$lik_jitter_param_range
     )
   })
   lik_filters_applied <- reactiveVal(NULL)
   lik_last_initialized_nonce <- reactiveVal(0)
   lik_filters <- reactive({
     lik_filters_applied()
+  })
+  lik_data_filters <- reactive({
+    filters <- lik_filters()
+    if (is.null(filters)) return(NULL)
+    list(
+      scenarios = filters$scenarios,
+      profile_type = filters$profile_type,
+      regions = filters$regions,
+      split_by_region = filters$split_by_region,
+      jitter_param_view = filters$jitter_param_view,
+      jitter_param_scope = filters$jitter_param_scope,
+      jitter_param_percentile = filters$jitter_param_percentile,
+      jitter_final_converged_only = filters$jitter_final_converged_only,
+      jitter_param_metric = filters$jitter_param_metric,
+      jitter_param_range = filters$jitter_param_range
+    )
+  })
+  lik_profile_output_filters <- reactive({
+    filters <- lik_data_filters()
+    if (is.null(filters)) return(NULL)
+    list(
+      scenarios = filters$scenarios
+    )
   })
 
   observe({
@@ -235,10 +322,16 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
   observeEvent(input$model_dir, {
     clear_heavy_cache()
+    clear_fishery_diag_cache()
+    clear_jitter_data_cache()
+    clear_jitter_param_cache()
   }, ignoreInit = TRUE)
 
   observeEvent(input$load_data, {
     clear_heavy_cache()
+    clear_fishery_diag_cache()
+    clear_jitter_data_cache()
+    clear_jitter_param_cache()
   }, ignoreInit = TRUE)
 
   observeEvent(input$lik_apply_filters, {
@@ -540,7 +633,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }
 
   profile_outputs_reactive <- reactive({
-    filters <- lik_filters()
+    filters <- lik_profile_output_filters()
     req(rv$data_loaded, input$model_dir, filters, filters$scenarios)
 
     selected <- filters$scenarios
@@ -558,11 +651,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
     profile_outputs_reactive,
     rv$data_loaded,
     input$model_dir,
-    lik_filters()
+    lik_profile_output_filters()
   )
 
   profile_target_info_reactive <- reactive({
-    filters <- lik_filters()
+    filters <- lik_data_filters()
     req(filters)
 
     type <- filters$profile_type
@@ -606,11 +699,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
   profile_target_info_reactive <- bindCache(
     profile_target_info_reactive,
     input$model_dir,
-    lik_filters()
+    lik_data_filters()
   )
 
   profile_gradient_table_reactive <- reactive({
-    filters <- lik_filters()
+    filters <- lik_data_filters()
     req(filters)
 
     type <- filters$profile_type
@@ -668,7 +761,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
   profile_gradient_table_reactive <- bindCache(
     profile_gradient_table_reactive,
     input$model_dir,
-    lik_filters()
+    lik_data_filters()
   )
 
   # Calculate likelihood change from minimum
@@ -712,19 +805,18 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     p <- ggplot(
       data,
-      aes(x = scaler, y = change, colour = .data[[group_var]], shape = .data[[group_var]])
+      aes(x = scaler, y = change, colour = .data[[group_var]])
     ) +
       geom_line(aes(linewidth = .data[[group_var]] == "Total"), alpha = 0.7) +
-      geom_point(aes(size = .data[[group_var]] == "Total"), alpha = 0.8) +
+      geom_point(aes(size = .data[[group_var]] == "Total"), alpha = 0.8, shape = 16) +
       scale_color_manual(values = color_values, breaks = legend_breaks) +
       scale_linewidth_manual(values = c("TRUE" = 1.5, "FALSE" = 0.7), guide = "none") +
       scale_size_manual(values = c("TRUE" = 3.5, "FALSE" = 2), guide = "none") +
-      scale_shape_manual(values = rep(0:24, length.out = length(unique_groups))) +
       scale_x_continuous(
         labels = function(x) x / 1000,
         name = x_label
       ) +
-      labs(y = "Changes in Likelihood", colour = NULL, shape = group_var) +
+      labs(y = "Changes in Likelihood", colour = NULL) +
       theme_bw(base_size = 12) +
       theme(
         legend.position = "bottom",
@@ -747,8 +839,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           byrow = TRUE,
           override.aes = list(linewidth = 1.4, size = 3.2, alpha = 1),
           order = 1
-        ),
-        shape = "none"
+        )
       )
 
     if (isTRUE(split_by_region) && "region" %in% names(data)) {
@@ -828,8 +919,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
                                  allowed_fisheries = NULL, fallback_nonzero_only = FALSE) {
     if (length(scales) == 0) return(data.frame())
 
-    rows <- list()
-    for (sc in scenarios) {
+    get_fishery_rows_for_scenario <- function(sc) {
+      allowed_ids <- if (!is.null(allowed_fisheries)) as.character(allowed_fisheries[[sc]]) else character(0)
+      allowed_ids <- allowed_ids[!is.na(allowed_ids)]
+      cache_key <- paste(sc, slot_name, as.character(isTRUE(fallback_nonzero_only)), paste(sort(unique(allowed_ids)), collapse = "|"), sep = "::")
+      cached <- fishery_diag_cache$fishery_slot[[cache_key]]
+      if (!is.null(cached)) {
+        return(cached)
+      }
+
+      rows <- list()
+      fish_lookup <- get_fishery_lookup(sc, fishery_maps[[sc]])
       for (scl in scales) {
         lik <- profile_data[[sc]]$lik_out[[scl]]
         if (is.null(lik)) next
@@ -839,14 +939,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
         vec <- slot(lik, slot_name)
         fish_ids <- as.character(seq_along(vec))
         keep_idx <- rep(TRUE, length(fish_ids))
-        if (!is.null(allowed_fisheries)) {
-          allowed_ids <- as.character(allowed_fisheries[[sc]])
-          allowed_ids <- allowed_ids[!is.na(allowed_ids)]
-          if (length(allowed_ids) > 0) {
-            keep_idx <- fish_ids %in% allowed_ids
-          } else if (isTRUE(fallback_nonzero_only)) {
-            keep_idx <- is.finite(vec) & abs(vec) > 0
-          }
+        if (length(allowed_ids) > 0) {
+          keep_idx <- fish_ids %in% allowed_ids
         } else if (isTRUE(fallback_nonzero_only)) {
           keep_idx <- is.finite(vec) & abs(vec) > 0
         }
@@ -855,9 +949,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
         fish_ids <- fish_ids[keep_idx]
         if (length(vec) == 0) next
 
-        fish_map <- fishery_maps[[sc]]
-        fish_names <- sapply(fish_ids, function(fid) get_fishery_name(fid, fish_map))
-        fish_regions <- sapply(fish_ids, function(fid) get_fishery_region(fid, fish_map))
+        fish_names <- unname(fish_lookup$names[fish_ids])
+        fish_regions <- unname(fish_lookup$regions[fish_ids])
+        fish_names[is.na(fish_names) | !nzchar(fish_names)] <- fish_ids[is.na(fish_names) | !nzchar(fish_names)]
+        fish_regions[is.na(fish_regions) | !nzchar(fish_regions)] <- "Unknown"
 
         df <- data.frame(
           scenario = sc,
@@ -877,9 +972,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
         rows[[length(rows) + 1]] <- bind_rows(df, total_row)
       }
+      fishery_diag_cache$fishery_slot[[cache_key]] <- bind_rows(rows)
+      fishery_diag_cache$fishery_slot[[cache_key]]
     }
 
-    data <- bind_rows(rows)
+    data <- bind_rows(lapply(scenarios, get_fishery_rows_for_scenario))
     if (nrow(data) == 0) return(data)
 
     names(data)[names(data) == "group"] <- label
@@ -921,6 +1018,36 @@ mod_likelihood_server <- function(input, output, session, rv) {
     as.character(region_val)
   }
 
+  get_fishery_lookup <- function(scenario, fish_map) {
+    cached <- fishery_diag_cache$fishery_lookup[[scenario]]
+    if (!is.null(cached)) {
+      return(cached)
+    }
+
+    if (is.null(fish_map) || !"fishery" %in% names(fish_map)) {
+      lookup <- list(
+        names = setNames(character(0), character(0)),
+        regions = setNames(character(0), character(0))
+      )
+      fishery_diag_cache$fishery_lookup[[scenario]] <- lookup
+      return(lookup)
+    }
+
+    fish_ids <- as.character(fish_map$fishery)
+    fish_names <- setNames(
+      vapply(fish_ids, function(fid) get_fishery_name(fid, fish_map), character(1)),
+      fish_ids
+    )
+    fish_regions <- setNames(
+      vapply(fish_ids, function(fid) get_fishery_region(fid, fish_map), character(1)),
+      fish_ids
+    )
+
+    lookup <- list(names = fish_names, regions = fish_regions)
+    fishery_diag_cache$fishery_lookup[[scenario]] <- lookup
+    lookup
+  }
+
   extract_survey_index_like_from_raw <- function(raw_lines) {
     if (is.null(raw_lines) || length(raw_lines) == 0) return(numeric(0))
     header_idx <- which(grepl("^\\s*#\\s*Survey_index_like_by_fishery\\s*$", raw_lines))
@@ -945,8 +1072,19 @@ mod_likelihood_server <- function(input, output, session, rv) {
   build_cpue_fishery_data <- function(profile_data, scenarios, fishery_maps, scales, allowed_fisheries = NULL) {
     if (length(scales) == 0) return(data.frame())
 
-    rows <- list()
-    for (sc in scenarios) {
+    get_cpue_rows_for_scenario <- function(sc) {
+      allowed_ids <- if (!is.null(allowed_fisheries)) as.character(allowed_fisheries[[sc]]) else character(0)
+      allowed_ids <- allowed_ids[!is.na(allowed_ids)]
+      cache_key <- paste(sc, paste(sort(unique(allowed_ids)), collapse = "|"), sep = "::")
+      cached <- fishery_diag_cache$cpue[[cache_key]]
+      if (!is.null(cached)) {
+        return(cached)
+      }
+
+      rows <- list()
+      fish_map <- fishery_maps[[sc]]
+      fish_lookup <- get_fishery_lookup(sc, fish_map)
+
       for (scl in scales) {
         raw <- profile_data[[sc]]$lik_raw[[scl]]
         vec <- extract_survey_index_like_from_raw(raw)
@@ -956,20 +1094,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
         fish_ids <- as.character(seq_along(vec))
         keep_idx <- is.finite(vec) & abs(vec) > 0
-        if (!is.null(allowed_fisheries)) {
-          allowed_ids <- as.character(allowed_fisheries[[sc]])
-          allowed_ids <- allowed_ids[!is.na(allowed_ids)]
-          if (length(allowed_ids) > 0) {
-            keep_idx <- keep_idx & (fish_ids %in% allowed_ids)
-          }
+        if (length(allowed_ids) > 0) {
+          keep_idx <- keep_idx & (fish_ids %in% allowed_ids)
         }
         vec <- vec[keep_idx]
         fish_ids <- fish_ids[keep_idx]
         if (length(vec) == 0) next
 
-        fish_map <- fishery_maps[[sc]]
-        fish_names <- sapply(fish_ids, function(fid) get_fishery_name(fid, fish_map))
-        fish_regions <- sapply(fish_ids, function(fid) get_fishery_region(fid, fish_map))
+        fish_names <- unname(fish_lookup$names[fish_ids])
+        fish_regions <- unname(fish_lookup$regions[fish_ids])
+        fish_names[is.na(fish_names) | !nzchar(fish_names)] <- fish_ids[is.na(fish_names) | !nzchar(fish_names)]
+        fish_regions[is.na(fish_regions) | !nzchar(fish_regions)] <- "Unknown"
 
         df <- data.frame(
           scenario = sc,
@@ -989,9 +1124,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
         rows[[length(rows) + 1]] <- bind_rows(df, total_row)
       }
+
+      fishery_diag_cache$cpue[[cache_key]] <- bind_rows(rows)
+      fishery_diag_cache$cpue[[cache_key]]
     }
 
-    bind_rows(rows)
+    bind_rows(lapply(scenarios, get_cpue_rows_for_scenario))
   }
 
   build_tagging_data <- function(profile_data, scenarios, tag_out_list, scales) {
@@ -1058,10 +1196,27 @@ mod_likelihood_server <- function(input, output, session, rv) {
                              allowed_fisheries = NULL) {
     if (length(scales) == 0) return(data.frame())
 
-    rows <- list()
-    for (sc in scenarios) {
-      alk_summary <- get_alk_summary(age_out_list[[sc]])
-      if (is.null(alk_summary) || nrow(alk_summary) == 0) next
+    get_cal_rows_for_scenario <- function(sc) {
+      allowed_ids <- if (!is.null(allowed_fisheries)) as.character(allowed_fisheries[[sc]]) else character(0)
+      allowed_ids <- allowed_ids[!is.na(allowed_ids)]
+      cache_key <- paste(sc, by, paste(sort(unique(allowed_ids)), collapse = "|"), sep = "::")
+      cached <- fishery_diag_cache$cal[[cache_key]]
+      if (!is.null(cached)) {
+        return(cached)
+      }
+
+      alk_summary <- fishery_diag_cache$alk_summary[[sc]]
+      if (is.null(alk_summary)) {
+        alk_summary <- get_alk_summary(age_out_list[[sc]])
+        fishery_diag_cache$alk_summary[[sc]] <- alk_summary
+      }
+      if (is.null(alk_summary) || nrow(alk_summary) == 0) {
+        fishery_diag_cache$cal[[cache_key]] <- data.frame()
+        return(fishery_diag_cache$cal[[cache_key]])
+      }
+
+      rows <- list()
+      fish_lookup <- get_fishery_lookup(sc, fishery_maps[[sc]])
 
       for (scl in scales) {
         lik <- profile_data[[sc]]$lik_out[[scl]]
@@ -1079,19 +1234,16 @@ mod_likelihood_server <- function(input, output, session, rv) {
         df$scaler <- scaler_bio
 
         if (by == "fishery") {
-          if (!is.null(allowed_fisheries)) {
-            allowed_ids <- as.character(allowed_fisheries[[sc]])
-            allowed_ids <- allowed_ids[!is.na(allowed_ids)]
-            if (length(allowed_ids) > 0) {
-              df <- df[as.character(df$fishery) %in% allowed_ids, , drop = FALSE]
-            }
+          if (length(allowed_ids) > 0) {
+            df <- df[as.character(df$fishery) %in% allowed_ids, , drop = FALSE]
           }
           if (nrow(df) == 0) next
 
           fish_ids <- as.character(df$fishery)
-          fish_map <- fishery_maps[[sc]]
-          df$fishery <- sapply(fish_ids, function(fid) get_fishery_name(fid, fish_map))
-          df$region <- sapply(fish_ids, function(fid) get_fishery_region(fid, fish_map))
+          df$fishery <- unname(fish_lookup$names[fish_ids])
+          df$region <- unname(fish_lookup$regions[fish_ids])
+          df$fishery[is.na(df$fishery) | !nzchar(df$fishery)] <- fish_ids[is.na(df$fishery) | !nzchar(df$fishery)]
+          df$region[is.na(df$region) | !nzchar(df$region)] <- "Unknown"
 
           by_group <- df %>%
             group_by(fishery, scaler, scenario, region) %>%
@@ -1119,21 +1271,34 @@ mod_likelihood_server <- function(input, output, session, rv) {
           rows[[length(rows) + 1]] <- bind_rows(by_group, total_row)
         }
       }
+
+      fishery_diag_cache$cal[[cache_key]] <- bind_rows(rows)
+      fishery_diag_cache$cal[[cache_key]]
     }
 
-    bind_rows(rows)
+    bind_rows(lapply(scenarios, get_cal_rows_for_scenario))
   }
 
   build_jitter_data <- function(scenarios, par_out_list, jitter_pars_list) {
-    rows <- list()
-    for (sc in scenarios) {
+    get_jitter_diag_rows <- function(sc) {
+      cached <- jitter_data_cache$diagnostics[[sc]]
+      if (!is.null(cached)) {
+        return(cached)
+      }
+
       ref_par <- par_out_list[[sc]]
       jit_list <- jitter_pars_list[[sc]]
-      if (is.null(ref_par) || is.null(jit_list) || length(jit_list) == 0) next
+      if (is.null(ref_par) || is.null(jit_list) || length(jit_list) == 0) {
+        jitter_data_cache$diagnostics[[sc]] <- data.frame()
+        return(jitter_data_cache$diagnostics[[sc]])
+      }
 
       ref_obj <- suppressWarnings(as.numeric(ref_par@obj_fun))
       ref_grad <- suppressWarnings(as.numeric(ref_par@max_grad))
-      if (!is.finite(ref_obj)) next
+      if (!is.finite(ref_obj)) {
+        jitter_data_cache$diagnostics[[sc]] <- data.frame()
+        return(jitter_data_cache$diagnostics[[sc]])
+      }
 
       seeds <- names(jit_list)
       if (is.null(seeds) || any(is.na(seeds) | seeds == "")) {
@@ -1151,14 +1316,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
       obj_vals <- sapply(jit_list, extract_jitter_obj)
       grad_vals <- sapply(jit_list, extract_jitter_grad)
       keep <- is.finite(obj_vals) & is.finite(grad_vals)
-      if (!any(keep)) next
+      if (!any(keep)) {
+        jitter_data_cache$diagnostics[[sc]] <- data.frame()
+        return(jitter_data_cache$diagnostics[[sc]])
+      }
 
       obj_vals <- obj_vals[keep]
       grad_vals <- grad_vals[keep]
       seeds <- seeds[keep]
       pct_diff <- ((obj_vals - ref_obj) / abs(ref_obj)) * 100
 
-      rows[[length(rows) + 1]] <- data.frame(
+      jitter_data_cache$diagnostics[[sc]] <- data.frame(
         scenario = sc,
         seed = as.character(seeds),
         ref_obj = as.numeric(ref_obj),
@@ -1169,17 +1337,26 @@ mod_likelihood_server <- function(input, output, session, rv) {
         jitter_id = seq_along(obj_vals),
         stringsAsFactors = FALSE
       )
+      jitter_data_cache$diagnostics[[sc]]
     }
 
-    bind_rows(rows)
+    bind_rows(lapply(scenarios, get_jitter_diag_rows))
   }
 
   build_jitter_parameter_data <- function(scenarios, jitter_pars_list, view = "input", converged_only = FALSE) {
-    rows <- list()
+    get_jitter_parameter_rows <- function(sc) {
+      cache_key <- paste(sc, view, as.character(isTRUE(converged_only)), sep = "::")
+      cached <- jitter_param_cache$rows[[cache_key]]
+      if (!is.null(cached)) {
+        return(cached)
+      }
 
-    for (sc in scenarios) {
+      rows <- list()
       jit_list <- jitter_pars_list[[sc]]
-      if (is.null(jit_list) || length(jit_list) == 0) next
+      if (is.null(jit_list) || length(jit_list) == 0) {
+        jitter_param_cache$rows[[cache_key]] <- data.frame()
+        return(jitter_param_cache$rows[[cache_key]])
+      }
 
       seeds <- names(jit_list)
       if (is.null(seeds) || any(is.na(seeds) | seeds == "")) {
@@ -1217,9 +1394,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
         if (nrow(df) == 0) next
         rows[[length(rows) + 1]] <- df
       }
+
+      jitter_param_cache$rows[[cache_key]] <- bind_rows(rows)
+      jitter_param_cache$rows[[cache_key]]
     }
 
-    all_params <- bind_rows(rows)
+    all_params <- bind_rows(lapply(scenarios, get_jitter_parameter_rows))
     if (nrow(all_params) == 0) return(data.frame())
 
     ranked <- all_params %>%
@@ -1295,18 +1475,25 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }
 
   build_jitter_derived_data <- function(scenarios, rep_out_list, jitter_pars_list) {
-    rows <- list()
-    ref_rows <- list()
+    get_jitter_derived_rows <- function(sc) {
+      cached <- jitter_data_cache$derived[[sc]]
+      if (!is.null(cached)) {
+        return(cached)
+      }
 
-    for (sc in scenarios) {
       ref_metrics <- extract_reference_metrics_timeseries(rep_out_list[[sc]], sc)
       jit_list <- jitter_pars_list[[sc]]
-      if (is.null(ref_metrics) || is.null(jit_list) || length(jit_list) == 0) next
+      if (is.null(ref_metrics) || is.null(jit_list) || length(jit_list) == 0) {
+        jitter_data_cache$derived[[sc]] <- data.frame()
+        return(jitter_data_cache$derived[[sc]])
+      }
 
       seeds <- names(jit_list)
       if (is.null(seeds) || any(is.na(seeds) | seeds == "")) {
         seeds <- as.character(seq_along(jit_list))
       }
+
+      rows <- list()
 
       for (i in seq_along(jit_list)) {
         jit <- jit_list[[i]]
@@ -1329,7 +1516,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
         rows[[length(rows) + 1]] <- seed_df
       }
 
-      ref_rows[[length(ref_rows) + 1]] <- bind_rows(
+      value_rows <- bind_rows(rows)
+      if (nrow(value_rows) == 0) {
+        jitter_data_cache$derived[[sc]] <- data.frame()
+        return(jitter_data_cache$derived[[sc]])
+      }
+
+      ref_rows <- bind_rows(
         data.frame(
           scenario = sc,
           metric = "Depletion",
@@ -1345,29 +1538,33 @@ mod_likelihood_server <- function(input, output, session, rv) {
           stringsAsFactors = FALSE
         )
       )
+      if (is.null(ref_rows) || nrow(ref_rows) == 0) {
+        jitter_data_cache$derived[[sc]] <- data.frame()
+        return(jitter_data_cache$derived[[sc]])
+      }
+
+      value_long <- bind_rows(
+        value_rows %>%
+          transmute(scenario, seed, year, metric = "Depletion", value = depletion),
+        value_rows %>%
+          transmute(scenario, seed, year, metric = "Spawning Potential (1e3 MT)", value = spawning_potential)
+      ) %>%
+        filter(is.finite(value))
+
+      if (nrow(value_long) == 0) {
+        jitter_data_cache$derived[[sc]] <- data.frame()
+        return(jitter_data_cache$derived[[sc]])
+      }
+
+      jitter_data_cache$derived[[sc]] <- value_long %>%
+        left_join(ref_rows, by = c("scenario", "metric", "year")) %>%
+        mutate(
+          pct_change = 100 * (value - reference_value) / pmax(abs(reference_value), .Machine$double.eps)
+        )
+      jitter_data_cache$derived[[sc]]
     }
 
-    value_rows <- bind_rows(rows)
-    if (nrow(value_rows) == 0) return(data.frame())
-
-    ref_rows <- bind_rows(ref_rows)
-    if (is.null(ref_rows) || nrow(ref_rows) == 0) return(data.frame())
-
-    value_long <- bind_rows(
-      value_rows %>%
-        transmute(scenario, seed, year, metric = "Depletion", value = depletion),
-      value_rows %>%
-        transmute(scenario, seed, year, metric = "Spawning Potential (1e3 MT)", value = spawning_potential)
-    ) %>%
-      filter(is.finite(value))
-
-    if (nrow(value_long) == 0) return(data.frame())
-
-    value_long %>%
-      left_join(ref_rows, by = c("scenario", "metric", "year")) %>%
-      mutate(
-        pct_change = 100 * (value - reference_value) / pmax(abs(reference_value), .Machine$double.eps)
-      )
+    bind_rows(lapply(scenarios, get_jitter_derived_rows))
   }
   
   build_retro_data_for_scenario <- function(scenario, model_dir, rep_obj) {
@@ -1529,7 +1726,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }
 
   profile_data_reactive <- reactive({
-    filters <- lik_filters()
+    filters <- lik_data_filters()
     req(rv$data_loaded, filters, filters$scenarios)
 
     if (length(filters$scenarios) == 0) {
@@ -1812,12 +2009,21 @@ mod_likelihood_server <- function(input, output, session, rv) {
     profile_data_reactive,
     rv$data_loaded,
     input$model_dir,
-    lik_filters()
+    lik_data_filters()
   )
 
   observeEvent(profile_data_reactive(), {
     info <- profile_data_reactive()
     plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else "piner"
+    if (identical(plot_kind, "jitter_params") && nrow(info$data) > 0) {
+      current_window <- isolate(input$lik_jitter_param_window)
+      if (is.null(current_window) || length(current_window) != 2) current_window <- c(1, 100)
+      current_window <- c(max(1, min(current_window[1], 100)), max(1, min(current_window[2], 100)))
+      if (current_window[1] > current_window[2]) current_window <- sort(current_window)
+      if (!identical(input$lik_jitter_param_window, current_window)) {
+        updateSliderInput(session, "lik_jitter_param_window", min = 1, max = 100, value = current_window)
+      }
+    }
     if (is.null(info$group_col) || nrow(info$data) == 0 || plot_kind %in% c("jitter", "jitter_params", "jitter_derived", "retro", "hessian")) {
       last_group_key(NULL)
       updatePickerInput(session, "lik_groups", choices = character(0), selected = character(0))
@@ -1891,38 +2097,42 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (identical(plot_kind, "jitter")) {
       plot_df <- data %>%
         mutate(
+          max_grad = ifelse(max_grad > 0, max_grad, NA_real_),
           is_outlier = pct_diff < -5 | pct_diff > 20,
           outlier_direction = case_when(
             pct_diff < -5 ~ "below",
             pct_diff > 20 ~ "above",
             TRUE ~ "none"
+          ),
+          plot_pct_diff = case_when(
+            pct_diff < -5 ~ -4.5,
+            pct_diff > 20 ~ 19.5,
+            TRUE ~ pct_diff
           )
         )
 
-      # Log-scale x requires positive gradients.
-      plot_df <- plot_df %>% mutate(max_grad = ifelse(max_grad > 0, max_grad, NA_real_))
       ref_df <- plot_df %>%
         group_by(scenario) %>%
         summarise(ref_grad = first(ref_grad), .groups = "drop") %>%
         mutate(ref_grad = ifelse(ref_grad > 0, ref_grad, NA_real_))
 
-      outliers_df <- plot_df %>% filter(is_outlier)
-      non_outlier <- plot_df %>% filter(!is_outlier)
+      point_df <- plot_df %>% filter(is.finite(max_grad), is.finite(plot_pct_diff))
+      outlier_df <- point_df %>% filter(is_outlier)
 
       return(
-        ggplot(non_outlier, aes(x = max_grad, y = pct_diff)) +
-          geom_point(aes(color = jitter_id), size = 3, alpha = 0.7, na.rm = TRUE) +
+        ggplot(point_df, aes(x = max_grad, y = plot_pct_diff, color = jitter_id)) +
+          geom_point(size = 2.3, alpha = 0.7, na.rm = TRUE) +
           geom_point(
-            data = outliers_df %>% filter(outlier_direction == "above"),
-            aes(x = max_grad, y = 19.5),
+            data = outlier_df %>% filter(outlier_direction == "above"),
+            aes(x = max_grad, y = plot_pct_diff),
             inherit.aes = FALSE,
-            color = "orange", size = 3, shape = 24, fill = "orange", na.rm = TRUE
+            color = "#d97904", size = 2.8, shape = 24, fill = "#d97904", na.rm = TRUE
           ) +
           geom_point(
-            data = outliers_df %>% filter(outlier_direction == "below"),
-            aes(x = max_grad, y = -4.5),
+            data = outlier_df %>% filter(outlier_direction == "below"),
+            aes(x = max_grad, y = plot_pct_diff),
             inherit.aes = FALSE,
-            color = "orange", size = 3, shape = 25, fill = "orange", na.rm = TRUE
+            color = "#d97904", size = 2.8, shape = 25, fill = "#d97904", na.rm = TRUE
           ) +
           geom_point(
             data = ref_df,
@@ -1933,9 +2143,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
           geom_hline(yintercept = 0, linetype = "dashed", color = "red", linewidth = 0.8, alpha = 0.5) +
           geom_vline(xintercept = 0.001, linetype = "dotted", color = "gray50", linewidth = 0.6) +
           scale_x_log10() +
+          scale_color_viridis_c(option = "D", guide = "none") +
           coord_cartesian(ylim = c(-5, 20)) +
           facet_wrap(~ scenario, scales = "free_x", ncol = facet_ncol) +
-          scale_color_viridis_c(option = "D", name = "Jitter ID") +
           labs(
             x = "Maximum Gradient (log scale)",
             y = "% Difference in Objective Function",
@@ -1944,7 +2154,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           ) +
           theme_bw(base_size = 12) +
           theme(
-            legend.position = "right",
+            legend.position = "none",
             strip.text = element_text(face = "bold"),
             strip.background = element_rect(fill = "lightblue"),
             panel.grid.minor = element_blank()
@@ -1954,12 +2164,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     if (identical(plot_kind, "jitter_params")) {
       param_view <- if (is.null(filters$jitter_param_view)) "input" else filters$jitter_param_view
+      param_scope <- if (is.null(filters$jitter_param_scope)) "top" else filters$jitter_param_scope
+      param_window <- if (is.null(filters$jitter_param_window)) c(1L, 100L) else as.integer(filters$jitter_param_window)
       converged_only <- isTRUE(filters$jitter_final_converged_only)
       metric <- if (is.null(filters$jitter_param_metric)) "pct_change" else filters$jitter_param_metric
+      range_mode <- if (is.null(filters$jitter_param_range)) "focused" else filters$jitter_param_range
 
-      selected_params <- data %>%
+      ranked_params <- data %>%
         distinct(scenario, param_key, Index, Var_name, family, median_abs_pct_change, mean_abs_pct_change) %>%
-        filter(is.finite(median_abs_pct_change)) %>%
+        filter(is.finite(median_abs_pct_change))
+
+      selected_params <- ranked_params %>%
         group_by(scenario, family) %>%
         arrange(dplyr::desc(median_abs_pct_change), dplyr::desc(mean_abs_pct_change), Var_name, Index, .by_group = TRUE) %>%
         slice_head(n = 1) %>%
@@ -1970,9 +2185,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         summarise(family_count = dplyr::n(), .groups = "drop") %>%
         mutate(extra_slots = pmax(20 - family_count, 0L))
 
-      remaining_slots <- data %>%
-        distinct(scenario, param_key, Index, Var_name, family, median_abs_pct_change, mean_abs_pct_change) %>%
-        filter(is.finite(median_abs_pct_change)) %>%
+      remaining_slots <- ranked_params %>%
         anti_join(selected_params %>% select(scenario, param_key), by = c("scenario", "param_key")) %>%
         left_join(scenario_slots, by = "scenario") %>%
         group_by(scenario) %>%
@@ -1987,6 +2200,23 @@ mod_likelihood_server <- function(input, output, session, rv) {
         arrange(dplyr::desc(median_abs_pct_change), dplyr::desc(mean_abs_pct_change), Var_name, Index, .by_group = TRUE) %>%
         mutate(plot_rank = row_number()) %>%
         ungroup()
+
+      if (identical(param_scope, "all")) {
+        window_start <- max(1L, min(param_window[1], 100L))
+        window_end <- max(window_start, min(param_window[2], 100L))
+        selected_params <- ranked_params %>%
+          group_by(scenario) %>%
+          arrange(dplyr::desc(median_abs_pct_change), dplyr::desc(mean_abs_pct_change), Var_name, Index, .by_group = TRUE) %>%
+          mutate(
+            plot_rank = row_number(),
+            n_params = dplyr::n(),
+            window_rank_min = pmax(1L, floor(((window_start - 1) / 100) * n_params) + 1L),
+            window_rank_max = pmax(window_rank_min, ceiling((window_end / 100) * n_params))
+          ) %>%
+          ungroup() %>%
+          filter(plot_rank >= window_rank_min, plot_rank <= window_rank_max) %>%
+          select(-n_params, -window_rank_min, -window_rank_max)
+      }
 
       plot_df <- data %>%
         inner_join(selected_params %>% select(scenario, param_key, plot_rank), by = c("scenario", "param_key")) %>%
@@ -2008,11 +2238,52 @@ mod_likelihood_server <- function(input, output, session, rv) {
         group_by(scenario, param_key, param_label) %>%
         summarise(original_value = first(original_value), .groups = "drop")
 
+      plot_limit <- NULL
+      if (metric %in% c("delta", "pct_change") && identical(range_mode, "focused")) {
+        finite_vals <- plot_df$plot_value[is.finite(plot_df$plot_value)]
+        if (length(finite_vals) > 0) {
+          robust_limit <- suppressWarnings(as.numeric(stats::quantile(abs(finite_vals), probs = 0.95, na.rm = TRUE)))
+          if (is.finite(robust_limit) && robust_limit > 0) {
+            plot_limit <- c(-1.1 * robust_limit, 1.1 * robust_limit)
+            if (identical(metric, "pct_change")) {
+              plot_limit <- c(max(plot_limit[1], -100), min(plot_limit[2], 100))
+            }
+          }
+        }
+      }
+
       param_levels <- selected_params %>%
         arrange(scenario, plot_rank, Var_name, Index) %>%
         pull(param_key)
       plot_df$param_key <- factor(plot_df$param_key, levels = unique(param_levels))
       original_df$param_key <- factor(original_df$param_key, levels = unique(param_levels))
+      summary_df <- plot_df %>%
+        group_by(scenario, param_key, param_label) %>%
+        summarise(
+          q10 = stats::quantile(plot_value, 0.1, na.rm = TRUE),
+          q25 = stats::quantile(plot_value, 0.25, na.rm = TRUE),
+          q50 = stats::quantile(plot_value, 0.5, na.rm = TRUE),
+          q75 = stats::quantile(plot_value, 0.75, na.rm = TRUE),
+          q90 = stats::quantile(plot_value, 0.9, na.rm = TRUE),
+          .groups = "drop"
+        )
+      summary_df$param_key <- factor(summary_df$param_key, levels = unique(param_levels))
+      label_map <- plot_df %>%
+        distinct(param_key, param_label) %>%
+        mutate(param_key = as.character(param_key))
+      if (identical(param_scope, "all")) {
+        sparse_keys <- selected_params %>%
+          distinct(scenario, param_key, plot_rank) %>%
+          group_by(scenario) %>%
+          arrange(plot_rank, .by_group = TRUE) %>%
+          mutate(show_label = plot_rank %in% unique(round(seq(1, max(plot_rank), length.out = min(10, max(plot_rank)))))) %>%
+          ungroup() %>%
+          filter(show_label) %>%
+          pull(param_key) %>%
+          as.character()
+        label_map <- label_map %>%
+          mutate(param_label = ifelse(param_key %in% sparse_keys, param_label, ""))
+      }
 
       y_label <- case_when(
         metric == "value" ~ "Parameter value",
@@ -2041,8 +2312,54 @@ mod_likelihood_server <- function(input, output, session, rv) {
         TRUE ~ "About 20 parameters per scenario from jittered input pars. Red diamond = 0% change"
       )
 
-      return(
-        ggplot(plot_df, aes(x = param_key, y = plot_value)) +
+      if (identical(param_scope, "all")) {
+        plot_subtitle <- gsub(
+          "About 20 parameters per scenario",
+          paste0("Showing parameter percentile window ", window_start, "-", window_end, "% per scenario"),
+          plot_subtitle,
+          fixed = TRUE
+        )
+      }
+
+      if (metric %in% c("delta", "pct_change")) {
+        plot_subtitle <- paste0(
+          plot_subtitle,
+          if (identical(range_mode, "focused")) " Showing focused range." else " Showing full range."
+        )
+      }
+
+      if (identical(param_scope, "all")) {
+        p <- ggplot(summary_df, aes(x = param_key, y = q50)) +
+          geom_linerange(
+            aes(ymin = q10, ymax = q90),
+            colour = "#9fb9c9",
+            linewidth = 0.8,
+            na.rm = TRUE
+          ) +
+          geom_linerange(
+            aes(ymin = q25, ymax = q75),
+            colour = "#2b6c8a",
+            linewidth = 2.2,
+            na.rm = TRUE
+          ) +
+          geom_point(
+            colour = "#1f4e79",
+            size = 1.4,
+            na.rm = TRUE
+          ) +
+          geom_point(
+            data = original_df,
+            aes(x = param_key, y = original_value),
+            inherit.aes = FALSE,
+            color = "#d62728",
+            fill = "#d62728",
+            shape = 23,
+            size = 2.6,
+            stroke = 0.4,
+            na.rm = TRUE
+          )
+      } else {
+        p <- ggplot(plot_df, aes(x = param_key, y = plot_value)) +
           geom_boxplot(
             fill = "#9ecae1",
             color = "#2b6c8a",
@@ -2067,31 +2384,38 @@ mod_likelihood_server <- function(input, output, session, rv) {
             size = 2.8,
             stroke = 0.4,
             na.rm = TRUE
-          ) +
-          facet_wrap(~ scenario, scales = "free", ncol = facet_ncol) +
-          scale_x_discrete(labels = function(x) {
-            lab_df <- unique(plot_df[, c("param_key", "param_label")])
-            lab_map <- setNames(as.character(lab_df$param_label), as.character(lab_df$param_key))
-            unname(lab_map[as.character(x)])
-          }) +
-          labs(
-            x = NULL,
-            y = y_label,
-            title = plot_title,
-            subtitle = plot_subtitle
-          ) +
-          theme_bw(base_size = 11) +
-          theme(
-            strip.text = element_text(face = "bold"),
-            strip.background = element_rect(fill = "#d9edf7"),
-            axis.text.x = element_text(size = 7),
-            axis.text.y = element_text(size = 9, face = "bold", colour = "#222222", lineheight = 0.95),
-            axis.title.y = element_text(margin = margin(r = 10)),
-            plot.margin = margin(5.5, 10, 5.5, 14),
-            panel.grid.minor = element_blank()
-          ) +
-          coord_flip()
-      )
+          )
+      }
+
+      p <- p +
+        facet_wrap(~ scenario, scales = "free", ncol = facet_ncol) +
+        scale_x_discrete(labels = function(x) {
+          lab_map <- setNames(as.character(label_map$param_label), as.character(label_map$param_key))
+          unname(lab_map[as.character(x)])
+        }) +
+        labs(
+          x = NULL,
+          y = y_label,
+          title = plot_title,
+          subtitle = plot_subtitle
+        ) +
+        theme_bw(base_size = 11) +
+        theme(
+          strip.text = element_text(face = "bold"),
+          strip.background = element_rect(fill = "#d9edf7"),
+          axis.text.x = element_text(size = 7),
+          axis.text.y = element_text(
+            size = if (identical(param_scope, "all")) 8 else 9,
+            face = "bold",
+            colour = "#222222",
+            lineheight = 0.95
+          ),
+          axis.title.y = element_text(margin = margin(r = 10)),
+          plot.margin = margin(5.5, 10, 5.5, 14),
+          panel.grid.minor = element_blank()
+        )
+
+      return(p + coord_flip(ylim = plot_limit))
     }
 
     if (identical(plot_kind, "jitter_derived")) {
@@ -2265,8 +2589,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
   })
   observeEvent(list(input$live_update_plots, input$lik_scenarios, input$lik_profile_type,
                     input$lik_groups, input$lik_regions, input$lik_split_by_region, input$lik_facet_ncol,
-                    input$lik_jitter_param_view, input$lik_jitter_final_converged_only,
-                    input$lik_jitter_param_metric), {
+                    input$lik_jitter_param_view, input$lik_jitter_param_scope, input$lik_jitter_param_window,
+                    input$lik_jitter_final_converged_only,
+                    input$lik_jitter_param_metric, input$lik_jitter_param_range), {
     req(rv$data_loaded)
     if (!isTRUE(input$live_update_plots)) return()
     if (length(input$lik_scenarios) == 0) return()
