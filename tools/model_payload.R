@@ -11,6 +11,7 @@ mp_detect_jitter_run_state <- function(seed_dir,
                                        output_par_exists,
                                        obj_fun = NA_real_,
                                        max_grad = NA_real_,
+                                       exit_status = NA_integer_,
                                        max_grad_converged_threshold = 1) {
   log_file <- file.path(seed_dir, "mfcl_log.txt")
   error_file <- file.path(seed_dir, "error.log")
@@ -24,12 +25,17 @@ mp_detect_jitter_run_state <- function(seed_dir,
     ignore.case = TRUE
   )
 
-  run_completed <- isTRUE(output_par_exists) && is.finite(obj_fun) && is.finite(max_grad)
+  has_bad_exit_status <- is.finite(exit_status) && !identical(as.integer(exit_status), 0L)
+  run_completed <- isTRUE(output_par_exists) &&
+    is.finite(obj_fun) &&
+    is.finite(max_grad) &&
+    !has_fatal_log &&
+    !has_bad_exit_status
   converged <- isTRUE(run_completed) && abs(max_grad) <= max_grad_converged_threshold
 
   run_status <- if (run_completed) {
     "completed"
-  } else if (has_fatal_log) {
+  } else if (has_fatal_log || has_bad_exit_status) {
     "failed"
   } else if (length(log_lines) > 0) {
     "incomplete"
@@ -47,6 +53,8 @@ mp_detect_jitter_run_state <- function(seed_dir,
 
   failure_reason <- if (run_completed) {
     NA_character_
+  } else if (has_bad_exit_status) {
+    sprintf("MFCL exited with status %s", as.integer(exit_status))
   } else if (nzchar(log_text)) {
     fatal_hits <- grep(
       "Floating point exception|SIGFPE|segmentation fault|core dumped|Error trying to open|had status [1-9][0-9]*",
@@ -64,6 +72,7 @@ mp_detect_jitter_run_state <- function(seed_dir,
     run_completed = run_completed,
     convergence_status = convergence_status,
     converged = converged,
+    exit_status = if (is.finite(exit_status)) as.integer(exit_status) else NA_integer_,
     max_grad_converged_threshold = max_grad_converged_threshold,
     failure_reason = failure_reason,
     log_file_exists = file.exists(log_file),
@@ -382,14 +391,15 @@ mp_build_jitter_payload <- function(seed_dir, seed = NA_integer_) {
 
   parameter_changes <- mp_read_jitter_parameter_changes(seed_dir, seed)
   mfcl_run <- mp_safe(info_out$mfcl_run)
+  exit_status <- suppressWarnings(as.integer(mp_safe(mfcl_run$exit_status)))
   run_checks <- mp_detect_jitter_run_state(
     seed_dir = seed_dir,
     output_par_exists = out_exists,
     obj_fun = obj_fun,
-    max_grad = max_grad
+    max_grad = max_grad,
+    exit_status = exit_status
   )
   run_status <- if (!is.null(mfcl_run$run_status)) mfcl_run$run_status else run_checks$run_status
-  exit_status <- suppressWarnings(as.integer(mp_safe(mfcl_run$exit_status)))
 
   list(
     version = "v1",
