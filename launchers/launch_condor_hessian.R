@@ -26,7 +26,7 @@ setwd(here::here())
 
 dir="develop/Feb_6_hessian"
 
-source("configs/set_model.R") 
+source("configs/set_model.R", chdir = TRUE) 
 
 all_split <- lapply(models, function(x) x$nsplit)
 

@@ -3,10 +3,13 @@
   async_root <- file.path(tempdir(), "shiny_launcher_async")
   if (!dir.exists(async_root)) dir.create(async_root, recursive = TRUE)
   
-  if (requireNamespace("future", quietly = TRUE)) {
+  async_available <- requireNamespace("future", quietly = TRUE)
+  rv$async_available <- async_available
+
+  if (isTRUE(async_available)) {
     future::plan(future::multisession, workers = max(1, parallel::detectCores() - 2))
   }
-  
+
   async_task_init <- function(task) {
     id <- paste0(task, "_", format(Sys.time(), "%Y%m%d_%H%M%S"), "_", sample(1000:9999, 1))
     task_dir <- file.path(async_root, id)
@@ -473,9 +476,13 @@
   }
   
   start_async_launch <- function(params) {
+    if (!isTRUE(rv$async_available)) {
+      showNotification("Package 'future' not available; using blocking launch path.", type = "warning", duration = 4)
+      return(FALSE)
+    }
     if (isTRUE(rv$async$launch$running)) {
       showNotification("Launch already running", type = "warning")
-      return()
+      return(TRUE)
     }
     task <- async_task_init("launch")
     rv$async$launch <- list(
@@ -505,12 +512,17 @@
       ),
       globals = list(run_launch_task = run_launch_task, params = params, log_path = task$log_path, status_path = task$status_path)
     )
+    TRUE
   }
   
   start_async_retrieve <- function(params) {
+    if (!isTRUE(rv$async_available)) {
+      showNotification("Package 'future' not available; using blocking retrieve path.", type = "warning", duration = 4)
+      return(FALSE)
+    }
     if (isTRUE(rv$async$retrieve$running)) {
       showNotification("Retrieve already running", type = "warning")
-      return()
+      return(TRUE)
     }
     task <- async_task_init("retrieve")
     rv$async$retrieve <- list(
@@ -543,6 +555,7 @@
       ),
       globals = list(run_retrieve_task = run_retrieve_task, params = params, log_path = task$log_path, status_path = task$status_path)
     )
+    TRUE
   }
   
   observe({

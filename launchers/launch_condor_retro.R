@@ -26,7 +26,7 @@ setwd(here::here())
 
 dir="develop/Feb_6_retro"
 
-source("configs/set_model.R") 
+source("configs/set_model.R", chdir = TRUE) 
 
 all_retro <- lapply(models, function(x) x$retro_peels)
 

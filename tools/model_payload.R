@@ -384,6 +384,35 @@ mp_read_jitter_parameter_changes <- function(seed_dir, seed = NA_integer_) {
   out
 }
 
+mp_extract_jitter_derived_quantities <- function(seed_dir, seed = NA_integer_) {
+  rep_file <- mp_final_rep(seed_dir)
+  if (is.null(rep_file) || !file.exists(rep_file)) {
+    return(NULL)
+  }
+
+  rep_obj <- mp_safe(read.MFCLRep(rep_file))
+  if (is.null(rep_obj)) {
+    return(NULL)
+  }
+
+  ts_df <- mp_extract_rep_timeseries(rep_obj, scenario = NA_character_, peel = 0L)
+  if (is.null(ts_df) || nrow(ts_df) == 0) {
+    return(NULL)
+  }
+
+  terminal_year <- max(ts_df$year, na.rm = TRUE)
+  terminal <- ts_df[ts_df$year == terminal_year, , drop = FALSE]
+  terminal <- terminal[1, , drop = FALSE]
+
+  data.frame(
+    seed = ifelse(is.na(seed), suppressWarnings(as.integer(sub(".*?(\\d+)$", "\\1", basename(seed_dir)))), seed),
+    year = suppressWarnings(as.numeric(terminal$year)),
+    depletion = suppressWarnings(as.numeric(terminal$depletion)),
+    spawning_potential = suppressWarnings(as.numeric(terminal$spawning_potential)),
+    stringsAsFactors = FALSE
+  )
+}
+
 mp_build_jitter_payload <- function(seed_dir, seed = NA_integer_) {
   info_file <- file.path(seed_dir, "jitter_info.rds")
   info_out <- if (file.exists(info_file)) mp_safe(readRDS(info_file)) else NULL
@@ -401,6 +430,7 @@ mp_build_jitter_payload <- function(seed_dir, seed = NA_integer_) {
   max_grad <- if (!is.null(out_obj)) suppressWarnings(as.numeric(out_obj@max_grad)) else NA_real_
 
   parameter_changes <- mp_read_jitter_parameter_changes(seed_dir, seed)
+  derived_quantities <- mp_extract_jitter_derived_quantities(seed_dir, seed_val)
   mfcl_run <- mp_safe(info_out$mfcl_run)
   exit_status <- suppressWarnings(as.integer(mp_safe(mfcl_run$exit_status)))
   run_checks <- mp_detect_jitter_run_state(
@@ -429,6 +459,7 @@ mp_build_jitter_payload <- function(seed_dir, seed = NA_integer_) {
     max_grad = max_grad,
     output_par = if (out_exists) basename(out_par) else mp_safe(info_out$output_par),
     parameter_changes = parameter_changes,
+    derived_quantities = derived_quantities,
     mfcl_run = mfcl_run,
     run_checks = run_checks
   )

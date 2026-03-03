@@ -17,3 +17,7 @@ launchers/shiny_launcher/.launcher_settings.rds
 launchers/configs/
 configs/.last_settings.rds
 *.DS_Store
+.chrome-shiny-launcher/
+.chrome-shiny-plot/
+desktop/
+scripts/

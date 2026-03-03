@@ -25,7 +25,7 @@ setwd(here::here())
 
 dir="quick/Feb_6_model"
 
-source("configs/set_model.R") 
+source("configs/set_model.R", chdir = TRUE) 
 
 for(model_name in names(models)) {
 

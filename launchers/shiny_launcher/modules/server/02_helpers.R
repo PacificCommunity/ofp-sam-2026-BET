@@ -146,7 +146,7 @@
                                        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
       } else {
         env <- new.env()
-        source(found_path, local = env)
+        source(found_path, local = env, chdir = TRUE)
         
         # Extract summary if defined in the script
         if (exists("summary", envir = env)) {

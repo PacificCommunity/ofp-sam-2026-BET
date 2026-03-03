@@ -40,6 +40,8 @@ mod_likelihood_ui <- function() {
             "Likelihood: CAL by Fishery" = "cal_fishery",
             "Likelihood: CAL by Year" = "cal_year",
             "Jitter Diagnostics" = "jitter",
+            "Jitter Parameters" = "jitter_params",
+            "Jitter Derived Quantities" = "jitter_derived",
             "Retrospective: Depletion & Spawning Potential" = "retro",
             "Hessian Diagnostics (PDH / SPD)" = "hessian"
           ),
@@ -462,7 +464,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     req(filters)
 
     type <- filters$profile_type
-    if (type %in% c("jitter", "retro", "hessian")) return(NULL)
+    if (type %in% c("jitter", "jitter_params", "jitter_derived", "retro", "hessian")) return(NULL)
 
     profile_data <- profile_outputs_reactive()
     if (length(profile_data) == 0) return(NULL)
@@ -510,7 +512,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     req(filters)
 
     type <- filters$profile_type
-    if (type %in% c("jitter", "retro", "hessian")) return(NULL)
+    if (type %in% c("jitter", "jitter_params", "jitter_derived", "retro", "hessian")) return(NULL)
 
     profile_data <- profile_outputs_reactive()
     if (length(profile_data) == 0) return(NULL)
@@ -954,6 +956,184 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     bind_rows(rows)
   }
+
+  build_jitter_parameter_data <- function(scenarios, jitter_pars_list, top_n = 24) {
+    rows <- list()
+
+    for (sc in scenarios) {
+      jit_list <- jitter_pars_list[[sc]]
+      if (is.null(jit_list) || length(jit_list) == 0) next
+
+      seeds <- names(jit_list)
+      if (is.null(seeds) || any(is.na(seeds) | seeds == "")) {
+        seeds <- as.character(seq_along(jit_list))
+      }
+
+      for (i in seq_along(jit_list)) {
+        jit <- jit_list[[i]]
+        param_changes <- if (is.list(jit) && !is.null(jit$parameter_changes)) jit$parameter_changes else NULL
+        labels_df <- if (is.list(param_changes) && !is.null(param_changes$labels)) param_changes$labels else NULL
+        if (is.null(labels_df) || nrow(labels_df) == 0) next
+
+        df <- labels_df %>%
+          mutate(
+            scenario = sc,
+            seed = as.character(seeds[[i]]),
+            before = suppressWarnings(as.numeric(before)),
+            after = suppressWarnings(as.numeric(after)),
+            delta = suppressWarnings(as.numeric(delta)),
+            pct_change = suppressWarnings(as.numeric(pct_change)),
+            abs_pct_change = suppressWarnings(as.numeric(abs_pct_change)),
+            family = ifelse(is.na(family) | !nzchar(family), "unclassified", family)
+          ) %>%
+          filter(is.finite(before), is.finite(after))
+
+        if (nrow(df) == 0) next
+        rows[[length(rows) + 1]] <- df
+      }
+    }
+
+    all_params <- bind_rows(rows)
+    if (nrow(all_params) == 0) return(data.frame())
+
+    ranked <- all_params %>%
+      group_by(scenario, Var_name, family) %>%
+      summarise(
+        before = first(before),
+        median_abs_pct_change = median(abs_pct_change, na.rm = TRUE),
+        mean_abs_pct_change = mean(abs_pct_change, na.rm = TRUE),
+        n_seed = n_distinct(seed),
+        .groups = "drop"
+      ) %>%
+      arrange(scenario, desc(median_abs_pct_change), desc(mean_abs_pct_change), Var_name) %>%
+      group_by(scenario) %>%
+      slice_head(n = top_n) %>%
+      ungroup() %>%
+      mutate(param_key = paste(scenario, Var_name, sep = "::"))
+
+    plot_df <- all_params %>%
+      inner_join(ranked %>% select(scenario, Var_name, param_key, median_abs_pct_change, mean_abs_pct_change, n_seed),
+                 by = c("scenario", "Var_name")) %>%
+      mutate(
+        param_label = paste0(Var_name, " [", family, "]")
+      )
+
+    param_levels <- ranked %>%
+      arrange(scenario, median_abs_pct_change, mean_abs_pct_change, Var_name) %>%
+      pull(param_key)
+    plot_df$param_key <- factor(plot_df$param_key, levels = unique(param_levels))
+
+    plot_df
+  }
+
+  extract_terminal_reference_metrics <- function(rep_obj, scenario) {
+    if (is.null(rep_obj)) return(NULL)
+
+    bio_fish <- safe_array_to_df(rep_obj@adultBiomass) %>%
+      mutate(year = suppressWarnings(as.numeric(year)), season = suppressWarnings(as.numeric(season)), data = suppressWarnings(as.numeric(data))) %>%
+      filter(is.finite(year), is.finite(season), is.finite(data)) %>%
+      group_by(year, season) %>%
+      summarise(bio_fish = sum(data), .groups = "drop")
+
+    bio_nofish <- safe_array_to_df(rep_obj@adultBiomass_nofish) %>%
+      mutate(year = suppressWarnings(as.numeric(year)), season = suppressWarnings(as.numeric(season)), data = suppressWarnings(as.numeric(data))) %>%
+      filter(is.finite(year), is.finite(season), is.finite(data)) %>%
+      group_by(year, season) %>%
+      summarise(bio_nofish = sum(data), .groups = "drop")
+
+    merged <- bio_fish %>%
+      inner_join(bio_nofish, by = c("year", "season")) %>%
+      mutate(depletion = bio_fish / pmax(bio_nofish, .Machine$double.eps)) %>%
+      group_by(year) %>%
+      summarise(
+        depletion = mean(depletion, na.rm = TRUE),
+        spawning_potential = mean(bio_fish, na.rm = TRUE) / 1e3,
+        .groups = "drop"
+      )
+
+    if (nrow(merged) == 0) return(NULL)
+    terminal_year <- max(merged$year, na.rm = TRUE)
+    merged %>%
+      filter(year == terminal_year) %>%
+      slice(1) %>%
+      mutate(scenario = scenario)
+  }
+
+  build_jitter_derived_data <- function(scenarios, rep_out_list, jitter_pars_list) {
+    rows <- list()
+    ref_rows <- list()
+
+    for (sc in scenarios) {
+      ref_metrics <- extract_terminal_reference_metrics(rep_out_list[[sc]], sc)
+      jit_list <- jitter_pars_list[[sc]]
+      if (is.null(ref_metrics) || is.null(jit_list) || length(jit_list) == 0) next
+
+      seeds <- names(jit_list)
+      if (is.null(seeds) || any(is.na(seeds) | seeds == "")) {
+        seeds <- as.character(seq_along(jit_list))
+      }
+
+      for (i in seq_along(jit_list)) {
+        jit <- jit_list[[i]]
+        derived <- if (is.list(jit) && !is.null(jit$derived_quantities)) jit$derived_quantities else NULL
+        if (is.null(derived) || !is.data.frame(derived) || nrow(derived) == 0) next
+
+        seed_df <- derived %>%
+          mutate(
+            scenario = sc,
+            seed = as.character(seeds[[i]])
+          ) %>%
+          transmute(
+            scenario = scenario,
+            seed = seed,
+            year = suppressWarnings(as.numeric(year)),
+            depletion = suppressWarnings(as.numeric(depletion)),
+            spawning_potential = suppressWarnings(as.numeric(spawning_potential))
+          )
+
+        rows[[length(rows) + 1]] <- seed_df
+      }
+
+      ref_rows[[length(ref_rows) + 1]] <- bind_rows(
+        data.frame(
+          scenario = sc,
+          metric = "Depletion",
+          reference_value = suppressWarnings(as.numeric(ref_metrics$depletion)),
+          year = suppressWarnings(as.numeric(ref_metrics$year)),
+          stringsAsFactors = FALSE
+        ),
+        data.frame(
+          scenario = sc,
+          metric = "Spawning Potential (1e3 MT)",
+          reference_value = suppressWarnings(as.numeric(ref_metrics$spawning_potential)),
+          year = suppressWarnings(as.numeric(ref_metrics$year)),
+          stringsAsFactors = FALSE
+        )
+      )
+    }
+
+    value_rows <- bind_rows(rows)
+    if (nrow(value_rows) == 0) return(data.frame())
+
+    ref_rows <- bind_rows(ref_rows)
+    if (is.null(ref_rows) || nrow(ref_rows) == 0) return(data.frame())
+
+    value_long <- bind_rows(
+      value_rows %>%
+        transmute(scenario, seed, year, metric = "Depletion", value = depletion),
+      value_rows %>%
+        transmute(scenario, seed, year, metric = "Spawning Potential (1e3 MT)", value = spawning_potential)
+    ) %>%
+      filter(is.finite(value))
+
+    if (nrow(value_long) == 0) return(data.frame())
+
+    value_long %>%
+      left_join(ref_rows, by = c("scenario", "metric", "year")) %>%
+      mutate(
+        pct_change = 100 * (value - reference_value) / pmax(abs(reference_value), .Machine$double.eps)
+      )
+  }
   
   build_retro_data_for_scenario <- function(scenario, model_dir, rep_obj) {
     extract_retro_metrics <- function(rep_obj, scenario, peel) {
@@ -1130,6 +1310,22 @@ mod_likelihood_server <- function(input, output, session, rv) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No jitter analysis results found", plot_kind = "jitter"))
       }
       return(list(data = data, group_col = NULL, label = "Jitter", message = NULL, plot_kind = "jitter"))
+    }
+
+    if (type == "jitter_params") {
+      data <- build_jitter_parameter_data(selected, rv$JitterPars_list)
+      if (nrow(data) == 0) {
+        return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No jitter parameter distributions found", plot_kind = "jitter_params"))
+      }
+      return(list(data = data, group_col = NULL, label = "Jitter Parameters", message = NULL, plot_kind = "jitter_params"))
+    }
+
+    if (type == "jitter_derived") {
+      data <- build_jitter_derived_data(selected, rv$RepOut_list, rv$JitterPars_list)
+      if (nrow(data) == 0) {
+        return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No jitter derived quantity distributions found", plot_kind = "jitter_derived"))
+      }
+      return(list(data = data, group_col = NULL, label = "Jitter Derived Quantities", message = NULL, plot_kind = "jitter_derived"))
     }
     
     if (type == "retro") {
@@ -1314,7 +1510,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
   observeEvent(profile_data_reactive(), {
     info <- profile_data_reactive()
     plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else "piner"
-    if (is.null(info$group_col) || nrow(info$data) == 0 || plot_kind %in% c("jitter", "retro", "hessian")) {
+    if (is.null(info$group_col) || nrow(info$data) == 0 || plot_kind %in% c("jitter", "jitter_params", "jitter_derived", "retro", "hessian")) {
       last_group_key(NULL)
       updatePickerInput(session, "lik_groups", choices = character(0), selected = character(0))
       return()
@@ -1364,7 +1560,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 2
     facet_ncol <- min(max(facet_ncol, 1), 12)
 
-    if (!identical(plot_kind, "jitter") && !is.null(filters$groups) && length(filters$groups) > 0) {
+    if (!(plot_kind %in% c("jitter", "jitter_params", "jitter_derived")) && !is.null(filters$groups) && length(filters$groups) > 0) {
       data <- data[data[[group_col]] %in% filters$groups, , drop = FALSE]
     }
 
@@ -1435,6 +1631,104 @@ mod_likelihood_server <- function(input, output, session, rv) {
             legend.position = "right",
             strip.text = element_text(face = "bold"),
             strip.background = element_rect(fill = "lightblue"),
+            panel.grid.minor = element_blank()
+          )
+      )
+    }
+
+    if (identical(plot_kind, "jitter_params")) {
+      plot_df <- data %>%
+        mutate(
+          param_label = paste0(Var_name, "\n[", family, "]"),
+          original_value = before
+        )
+
+      original_df <- plot_df %>%
+        group_by(scenario, param_key, param_label) %>%
+        summarise(original_value = first(original_value), .groups = "drop")
+
+      return(
+        ggplot(plot_df, aes(x = param_key, y = after)) +
+          geom_boxplot(fill = "#9ecae1", color = "#2b6c8a", outlier.alpha = 0.25, na.rm = TRUE) +
+          geom_point(
+            aes(group = seed),
+            position = position_jitter(width = 0.18, height = 0),
+            alpha = 0.18,
+            size = 0.9,
+            color = "#1f4e79",
+            na.rm = TRUE
+          ) +
+          geom_point(
+            data = original_df,
+            aes(x = param_key, y = original_value),
+            inherit.aes = FALSE,
+            color = "#d62728",
+            fill = "#d62728",
+            shape = 23,
+            size = 2.8,
+            stroke = 0.4,
+            na.rm = TRUE
+          ) +
+          facet_wrap(~ scenario, scales = "free", ncol = facet_ncol) +
+          scale_x_discrete(labels = function(x) {
+            lab_df <- unique(plot_df[, c("param_key", "param_label")])
+            lab_map <- setNames(as.character(lab_df$param_label), as.character(lab_df$param_key))
+            unname(lab_map[as.character(x)])
+          }) +
+          labs(
+            x = NULL,
+            y = "Parameter value",
+            title = "Jitter Parameter Distributions",
+            subtitle = "Top 24 parameters by median absolute % change across seeds. Red diamond = original value"
+          ) +
+          theme_bw(base_size = 11) +
+          theme(
+            strip.text = element_text(face = "bold"),
+            strip.background = element_rect(fill = "#d9edf7"),
+            axis.text.x = element_text(size = 7),
+            panel.grid.minor = element_blank()
+          ) +
+          coord_flip()
+      )
+    }
+
+    if (identical(plot_kind, "jitter_derived")) {
+      ref_df <- data %>%
+        distinct(scenario, metric, reference_value, year)
+
+      return(
+        ggplot(data, aes(x = metric, y = value)) +
+          geom_boxplot(fill = "#c7e9c0", color = "#2e6b3f", outlier.alpha = 0.25, na.rm = TRUE) +
+          geom_point(
+            aes(group = seed),
+            position = position_jitter(width = 0.14, height = 0),
+            alpha = 0.22,
+            size = 1.2,
+            color = "#2e6b3f",
+            na.rm = TRUE
+          ) +
+          geom_point(
+            data = ref_df,
+            aes(x = metric, y = reference_value),
+            inherit.aes = FALSE,
+            color = "#d62728",
+            fill = "#d62728",
+            shape = 23,
+            size = 3,
+            stroke = 0.4,
+            na.rm = TRUE
+          ) +
+          facet_wrap(~ scenario, scales = "free_y", ncol = facet_ncol) +
+          labs(
+            x = NULL,
+            y = "Derived quantity value",
+            title = "Jitter Derived Quantity Distributions",
+            subtitle = "Successful jitter runs only. Red diamond = original model terminal value"
+          ) +
+          theme_bw(base_size = 12) +
+          theme(
+            strip.text = element_text(face = "bold"),
+            strip.background = element_rect(fill = "#d9edf7"),
             panel.grid.minor = element_blank()
           )
       )

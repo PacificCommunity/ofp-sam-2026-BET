@@ -1,5 +1,7 @@
 summary <-"Assessing the impact of tagging data on the 2023 BET diagnostic model across tagging programmes"
 
+source("../tools/model_defaults.R")
+
 models <- list(
   
   "2023ExRTTP" = list(
@@ -98,47 +100,7 @@ models <- list(
 
 
 
-# Default values
-default_program_path <- "mfcl/exe/mfclo64_2023"
-default_base_dir <- "mfcl/inputs/2023_rep"
-Reps <- "15 25 25 1000 500 500"
-scalers <- paste0((seq(140, 50, by=-5)), collapse = " ")
-retro_peels <- "1 2 3 4 5"  # Default retrospective peels (years to remove)
-jitter_seeds <- 1:10
-jitter_amount <- 0.01
-nsplit <- 5
-
-### Post-processing with defaults
-
+models <- apply_model_defaults(models)
 ModelIDs <- names(models)
-models <- Map(function(x, nm) {
-  # Use model-specific paths if provided, otherwise use defaults
-  prog_path <- if (!is.null(x$program_path)) x$program_path else default_program_path
-  b_dir <- if (!is.null(x$base_dir)) x$base_dir else default_base_dir
-  scalers <- if (!is.null(x$scalers)) x$scalers else scalers
-  retro_peels <- if (!is.null(x$retro_peels)) x$retro_peels else retro_peels
-  Reps <- if (!is.null(x$Reps)) x$Reps else Reps
-  jitter_seeds <- if (!is.null(x$jitter_seeds)) x$jitter_seeds else jitter_seeds
-  jitter_amount <- if (!is.null(x$jitter_amount)) x$jitter_amount else jitter
-  nsplit <- if (!is.null(x$nsplit)) x$nsplit else nsplit
-  
-  if(x$mfcl_commands == "./doitall.sh") {
-    x$mfcl_commands <- x$mfcl_commands
-  } else {
-  x$mfcl_commands <- paste(prog_path, x$mfcl_commands)
-  }
-  x$model_dir <- paste0("model/", nm)
-  x$base_dir <- b_dir
-  x$program_path <- prog_path
-  x$Reps <- Reps
-  x$scalers <- scalers
-  x$retro_peels <- retro_peels
-  x$jitter_seeds <- jitter_seeds
-  x$jitter_amount <- jitter_amount
-  x$nsplit <- nsplit
-  x
-}, models, names(models))
-
-
 
 

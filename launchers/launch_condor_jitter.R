@@ -25,7 +25,7 @@ setwd(here::here())
 
 dir="develop/Feb_6_jitter"
 
-source("configs/set_model.R") 
+source("configs/set_model.R", chdir = TRUE) 
 
 all_jitter <- lapply(models, function(x) x$jitter_seeds)
 

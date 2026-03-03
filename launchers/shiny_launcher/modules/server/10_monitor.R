@@ -144,15 +144,29 @@
         )
       ),
       callback = JS(
-        "var updateChecked = function() {",
-        "  var checked = [];",
-        "  table.$('.job-select-checkbox:checked', {page: 'all'}).each(function(){",
-        "    checked.push(parseInt($(this).val()));",
-        "  });",
+        "var checkedMap = {};",
+        "var syncCheckedToShiny = function() {",
+        "  var checked = Object.keys(checkedMap)",
+        "    .filter(function(key) { return checkedMap[key]; })",
+        "    .map(function(key) { return parseInt(key, 10); })",
+        "    .sort(function(a, b) { return a - b; });",
         "  Shiny.setInputValue('jobs_checked_rows', checked, {priority: 'event'});",
         "};",
-        "updateChecked();",
-        "table.on('change', '.job-select-checkbox', updateChecked);",
+        "var restoreCheckedState = function() {",
+        "  table.$('.job-select-checkbox', {page: 'current'}).each(function(){",
+        "    this.checked = !!checkedMap[this.value];",
+        "  });",
+        "};",
+        "var updateChecked = function() {",
+        "  restoreCheckedState();",
+        "  syncCheckedToShiny();",
+        "};",
+        "table.on('change', '.job-select-checkbox', function() {",
+        "  checkedMap[this.value] = this.checked;",
+        "  syncCheckedToShiny();",
+        "});",
+        "restoreCheckedState();",
+        "syncCheckedToShiny();",
         "table.on('draw.dt', updateChecked);"
       ),
       class = 'cell-border stripe'
@@ -344,7 +358,7 @@
       }
 
       update_delete_notification(
-        sprintf("Deleting %d jobs in one command...", length(all_ids))
+        sprintf("Deleting %d jobs...", length(all_ids))
       )
 
       cmd <- sprintf(

@@ -16,15 +16,14 @@ models <- list(
     base_dir = "mfcl/inputs/2023_rep",                   # Model-specific dir
     
     ## configuration for profiling
-    Reps = "15 25 25 1000 500 500",
-    scalers = paste0((seq(140, 60, by=-5)), collapse = " "),
-    Af172 = "0",
+    Reps = "1 1 1 1 1 1",
+    scalers = paste0((seq(120, 80, by=-5)), collapse = " "),
+    Af172 = "1",
     Af173 = "0",
-    Af174 = "0",
+    Af174 = "10",
     
     ## retrospective configuration
     retro_peels = "1 2 3 4 5 6 7",
-    
     
     ## n_mixing_periods (this is only for retrospective runs, so should match with what is specified in doitall.sh)
     n_mixing_periods = "2",

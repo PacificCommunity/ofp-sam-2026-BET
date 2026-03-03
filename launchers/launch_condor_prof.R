@@ -25,7 +25,7 @@ setwd(here::here())
 
 dir="develop/Feb_5_prof"
 
-source("configs/set_model.R") 
+source("configs/set_model.R", chdir = TRUE) 
 
 all_scalers <- lapply(models, function(x) x$scalers)
 
