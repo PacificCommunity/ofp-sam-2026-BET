@@ -16,7 +16,6 @@ model_dir <- Sys.getenv("model_dir", "model/base")
 ## Convert to absolute paths using getwd() (assumes script runs from project root)
 project_root <- getwd()
 base_dir_abs <- file.path(project_root, base_dir)
-model_dir_abs <- file.path(project_root, model_dir)
 
 ## Jitter settings
 ## Single seed value for parallel execution via condor
@@ -44,13 +43,6 @@ dir.create(seed_dir_abs, recursive = TRUE, showWarnings = FALSE)
 files_to_copy <- list.files(base_dir_abs, full.names = TRUE)
 file.copy(files_to_copy, to = seed_dir_abs, overwrite = TRUE, recursive = TRUE)
 
-## Also copy par file from model_dir (converged model)
-par_in_model <- list.files(model_dir_abs, pattern = "\\.par$", full.names = TRUE)
-if(length(par_in_model) > 0) {
-  file.copy(par_in_model, to = seed_dir_abs, overwrite = TRUE)
-  cat("Copied par files from model directory\n")
-}
-
 ############################
 ## Generate jittered par  ##
 ############################
@@ -74,6 +66,10 @@ if(length(par_files) > 0) {
 ## Read par file and apply jitter
 jittered_par_name <- paste0("jittered_", jitter_seed, ".par")
 indepvar_in_seed <- file.path(seed_dir_abs, "indepvar.rpt")
+
+if (!file.exists(indepvar_in_seed)) {
+  stop("Missing indepvar.rpt required for jitter run: ", indepvar_in_seed)
+}
 
 jitter_run <- run_exact_jitter(
   model_dir = seed_dir_abs,

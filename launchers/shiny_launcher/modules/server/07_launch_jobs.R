@@ -29,6 +29,8 @@
 
   local_run_command <- function(spec, common_params, job_env, log_file) {
     if (isTRUE(common_params$local_use_docker)) {
+      uid <- tryCatch(system2("id", "-u", stdout = TRUE), error = function(e) character(0))
+      gid <- tryCatch(system2("id", "-g", stdout = TRUE), error = function(e) character(0))
       env_values <- vapply(job_env, function(x) {
         if (length(x) == 0 || is.null(x)) "" else paste(as.character(x), collapse = " ")
       }, character(1))
@@ -36,10 +38,16 @@
         Map(function(k, v) c("-e", shQuote(paste0(k, "=", v))), names(env_values), env_values),
         use.names = FALSE
       )
+      user_args <- if (length(uid) == 1 && nzchar(uid) && length(gid) == 1 && nzchar(gid)) {
+        c("--user", shQuote(paste0(uid, ":", gid)))
+      } else {
+        character(0)
+      }
       list(
         command = "docker",
         args = c(
           "run", "--rm",
+          user_args,
           "-v", shQuote(paste0(common_params$repo_root, ":/workspace")),
           "-w", shQuote("/workspace"),
           env_args,

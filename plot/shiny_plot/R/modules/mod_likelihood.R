@@ -68,6 +68,33 @@ mod_likelihood_ui <- function() {
             )
           )
         ),
+        conditionalPanel(
+          condition = "['cpues', 'lfs', 'wfs', 'cal_fishery'].includes(input.lik_profile_type)",
+          tagList(
+            checkboxInput(
+              "lik_split_by_region",
+              "Split by region",
+              value = FALSE
+            ),
+            pickerInput(
+              "lik_regions",
+              "Regions:",
+              choices = NULL,
+              selected = NULL,
+              multiple = TRUE,
+              options = pickerOptions(
+                actionsBox = TRUE,
+                selectAllText = "Select All",
+                deselectAllText = "Deselect All",
+                selectedTextFormat = "count > 3",
+                countSelectedText = "{0} regions selected",
+                liveSearch = TRUE,
+                liveSearchPlaceholder = "Search regions...",
+                size = 8
+              )
+            )
+          )
+        ),
         selectInput("lik_facet_ncol", "Facet columns:", choices = as.character(1:12), selected = "2"),
         conditionalPanel(
           condition = "input.lik_profile_type == 'jitter_params'",
@@ -179,11 +206,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
     heavy_cache$hessian <- list()
   }
   lik_live_update_nonce <- reactiveVal(0)
+  fishery_region_types <- c("cpues", "lfs", "wfs", "cal_fishery")
   lik_filters_current <- reactive({
     list(
       scenarios = input$lik_scenarios,
       profile_type = if (is.null(input$lik_profile_type)) "components" else input$lik_profile_type,
       groups = input$lik_groups,
+      regions = input$lik_regions,
+      split_by_region = isTRUE(input$lik_split_by_region),
       facet_ncol = input$lik_facet_ncol,
       jitter_param_view = if (is.null(input$lik_jitter_param_view)) "input" else input$lik_jitter_param_view,
       jitter_final_converged_only = isTRUE(input$lik_jitter_final_converged_only),
@@ -229,6 +259,40 @@ mod_likelihood_server <- function(input, output, session, rv) {
       choices = map_models,
       selected = current_selection
     )
+  }, ignoreInit = TRUE)
+
+  observeEvent(list(rv$data_loaded, input$lik_scenarios, input$lik_profile_type), {
+    req(rv$data_loaded)
+
+    type <- isolate(input$lik_profile_type)
+    if (!(type %in% fishery_region_types)) {
+      updatePickerInput(session, "lik_regions", choices = character(0), selected = character(0))
+      return()
+    }
+
+    scenarios <- isolate(input$lik_scenarios)
+    if (is.null(scenarios) || length(scenarios) == 0) {
+      updatePickerInput(session, "lik_regions", choices = character(0), selected = character(0))
+      return()
+    }
+
+    region_values <- sort(unique(unlist(lapply(scenarios, function(sc) {
+      fish_map <- rv$FISHERY_MAPS[[sc]]
+      if (is.null(fish_map) || !"region" %in% names(fish_map)) return(character(0))
+      vals <- fish_map$region
+      vals <- vals[!is.na(vals) & nzchar(trimws(as.character(vals)))]
+      as.character(vals)
+    }), use.names = FALSE)))
+
+    current <- isolate(input$lik_regions)
+    if (is.null(current) || length(current) == 0) {
+      selected <- region_values
+    } else {
+      selected <- intersect(as.character(current), region_values)
+      if (length(selected) == 0) selected <- region_values
+    }
+
+    updatePickerInput(session, "lik_regions", choices = region_values, selected = selected)
   }, ignoreInit = TRUE)
 
   # Safe read helper for scalar files
@@ -609,8 +673,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
   # Calculate likelihood change from minimum
   calc_lik_change <- function(df, group_col) {
+    grouping_vars <- c(group_col, "scenario")
+    if ("region" %in% names(df)) grouping_vars <- c(grouping_vars, "region")
+
     df %>%
-      group_by(.data[[group_col]], scenario) %>%
+      group_by(across(all_of(grouping_vars))) %>%
       mutate(
         min_value = min(value, na.rm = TRUE),
         change = value - min_value
@@ -619,11 +686,24 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }
 
   # Create a standard likelihood profile plot
-  create_piner_plot <- function(data, group_var, x_label, label = NULL, facet_ncol = 2) {
+  create_piner_plot <- function(data, group_var, x_label, label = NULL, facet_ncol = 2, split_by_region = FALSE) {
     if (nrow(data) == 0) return(NULL)
+
+    if ("region" %in% names(data)) {
+      data <- data %>%
+        mutate(
+          region = ifelse(
+            is.na(region) | !nzchar(trimws(as.character(region))),
+            "Unknown",
+            paste("Region", as.character(region))
+          )
+      )
+    }
 
     unique_groups <- unique(data[[group_var]])
     non_total_groups <- setdiff(unique_groups, "Total")
+    legend_ncol <- max(3, min(6, ceiling(sqrt(length(unique_groups)))))
+    legend_breaks <- c(setdiff(unique_groups, "Total"), intersect("Total", unique_groups))
 
     color_values <- c(
       "Total" = "black",
@@ -636,25 +716,67 @@ mod_likelihood_server <- function(input, output, session, rv) {
     ) +
       geom_line(aes(linewidth = .data[[group_var]] == "Total"), alpha = 0.7) +
       geom_point(aes(size = .data[[group_var]] == "Total"), alpha = 0.8) +
-      scale_color_manual(values = color_values) +
+      scale_color_manual(values = color_values, breaks = legend_breaks) +
       scale_linewidth_manual(values = c("TRUE" = 1.5, "FALSE" = 0.7), guide = "none") +
       scale_size_manual(values = c("TRUE" = 3.5, "FALSE" = 2), guide = "none") +
       scale_shape_manual(values = rep(0:24, length.out = length(unique_groups))) +
-      facet_wrap(~scenario, scales = "free", ncol = facet_ncol) +
       scale_x_continuous(
         labels = function(x) x / 1000,
         name = x_label
       ) +
-      labs(y = "Changes in Likelihood", colour = group_var, shape = group_var) +
+      labs(y = "Changes in Likelihood", colour = NULL, shape = group_var) +
       theme_bw(base_size = 12) +
       theme(
         legend.position = "bottom",
-        legend.title = element_text(face = "bold"),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 8.5, face = "bold", colour = "#222222"),
+        legend.key.width = unit(11, "pt"),
+        legend.key.height = unit(10, "pt"),
+        legend.spacing.x = unit(5, "pt"),
+        legend.spacing.y = unit(3, "pt"),
+        legend.box.spacing = unit(3, "pt"),
+        legend.box.margin = margin(t = 2, r = 2, b = 0, l = 2),
+        legend.margin = margin(0, 0, 0, 0),
+        legend.box = "vertical",
         strip.text = element_text(size = 10, face = "bold"),
         panel.grid.minor = element_blank()
+      ) +
+      guides(
+        colour = guide_legend(
+          ncol = legend_ncol,
+          byrow = TRUE,
+          override.aes = list(linewidth = 1.4, size = 3.2, alpha = 1),
+          order = 1
+        ),
+        shape = "none"
       )
 
-    if (!is.null(label)) {
+    if (isTRUE(split_by_region) && "region" %in% names(data)) {
+      n_scenarios <- dplyr::n_distinct(data$scenario)
+      if (n_scenarios == 1) {
+        region_labels <- sort(unique(as.character(data$region)))
+        region_labeller <- setNames(region_labels, region_labels)
+
+        p <- p +
+          facet_wrap(
+            ~region,
+            scales = "free_y",
+            ncol = facet_ncol,
+            labeller = as_labeller(region_labeller)
+          ) +
+          labs(title = unique(data$scenario)[1]) +
+          theme(
+            strip.text = element_text(size = 8.5, lineheight = 0.95, face = "bold"),
+            plot.margin = margin(8, 8, 10, 8)
+          )
+      } else {
+        p <- p + facet_grid(rows = vars(scenario), cols = vars(region), scales = "free_y")
+      }
+    } else {
+      p <- p + facet_wrap(~scenario, scales = "free", ncol = facet_ncol)
+    }
+
+    if (!is.null(label) && !(isTRUE(split_by_region) && "region" %in% names(data))) {
       p <- p + annotate("text", x = Inf, y = Inf, label = label,
                         hjust = 1.1, vjust = 1.5, size = 5, fontface = "bold")
     }
@@ -735,22 +857,23 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
         fish_map <- fishery_maps[[sc]]
         fish_names <- sapply(fish_ids, function(fid) get_fishery_name(fid, fish_map))
+        fish_regions <- sapply(fish_ids, function(fid) get_fishery_region(fid, fish_map))
 
         df <- data.frame(
           scenario = sc,
           scaler = scaler_bio,
           group = fish_names,
+          region = fish_regions,
           value = as.numeric(vec),
           stringsAsFactors = FALSE
         )
 
-        total_row <- data.frame(
-          scenario = sc,
-          scaler = scaler_bio,
-          group = "Total",
-          value = sum(vec),
-          stringsAsFactors = FALSE
-        )
+        total_row <- df %>%
+          group_by(scenario, scaler, region) %>%
+          summarise(value = sum(value), n_groups = dplyr::n_distinct(group), .groups = "drop") %>%
+          filter(n_groups > 1) %>%
+          select(-n_groups) %>%
+          mutate(group = "Total")
 
         rows[[length(rows) + 1]] <- bind_rows(df, total_row)
       }
@@ -761,6 +884,41 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     names(data)[names(data) == "group"] <- label
     data
+  }
+
+  allowed_fisheries_for_regions <- function(scenarios, fishery_maps, regions) {
+    if (is.null(regions) || length(regions) == 0) return(NULL)
+    region_vals <- as.character(regions)
+    region_vals <- region_vals[nzchar(region_vals)]
+    if (length(region_vals) == 0) return(NULL)
+
+    out <- lapply(scenarios, function(sc) {
+      fish_map <- fishery_maps[[sc]]
+      if (is.null(fish_map) || !"fishery" %in% names(fish_map) || !"region" %in% names(fish_map)) {
+        return(character(0))
+      }
+
+      keep <- as.character(fish_map$region) %in% region_vals
+      as.character(fish_map$fishery[keep])
+    })
+    names(out) <- scenarios
+    out
+  }
+
+  get_fishery_region <- function(fid, fish_map) {
+    if (is.null(fish_map) || !"fishery" %in% names(fish_map) || !"region" %in% names(fish_map)) {
+      return("Unknown")
+    }
+
+    idx <- match(as.character(fid), as.character(fish_map$fishery))
+    if (is.na(idx)) return("Unknown")
+
+    region_val <- fish_map$region[[idx]]
+    if (is.null(region_val) || length(region_val) == 0 || is.na(region_val) || !nzchar(trimws(as.character(region_val)))) {
+      return("Unknown")
+    }
+
+    as.character(region_val)
   }
 
   extract_survey_index_like_from_raw <- function(raw_lines) {
@@ -784,7 +942,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     vals[is.finite(vals)]
   }
 
-  build_cpue_fishery_data <- function(profile_data, scenarios, fishery_maps, scales) {
+  build_cpue_fishery_data <- function(profile_data, scenarios, fishery_maps, scales, allowed_fisheries = NULL) {
     if (length(scales) == 0) return(data.frame())
 
     rows <- list()
@@ -798,28 +956,36 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
         fish_ids <- as.character(seq_along(vec))
         keep_idx <- is.finite(vec) & abs(vec) > 0
+        if (!is.null(allowed_fisheries)) {
+          allowed_ids <- as.character(allowed_fisheries[[sc]])
+          allowed_ids <- allowed_ids[!is.na(allowed_ids)]
+          if (length(allowed_ids) > 0) {
+            keep_idx <- keep_idx & (fish_ids %in% allowed_ids)
+          }
+        }
         vec <- vec[keep_idx]
         fish_ids <- fish_ids[keep_idx]
         if (length(vec) == 0) next
 
         fish_map <- fishery_maps[[sc]]
         fish_names <- sapply(fish_ids, function(fid) get_fishery_name(fid, fish_map))
+        fish_regions <- sapply(fish_ids, function(fid) get_fishery_region(fid, fish_map))
 
         df <- data.frame(
           scenario = sc,
           scaler = scaler_bio,
           Fishery = fish_names,
+          region = fish_regions,
           value = as.numeric(vec),
           stringsAsFactors = FALSE
         )
 
-        total_row <- data.frame(
-          scenario = sc,
-          scaler = scaler_bio,
-          Fishery = "Total",
-          value = sum(vec),
-          stringsAsFactors = FALSE
-        )
+        total_row <- df %>%
+          group_by(scenario, scaler, region) %>%
+          summarise(value = sum(value), n_groups = dplyr::n_distinct(Fishery), .groups = "drop") %>%
+          filter(n_groups > 1) %>%
+          select(-n_groups) %>%
+          mutate(Fishery = "Total")
 
         rows[[length(rows) + 1]] <- bind_rows(df, total_row)
       }
@@ -888,7 +1054,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       select(-first_order)
   }
 
-  build_cal_data <- function(profile_data, scenarios, age_out_list, fishery_maps, by = "fishery", scales) {
+  build_cal_data <- function(profile_data, scenarios, age_out_list, fishery_maps, by = "fishery", scales,
+                             allowed_fisheries = NULL) {
     if (length(scales) == 0) return(data.frame())
 
     rows <- list()
@@ -912,17 +1079,29 @@ mod_likelihood_server <- function(input, output, session, rv) {
         df$scaler <- scaler_bio
 
         if (by == "fishery") {
+          if (!is.null(allowed_fisheries)) {
+            allowed_ids <- as.character(allowed_fisheries[[sc]])
+            allowed_ids <- allowed_ids[!is.na(allowed_ids)]
+            if (length(allowed_ids) > 0) {
+              df <- df[as.character(df$fishery) %in% allowed_ids, , drop = FALSE]
+            }
+          }
+          if (nrow(df) == 0) next
+
           fish_ids <- as.character(df$fishery)
           fish_map <- fishery_maps[[sc]]
           df$fishery <- sapply(fish_ids, function(fid) get_fishery_name(fid, fish_map))
+          df$region <- sapply(fish_ids, function(fid) get_fishery_region(fid, fish_map))
 
           by_group <- df %>%
-            group_by(fishery, scaler, scenario) %>%
+            group_by(fishery, scaler, scenario, region) %>%
             summarise(value = sum(Lik, na.rm = TRUE), .groups = "drop")
 
           total_row <- by_group %>%
-            group_by(scaler, scenario) %>%
-            summarise(value = sum(value), .groups = "drop") %>%
+            group_by(scaler, scenario, region) %>%
+            summarise(value = sum(value), n_groups = dplyr::n_distinct(fishery), .groups = "drop") %>%
+            filter(n_groups > 1) %>%
+            select(-n_groups) %>%
             mutate(fishery = "Total")
 
           rows[[length(rows) + 1]] <- bind_rows(by_group, total_row)
@@ -1486,6 +1665,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
       return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No scaler values found for the selected scenarios"))
     }
 
+    allowed_region_fisheries <- NULL
+    if (type %in% fishery_region_types) {
+      allowed_region_fisheries <- allowed_fisheries_for_regions(
+        names(profile_data),
+        rv$FISHERY_MAPS,
+        filters$regions
+      )
+    }
+
     if (type == "components") {
       data <- build_components_data(profile_data, names(profile_data), all_scales)
       data <- data %>% filter(is.finite(value) & is.finite(scaler))
@@ -1497,10 +1685,27 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     if (type == "cpues") {
-      data <- build_cpue_fishery_data(profile_data, names(profile_data), rv$FISHERY_MAPS, all_scales)
+      data <- build_cpue_fishery_data(
+        profile_data,
+        names(profile_data),
+        rv$FISHERY_MAPS,
+        all_scales,
+        allowed_fisheries = allowed_region_fisheries
+      )
       data <- data %>% filter(is.finite(value) & is.finite(scaler))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No CPUE profile data available"))
+      }
+      if (!isTRUE(filters$split_by_region) && "region" %in% names(data)) {
+        data <- data %>%
+          filter(Fishery != "Total") %>%
+          group_by(scenario, scaler, Fishery) %>%
+          summarise(value = sum(value), .groups = "drop")
+        total_rows <- data %>%
+          group_by(scenario, scaler) %>%
+          summarise(value = sum(value), .groups = "drop") %>%
+          mutate(Fishery = "Total")
+        data <- bind_rows(data, total_rows)
       }
       data <- calc_lik_change(data, "Fishery")
       return(list(data = data, group_col = "Fishery", label = "CPUEs", message = NULL, profile_data = profile_data))
@@ -1508,10 +1713,22 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     if (type == "lfs") {
       data <- build_fishery_data(profile_data, names(profile_data), rv$FISHERY_MAPS,
-                                 "total_length_fish", "Fishery", all_scales)
+                                 "total_length_fish", "Fishery", all_scales,
+                                 allowed_fisheries = allowed_region_fisheries)
       data <- data %>% filter(is.finite(value) & is.finite(scaler))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No LF profile data available"))
+      }
+      if (!isTRUE(filters$split_by_region) && "region" %in% names(data)) {
+        data <- data %>%
+          filter(Fishery != "Total") %>%
+          group_by(scenario, scaler, Fishery) %>%
+          summarise(value = sum(value), .groups = "drop")
+        total_rows <- data %>%
+          group_by(scenario, scaler) %>%
+          summarise(value = sum(value), .groups = "drop") %>%
+          mutate(Fishery = "Total")
+        data <- bind_rows(data, total_rows)
       }
       data <- calc_lik_change(data, "Fishery")
       return(list(data = data, group_col = "Fishery", label = "LFs", message = NULL, profile_data = profile_data))
@@ -1519,10 +1736,22 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     if (type == "wfs") {
       data <- build_fishery_data(profile_data, names(profile_data), rv$FISHERY_MAPS,
-                                 "total_weight_fish", "Fishery", all_scales)
+                                 "total_weight_fish", "Fishery", all_scales,
+                                 allowed_fisheries = allowed_region_fisheries)
       data <- data %>% filter(is.finite(value) & is.finite(scaler))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No WF profile data available"))
+      }
+      if (!isTRUE(filters$split_by_region) && "region" %in% names(data)) {
+        data <- data %>%
+          filter(Fishery != "Total") %>%
+          group_by(scenario, scaler, Fishery) %>%
+          summarise(value = sum(value), .groups = "drop")
+        total_rows <- data %>%
+          group_by(scenario, scaler) %>%
+          summarise(value = sum(value), .groups = "drop") %>%
+          mutate(Fishery = "Total")
+        data <- bind_rows(data, total_rows)
       }
       data <- calc_lik_change(data, "Fishery")
       return(list(data = data, group_col = "Fishery", label = "WFs", message = NULL, profile_data = profile_data))
@@ -1545,10 +1774,22 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     if (type == "cal_fishery") {
       data <- build_cal_data(profile_data, names(profile_data), rv$AgeOut_list,
-                             rv$FISHERY_MAPS, by = "fishery", all_scales)
+                             rv$FISHERY_MAPS, by = "fishery", all_scales,
+                             allowed_fisheries = allowed_region_fisheries)
       data <- data %>% filter(is.finite(value) & is.finite(scaler))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No CAL by fishery data available"))
+      }
+      if (!isTRUE(filters$split_by_region) && "region" %in% names(data)) {
+        data <- data %>%
+          filter(fishery != "Total") %>%
+          group_by(scenario, scaler, fishery) %>%
+          summarise(value = sum(value), .groups = "drop")
+        total_rows <- data %>%
+          group_by(scenario, scaler) %>%
+          summarise(value = sum(value), .groups = "drop") %>%
+          mutate(fishery = "Total")
+        data <- bind_rows(data, total_rows)
       }
       data <- calc_lik_change(data, "fishery")
       return(list(data = data, group_col = "fishery", label = "CAL", message = NULL, profile_data = profile_data))
@@ -1584,8 +1825,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     groups <- sort(unique(info$data[[info$group_col]]))
+    current_regions <- isolate(lik_filters_current()$regions)
+    if (is.null(current_regions)) current_regions <- character(0)
+
     group_key <- paste(
       isolate(lik_filters_current()$profile_type),
+      paste(sort(current_regions), collapse = "|"),
+      as.character(isTRUE(isolate(lik_filters_current()$split_by_region))),
       info$group_col,
       paste(groups, collapse = "||"),
       sep = "::"
@@ -1599,6 +1845,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
         selected <- groups
       } else {
         selected <- intersect(current, groups)
+        if ("Total" %in% groups && !("Total" %in% selected)) {
+          selected <- c("Total", selected)
+        }
         if (length(selected) == 0) selected <- groups
       }
     }
@@ -2005,10 +2254,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     x_label <- quantity_axis_label(info$profile_data)
-    create_piner_plot(data, group_col, x_label, label, facet_ncol = facet_ncol)
+    create_piner_plot(
+      data,
+      group_col,
+      x_label,
+      label,
+      facet_ncol = facet_ncol,
+      split_by_region = isTRUE(filters$split_by_region)
+    )
   })
   observeEvent(list(input$live_update_plots, input$lik_scenarios, input$lik_profile_type,
-                    input$lik_groups, input$lik_facet_ncol,
+                    input$lik_groups, input$lik_regions, input$lik_split_by_region, input$lik_facet_ncol,
                     input$lik_jitter_param_view, input$lik_jitter_final_converged_only,
                     input$lik_jitter_param_metric), {
     req(rv$data_loaded)

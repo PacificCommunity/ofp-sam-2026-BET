@@ -34,14 +34,6 @@ dir.create(part_dir, recursive = TRUE, showWarnings = FALSE)
 files_to_copy <- list.files(base_dir_abs, full.names = TRUE)
 file.copy(files_to_copy, to = part_dir, overwrite = TRUE, recursive = TRUE)
 
-## Also copy par file from model_dir (converged model)
-model_dir_abs <- file.path(project_root, model_dir)
-par_in_model <- list.files(model_dir_abs, pattern = "\\.par$", full.names = TRUE)
-if(length(par_in_model) > 0) {
-  file.copy(par_in_model, to = part_dir, overwrite = TRUE)
-  cat("Copied par files from model directory\n")
-}
-
 ###############################
 ## Calculate parameter range ##
 ###############################
