@@ -1246,7 +1246,7 @@ compare_exact_jitter <- function(base_par,
   summary_df$changed_pct <- round(100 * summary_df$changed / summary_df$total, 1)
   summary_df <- summary_df[order(-summary_df$total, summary_df$family), ]
 
-  if (!is.null(output_prefix)) {
+  if (!is.null(output_prefix) && !isFALSE(output_prefix) && !(length(output_prefix) == 1 && is.na(output_prefix))) {
     dir.create(dirname(output_prefix), recursive = TRUE, showWarnings = FALSE)
     write.csv(labels_df, sprintf("%s_label_changes.csv", output_prefix), row.names = FALSE)
     write.csv(summary_df, sprintf("%s_summary.csv", output_prefix), row.names = FALSE)

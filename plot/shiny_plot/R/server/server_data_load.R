@@ -195,17 +195,7 @@ server_data_load <- function(input, output, session, rv) {
                       if (file.exists(result_file)) {
                         return(tryCatch(readRDS(result_file), error = function(e) NULL))
                       }
-                      par_file <- list.files(d, pattern = "jittered_out_\\d+\\.par$", full.names = TRUE)
-                      if (length(par_file) == 0) return(NULL)
-                      par_obj <- tryCatch(read.MFCLPar(par_file[1]), error = function(e) NULL)
-                      if (is.null(par_obj)) return(NULL)
-                      list(
-                        seed = suppressWarnings(as.integer(sub(".*_(\\d+)$", "\\1", basename(d)))),
-                        obj_fun = suppressWarnings(as.numeric(par_obj@obj_fun)),
-                        max_grad = suppressWarnings(as.numeric(par_obj@max_grad)),
-                        output_par = basename(par_file[1]),
-                        source = "legacy_par"
-                      )
+                      tryCatch(mp_build_jitter_payload(d), error = function(e) NULL)
                     }), seeds)
                     Filter(Negate(is.null), pars)
                   }

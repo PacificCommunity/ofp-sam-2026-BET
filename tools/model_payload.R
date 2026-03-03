@@ -146,6 +146,20 @@ mp_final_par <- function(folder) {
 }
 
 mp_final_rep <- function(folder) {
+  rep_priority <- c(
+    "plot-jittered_out_*.par.rep",
+    "plot-*.par.rep",
+    "plotq0-jittered_out_*.par.rep",
+    "plotq0-*.par.rep"
+  )
+  for (pat in rep_priority) {
+    hits <- list.files(folder, pattern = glob2rx(pat), full.names = TRUE)
+    if (length(hits) > 0) {
+      file_info <- file.info(hits)
+      return(rownames(file_info)[which.max(file_info$mtime)])
+    }
+  }
+
   f <- mp_safe(finalRep(folder))
   if (!is.null(f) && file.exists(f)) return(f)
 
@@ -406,15 +420,14 @@ mp_extract_jitter_derived_quantities <- function(seed_dir, seed = NA_integer_) {
     return(NULL)
   }
 
-  terminal_year <- max(ts_df$year, na.rm = TRUE)
-  terminal <- ts_df[ts_df$year == terminal_year, , drop = FALSE]
-  terminal <- terminal[1, , drop = FALSE]
-
   data.frame(
-    seed = ifelse(is.na(seed), suppressWarnings(as.integer(sub(".*?(\\d+)$", "\\1", basename(seed_dir)))), seed),
-    year = suppressWarnings(as.numeric(terminal$year)),
-    depletion = suppressWarnings(as.numeric(terminal$depletion)),
-    spawning_potential = suppressWarnings(as.numeric(terminal$spawning_potential)),
+    seed = rep(
+      ifelse(is.na(seed), suppressWarnings(as.integer(sub(".*?(\\d+)$", "\\1", basename(seed_dir)))), seed),
+      nrow(ts_df)
+    ),
+    year = suppressWarnings(as.numeric(ts_df$year)),
+    depletion = suppressWarnings(as.numeric(ts_df$depletion)),
+    spawning_potential = suppressWarnings(as.numeric(ts_df$spawning_potential)),
     stringsAsFactors = FALSE
   )
 }

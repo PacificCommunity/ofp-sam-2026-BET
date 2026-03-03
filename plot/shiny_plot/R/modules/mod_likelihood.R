@@ -48,21 +48,24 @@ mod_likelihood_ui <- function() {
           selected = "components"
         ),
 
-        pickerInput(
-          "lik_groups",
-          "Lines:",
-          choices = NULL,
-          selected = NULL,
-          multiple = TRUE,
-          options = pickerOptions(
-            actionsBox = TRUE,
-            selectAllText = "Select All",
-            deselectAllText = "Deselect All",
-            selectedTextFormat = "count > 3",
-            countSelectedText = "{0} lines selected",
-            liveSearch = TRUE,
-            liveSearchPlaceholder = "Search lines...",
-            size = 10
+        conditionalPanel(
+          condition = "!['jitter', 'jitter_params', 'jitter_derived', 'retro', 'hessian'].includes(input.lik_profile_type)",
+          pickerInput(
+            "lik_groups",
+            "Lines:",
+            choices = NULL,
+            selected = NULL,
+            multiple = TRUE,
+            options = pickerOptions(
+              actionsBox = TRUE,
+              selectAllText = "Select All",
+              deselectAllText = "Deselect All",
+              selectedTextFormat = "count > 3",
+              countSelectedText = "{0} lines selected",
+              liveSearch = TRUE,
+              liveSearchPlaceholder = "Search lines...",
+              size = 10
+            )
           )
         ),
         selectInput("lik_facet_ncol", "Facet columns:", choices = as.character(1:12), selected = "2"),
@@ -1082,7 +1085,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     plot_df
   }
 
-  extract_terminal_reference_metrics <- function(rep_obj, scenario) {
+  extract_reference_metrics_timeseries <- function(rep_obj, scenario) {
     if (is.null(rep_obj)) return(NULL)
 
     bio_fish <- safe_array_to_df(rep_obj@adultBiomass) %>%
@@ -1108,10 +1111,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       )
 
     if (nrow(merged) == 0) return(NULL)
-    terminal_year <- max(merged$year, na.rm = TRUE)
     merged %>%
-      filter(year == terminal_year) %>%
-      slice(1) %>%
       mutate(scenario = scenario)
   }
 
@@ -1120,7 +1120,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     ref_rows <- list()
 
     for (sc in scenarios) {
-      ref_metrics <- extract_terminal_reference_metrics(rep_out_list[[sc]], sc)
+      ref_metrics <- extract_reference_metrics_timeseries(rep_out_list[[sc]], sc)
       jit_list <- jitter_pars_list[[sc]]
       if (is.null(ref_metrics) || is.null(jit_list) || length(jit_list) == 0) next
 
@@ -1849,34 +1849,27 @@ mod_likelihood_server <- function(input, output, session, rv) {
       ref_df <- data %>%
         distinct(scenario, metric, reference_value, year)
 
+      plot_df <- data %>%
+        mutate(seed_value = suppressWarnings(as.numeric(seed)))
+
       return(
-        ggplot(data, aes(x = metric, y = value)) +
-          geom_boxplot(fill = "#c7e9c0", color = "#2e6b3f", outlier.alpha = 0.25, na.rm = TRUE) +
-          geom_point(
-            aes(group = seed),
-            position = position_jitter(width = 0.14, height = 0),
-            alpha = 0.22,
-            size = 1.2,
-            color = "#2e6b3f",
-            na.rm = TRUE
-          ) +
-          geom_point(
+        ggplot(plot_df, aes(x = year, y = value, group = seed, color = seed_value)) +
+          geom_line(alpha = 0.6, linewidth = 0.6, na.rm = TRUE) +
+          geom_line(
             data = ref_df,
-            aes(x = metric, y = reference_value),
+            aes(x = year, y = reference_value, group = 1),
             inherit.aes = FALSE,
             color = "#d62728",
-            fill = "#d62728",
-            shape = 23,
-            size = 3,
-            stroke = 0.4,
+            linewidth = 0.9,
             na.rm = TRUE
           ) +
-          facet_wrap(~ scenario, scales = "free_y", ncol = facet_ncol) +
+          facet_grid(metric ~ scenario, scales = "free_y") +
+          scale_color_viridis_c(option = "D", name = "Jitter seed", na.value = "#2e6b3f") +
           labs(
-            x = NULL,
+            x = "Year",
             y = "Derived quantity value",
-            title = "Jitter Derived Quantity Distributions",
-            subtitle = "Successful jitter runs only. Red diamond = original model terminal value"
+            title = "Jitter Derived Quantity Time Series",
+            subtitle = "Green lines = jitter runs. Red line = original model time series"
           ) +
           theme_bw(base_size = 12) +
           theme(
