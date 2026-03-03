@@ -1205,7 +1205,9 @@ run_exact_jitter <- function(model_dir,
     out_file <- file.path(files$model_dir, out_file)
   }
 
-  if (is.null(output_prefix)) {
+  if (isFALSE(output_prefix) || (length(output_prefix) == 1 && is.na(output_prefix))) {
+    output_prefix <- NULL
+  } else if (is.null(output_prefix)) {
     output_prefix <- file.path(files$model_dir, "jitter", sprintf("jitter_seed%d_%0.2f", seed, jitter_bound))
   } else if (!grepl("^/", output_prefix) &&
              !startsWith(output_prefix, paste0(files$model_dir_input, "/")) &&

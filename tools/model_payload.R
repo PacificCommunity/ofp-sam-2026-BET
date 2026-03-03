@@ -7,6 +7,70 @@ mp_safe_read_lines <- function(path) {
   mp_safe(readLines(path))
 }
 
+mp_detect_jitter_run_state <- function(seed_dir,
+                                       output_par_exists,
+                                       obj_fun = NA_real_,
+                                       max_grad = NA_real_,
+                                       max_grad_converged_threshold = 1) {
+  log_file <- file.path(seed_dir, "mfcl_log.txt")
+  error_file <- file.path(seed_dir, "error.log")
+  log_lines <- c(mp_safe_read_lines(log_file), mp_safe_read_lines(error_file))
+  log_lines <- log_lines[!is.na(log_lines)]
+  log_text <- if (length(log_lines) > 0) paste(log_lines, collapse = "\n") else ""
+
+  has_fatal_log <- nzchar(log_text) && grepl(
+    "Floating point exception|SIGFPE|segmentation fault|core dumped|Error trying to open|had status [1-9][0-9]*",
+    log_text,
+    ignore.case = TRUE
+  )
+
+  run_completed <- isTRUE(output_par_exists) && is.finite(obj_fun) && is.finite(max_grad)
+  converged <- isTRUE(run_completed) && abs(max_grad) <= max_grad_converged_threshold
+
+  run_status <- if (run_completed) {
+    "completed"
+  } else if (has_fatal_log) {
+    "failed"
+  } else if (length(log_lines) > 0) {
+    "incomplete"
+  } else {
+    "unknown"
+  }
+
+  convergence_status <- if (!run_completed) {
+    "not_completed"
+  } else if (converged) {
+    "converged"
+  } else {
+    "not_converged"
+  }
+
+  failure_reason <- if (run_completed) {
+    NA_character_
+  } else if (nzchar(log_text)) {
+    fatal_hits <- grep(
+      "Floating point exception|SIGFPE|segmentation fault|core dumped|Error trying to open|had status [1-9][0-9]*",
+      log_lines,
+      value = TRUE,
+      ignore.case = TRUE
+    )
+    if (length(fatal_hits) > 0) fatal_hits[[1]] else "MFCL log exists but final output par was not created."
+  } else {
+    "No final jitter output par was found."
+  }
+
+  list(
+    run_status = run_status,
+    run_completed = run_completed,
+    convergence_status = convergence_status,
+    converged = converged,
+    max_grad_converged_threshold = max_grad_converged_threshold,
+    failure_reason = failure_reason,
+    log_file_exists = file.exists(log_file),
+    error_log_exists = file.exists(error_file)
+  )
+}
+
 mp_first_or_null <- function(x) {
   if (length(x) > 0) x[[1]] else NULL
 }
@@ -206,21 +270,146 @@ mp_build_profile_payload <- function(scaler_dir) {
   )
 }
 
-mp_build_jitter_payload <- function(seed_dir, seed = NA_integer_) {
-  out_par <- mp_first_or_null(list.files(seed_dir, pattern = "jittered_out_\\d+\\.par$", full.names = TRUE))
-  if (is.null(out_par) || !file.exists(out_par)) return(NULL)
+mp_jitter_parameter_changes_from_labels <- function(labels_df, summary_df = NULL, seed = NA_integer_) {
+  seed_val <- seed
+  if (is.null(labels_df) || nrow(labels_df) == 0) {
+    return(list(
+      files = NULL,
+      labels = labels_df,
+      summary = summary_df,
+      family_stats = NULL,
+      overall_stats = NULL
+    ))
+  }
 
-  out_obj <- mp_safe(read.MFCLPar(out_par))
-  if (is.null(out_obj)) return(NULL)
+  labels_df$before <- suppressWarnings(as.numeric(labels_df$before))
+  labels_df$after <- suppressWarnings(as.numeric(labels_df$after))
+  labels_df$delta <- suppressWarnings(as.numeric(labels_df$delta))
+
+  denom <- ifelse(is.finite(labels_df$before) & abs(labels_df$before) > .Machine$double.eps, abs(labels_df$before), NA_real_)
+  labels_df$rel_change <- labels_df$delta / denom
+  labels_df$pct_change <- 100 * labels_df$rel_change
+  labels_df$abs_delta <- abs(labels_df$delta)
+  labels_df$abs_pct_change <- abs(labels_df$pct_change)
+  changed_col <- if ("changed" %in% names(labels_df)) labels_df$changed else rep(FALSE, nrow(labels_df))
+  labels_df$changed_flag <- as.integer((!is.na(changed_col) & changed_col) | (is.finite(labels_df$delta) & abs(labels_df$delta) > 0))
+  labels_df$seed <- seed_val
+
+  family_stats <- stats::aggregate(rep(1, nrow(labels_df)), by = list(family = labels_df$family), FUN = sum)
+  names(family_stats)[names(family_stats) == "x"] <- "n"
+
+  changed_stats <- stats::aggregate(labels_df$changed_flag, by = list(family = labels_df$family), FUN = sum, na.rm = TRUE)
+  mean_abs_delta_stats <- stats::aggregate(labels_df$abs_delta, by = list(family = labels_df$family), FUN = mean, na.rm = TRUE)
+  median_abs_delta_stats <- stats::aggregate(labels_df$abs_delta, by = list(family = labels_df$family), FUN = stats::median, na.rm = TRUE)
+  mean_abs_pct_stats <- stats::aggregate(labels_df$abs_pct_change, by = list(family = labels_df$family), FUN = mean, na.rm = TRUE)
+  median_abs_pct_stats <- stats::aggregate(labels_df$abs_pct_change, by = list(family = labels_df$family), FUN = stats::median, na.rm = TRUE)
+
+  names(changed_stats)[2] <- "changed"
+  names(mean_abs_delta_stats)[2] <- "mean_abs_delta"
+  names(median_abs_delta_stats)[2] <- "median_abs_delta"
+  names(mean_abs_pct_stats)[2] <- "mean_abs_pct_change"
+  names(median_abs_pct_stats)[2] <- "median_abs_pct_change"
+
+  family_stats <- merge(family_stats, changed_stats, by = "family", all.x = TRUE)
+  family_stats <- merge(family_stats, mean_abs_delta_stats, by = "family", all.x = TRUE)
+  family_stats <- merge(family_stats, median_abs_delta_stats, by = "family", all.x = TRUE)
+  family_stats <- merge(family_stats, mean_abs_pct_stats, by = "family", all.x = TRUE)
+  family_stats <- merge(family_stats, median_abs_pct_stats, by = "family", all.x = TRUE)
+  family_stats$changed_pct <- ifelse(family_stats$n > 0, 100 * family_stats$changed / family_stats$n, NA_real_)
+  family_stats$seed <- seed_val
+
+  overall_stats <- data.frame(
+    seed = seed_val,
+    n = nrow(labels_df),
+    changed = sum(labels_df$changed_flag, na.rm = TRUE),
+    changed_pct = 100 * mean(labels_df$changed_flag, na.rm = TRUE),
+    mean_abs_delta = mean(labels_df$abs_delta, na.rm = TRUE),
+    median_abs_delta = stats::median(labels_df$abs_delta, na.rm = TRUE),
+    mean_abs_pct_change = mean(labels_df$abs_pct_change, na.rm = TRUE),
+    median_abs_pct_change = stats::median(labels_df$abs_pct_change, na.rm = TRUE)
+  )
+
+  list(
+    files = NULL,
+    labels = labels_df,
+    summary = summary_df,
+    family_stats = family_stats,
+    overall_stats = overall_stats
+  )
+}
+
+mp_read_jitter_parameter_changes <- function(seed_dir, seed = NA_integer_) {
+  seed_val <- ifelse(
+    is.na(seed),
+    suppressWarnings(as.integer(sub(".*?(\\d+)$", "\\1", basename(seed_dir)))),
+    seed
+  )
+  label_file <- file.path(seed_dir, sprintf("jitter_seed_%s_label_changes.csv", seed_val))
+  summary_file <- file.path(seed_dir, sprintf("jitter_seed_%s_summary.csv", seed_val))
+  info_file <- file.path(seed_dir, "jitter_info.rds")
+
+  if (file.exists(info_file)) {
+    info_out <- mp_safe(readRDS(info_file))
+    labels_df <- mp_safe(info_out$parameter_changes$labels)
+    summary_df <- mp_safe(info_out$parameter_changes$summary)
+    if (!is.null(labels_df) && nrow(labels_df) > 0) {
+      return(mp_jitter_parameter_changes_from_labels(labels_df, summary_df = summary_df, seed = seed_val))
+    }
+  }
+
+  labels_df <- if (file.exists(label_file)) mp_safe(utils::read.csv(label_file, stringsAsFactors = FALSE)) else NULL
+  summary_df <- if (file.exists(summary_file)) mp_safe(utils::read.csv(summary_file, stringsAsFactors = FALSE)) else NULL
+  out <- mp_jitter_parameter_changes_from_labels(labels_df, summary_df = summary_df, seed = seed_val)
+  out$files <- list(label_changes = label_file, summary = summary_file)
+  out
+}
+
+mp_build_jitter_payload <- function(seed_dir, seed = NA_integer_) {
+  info_file <- file.path(seed_dir, "jitter_info.rds")
+  info_out <- if (file.exists(info_file)) mp_safe(readRDS(info_file)) else NULL
+  seed_val <- ifelse(is.na(seed), suppressWarnings(as.integer(sub(".*?(\\d+)$", "\\1", basename(seed_dir)))), seed)
+
+  out_par <- mp_first_or_null(list.files(seed_dir, pattern = "jittered_out_\\d+\\.par$", full.names = TRUE))
+  if (is.null(out_par) && !is.null(info_out$output_par)) {
+    candidate_out <- file.path(seed_dir, info_out$output_par)
+    if (file.exists(candidate_out)) out_par <- candidate_out
+  }
+
+  out_exists <- !is.null(out_par) && file.exists(out_par)
+  out_obj <- if (out_exists) mp_safe(read.MFCLPar(out_par)) else NULL
+  obj_fun <- if (!is.null(out_obj)) suppressWarnings(as.numeric(out_obj@obj_fun)) else NA_real_
+  max_grad <- if (!is.null(out_obj)) suppressWarnings(as.numeric(out_obj@max_grad)) else NA_real_
+
+  parameter_changes <- mp_read_jitter_parameter_changes(seed_dir, seed)
+  mfcl_run <- mp_safe(info_out$mfcl_run)
+  run_checks <- mp_detect_jitter_run_state(
+    seed_dir = seed_dir,
+    output_par_exists = out_exists,
+    obj_fun = obj_fun,
+    max_grad = max_grad
+  )
+  run_status <- if (!is.null(mfcl_run$run_status)) mfcl_run$run_status else run_checks$run_status
+  exit_status <- suppressWarnings(as.integer(mp_safe(mfcl_run$exit_status)))
 
   list(
     version = "v1",
     created_at = as.character(Sys.time()),
     seed_dir = seed_dir,
-    seed = ifelse(is.na(seed), suppressWarnings(as.integer(sub(".*?(\\d+)$", "\\1", basename(seed_dir)))), seed),
-    obj_fun = suppressWarnings(as.numeric(out_obj@obj_fun)),
-    max_grad = suppressWarnings(as.numeric(out_obj@max_grad)),
-    output_par = basename(out_par)
+    seed = seed_val,
+    run_status = run_status,
+    run_completed = run_checks$run_completed,
+    convergence_status = run_checks$convergence_status,
+    converged = run_checks$converged,
+    success = run_checks$run_completed,
+    exit_status = exit_status,
+    failure_reason = if (!is.null(mp_safe(mfcl_run$failure_reason))) mp_safe(mfcl_run$failure_reason) else run_checks$failure_reason,
+    output_par_exists = out_exists,
+    obj_fun = obj_fun,
+    max_grad = max_grad,
+    output_par = if (out_exists) basename(out_par) else mp_safe(info_out$output_par),
+    parameter_changes = parameter_changes,
+    mfcl_run = mfcl_run,
+    run_checks = run_checks
   )
 }
 

@@ -70,16 +70,15 @@ if(length(par_files) > 0) {
 ## Read par file and apply jitter
 jittered_par_name <- paste0("jittered_", jitter_seed, ".par")
 indepvar_in_seed <- file.path(seed_dir, "indepvar.rpt")
-jitter_output_prefix <- file.path(seed_dir, paste0("jitter_seed_", jitter_seed))
 
-run_exact_jitter(
+jitter_run <- run_exact_jitter(
   model_dir = seed_dir,
   jitter_bound = as.numeric(jitter_amount),
   seed = as.numeric(jitter_seed),
   base_par_file = most_recent,
   indepvar_file = indepvar_in_seed,
   out_file = file.path(seed_dir, jittered_par_name),
-  output_prefix = jitter_output_prefix,
+  output_prefix = FALSE,
   change_tol = 1e-14
 )
 
@@ -114,7 +113,19 @@ info_list <- list(
   model_dir     = model_dir,
   seed_dir      = seed_dir,
   input_par     = basename(most_recent),
-  jittered_par  = jittered_par_name
+  jittered_par  = jittered_par_name,
+  parameter_changes = jitter_run$comparison,
+  parameter_change_summary = jitter_run$comparison$summary,
+  parameter_change_overall = data.frame(
+    seed = jitter_seed,
+    n = nrow(jitter_run$comparison$labels),
+    changed = sum(jitter_run$comparison$labels$changed, na.rm = TRUE),
+    changed_pct = 100 * mean(jitter_run$comparison$labels$changed, na.rm = TRUE),
+    mean_abs_delta = mean(abs(jitter_run$comparison$labels$delta), na.rm = TRUE),
+    median_abs_delta = stats::median(abs(jitter_run$comparison$labels$delta), na.rm = TRUE),
+    mean_abs_pct_change = mean(abs(100 * (jitter_run$comparison$labels$delta / ifelse(abs(jitter_run$comparison$labels$before) > .Machine$double.eps, abs(jitter_run$comparison$labels$before), NA_real_))), na.rm = TRUE),
+    median_abs_pct_change = stats::median(abs(100 * (jitter_run$comparison$labels$delta / ifelse(abs(jitter_run$comparison$labels$before) > .Machine$double.eps, abs(jitter_run$comparison$labels$before), NA_real_))), na.rm = TRUE)
+  )
 )
 
 saveRDS(
@@ -134,11 +145,7 @@ deleted_n <- mp_cleanup_files(
   seed_dir,
   keep = c(
     "jitter_result.rds",
-    "jitter_info.rds",
-    jittered_par_name,
-    basename(sprintf("%s_label_changes.csv", jitter_output_prefix)),
-    basename(sprintf("%s_summary.csv", jitter_output_prefix)),
-    basename(sprintf("%s_summary.pdf", jitter_output_prefix))
+    "jitter_info.rds"
   ),
   recursive = TRUE
 )
