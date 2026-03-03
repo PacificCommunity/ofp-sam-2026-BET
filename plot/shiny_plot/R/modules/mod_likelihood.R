@@ -73,23 +73,28 @@ mod_likelihood_ui <- function() {
               "lik_jitter_param_view",
               "Jitter Param View:",
               choices = c(
-                "Diverse 20 distributions" = "top",
-                "All-parameter summary" = "summary"
+                "Original vs jittered pars distribution" = "input",
+                "Original vs final fitted pars distribution" = "final"
               ),
-              selected = "top"
+              selected = "input"
             ),
             conditionalPanel(
-              condition = "input.lik_jitter_param_view == 'top'",
-              selectInput(
-                "lik_jitter_param_metric",
-                "Jitter Param Scale:",
-                choices = c(
-                  "Parameter value" = "value",
-                  "Change from original" = "delta",
-                  "% change from original" = "pct_change"
-                ),
-                selected = "pct_change"
+              condition = "input.lik_jitter_param_view == 'final'",
+              checkboxInput(
+                "lik_jitter_final_converged_only",
+                "Converged only (max_grad <= 0.01)",
+                value = FALSE
               )
+            ),
+            selectInput(
+              "lik_jitter_param_metric",
+              "Jitter Param Scale:",
+              choices = c(
+                "Parameter value" = "value",
+                "Change from original" = "delta",
+                "% change from original" = "pct_change"
+              ),
+              selected = "pct_change"
             )
           )
         ),
@@ -177,7 +182,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       profile_type = if (is.null(input$lik_profile_type)) "components" else input$lik_profile_type,
       groups = input$lik_groups,
       facet_ncol = input$lik_facet_ncol,
-      jitter_param_view = if (is.null(input$lik_jitter_param_view)) "top" else input$lik_jitter_param_view,
+      jitter_param_view = if (is.null(input$lik_jitter_param_view)) "input" else input$lik_jitter_param_view,
+      jitter_final_converged_only = isTRUE(input$lik_jitter_final_converged_only),
       jitter_param_metric = if (is.null(input$lik_jitter_param_metric)) "pct_change" else input$lik_jitter_param_metric
     )
   })
@@ -986,7 +992,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     bind_rows(rows)
   }
 
-  build_jitter_parameter_data <- function(scenarios, jitter_pars_list) {
+  build_jitter_parameter_data <- function(scenarios, jitter_pars_list, view = "input", converged_only = FALSE) {
     rows <- list()
 
     for (sc in scenarios) {
@@ -1000,7 +1006,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
       for (i in seq_along(jit_list)) {
         jit <- jit_list[[i]]
-        param_changes <- if (is.list(jit) && !is.null(jit$parameter_changes)) jit$parameter_changes else NULL
+        if (identical(view, "final")) {
+          if (!isTRUE(jit$run_completed)) next
+          if (isTRUE(converged_only) && !isTRUE(jit$converged)) next
+        }
+        param_changes <- if (identical(view, "final")) {
+          if (is.list(jit) && !is.null(jit$fitted_parameter_changes)) jit$fitted_parameter_changes else NULL
+        } else {
+          if (is.list(jit) && !is.null(jit$parameter_changes)) jit$parameter_changes else NULL
+        }
         labels_df <- if (is.list(param_changes) && !is.null(param_changes$labels)) param_changes$labels else NULL
         if (is.null(labels_df) || nrow(labels_df) == 0) next
 
@@ -1355,9 +1369,20 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     if (type == "jitter_params") {
-      data <- build_jitter_parameter_data(selected, rv$JitterPars_list)
+      jitter_param_view <- if (is.null(filters$jitter_param_view)) "input" else filters$jitter_param_view
+      converged_only <- isTRUE(filters$jitter_final_converged_only)
+      data <- build_jitter_parameter_data(selected, rv$JitterPars_list, view = jitter_param_view, converged_only = converged_only)
       if (nrow(data) == 0) {
-        return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No jitter parameter distributions found", plot_kind = "jitter_params"))
+        msg <- if (identical(jitter_param_view, "final")) {
+          if (isTRUE(converged_only)) {
+            "No converged jitter runs with final parameter distributions found"
+          } else {
+            "No completed jitter runs with final parameter distributions found"
+          }
+        } else {
+          "No jitter parameter distributions found"
+        }
+        return(list(data = data.frame(), group_col = NULL, label = NULL, message = msg, plot_kind = "jitter_params"))
       }
       return(list(data = data, group_col = NULL, label = "Jitter Parameters", message = NULL, plot_kind = "jitter_params"))
     }
@@ -1679,55 +1704,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     if (identical(plot_kind, "jitter_params")) {
-      param_view <- if (is.null(filters$jitter_param_view)) "top" else filters$jitter_param_view
+      param_view <- if (is.null(filters$jitter_param_view)) "input" else filters$jitter_param_view
+      converged_only <- isTRUE(filters$jitter_final_converged_only)
       metric <- if (is.null(filters$jitter_param_metric)) "pct_change" else filters$jitter_param_metric
-
-      if (identical(param_view, "summary")) {
-        summary_df <- data %>%
-          distinct(scenario, param_key, Index, Var_name, family, median_abs_pct_change, mean_abs_pct_change, n_seed) %>%
-          mutate(
-            changed_flag = is.finite(median_abs_pct_change) & median_abs_pct_change > 0
-          )
-
-        scenario_counts <- summary_df %>%
-          group_by(scenario) %>%
-          summarise(
-            n_params = dplyr::n(),
-            n_changed = sum(changed_flag, na.rm = TRUE),
-            .groups = "drop"
-          )
-
-        summary_df <- summary_df %>%
-          left_join(scenario_counts, by = "scenario") %>%
-          mutate(
-            scenario_label = paste0(scenario, "\nchanged: ", n_changed, " / ", n_params)
-          )
-
-        return(
-          ggplot(summary_df, aes(x = median_abs_pct_change)) +
-            geom_histogram(
-              bins = 30,
-              fill = "#9ecae1",
-              color = "#2b6c8a",
-              linewidth = 0.3,
-              na.rm = TRUE
-            ) +
-            geom_vline(xintercept = 0, color = "#d62728", linetype = "dashed", linewidth = 0.7) +
-            facet_wrap(~ scenario_label, scales = "free_y", ncol = facet_ncol) +
-            labs(
-              x = "Median absolute % change across seeds",
-              y = "Number of parameters",
-              title = "All-Parameter Jitter Summary",
-              subtitle = "Each bar summarizes how much parameters moved across all seeds. Red dashed line = no change"
-            ) +
-            theme_bw(base_size = 11) +
-            theme(
-              strip.text = element_text(face = "bold"),
-              strip.background = element_rect(fill = "#d9edf7"),
-              panel.grid.minor = element_blank()
-            )
-        )
-      }
 
       selected_params <- data %>%
         distinct(scenario, param_key, Index, Var_name, family, median_abs_pct_change, mean_abs_pct_change) %>%
@@ -1793,15 +1772,24 @@ mod_likelihood_server <- function(input, output, session, rv) {
       )
 
       plot_title <- case_when(
-        metric == "value" ~ "Jitter Parameter Distributions",
-        metric == "delta" ~ "Jitter Parameter Changes",
-        TRUE ~ "Jitter Parameter % Changes"
+        metric == "value" && identical(param_view, "final") ~ "Final Fitted Parameter Distributions",
+        metric == "delta" && identical(param_view, "final") ~ "Final Fitted Parameter Changes",
+        metric == "pct_change" && identical(param_view, "final") ~ "Final Fitted Parameter % Changes",
+        metric == "value" ~ "Jittered Input Parameter Distributions",
+        metric == "delta" ~ "Jittered Input Parameter Changes",
+        TRUE ~ "Jittered Input Parameter % Changes"
       )
 
       plot_subtitle <- case_when(
-        metric == "value" ~ "About 20 parameters per scenario: first spread across families, then filled by largest median absolute % change. Red diamond = original value",
-        metric == "delta" ~ "About 20 parameters per scenario: first spread across families, then filled by largest median absolute % change. Red diamond = no change",
-        TRUE ~ "About 20 parameters per scenario: first spread across families, then filled by largest median absolute % change. Red diamond = 0% change"
+        metric == "value" && identical(param_view, "final") && converged_only ~ "About 20 parameters per scenario from converged final runs (max_grad <= 0.01). Red diamond = original value",
+        metric == "delta" && identical(param_view, "final") && converged_only ~ "About 20 parameters per scenario from converged final runs (max_grad <= 0.01). Red diamond = no change",
+        metric == "pct_change" && identical(param_view, "final") && converged_only ~ "About 20 parameters per scenario from converged final runs (max_grad <= 0.01). Red diamond = 0% change",
+        metric == "value" && identical(param_view, "final") ~ "About 20 parameters per scenario from completed final runs. Red diamond = original value",
+        metric == "delta" && identical(param_view, "final") ~ "About 20 parameters per scenario from completed final runs. Red diamond = no change",
+        metric == "pct_change" && identical(param_view, "final") ~ "About 20 parameters per scenario from completed final runs. Red diamond = 0% change",
+        metric == "value" ~ "About 20 parameters per scenario from jittered input pars. Red diamond = original value",
+        metric == "delta" ~ "About 20 parameters per scenario from jittered input pars. Red diamond = no change",
+        TRUE ~ "About 20 parameters per scenario from jittered input pars. Red diamond = 0% change"
       )
 
       return(
@@ -2028,7 +2016,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
   })
   observeEvent(list(input$live_update_plots, input$lik_scenarios, input$lik_profile_type,
                     input$lik_groups, input$lik_facet_ncol,
-                    input$lik_jitter_param_view, input$lik_jitter_param_metric), {
+                    input$lik_jitter_param_view, input$lik_jitter_final_converged_only,
+                    input$lik_jitter_param_metric), {
     req(rv$data_loaded)
     if (!isTRUE(input$live_update_plots)) return()
     if (length(input$lik_scenarios) == 0) return()

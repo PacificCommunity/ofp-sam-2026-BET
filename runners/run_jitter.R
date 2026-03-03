@@ -108,6 +108,38 @@ run_commands(commands = mfcl_commands,
              verbose = T, 
              log_file = file.path(seed_dir, "mfcl_log.txt"))
 
+fitted_parameter_changes <- NULL
+fitted_parameter_change_summary <- NULL
+fitted_parameter_change_overall <- NULL
+output_par_path <- file.path(seed_dir, output_par_name)
+base_par_obj <- suppressWarnings(tryCatch(read.MFCLPar(most_recent), error = function(e) NULL))
+output_par_obj <- if (file.exists(output_par_path)) {
+  suppressWarnings(tryCatch(read.MFCLPar(output_par_path), error = function(e) NULL))
+} else {
+  NULL
+}
+
+if (!is.null(base_par_obj) && !is.null(output_par_obj)) {
+  fitted_parameter_changes <- compare_exact_jitter(
+    base_par = base_par_obj,
+    jittered_par = output_par_obj,
+    indepvar_file = indepvar_in_seed,
+    change_tol = 1e-14,
+    output_prefix = FALSE
+  )
+  fitted_parameter_change_summary <- fitted_parameter_changes$summary
+  fitted_parameter_change_overall <- data.frame(
+    seed = jitter_seed,
+    n = nrow(fitted_parameter_changes$labels),
+    changed = sum(fitted_parameter_changes$labels$changed, na.rm = TRUE),
+    changed_pct = 100 * mean(fitted_parameter_changes$labels$changed, na.rm = TRUE),
+    mean_abs_delta = mean(abs(fitted_parameter_changes$labels$delta), na.rm = TRUE),
+    median_abs_delta = stats::median(abs(fitted_parameter_changes$labels$delta), na.rm = TRUE),
+    mean_abs_pct_change = mean(abs(100 * (fitted_parameter_changes$labels$delta / ifelse(abs(fitted_parameter_changes$labels$before) > .Machine$double.eps, abs(fitted_parameter_changes$labels$before), NA_real_))), na.rm = TRUE),
+    median_abs_pct_change = stats::median(abs(100 * (fitted_parameter_changes$labels$delta / ifelse(abs(fitted_parameter_changes$labels$before) > .Machine$double.eps, abs(fitted_parameter_changes$labels$before), NA_real_))), na.rm = TRUE)
+  )
+}
+
 # Save jitter run info
 info_list <- list(
   jitter_seed   = jitter_seed,
@@ -130,7 +162,10 @@ info_list <- list(
     median_abs_delta = stats::median(abs(jitter_run$comparison$labels$delta), na.rm = TRUE),
     mean_abs_pct_change = mean(abs(100 * (jitter_run$comparison$labels$delta / ifelse(abs(jitter_run$comparison$labels$before) > .Machine$double.eps, abs(jitter_run$comparison$labels$before), NA_real_))), na.rm = TRUE),
     median_abs_pct_change = stats::median(abs(100 * (jitter_run$comparison$labels$delta / ifelse(abs(jitter_run$comparison$labels$before) > .Machine$double.eps, abs(jitter_run$comparison$labels$before), NA_real_))), na.rm = TRUE)
-  )
+  ),
+  fitted_parameter_changes = fitted_parameter_changes,
+  fitted_parameter_change_summary = fitted_parameter_change_summary,
+  fitted_parameter_change_overall = fitted_parameter_change_overall
 )
 
 saveRDS(

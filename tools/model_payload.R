@@ -12,7 +12,7 @@ mp_detect_jitter_run_state <- function(seed_dir,
                                        obj_fun = NA_real_,
                                        max_grad = NA_real_,
                                        exit_status = NA_integer_,
-                                       max_grad_converged_threshold = 1) {
+                                       max_grad_converged_threshold = 0.01) {
   log_file <- file.path(seed_dir, "mfcl_log.txt")
   error_file <- file.path(seed_dir, "error.log")
   log_lines <- c(mp_safe_read_lines(log_file), mp_safe_read_lines(error_file))
@@ -363,7 +363,7 @@ mp_jitter_parameter_changes_from_labels <- function(labels_df, summary_df = NULL
   )
 }
 
-mp_read_jitter_parameter_changes <- function(seed_dir, seed = NA_integer_) {
+mp_read_jitter_parameter_changes <- function(seed_dir, seed = NA_integer_, field_name = "parameter_changes") {
   seed_val <- ifelse(
     is.na(seed),
     suppressWarnings(as.integer(sub(".*?(\\d+)$", "\\1", basename(seed_dir)))),
@@ -375,8 +375,9 @@ mp_read_jitter_parameter_changes <- function(seed_dir, seed = NA_integer_) {
 
   if (file.exists(info_file)) {
     info_out <- mp_safe(readRDS(info_file))
-    labels_df <- mp_safe(info_out$parameter_changes$labels)
-    summary_df <- mp_safe(info_out$parameter_changes$summary)
+    change_obj <- mp_safe(info_out[[field_name]])
+    labels_df <- mp_safe(change_obj$labels)
+    summary_df <- mp_safe(change_obj$summary)
     if (!is.null(labels_df) && nrow(labels_df) > 0) {
       return(mp_jitter_parameter_changes_from_labels(labels_df, summary_df = summary_df, seed = seed_val))
     }
@@ -434,7 +435,8 @@ mp_build_jitter_payload <- function(seed_dir, seed = NA_integer_) {
   obj_fun <- if (!is.null(out_obj)) suppressWarnings(as.numeric(out_obj@obj_fun)) else NA_real_
   max_grad <- if (!is.null(out_obj)) suppressWarnings(as.numeric(out_obj@max_grad)) else NA_real_
 
-  parameter_changes <- mp_read_jitter_parameter_changes(seed_dir, seed)
+  parameter_changes <- mp_read_jitter_parameter_changes(seed_dir, seed, field_name = "parameter_changes")
+  fitted_parameter_changes <- mp_read_jitter_parameter_changes(seed_dir, seed, field_name = "fitted_parameter_changes")
   derived_quantities <- mp_extract_jitter_derived_quantities(seed_dir, seed_val)
   mfcl_run <- mp_safe(info_out$mfcl_run)
   exit_status <- suppressWarnings(as.integer(mp_safe(mfcl_run$exit_status)))
@@ -464,6 +466,7 @@ mp_build_jitter_payload <- function(seed_dir, seed = NA_integer_) {
     max_grad = max_grad,
     output_par = if (out_exists) basename(out_par) else mp_safe(info_out$output_par),
     parameter_changes = parameter_changes,
+    fitted_parameter_changes = fitted_parameter_changes,
     derived_quantities = derived_quantities,
     mfcl_run = mfcl_run,
     run_checks = run_checks
