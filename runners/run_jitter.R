@@ -19,7 +19,7 @@ base_dir_abs <- file.path(project_root, base_dir)
 
 ## Jitter settings
 ## Single seed value for parallel execution via condor
-jitter_seed <- as.integer(Sys.getenv("jitter_seed", "1"))
+jitter_seed <- as.integer(Sys.getenv("jitter_seed", "11"))
 jitter_amount <- as.numeric(Sys.getenv("jitter_amount", "0.1"))
 
 ## Create jitter-specific directory inside jitter folder
@@ -68,14 +68,20 @@ if(length(par_files) > 0) {
 }
 
 ## Read par file and apply jitter
-par_orig <- read.MFCLPar(most_recent)
-par_jittered <- jitter_par(par_orig, as.numeric(jitter_amount), as.numeric(jitter_seed))
-
-#results <- plot_all_jitter_comprehensive(par_orig, n_jitters = 1000, jitter_bound = jitter_amount)
-
-## Write jittered par file
 jittered_par_name <- paste0("jittered_", jitter_seed, ".par")
-write(par_jittered, file = file.path(seed_dir, jittered_par_name))
+indepvar_in_seed <- file.path(seed_dir, "indepvar.rpt")
+jitter_output_prefix <- file.path(seed_dir, paste0("jitter_seed_", jitter_seed))
+
+run_exact_jitter(
+  model_dir = seed_dir,
+  jitter_bound = as.numeric(jitter_amount),
+  seed = as.numeric(jitter_seed),
+  base_par_file = most_recent,
+  indepvar_file = indepvar_in_seed,
+  out_file = file.path(seed_dir, jittered_par_name),
+  output_prefix = jitter_output_prefix,
+  change_tol = 1e-14
+)
 
 cat("Jittered par file written:", jittered_par_name, "\n")
 
@@ -84,7 +90,7 @@ cat("Jittered par file written:", jittered_par_name, "\n")
 ##############
 
 defaultswitch <- paste("-switch 1",
-                       "1 1 5000",
+                       "1 1 5",
                        sep=" ")
 
 output_par_name <- paste0("jittered_out_", jitter_seed, ".par")
@@ -126,7 +132,14 @@ saveRDS(
 
 deleted_n <- mp_cleanup_files(
   seed_dir,
-  keep = c("jitter_result.rds", "jitter_info.rds"),
+  keep = c(
+    "jitter_result.rds",
+    "jitter_info.rds",
+    jittered_par_name,
+    basename(sprintf("%s_label_changes.csv", jitter_output_prefix)),
+    basename(sprintf("%s_summary.csv", jitter_output_prefix)),
+    basename(sprintf("%s_summary.pdf", jitter_output_prefix))
+  ),
   recursive = TRUE
 )
 cat("Cleanup removed", deleted_n, "non-core files in", seed_dir, "\n")
