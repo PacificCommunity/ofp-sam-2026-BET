@@ -12,7 +12,14 @@ jitter_sample_uniform_pct <- function(current_val, bound, lower = -Inf, upper = 
   }
 
   if (abs(current_val) <= eps) {
-    return(max(lower, min(upper, current_val)))
+    return(jitter_sample_uniform_delta(
+      current_val,
+      bound,
+      scale_val = max(abs(current_val), eps),
+      lower = lower,
+      upper = upper,
+      eps = eps
+    ))
   }
 
   pct_min <- -bound
@@ -26,7 +33,14 @@ jitter_sample_uniform_pct <- function(current_val, bound, lower = -Inf, upper = 
   }
 
   if (pct_min > pct_max) {
-    return(max(lower, min(upper, current_val)))
+    return(jitter_sample_uniform_delta(
+      current_val,
+      bound,
+      scale_val = max(abs(current_val), eps),
+      lower = lower,
+      upper = upper,
+      eps = eps
+    ))
   }
 
   current_val * (1 + runif(1, pct_min, pct_max))
@@ -38,6 +52,41 @@ jitter_sample_uniform_delta <- function(current_val,
                                         lower = -Inf,
                                         upper = Inf,
                                         eps = 1e-12) {
+  sample_away_from_current <- function(current_val, lower, upper, eps = 1e-12) {
+    lo <- if (is.finite(lower)) lower else current_val - max(abs(current_val), 1)
+    hi <- if (is.finite(upper)) upper else current_val + max(abs(current_val), 1)
+
+    if (!is.finite(lo) || !is.finite(hi) || lo > hi) {
+      return(current_val)
+    }
+
+    if ((hi - lo) <= eps) {
+      candidate <- max(lo, min(hi, current_val))
+      if (abs(candidate - current_val) > eps) {
+        return(candidate)
+      }
+      return(current_val)
+    }
+
+    left_ok <- lo < (current_val - eps)
+    right_ok <- hi > (current_val + eps)
+
+    if (left_ok && right_ok) {
+      if (runif(1) < 0.5) {
+        return(runif(1, lo, current_val - eps))
+      }
+      return(runif(1, current_val + eps, hi))
+    }
+    if (left_ok) {
+      return(runif(1, lo, current_val - eps))
+    }
+    if (right_ok) {
+      return(runif(1, current_val + eps, hi))
+    }
+
+    current_val
+  }
+
   if (!is.finite(current_val) || bound <= 0) {
     return(current_val)
   }
@@ -57,7 +106,7 @@ jitter_sample_uniform_delta <- function(current_val,
   }
 
   if (delta_min > delta_max) {
-    return(max(lower, min(upper, current_val)))
+    return(sample_away_from_current(current_val, lower, upper, eps = eps))
   }
 
   current_val + runif(1, delta_min, delta_max)
@@ -81,6 +130,70 @@ jitter_sample_value <- function(current_val,
     upper = upper,
     eps = eps
   )
+}
+
+sample_bounded_simplex <- function(current_vals,
+                                   total_sum = sum(current_vals),
+                                   lower = NULL,
+                                   upper = NULL,
+                                   eps = 1e-12) {
+  current_vals <- as.numeric(current_vals)
+  n <- length(current_vals)
+  if (n == 0 || !all(is.finite(current_vals)) || !is.finite(total_sum)) {
+    return(current_vals)
+  }
+
+  if (is.null(lower)) lower <- rep(eps, n)
+  if (is.null(upper)) upper <- rep(total_sum, n)
+
+  lower <- pmax(as.numeric(lower), eps)
+  upper <- as.numeric(upper)
+
+  if (length(lower) != n || length(upper) != n || any(!is.finite(lower)) || any(!is.finite(upper))) {
+    return(current_vals)
+  }
+
+  upper <- pmax(upper, lower)
+  if (sum(lower) > total_sum + eps || sum(upper) < total_sum - eps) {
+    return(current_vals)
+  }
+
+  if (n == 1) {
+    if (total_sum >= lower[1] - eps && total_sum <= upper[1] + eps) {
+      return(total_sum)
+    }
+    return(current_vals)
+  }
+
+  order_idx <- sample.int(n)
+  x <- rep(NA_real_, n)
+  remaining_sum <- total_sum
+
+  for (k in seq_len(n - 1)) {
+    i <- order_idx[k]
+    rem <- order_idx[(k + 1):n]
+
+    lo <- max(lower[i], remaining_sum - sum(upper[rem]))
+    hi <- min(upper[i], remaining_sum - sum(lower[rem]))
+
+    if (!is.finite(lo) || !is.finite(hi) || lo > hi) {
+      return(current_vals)
+    }
+
+    if (hi - lo <= eps) {
+      x[i] <- lo
+    } else {
+      x[i] <- runif(1, lo, hi)
+    }
+    remaining_sum <- remaining_sum - x[i]
+  }
+
+  last_i <- order_idx[n]
+  if (remaining_sum < lower[last_i] - eps || remaining_sum > upper[last_i] + eps) {
+    return(current_vals)
+  }
+  x[last_i] <- remaining_sum
+  x
 }
 
 resolve_indepvar_file <- function(indepvar_file = NULL, search_root = getwd()) {
@@ -372,10 +485,9 @@ apply_indepvar_exact_jitter <- function(par, indepvar_map, jitter_bound, eps = 1
       ncol = dimensions(par)["regions"]
     )
     for (i in rrd_rows) {
-      rrv_export[mapping$key2[i], mapping$key1[i]] <- jitter_sample_uniform_delta(
+      rrv_export[mapping$key2[i], mapping$key1[i]] <- jitter_sample_uniform_pct(
         rrv_export[mapping$key2[i], mapping$key1[i]],
         jitter_bound,
-        scale_val = max(abs(rrv_export[mapping$key2[i], mapping$key1[i]]), eps),
         lower = mapping$L_bound[i],
         upper = mapping$U_bound[i],
         eps = eps
@@ -479,21 +591,15 @@ apply_indepvar_exact_jitter <- function(par, indepvar_map, jitter_bound, eps = 1
       row_map <- rp_rows[mapping$key1[rp_rows] == row_id]
       cols <- mapping$key2[row_map]
       current_vals <- region_pars(par)[row_id, cols]
-      proposed <- pmax(
-        eps,
-        vapply(
-          current_vals,
-          jitter_sample_uniform_pct,
-          numeric(1),
-          bound = jitter_bound,
-          lower = eps,
-          upper = 1,
-          eps = eps
-        )
+      lower_bounds <- pmax(eps, current_vals * (1 - jitter_bound), mapping$L_bound[row_map])
+      upper_bounds <- pmin(mapping$U_bound[row_map], current_vals * (1 + jitter_bound))
+      proposed <- sample_bounded_simplex(
+        current_vals,
+        total_sum = sum(current_vals),
+        lower = lower_bounds,
+        upper = upper_bounds,
+        eps = eps
       )
-      if (sum(proposed) > 0) {
-        proposed <- proposed / sum(proposed)
-      }
       region_pars(par)[row_id, cols] <- proposed
     }
   }
@@ -980,21 +1086,18 @@ jitter_par <- function(par, jitter_bound = 0.05, seed = NULL, indepvar_file = NU
           }
         }
       } else if (length(idx.free) == 1) {
-        new_val <- sample_uniform_pct(
-          current_props[1],
-          jitter_bound,
-          lower = eps,
-          upper = must.sum - eps
-        )
-        region_pars(par)[1, idx.free[1]] <- new_val
+        region_pars(par)[1, idx.free[1]] <- must.sum
 
       } else {
-        pct_shifts <- runif(length(current_props), -jitter_bound, jitter_bound)
-        proposed <- pmax(eps, current_props * (1 + pct_shifts))
-        proposed <- proposed / sum(proposed) * must.sum
-        proposed <- pmax(proposed, eps)
-        proposed <- proposed / sum(proposed) * must.sum
-        
+        lower_bounds <- pmax(eps, current_props * (1 - jitter_bound))
+        upper_bounds <- current_props * (1 + jitter_bound)
+        proposed <- sample_bounded_simplex(
+          current_props,
+          total_sum = must.sum,
+          lower = lower_bounds,
+          upper = upper_bounds,
+          eps = eps
+        )
         region_pars(par)[1, idx.free] <- proposed
       }
     }

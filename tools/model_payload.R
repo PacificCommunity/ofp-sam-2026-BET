@@ -306,7 +306,12 @@ mp_jitter_parameter_changes_from_labels <- function(labels_df, summary_df = NULL
   labels_df$after <- suppressWarnings(as.numeric(labels_df$after))
   labels_df$delta <- suppressWarnings(as.numeric(labels_df$delta))
 
-  denom <- ifelse(is.finite(labels_df$before) & abs(labels_df$before) > .Machine$double.eps, abs(labels_df$before), NA_real_)
+  pct_change_floor <- 1e-6
+  denom <- ifelse(
+    is.finite(labels_df$before) & abs(labels_df$before) >= pct_change_floor,
+    abs(labels_df$before),
+    NA_real_
+  )
   labels_df$rel_change <- labels_df$delta / denom
   labels_df$pct_change <- 100 * labels_df$rel_change
   labels_df$abs_delta <- abs(labels_df$delta)

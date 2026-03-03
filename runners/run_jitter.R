@@ -19,8 +19,9 @@ base_dir_abs <- file.path(project_root, base_dir)
 
 ## Jitter settings
 ## Single seed value for parallel execution via condor
-jitter_seed <- as.integer(Sys.getenv("jitter_seed", "11"))
+jitter_seed <- as.integer(Sys.getenv("jitter_seed", "90"))
 jitter_amount <- as.numeric(Sys.getenv("jitter_amount", "0.1"))
+jitter_neval <- as.integer(Sys.getenv("jitter_neval", "3"))
 
 ## Create jitter-specific directory inside jitter folder
 jitter_dir <- file.path(model_dir, "jitter")
@@ -33,6 +34,7 @@ cat("Jitter directory:", jitter_dir, "\n")
 cat("Seed directory:", seed_dir, "\n")
 cat("Jitter seed:", jitter_seed, "\n")
 cat("Jitter amount:", jitter_amount, "\n")
+cat("Jitter neval:", jitter_neval, "\n")
 
 ## Create seed directory and copy all files from base_dir (inputs)
 dir.create(seed_dir, recursive = TRUE, showWarnings = FALSE)
@@ -88,9 +90,11 @@ cat("Jittered par file written:", jittered_par_name, "\n")
 ## run MFCL ##
 ##############
 
-defaultswitch <- paste("-switch 1",
-                       "1 1 5000",
-                       sep=" ")
+defaultswitch <- paste(
+  "-switch 1",
+  paste("1 1", jitter_neval),
+  sep = " "
+)
 
 output_par_name <- paste0("jittered_out_", jitter_seed, ".par")
 mfcl_commands <- paste0("../../../../", program_path, " ", frq_file, " ", jittered_par_name, " ", output_par_name, " ", defaultswitch)
@@ -108,6 +112,7 @@ run_commands(commands = mfcl_commands,
 info_list <- list(
   jitter_seed   = jitter_seed,
   jitter_amount = jitter_amount,
+  jitter_neval  = jitter_neval,
   frq_file      = frq_file,
   program_path  = program_path,
   model_dir     = model_dir,

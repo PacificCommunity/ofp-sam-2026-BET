@@ -66,6 +66,33 @@ mod_likelihood_ui <- function() {
           )
         ),
         selectInput("lik_facet_ncol", "Facet columns:", choices = as.character(1:12), selected = "2"),
+        conditionalPanel(
+          condition = "input.lik_profile_type == 'jitter_params'",
+          tagList(
+            selectInput(
+              "lik_jitter_param_view",
+              "Jitter Param View:",
+              choices = c(
+                "Diverse 20 distributions" = "top",
+                "All-parameter summary" = "summary"
+              ),
+              selected = "top"
+            ),
+            conditionalPanel(
+              condition = "input.lik_jitter_param_view == 'top'",
+              selectInput(
+                "lik_jitter_param_metric",
+                "Jitter Param Scale:",
+                choices = c(
+                  "Parameter value" = "value",
+                  "Change from original" = "delta",
+                  "% change from original" = "pct_change"
+                ),
+                selected = "pct_change"
+              )
+            )
+          )
+        ),
         actionButton("lik_apply_filters", "Apply", class = "btn-primary", style = "width: 100%;"),
         tags$small("Selections update the plot and tables when you click Apply.",
                    style = "display:block; margin-top:6px; color:#666;"),
@@ -149,7 +176,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
       scenarios = input$lik_scenarios,
       profile_type = if (is.null(input$lik_profile_type)) "components" else input$lik_profile_type,
       groups = input$lik_groups,
-      facet_ncol = input$lik_facet_ncol
+      facet_ncol = input$lik_facet_ncol,
+      jitter_param_view = if (is.null(input$lik_jitter_param_view)) "top" else input$lik_jitter_param_view,
+      jitter_param_metric = if (is.null(input$lik_jitter_param_metric)) "pct_change" else input$lik_jitter_param_metric
     )
   })
   lik_filters_applied <- reactiveVal(NULL)
@@ -957,7 +986,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     bind_rows(rows)
   }
 
-  build_jitter_parameter_data <- function(scenarios, jitter_pars_list, top_n = 24) {
+  build_jitter_parameter_data <- function(scenarios, jitter_pars_list) {
     rows <- list()
 
     for (sc in scenarios) {
@@ -979,6 +1008,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           mutate(
             scenario = sc,
             seed = as.character(seeds[[i]]),
+            Index = suppressWarnings(as.integer(Index)),
             before = suppressWarnings(as.numeric(before)),
             after = suppressWarnings(as.numeric(after)),
             delta = suppressWarnings(as.numeric(delta)),
@@ -997,7 +1027,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (nrow(all_params) == 0) return(data.frame())
 
     ranked <- all_params %>%
-      group_by(scenario, Var_name, family) %>%
+      group_by(scenario, Index, Var_name, family) %>%
       summarise(
         before = first(before),
         median_abs_pct_change = median(abs_pct_change, na.rm = TRUE),
@@ -1006,17 +1036,29 @@ mod_likelihood_server <- function(input, output, session, rv) {
         .groups = "drop"
       ) %>%
       arrange(scenario, desc(median_abs_pct_change), desc(mean_abs_pct_change), Var_name) %>%
-      group_by(scenario) %>%
-      slice_head(n = top_n) %>%
-      ungroup() %>%
-      mutate(param_key = paste(scenario, Var_name, sep = "::"))
+      mutate(param_key = paste(scenario, Index, sep = "::"))
 
     plot_df <- all_params %>%
-      inner_join(ranked %>% select(scenario, Var_name, param_key, median_abs_pct_change, mean_abs_pct_change, n_seed),
-                 by = c("scenario", "Var_name")) %>%
-      mutate(
-        param_label = paste0(Var_name, " [", family, "]")
+      inner_join(
+        ranked %>% select(scenario, Index, param_key, median_abs_pct_change, mean_abs_pct_change, n_seed),
+        by = c("scenario", "Index")
       )
+
+    duplicate_counts <- plot_df %>%
+      distinct(scenario, Index, Var_name, family) %>%
+      group_by(scenario, Var_name, family) %>%
+      summarise(label_count = dplyr::n(), .groups = "drop")
+
+    plot_df <- plot_df %>%
+      left_join(duplicate_counts, by = c("scenario", "Var_name", "family")) %>%
+      mutate(
+        param_label = ifelse(
+          label_count > 1,
+          paste0(Var_name, " {", Index, "} [", family, "]"),
+          paste0(Var_name, " [", family, "]")
+        )
+      ) %>%
+      select(-label_count)
 
     param_levels <- ranked %>%
       arrange(scenario, median_abs_pct_change, mean_abs_pct_change, Var_name) %>%
@@ -1637,19 +1679,139 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     if (identical(plot_kind, "jitter_params")) {
+      param_view <- if (is.null(filters$jitter_param_view)) "top" else filters$jitter_param_view
+      metric <- if (is.null(filters$jitter_param_metric)) "pct_change" else filters$jitter_param_metric
+
+      if (identical(param_view, "summary")) {
+        summary_df <- data %>%
+          distinct(scenario, param_key, Index, Var_name, family, median_abs_pct_change, mean_abs_pct_change, n_seed) %>%
+          mutate(
+            changed_flag = is.finite(median_abs_pct_change) & median_abs_pct_change > 0
+          )
+
+        scenario_counts <- summary_df %>%
+          group_by(scenario) %>%
+          summarise(
+            n_params = dplyr::n(),
+            n_changed = sum(changed_flag, na.rm = TRUE),
+            .groups = "drop"
+          )
+
+        summary_df <- summary_df %>%
+          left_join(scenario_counts, by = "scenario") %>%
+          mutate(
+            scenario_label = paste0(scenario, "\nchanged: ", n_changed, " / ", n_params)
+          )
+
+        return(
+          ggplot(summary_df, aes(x = median_abs_pct_change)) +
+            geom_histogram(
+              bins = 30,
+              fill = "#9ecae1",
+              color = "#2b6c8a",
+              linewidth = 0.3,
+              na.rm = TRUE
+            ) +
+            geom_vline(xintercept = 0, color = "#d62728", linetype = "dashed", linewidth = 0.7) +
+            facet_wrap(~ scenario_label, scales = "free_y", ncol = facet_ncol) +
+            labs(
+              x = "Median absolute % change across seeds",
+              y = "Number of parameters",
+              title = "All-Parameter Jitter Summary",
+              subtitle = "Each bar summarizes how much parameters moved across all seeds. Red dashed line = no change"
+            ) +
+            theme_bw(base_size = 11) +
+            theme(
+              strip.text = element_text(face = "bold"),
+              strip.background = element_rect(fill = "#d9edf7"),
+              panel.grid.minor = element_blank()
+            )
+        )
+      }
+
+      selected_params <- data %>%
+        distinct(scenario, param_key, Index, Var_name, family, median_abs_pct_change, mean_abs_pct_change) %>%
+        filter(is.finite(median_abs_pct_change)) %>%
+        group_by(scenario, family) %>%
+        arrange(dplyr::desc(median_abs_pct_change), dplyr::desc(mean_abs_pct_change), Var_name, Index, .by_group = TRUE) %>%
+        slice_head(n = 1) %>%
+        ungroup()
+
+      scenario_slots <- selected_params %>%
+        group_by(scenario) %>%
+        summarise(family_count = dplyr::n(), .groups = "drop") %>%
+        mutate(extra_slots = pmax(20 - family_count, 0L))
+
+      remaining_slots <- data %>%
+        distinct(scenario, param_key, Index, Var_name, family, median_abs_pct_change, mean_abs_pct_change) %>%
+        filter(is.finite(median_abs_pct_change)) %>%
+        anti_join(selected_params %>% select(scenario, param_key), by = c("scenario", "param_key")) %>%
+        left_join(scenario_slots, by = "scenario") %>%
+        group_by(scenario) %>%
+        arrange(dplyr::desc(median_abs_pct_change), dplyr::desc(mean_abs_pct_change), Var_name, Index, .by_group = TRUE) %>%
+        mutate(extra_rank = row_number()) %>%
+        filter(extra_rank <= first(extra_slots)) %>%
+        ungroup() %>%
+        select(-family_count, -extra_slots, -extra_rank)
+
+      selected_params <- bind_rows(selected_params, remaining_slots) %>%
+        group_by(scenario) %>%
+        arrange(dplyr::desc(median_abs_pct_change), dplyr::desc(mean_abs_pct_change), Var_name, Index, .by_group = TRUE) %>%
+        mutate(plot_rank = row_number()) %>%
+        ungroup()
+
       plot_df <- data %>%
+        inner_join(selected_params %>% select(scenario, param_key, plot_rank), by = c("scenario", "param_key")) %>%
         mutate(
           param_label = paste0(Var_name, "\n[", family, "]"),
-          original_value = before
-        )
+          plot_value = case_when(
+            metric == "value" ~ after,
+            metric == "delta" ~ delta,
+            TRUE ~ pct_change
+          ),
+          original_value = case_when(
+            metric == "value" ~ before,
+            TRUE ~ 0
+          )
+        ) %>%
+        filter(is.finite(plot_value))
 
       original_df <- plot_df %>%
         group_by(scenario, param_key, param_label) %>%
         summarise(original_value = first(original_value), .groups = "drop")
 
+      param_levels <- selected_params %>%
+        arrange(scenario, plot_rank, Var_name, Index) %>%
+        pull(param_key)
+      plot_df$param_key <- factor(plot_df$param_key, levels = unique(param_levels))
+      original_df$param_key <- factor(original_df$param_key, levels = unique(param_levels))
+
+      y_label <- case_when(
+        metric == "value" ~ "Parameter value",
+        metric == "delta" ~ "Change from original",
+        TRUE ~ "% change from original"
+      )
+
+      plot_title <- case_when(
+        metric == "value" ~ "Jitter Parameter Distributions",
+        metric == "delta" ~ "Jitter Parameter Changes",
+        TRUE ~ "Jitter Parameter % Changes"
+      )
+
+      plot_subtitle <- case_when(
+        metric == "value" ~ "About 20 parameters per scenario: first spread across families, then filled by largest median absolute % change. Red diamond = original value",
+        metric == "delta" ~ "About 20 parameters per scenario: first spread across families, then filled by largest median absolute % change. Red diamond = no change",
+        TRUE ~ "About 20 parameters per scenario: first spread across families, then filled by largest median absolute % change. Red diamond = 0% change"
+      )
+
       return(
-        ggplot(plot_df, aes(x = param_key, y = after)) +
-          geom_boxplot(fill = "#9ecae1", color = "#2b6c8a", outlier.alpha = 0.25, na.rm = TRUE) +
+        ggplot(plot_df, aes(x = param_key, y = plot_value)) +
+          geom_boxplot(
+            fill = "#9ecae1",
+            color = "#2b6c8a",
+            outlier.shape = NA,
+            na.rm = TRUE
+          ) +
           geom_point(
             aes(group = seed),
             position = position_jitter(width = 0.18, height = 0),
@@ -1677,15 +1839,18 @@ mod_likelihood_server <- function(input, output, session, rv) {
           }) +
           labs(
             x = NULL,
-            y = "Parameter value",
-            title = "Jitter Parameter Distributions",
-            subtitle = "Top 24 parameters by median absolute % change across seeds. Red diamond = original value"
+            y = y_label,
+            title = plot_title,
+            subtitle = plot_subtitle
           ) +
           theme_bw(base_size = 11) +
           theme(
             strip.text = element_text(face = "bold"),
             strip.background = element_rect(fill = "#d9edf7"),
             axis.text.x = element_text(size = 7),
+            axis.text.y = element_text(size = 9, face = "bold", colour = "#222222", lineheight = 0.95),
+            axis.title.y = element_text(margin = margin(r = 10)),
+            plot.margin = margin(5.5, 10, 5.5, 14),
             panel.grid.minor = element_blank()
           ) +
           coord_flip()
@@ -1862,7 +2027,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
     create_piner_plot(data, group_col, x_label, label, facet_ncol = facet_ncol)
   })
   observeEvent(list(input$live_update_plots, input$lik_scenarios, input$lik_profile_type,
-                    input$lik_groups, input$lik_facet_ncol), {
+                    input$lik_groups, input$lik_facet_ncol,
+                    input$lik_jitter_param_view, input$lik_jitter_param_metric), {
     req(rv$data_loaded)
     if (!isTRUE(input$live_update_plots)) return()
     if (length(input$lik_scenarios) == 0) return()
