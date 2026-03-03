@@ -20,7 +20,7 @@ models <- list(
     scalers = paste0((seq(140, 60, by=-5)), collapse = " "),
     Af172 = "0",
     Af173 = "0",
-    Af174 = "0",
+    Af174 = "50",
     
     ## retrospective configuration
     retro_peels = "1 2 3 4 5 6 7",
@@ -35,6 +35,7 @@ models <- list(
     ## Jitter settings
     jitter_seeds = paste0(1:50, collapse = " "),
     jitter_amount = "0.2",
+    jitter_neval= "5000",
     
     ## hessian parallel settings
     nsplit="5"
