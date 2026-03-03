@@ -25,13 +25,24 @@ mp_detect_jitter_run_state <- function(seed_dir,
     ignore.case = TRUE
   )
 
-  has_bad_exit_status <- is.finite(exit_status) && !identical(as.integer(exit_status), 0L)
+  exit_status_scalar <- suppressWarnings(as.integer(if (length(exit_status) > 0) exit_status[1] else NA_integer_))
+  if (length(exit_status_scalar) == 0 || is.na(exit_status_scalar)) {
+    exit_status_scalar <- NA_integer_
+  }
+
+  obj_fun_scalar <- suppressWarnings(as.numeric(if (length(obj_fun) > 0) obj_fun[1] else NA_real_))
+  if (length(obj_fun_scalar) == 0) obj_fun_scalar <- NA_real_
+
+  max_grad_scalar <- suppressWarnings(as.numeric(if (length(max_grad) > 0) max_grad[1] else NA_real_))
+  if (length(max_grad_scalar) == 0) max_grad_scalar <- NA_real_
+
+  has_bad_exit_status <- isTRUE(is.finite(exit_status_scalar) && exit_status_scalar != 0L)
   run_completed <- isTRUE(output_par_exists) &&
-    is.finite(obj_fun) &&
-    is.finite(max_grad) &&
+    isTRUE(is.finite(obj_fun_scalar)) &&
+    isTRUE(is.finite(max_grad_scalar)) &&
     !has_fatal_log &&
     !has_bad_exit_status
-  converged <- isTRUE(run_completed) && abs(max_grad) <= max_grad_converged_threshold
+  converged <- isTRUE(run_completed) && isTRUE(abs(max_grad_scalar) <= max_grad_converged_threshold)
 
   run_status <- if (run_completed) {
     "completed"
@@ -54,7 +65,7 @@ mp_detect_jitter_run_state <- function(seed_dir,
   failure_reason <- if (run_completed) {
     NA_character_
   } else if (has_bad_exit_status) {
-    sprintf("MFCL exited with status %s", as.integer(exit_status))
+    sprintf("MFCL exited with status %s", exit_status_scalar)
   } else if (nzchar(log_text)) {
     fatal_hits <- grep(
       "Floating point exception|SIGFPE|segmentation fault|core dumped|Error trying to open|had status [1-9][0-9]*",
@@ -72,7 +83,7 @@ mp_detect_jitter_run_state <- function(seed_dir,
     run_completed = run_completed,
     convergence_status = convergence_status,
     converged = converged,
-    exit_status = if (is.finite(exit_status)) as.integer(exit_status) else NA_integer_,
+    exit_status = exit_status_scalar,
     max_grad_converged_threshold = max_grad_converged_threshold,
     failure_reason = failure_reason,
     log_file_exists = file.exists(log_file),
