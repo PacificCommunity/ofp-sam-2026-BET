@@ -16,6 +16,7 @@ model_dir <- Sys.getenv("model_dir", "model/base")
 ## Convert to absolute paths using getwd() (assumes script runs from project root)
 project_root <- getwd()
 base_dir_abs <- file.path(project_root, base_dir)
+model_dir_abs <- file.path(project_root, model_dir)
 
 ## Jitter settings
 ## Single seed value for parallel execution via condor
@@ -26,26 +27,27 @@ jitter_neval <- as.integer(Sys.getenv("jitter_neval", "3"))
 ## Create jitter-specific directory inside jitter folder
 jitter_dir <- file.path(model_dir, "jitter")
 seed_dir <- file.path(jitter_dir, paste0("jitter_seed_", jitter_seed))
+jitter_dir_abs <- file.path(project_root, jitter_dir)
+seed_dir_abs <- file.path(project_root, seed_dir)
 
 cat("Running Jitter Analysis\n")
 cat("Base directory:", base_dir_abs, "\n")
 cat("Model directory:", model_dir, "\n")
-cat("Jitter directory:", jitter_dir, "\n")
-cat("Seed directory:", seed_dir, "\n")
+cat("Jitter directory:", jitter_dir_abs, "\n")
+cat("Seed directory:", seed_dir_abs, "\n")
 cat("Jitter seed:", jitter_seed, "\n")
 cat("Jitter amount:", jitter_amount, "\n")
 cat("Jitter neval:", jitter_neval, "\n")
 
 ## Create seed directory and copy all files from base_dir (inputs)
-dir.create(seed_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(seed_dir_abs, recursive = TRUE, showWarnings = FALSE)
 files_to_copy <- list.files(base_dir_abs, full.names = TRUE)
-file.copy(files_to_copy, to = seed_dir, overwrite = TRUE, recursive = TRUE)
+file.copy(files_to_copy, to = seed_dir_abs, overwrite = TRUE, recursive = TRUE)
 
 ## Also copy par file from model_dir (converged model)
-model_dir_abs <- file.path(project_root, model_dir)
 par_in_model <- list.files(model_dir_abs, pattern = "\\.par$", full.names = TRUE)
 if(length(par_in_model) > 0) {
-  file.copy(par_in_model, to = seed_dir, overwrite = TRUE)
+  file.copy(par_in_model, to = seed_dir_abs, overwrite = TRUE)
   cat("Copied par files from model directory\n")
 }
 
@@ -53,8 +55,8 @@ if(length(par_in_model) > 0) {
 ## Generate jittered par  ##
 ############################
 
-par_files <- list.files(seed_dir, pattern = "\\.par$", full.names = TRUE)
-frq_file <- list.files(seed_dir, pattern = "\\.frq$", full.names = FALSE)
+par_files <- list.files(seed_dir_abs, pattern = "\\.par$", full.names = TRUE)
+frq_file <- list.files(seed_dir_abs, pattern = "\\.frq$", full.names = FALSE)
 
 if(length(par_files) > 0) {
   # Get file information
@@ -66,20 +68,20 @@ if(length(par_files) > 0) {
   cat("Most recent par file:", basename(most_recent), "\n")
   cat("Modified time:", as.character(file_info[most_recent, "mtime"]), "\n")
 } else {
-  stop("No .par files found in directory: ", seed_dir)
+  stop("No .par files found in directory: ", seed_dir_abs)
 }
 
 ## Read par file and apply jitter
 jittered_par_name <- paste0("jittered_", jitter_seed, ".par")
-indepvar_in_seed <- file.path(seed_dir, "indepvar.rpt")
+indepvar_in_seed <- file.path(seed_dir_abs, "indepvar.rpt")
 
 jitter_run <- run_exact_jitter(
-  model_dir = seed_dir,
+  model_dir = seed_dir_abs,
   jitter_bound = as.numeric(jitter_amount),
   seed = as.numeric(jitter_seed),
   base_par_file = most_recent,
   indepvar_file = indepvar_in_seed,
-  out_file = file.path(seed_dir, jittered_par_name),
+  out_file = file.path(seed_dir_abs, jittered_par_name),
   output_prefix = FALSE,
   change_tol = 1e-14
 )
@@ -102,16 +104,16 @@ mfcl_commands <- paste0("../../../../", program_path, " ", frq_file, " ", jitter
 cat("Running MFCL with commands:", mfcl_commands, "\n")
 
 run_commands(commands = mfcl_commands,
-             work_dirs = seed_dir, 
+             work_dirs = seed_dir_abs, 
              save_log = T, 
              parallel = F, 
              verbose = T, 
-             log_file = file.path(seed_dir, "mfcl_log.txt"))
+             log_file = file.path(seed_dir_abs, "mfcl_log.txt"))
 
 fitted_parameter_changes <- NULL
 fitted_parameter_change_summary <- NULL
 fitted_parameter_change_overall <- NULL
-output_par_path <- file.path(seed_dir, output_par_name)
+output_par_path <- file.path(seed_dir_abs, output_par_name)
 base_par_obj <- suppressWarnings(tryCatch(read.MFCLPar(most_recent), error = function(e) NULL))
 output_par_obj <- if (file.exists(output_par_path)) {
   suppressWarnings(tryCatch(read.MFCLPar(output_par_path), error = function(e) NULL))
@@ -149,6 +151,7 @@ info_list <- list(
   program_path  = program_path,
   model_dir     = model_dir,
   seed_dir      = seed_dir,
+  seed_dir_abs  = seed_dir_abs,
   input_par     = basename(most_recent),
   jittered_par  = jittered_par_name,
   parameter_changes = jitter_run$comparison,
@@ -170,19 +173,19 @@ info_list <- list(
 
 saveRDS(
   info_list,
-  file = file.path(seed_dir, "jitter_info.rds"),
+  file = file.path(seed_dir_abs, "jitter_info.rds"),
   compress = "xz"
 )
 
-jitter_payload <- mp_build_jitter_payload(seed_dir, jitter_seed)
+jitter_payload <- mp_build_jitter_payload(seed_dir_abs, jitter_seed)
 saveRDS(
   jitter_payload,
-  file = file.path(seed_dir, "jitter_result.rds"),
+  file = file.path(seed_dir_abs, "jitter_result.rds"),
   compress = "xz"
 )
 
 deleted_n <- mp_cleanup_files(
-  seed_dir,
+  seed_dir_abs,
   keep = c(
     "jitter_result.rds",
     "jitter_info.rds"

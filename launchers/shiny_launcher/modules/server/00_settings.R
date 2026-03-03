@@ -116,11 +116,24 @@
       if (!is.null(v)) updateTextInput(session, k, value = v)
     }
 
+    launch_mode_value <- latest_setting_value("launch_mode", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (!is.null(launch_mode_value)) {
+      updateRadioButtons(session, "launch_mode", selected = launch_mode_value)
+    }
+
     docker_from_makefile <- read_makefile_docker_image(startup_repo_root)
     docker_from_settings <- latest_setting_value("docker_image", launcher_obj, root_obj, launcher_mtime, root_mtime)
     docker_value <- if (!is.null(docker_from_makefile) && nzchar(docker_from_makefile)) docker_from_makefile else docker_from_settings
     if (!is.null(docker_value) && nzchar(docker_value)) {
       updateTextInput(session, "docker_image", value = docker_value)
+    }
+
+    local_docker_value <- latest_setting_value("local_docker_image", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (is.null(local_docker_value)) {
+      local_docker_value <- docker_value
+    }
+    if (!is.null(local_docker_value) && nzchar(local_docker_value)) {
+      updateTextInput(session, "local_docker_image", value = local_docker_value)
     }
 
     for (k in c("condor_cpus", "condor_memory", "condor_disk")) {
@@ -138,7 +151,9 @@
       github_username = input$github_username,
       github_org = input$github_org,
       github_repo = input$github_repo,
+      launch_mode = input$launch_mode,
       docker_image = input$docker_image,
+      local_docker_image = input$local_docker_image,
       condor_cpus = input$condor_cpus,
       condor_memory = input$condor_memory,
       condor_disk = input$condor_disk,
@@ -200,6 +215,14 @@
             server = FALSE
           )
         }
+
+        if (!is.null(saved_settings$launch_mode)) {
+          updateRadioButtons(session, "launch_mode", selected = saved_settings$launch_mode)
+        }
+
+        if (!is.null(saved_settings$local_docker_image)) {
+          updateTextInput(session, "local_docker_image", value = saved_settings$local_docker_image)
+        }
         
         if (!is.null(saved_settings$job_types)) {
           rv$last_job_type <- saved_settings$job_types
@@ -252,8 +275,10 @@
       output_dir = input$output_dir,
       branch = input$branch,
       job_types = input$job_types,
+      launch_mode = input$launch_mode,
       last_browse_path = rv$last_browse_path,
       last_config_file = rv$config_path,
+      local_docker_image = input$local_docker_image,
       condor_cpus = input$condor_cpus,
       condor_memory = input$condor_memory,
       condor_disk = input$condor_disk,
@@ -300,6 +325,14 @@
   }, ignoreInit = TRUE)
   
   observeEvent(input$branch, {
+    save_settings()
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$launch_mode, {
+    save_settings()
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$local_docker_image, {
     save_settings()
   }, ignoreInit = TRUE)
   

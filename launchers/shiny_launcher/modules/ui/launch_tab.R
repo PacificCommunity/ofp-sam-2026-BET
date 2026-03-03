@@ -58,9 +58,23 @@ launch_tab_ui <- function() {
                                            "Retrospective" = "retro",
                                            "Profile" = "prof"),
                                selected = NULL),
-            
-            textInput("output_dir", "Output Directory:", 
-                      value = "quick/test_run"),
+
+            conditionalPanel(
+              condition = "input.launch_mode == 'condor'",
+              textInput("output_dir", "Output Directory:", 
+                        value = "quick/test_run")
+            ),
+
+            conditionalPanel(
+              condition = "input.launch_mode == 'local_native' || input.launch_mode == 'local_docker'",
+              div(
+                style = "margin-bottom: 12px; padding: 10px; background: #f7f7f7; border-left: 4px solid #00a65a;",
+                strong("Local output location: "),
+                "each run writes to the model's configured ",
+                tags$code("model_dir"),
+                " under this repo."
+              )
+            ),
             
             selectizeInput(
               "branch",
@@ -108,26 +122,18 @@ launch_tab_ui <- function() {
           
           box(
             title = "Resource Configuration", status = "info", solidHeader = TRUE, width = 6,
-            
-            textInput("remote_user", "Remote User:", 
-                      value = Sys.getenv("USER", "kyuhank")),
-            
-            textInput("remote_host", "Remote Host:", 
-                      value = Sys.getenv("NOU_CONDOR", "")),
-            
-            textInput("github_username", "GitHub Username:", 
-                      value = "kyuhank"),
-            
-            textInput("github_org", "GitHub Organization:", 
-                      value = "PacificCommunity"),
-            
-            textInput("github_repo", "GitHub Repository:", 
-                      value = "ofp-sam-2026-bet"),
-            
-            textInput("docker_image", "Docker Image:", 
-                      value = "ghcr.io/pacificcommunity/bet-2026:v1.5"),
-            
-            checkboxInput("ghcr_login", "GHCR Login (private images)", value = FALSE),
+
+            radioButtons(
+              "launch_mode",
+              "Launch Mode:",
+              choices = c(
+                "Condor" = "condor",
+                "Local Native" = "local_native",
+                "Local Docker" = "local_docker"
+              ),
+              selected = "condor",
+              inline = TRUE
+            ),
             
             checkboxInput("parallel_launch", "Parallel launch", value = TRUE),
             
@@ -138,16 +144,56 @@ launch_tab_ui <- function() {
               selected = as.character(max(1, parallel::detectCores() - 2))
             ),
             
-            shiny::hr(),
-            
-            numericInput("condor_cpus", "CPUs:", 
-                         value = 2, min = 1, max = 32, step = 1),
-            
-            numericInput("condor_memory", "Memory (GB):",
-                         value = 12, min = 1, max = 128, step = 1),
-            
-            numericInput("condor_disk", "Disk (GB):",
-                         value = 10, min = 1, max = 100, step = 1)
+            conditionalPanel(
+              condition = "input.launch_mode == 'local_native' || input.launch_mode == 'local_docker'",
+              tagList(
+                div(
+                  style = "margin: 10px 0; padding: 10px; background: #f4f8fb; border-left: 4px solid #3c8dbc;",
+                  "Local mode runs the selected job in this repository using the loaded config env."
+                ),
+                conditionalPanel(
+                  condition = "input.launch_mode == 'local_docker'",
+                  textInput("local_docker_image", "Docker Image:", 
+                            value = "ghcr.io/pacificcommunity/bet-2026:v1.5")
+                )
+              )
+            ),
+
+            conditionalPanel(
+              condition = "input.launch_mode == 'condor'",
+              tagList(
+                textInput("remote_user", "Remote User:", 
+                          value = Sys.getenv("USER", "kyuhank")),
+                
+                textInput("remote_host", "Remote Host:", 
+                          value = Sys.getenv("NOU_CONDOR", "")),
+                
+                textInput("github_username", "GitHub Username:", 
+                          value = "kyuhank"),
+                
+                textInput("github_org", "GitHub Organization:", 
+                          value = "PacificCommunity"),
+                
+                textInput("github_repo", "GitHub Repository:", 
+                          value = "ofp-sam-2026-bet"),
+                
+                textInput("docker_image", "Docker Image:", 
+                          value = "ghcr.io/pacificcommunity/bet-2026:v1.5"),
+                
+                checkboxInput("ghcr_login", "GHCR Login (private images)", value = FALSE),
+                
+                shiny::hr(),
+                
+                numericInput("condor_cpus", "CPUs:", 
+                             value = 2, min = 1, max = 32, step = 1),
+                
+                numericInput("condor_memory", "Memory (GB):",
+                             value = 12, min = 1, max = 128, step = 1),
+                
+                numericInput("condor_disk", "Disk (GB):",
+                             value = 10, min = 1, max = 100, step = 1)
+              )
+            )
             
           )
         ),

@@ -1,4 +1,194 @@
   # ========== LAUNCH JOB HANDLERS ==========
+
+  local_env_strings <- function(job_env) {
+    env_names <- names(job_env)
+    if (is.null(env_names) || length(env_names) == 0) {
+      return(character(0))
+    }
+    vals <- vapply(job_env, function(x) {
+      if (length(x) == 0 || is.null(x)) {
+        ""
+      } else {
+        paste(as.character(x), collapse = " ")
+      }
+    }, character(1))
+    paste0(env_names, "=", shQuote(vals))
+  }
+
+  local_job_runner <- function(job_type) {
+    switch(
+      job_type,
+      model = "runners/run_model.R",
+      jitter = "runners/run_jitter.R",
+      hessian = "runners/run_hessian.R",
+      retro = "runners/run_retro.R",
+      prof = "runners/run_prof.R",
+      stop("Unsupported local job type: ", job_type)
+    )
+  }
+
+  local_run_command <- function(spec, common_params, job_env, log_file) {
+    if (isTRUE(common_params$local_use_docker)) {
+      env_values <- vapply(job_env, function(x) {
+        if (length(x) == 0 || is.null(x)) "" else paste(as.character(x), collapse = " ")
+      }, character(1))
+      env_args <- unlist(
+        Map(function(k, v) c("-e", shQuote(paste0(k, "=", v))), names(env_values), env_values),
+        use.names = FALSE
+      )
+      list(
+        command = "docker",
+        args = c(
+          "run", "--rm",
+          "-v", shQuote(paste0(common_params$repo_root, ":/workspace")),
+          "-w", shQuote("/workspace"),
+          env_args,
+          shQuote(common_params$docker_image),
+          "Rscript",
+          shQuote(local_job_runner(spec$job_type))
+        ),
+        env = character(0),
+        log_file = log_file
+      )
+    } else {
+      list(
+        command = "make",
+        args = spec$job_type,
+        env = local_env_strings(job_env),
+        log_file = log_file
+      )
+    }
+  }
+
+  local_command_preview <- function(run_spec) {
+    args <- if (length(run_spec$args) > 0) paste(shQuote(run_spec$args), collapse = " ") else ""
+    paste(trimws(paste(run_spec$command, args)), collapse = " ")
+  }
+
+  launch_single_job_local_raw <- function(spec, common_params) {
+    model_env_list <- common_params$model_env_lists[[spec$model_name]]
+    if (is.null(model_env_list)) {
+      stop(paste("Model env not found for", spec$model_name))
+    }
+
+    job_env <- model_env_list
+    batch_suffix <- ""
+
+    if (!is.null(spec$seed)) {
+      job_env$jitter_seed <- as.character(spec$seed)
+      batch_suffix <- paste0("-jitter", spec$seed)
+    } else if (!is.null(spec$part)) {
+      job_env$hessian_part <- as.character(spec$part)
+      batch_suffix <- paste0("-hess", spec$part)
+    } else if (!is.null(spec$peel)) {
+      job_env$retro_peel <- as.character(spec$peel)
+      batch_suffix <- paste0("-retro", spec$peel)
+    } else if (!is.null(spec$scaler)) {
+      job_env$scaler <- as.character(spec$scaler)
+      batch_suffix <- paste0("-sc", spec$scaler)
+    }
+
+    batch_name <- paste0(spec$model_name, batch_suffix, "-local-", format(Sys.time(), "%H:%M:%S"), "-", Sys.getpid())
+    log_dir <- file.path(common_params$repo_root, "logs", "shiny_launcher_local")
+    dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+    log_file <- file.path(log_dir, paste0("shiny_launcher_local_", gsub("[^A-Za-z0-9_\\-]", "_", batch_name), ".log"))
+
+    if (!dir.exists(common_params$repo_root)) {
+      stop("Repo root does not exist for local run: ", common_params$repo_root)
+    }
+
+    old_wd <- getwd()
+    on.exit(setwd(old_wd), add = TRUE)
+    setwd(common_params$repo_root)
+
+    run_spec <- local_run_command(spec, common_params, job_env, log_file)
+
+    writeLines(
+      c(
+        paste("mode:", if (isTRUE(common_params$local_use_docker)) "docker" else "native"),
+        paste("job_type:", spec$job_type),
+        paste("model_name:", spec$model_name)
+      ),
+      con = log_file
+    )
+
+    run_spec <- local_run_command(spec, common_params, job_env, log_file)
+    write(paste("command:", local_command_preview(run_spec)), file = log_file, append = TRUE)
+    write("", file = log_file, append = TRUE)
+
+    exit_status <- tryCatch(
+      system2(
+        run_spec$command,
+        args = run_spec$args,
+        env = run_spec$env,
+        stdout = run_spec$log_file,
+        stderr = run_spec$log_file
+      ),
+      error = function(e) {
+        structure(127L, message = conditionMessage(e))
+      }
+    )
+
+    if (!is.numeric(exit_status) || length(exit_status) != 1 || is.na(exit_status)) {
+      exit_status <- 127L
+    }
+    if (!identical(as.integer(exit_status), 0L)) {
+      output <- if (file.exists(log_file)) readLines(log_file, warn = FALSE) else character(0)
+      cmd_error <- attr(exit_status, "message")
+      stop(
+        paste(
+          c(
+            sprintf("Local %s run failed for %s (status %s).", spec$job_type, spec$model_name, exit_status),
+            if (!is.null(cmd_error) && nzchar(cmd_error)) paste("Command error:", cmd_error),
+            paste("Log file:", log_file),
+            tail(as.character(output), 20)
+          ),
+          collapse = "\n"
+        )
+      )
+    }
+
+    list(
+      batch_name = batch_name,
+      remote_dir = if (!is.null(job_env$model_dir)) as.character(job_env$model_dir) else "",
+      job_id = batch_name,
+      mode = "local",
+      log_file = log_file
+    )
+  }
+
+  launch_single_job_local <- function(model_name, model_env, job_type, seed = NULL, part = NULL, peel = NULL, scaler = NULL, log = TRUE) {
+    if (isTRUE(log)) {
+      rv$launch_log <- paste0(
+        rv$launch_log,
+        "  → ",
+        model_name,
+        if (!is.null(seed)) paste0(" seed ", seed) else if (!is.null(part)) paste0(" part ", part) else if (!is.null(peel)) paste0(" peel ", peel) else if (!is.null(scaler)) paste0(" scaler ", scaler) else "",
+        " [local",
+        if (identical(input$launch_mode, "local_docker")) ", docker" else ", native",
+        "]\n"
+      )
+    }
+
+    common_params <- list(
+      repo_root = isolate(repo_root_val()),
+      local_use_docker = identical(input$launch_mode, "local_docker"),
+      docker_image = if (!is.null(input$local_docker_image) && nzchar(input$local_docker_image)) input$local_docker_image else input$docker_image,
+      model_env_lists = setNames(list(as.list(model_env, all.names = TRUE)), model_name)
+    )
+
+    launch_single_job_local_raw(
+      spec = list(
+        model_name = model_name,
+        job_type = job_type,
+        seed = seed,
+        part = part,
+        peel = peel,
+        scaler = scaler
+      ),
+      common_params = common_params
+    )
+  }
   
   observeEvent(input$launch_btn, {
     if (length(rv$models) == 0) { 
@@ -82,11 +272,27 @@
     })
     names(model_env_lists) <- selected_models
 
+    launch_mode <- if (!is.null(input$launch_mode) && nzchar(input$launch_mode)) input$launch_mode else "condor"
+    is_local_mode <- launch_mode %in% c("local_native", "local_docker")
+    is_local_docker <- identical(launch_mode, "local_docker")
+    action_word <- if (is_local_mode) "run" else "launch"
+    completion_word <- if (is_local_mode) "completed" else "submitted"
+    progress_prefix <- if (is_local_mode) "Running local" else "Launching"
+    effective_output_dir <- if (is_local_mode) {
+      paste(unique(vapply(selected_models, function(m) {
+        md <- rv$models[[m]]$model_dir
+        if (is.null(md) || !nzchar(md)) m else as.character(md)
+      }, character(1))), collapse = ", ")
+    } else {
+      input$output_dir
+    }
+
     # Initialize log with total job count
     rv$launch_log <- paste0(
-      Sys.time(), " - Starting job submission...\n",
+      Sys.time(), " - Starting ", action_word, "...\n",
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
-      "📊 Total jobs to launch: ", total_jobs, "\n",
+      "📊 Total jobs to ", action_word, ": ", total_jobs, "\n",
+      "Mode: ", if (identical(launch_mode, "local_docker")) "Local Docker" else if (identical(launch_mode, "local_native")) "Local Native" else "Condor", "\n",
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
     )
     
@@ -96,7 +302,7 @@
       showNotification(text, type = type, duration = NULL, id = "launch_progress")
     }
 
-    update_launch_notification(sprintf("Launching jobs... (0/%d)", total_jobs))
+    update_launch_notification(sprintf("%s jobs... (0/%d)", progress_prefix, total_jobs))
     
     tryCatch({
       batch_names <- c()
@@ -135,49 +341,89 @@
             "). Using sequential.\n"
           )
         } else {
-          rv$launch_log <- paste0(rv$launch_log, "⚡ Parallel launch ON (cores: ", cores, ")\n")
-          
-          update_launch_notification(
-            sprintf("Launching %d jobs in parallel (cores: %d)", total_jobs, cores)
+          rv$launch_log <- paste0(
+            rv$launch_log,
+            "⚡ Parallel ",
+              if (is_local_mode) "local run" else "launch",
+              " ON (cores: ",
+              cores,
+              ")\n"
           )
           
-          if (cancel_launch()) stop("Launch cancelled")
-          
-          common_params <- list(
-            remote_user = input$remote_user,
-            remote_host = input$remote_host,
-            github_pat = Sys.getenv("GIT_PAT"),
-            github_username = input$github_username,
-            github_org = input$github_org,
-            github_repo = input$github_repo,
-            docker_image = input$docker_image,
-            condor_cpus = as.integer(input$condor_cpus),
-            condor_memory = paste0(input$condor_memory, "GB"),
-            condor_disk = paste0(input$condor_disk, "GB"),
-            branch = input$branch,
-            ghcr_login = isTRUE(input$ghcr_login),
-            output_dir = input$output_dir,
-            model_env_lists = model_env_lists,
-            exclude_slots = c(
-              "slot1@nouofpcand27", "slot1@nouofpcand28", "slot1@nouofpcand29", "slot1@nouofpcand30",
-              "slot1_1@suvofpcand26.corp.spc.int", "slot1_2@suvofpcand26.corp.spc.int", "slot1_3@suvofpcand26.corp.spc.int"
+          update_launch_notification(
+            sprintf(
+              "%s %d jobs in parallel (cores: %d)",
+              if (is_local_mode) "Running" else "Launching",
+              total_jobs,
+              cores
             )
           )
           
+          if (cancel_launch()) stop("Launch cancelled")
+
           results <- tryCatch({
             cl <- parallel::makeCluster(cores)
             on.exit(parallel::stopCluster(cl), add = TRUE)
-            parallel::clusterEvalQ(cl, { library(CondorBox) })
-            parallel::clusterExport(cl, varlist = c("launch_single_job_raw", "common_params"), envir = environment())
-            parallel::parLapply(cl, job_specs, function(spec) {
-              tryCatch({
-                launch_single_job_raw(spec, common_params)
-              }, error = function(e) {
-                list(batch_name = NA_character_, remote_dir = NA_character_, job_id = NA_character_, error = e$message)
+
+            if (identical(launch_mode, "condor")) {
+              common_params <- list(
+                remote_user = input$remote_user,
+                remote_host = input$remote_host,
+                github_pat = Sys.getenv("GIT_PAT"),
+                github_username = input$github_username,
+                github_org = input$github_org,
+                github_repo = input$github_repo,
+                docker_image = input$docker_image,
+                condor_cpus = as.integer(input$condor_cpus),
+                condor_memory = paste0(input$condor_memory, "GB"),
+                condor_disk = paste0(input$condor_disk, "GB"),
+                branch = input$branch,
+                ghcr_login = isTRUE(input$ghcr_login),
+                output_dir = input$output_dir,
+                model_env_lists = model_env_lists,
+                exclude_slots = c(
+                  "slot1@nouofpcand27", "slot1@nouofpcand28", "slot1@nouofpcand29", "slot1@nouofpcand30",
+                  "slot1_1@suvofpcand26.corp.spc.int", "slot1_2@suvofpcand26.corp.spc.int", "slot1_3@suvofpcand26.corp.spc.int"
+                )
+              )
+              parallel::clusterEvalQ(cl, { library(CondorBox) })
+              parallel::clusterExport(cl, varlist = c("launch_single_job_raw", "common_params"), envir = environment())
+              parallel::parLapply(cl, job_specs, function(spec) {
+                tryCatch({
+                  launch_single_job_raw(spec, common_params)
+                }, error = function(e) {
+                  list(batch_name = NA_character_, remote_dir = NA_character_, job_id = NA_character_, error = e$message)
+                })
               })
-            })
+            } else {
+              common_params <- list(
+                repo_root = isolate(repo_root_val()),
+                local_use_docker = is_local_docker,
+                docker_image = if (!is.null(input$local_docker_image) && nzchar(input$local_docker_image)) input$local_docker_image else input$docker_image,
+                model_env_lists = model_env_lists
+              )
+              parallel::clusterExport(
+                cl,
+                varlist = c("local_env_strings", "local_job_runner", "local_run_command", "launch_single_job_local_raw", "common_params"),
+                envir = environment()
+              )
+              parallel::parLapply(cl, job_specs, function(spec) {
+                tryCatch({
+                  launch_single_job_local_raw(spec, common_params)
+                }, error = function(e) {
+                  list(batch_name = NA_character_, remote_dir = NA_character_, job_id = NA_character_, error = e$message)
+                })
+              })
+            }
           }, error = function(e) {
-            rv$launch_log <- paste0(rv$launch_log, "⚠️ Parallel launch failed: ", e$message, "\n")
+            rv$launch_log <- paste0(
+              rv$launch_log,
+              "⚠️ Parallel ",
+              if (is_local_mode) "local run" else "launch",
+              " failed: ",
+              e$message,
+              "\n"
+            )
             NULL
           })
           
@@ -215,14 +461,15 @@
                 current_job <- current_job + 1
                 
                 update_launch_notification(
-                  sprintf("Launching job %d/%d: %s (seed %d)",
+                  sprintf("%s job %d/%d: %s (seed %d)",
+                          progress_prefix,
                           current_job, total_jobs, model_name, seed)
                 )
                 
                 rv$launch_log <- paste0(
                   rv$launch_log,
-                  sprintf("[%d/%d] 🔄 Launching: %s (seed %d)\n", 
-                          current_job, total_jobs, model_name, seed)
+                  sprintf("[%d/%d] 🔄 %s: %s (seed %d)\n", 
+                          current_job, total_jobs, progress_prefix, model_name, seed)
                 )
                 
                 progress_details <- c(
@@ -242,7 +489,7 @@
                 
                 rv$launch_log <- paste0(
                   rv$launch_log,
-                  sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
+                  sprintf("  ✓ %s: %s\n\n", tools::toTitleCase(completion_word), result$batch_name)
                 )
               }
               if (cancel_launch()) stop("Launch cancelled")
@@ -252,14 +499,15 @@
                 current_job <- current_job + 1
                 
                 update_launch_notification(
-                  sprintf("Launching job %d/%d: %s (part %d)",
+                  sprintf("%s job %d/%d: %s (part %d)",
+                          progress_prefix,
                           current_job, total_jobs, model_name, part)
                 )
                 
                 rv$launch_log <- paste0(
                   rv$launch_log,
-                  sprintf("[%d/%d] 🔄 Launching: %s (part %d)\n", 
-                          current_job, total_jobs, model_name, part)
+                  sprintf("[%d/%d] 🔄 %s: %s (part %d)\n", 
+                          current_job, total_jobs, progress_prefix, model_name, part)
                 )
                 
                 progress_details <- c(
@@ -279,7 +527,7 @@
                 
                 rv$launch_log <- paste0(
                   rv$launch_log,
-                  sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
+                  sprintf("  ✓ %s: %s\n\n", tools::toTitleCase(completion_word), result$batch_name)
                 )
               }
               if (cancel_launch()) stop("Launch cancelled")
@@ -290,14 +538,15 @@
                 current_job <- current_job + 1
                 
                 update_launch_notification(
-                  sprintf("Launching job %d/%d: %s (peel %d)",
+                  sprintf("%s job %d/%d: %s (peel %d)",
+                          progress_prefix,
                           current_job, total_jobs, model_name, peel)
                 )
                 
                 rv$launch_log <- paste0(
                   rv$launch_log,
-                  sprintf("[%d/%d] 🔄 Launching: %s (peel %d)\n", 
-                          current_job, total_jobs, model_name, peel)
+                  sprintf("[%d/%d] 🔄 %s: %s (peel %d)\n", 
+                          current_job, total_jobs, progress_prefix, model_name, peel)
                 )
                 
                 progress_details <- c(
@@ -317,7 +566,7 @@
                 
                 rv$launch_log <- paste0(
                   rv$launch_log,
-                  sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
+                  sprintf("  ✓ %s: %s\n\n", tools::toTitleCase(completion_word), result$batch_name)
                 )
               }
               if (cancel_launch()) stop("Launch cancelled")
@@ -328,14 +577,15 @@
                 current_job <- current_job + 1
                 
                 update_launch_notification(
-                  sprintf("Launching job %d/%d: %s (scaler %g)",
+                  sprintf("%s job %d/%d: %s (scaler %g)",
+                          progress_prefix,
                           current_job, total_jobs, model_name, sc)
                 )
                 
                 rv$launch_log <- paste0(
                   rv$launch_log,
-                  sprintf("[%d/%d] 🔄 Launching: %s (scaler %g)\n", 
-                          current_job, total_jobs, model_name, sc)
+                  sprintf("[%d/%d] 🔄 %s: %s (scaler %g)\n", 
+                          current_job, total_jobs, progress_prefix, model_name, sc)
                 )
                 
                 progress_details <- c(
@@ -355,7 +605,7 @@
                 
                 rv$launch_log <- paste0(
                   rv$launch_log,
-                  sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
+                  sprintf("  ✓ %s: %s\n\n", tools::toTitleCase(completion_word), result$batch_name)
                 )
               }
               if (cancel_launch()) stop("Launch cancelled")
@@ -364,14 +614,15 @@
               current_job <- current_job + 1
               
               update_launch_notification(
-                sprintf("Launching job %d/%d: %s",
+                sprintf("%s job %d/%d: %s",
+                        progress_prefix,
                         current_job, total_jobs, model_name)
               )
               
               rv$launch_log <- paste0(
                 rv$launch_log,
-                sprintf("[%d/%d] 🔄 Launching: %s\n", 
-                        current_job, total_jobs, model_name)
+                sprintf("[%d/%d] 🔄 %s: %s\n", 
+                        current_job, total_jobs, progress_prefix, model_name)
               )
               
               progress_details <- c(
@@ -391,7 +642,7 @@
               
               rv$launch_log <- paste0(
                 rv$launch_log,
-                sprintf("  ✓ Submitted: %s\n\n", result$batch_name)
+                sprintf("  ✓ %s: %s\n\n", tools::toTitleCase(completion_word), result$batch_name)
               )
             }
           }
@@ -404,11 +655,12 @@
           timestamp = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
           job_type = paste(selected_job_types, collapse = ", "),
           model_names = paste(selected_models, collapse = ", "),
-          output_dir = input$output_dir,
+          output_dir = effective_output_dir,
           batch_names = paste(batch_names, collapse = ", "),
           remote_dirs = paste(remote_dirs, collapse = ", "),
           branch = input$branch,
-          status = if (cancel_launch()) "cancelled" else "launched",
+          status = if (cancel_launch()) "cancelled" else if (is_local_mode) "completed_local" else "launched",
+          launch_mode = launch_mode,
           stringsAsFactors = FALSE
         )
         save_job_history(rv$current_config_file, job_record)
@@ -420,7 +672,7 @@
         rv$launch_log <- paste0(
           rv$launch_log,
           "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
-          "⚠️ ", Sys.time(), " - Launch cancelled by user after ", current_job, " submissions\n",
+          "⚠️ ", Sys.time(), " - ", tools::toTitleCase(action_word), " cancelled by user after ", current_job, " job(s)\n",
           "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         )
         
@@ -434,7 +686,7 @@
             style = "text-align: center; margin: 20px 0;",
             h3(
               style = "color: #f39c12;",
-              sprintf("⚠️ Cancelled after %d job(s) submitted.", current_job)
+              sprintf("⚠️ Cancelled after %d job(s).", current_job)
             )
           ),
           footer = tagList(
@@ -447,7 +699,7 @@
         rv$launch_log <- paste0(
           rv$launch_log,
           "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
-          "✅ ", Sys.time(), " - All ", total_jobs, " jobs submitted successfully!\n",
+          "✅ ", Sys.time(), " - All ", total_jobs, " jobs ", completion_word, " successfully!\n",
           "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         )
         
@@ -455,7 +707,7 @@
         showModal(modalDialog(
           title = div(
             style = "font-size: 18px; font-weight: bold; color: #00a65a;",
-            icon("check-circle"), " Launch Complete"
+            icon("check-circle"), if (is_local_mode) " Local Run Complete" else " Launch Complete"
           ),
           size = "m",
           
@@ -463,7 +715,7 @@
             style = "text-align: center; margin: 20px 0;",
             h3(
               style = "color: #00a65a;",
-              sprintf("✅ Successfully launched all %d jobs!", total_jobs)
+              sprintf("✅ Successfully %s all %d jobs!", completion_word, total_jobs)
             )
           ),
           
@@ -473,7 +725,8 @@
             tags$ul(
               tags$li(paste("Total jobs:", total_jobs)),
               tags$li(paste("Models:", paste(selected_models, collapse = ", "))),
-              tags$li(paste("Output directory:", input$output_dir)),
+              tags$li(paste("Mode:", if (identical(launch_mode, "local_docker")) "Local Docker" else if (identical(launch_mode, "local_native")) "Local Native" else "Condor")),
+              tags$li(paste(if (is_local_mode) "Model dir:" else "Output directory:", effective_output_dir)),
               tags$li(paste("Branch:", input$branch))
             )
           ),
@@ -490,7 +743,7 @@
         rv$launch_log <- paste0(
           rv$launch_log,
           "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
-          "⚠️ ", Sys.time(), " - Launch cancelled by user after ", current_job, " submissions\n",
+          "⚠️ ", Sys.time(), " - ", tools::toTitleCase(action_word), " cancelled by user after ", current_job, " job(s)\n",
           "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         )
         
@@ -504,7 +757,7 @@
             style = "text-align: center; margin: 20px 0;",
             h3(
               style = "color: #f39c12;",
-              sprintf("⚠️ Cancelled after %d job(s) submitted.", current_job)
+              sprintf("⚠️ Cancelled after %d job(s).", current_job)
             )
           ),
           footer = tagList(
@@ -627,6 +880,21 @@
   }
   
   launch_single_job <- function(model_name, model_env, job_type, seed = NULL, part = NULL, peel = NULL, scaler = NULL, log = TRUE) {
+    if (input$launch_mode %in% c("local_native", "local_docker")) {
+      return(
+        launch_single_job_local(
+          model_name = model_name,
+          model_env = model_env,
+          job_type = job_type,
+          seed = seed,
+          part = part,
+          peel = peel,
+          scaler = scaler,
+          log = log
+        )
+      )
+    }
+
     job_env <- model_env
     job_env$DOCKER_IMAGE <- input$docker_image
     remote_dir_suffix <- model_name
