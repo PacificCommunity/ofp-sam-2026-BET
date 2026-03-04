@@ -162,24 +162,28 @@ mod_likelihood_ui <- function() {
                 round = TRUE
               )
             ),
-            conditionalPanel(
-              condition = "input.lik_jitter_param_view == 'input'",
-              tagList(
-                selectInput(
-                  "lik_jitter_param_input_scale",
+                  conditionalPanel(
+                    condition = "input.lik_jitter_param_view == 'input'",
+                    tagList(
+                      selectInput(
+                        "lik_jitter_param_input_scale",
                   "Input Param Scale:",
                   choices = c(
                     "Bound position (0-1)" = "bound_position",
                     "Raw value" = "value"
                   ),
                   selected = "bound_position"
-                ),
-                tags$small(
-                  "Bound position is computed as (value - L_bound) / (U_bound - L_bound). 0 = lower bound, 1 = upper bound, 0.5 = midpoint.",
-                  style = "display:block; margin-top:-6px; margin-bottom:6px; color:#666;"
-                )
-              )
-            ),
+                      ),
+                      tags$small(
+                        "Bound position is computed as (value - L_bound) / (U_bound - L_bound). 0 = lower bound, 1 = upper bound, 0.5 = midpoint.",
+                        style = "display:block; margin-top:-6px; margin-bottom:6px; color:#666;"
+                      ),
+                      tags$small(
+                        "Jitter uses interior bounds (lower/upper each trimmed by 5% of span), samples by CV, and resamples if a proposal hits bounds.",
+                        style = "display:block; margin-top:-4px; margin-bottom:6px; color:#666;"
+                      )
+                    )
+                  ),
             conditionalPanel(
               condition = "input.lik_jitter_param_view == 'final'",
               selectInput(

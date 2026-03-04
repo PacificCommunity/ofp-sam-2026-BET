@@ -43,7 +43,9 @@ jitter_interior_bounds <- function(lower = -Inf, upper = Inf, eps = 1e-12) {
 
   if (is.finite(lo) && is.finite(hi)) {
     span <- hi - lo
-    margin <- max(abs(span) * 1e-8, eps)
+    # Keep jitter away from hard bounds using a meaningful interior margin.
+    # 5% per side avoids boundary hits without collapsing the feasible window.
+    margin <- max(abs(span) * 5e-2, eps)
     lo <- lo + margin
     hi <- hi - margin
   } else if (is.finite(lo)) {
