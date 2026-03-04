@@ -10,6 +10,7 @@ apply_model_defaults <- function(models, defaults = list()) {
       retro_peels = "1 2 3 4 5",
       jitter_seeds = paste0(1:10, collapse = " "),
       jitter_cv = "0.2",
+      jitter_hessian = "0",
       nsplit = "5"
     ),
     defaults
@@ -23,6 +24,7 @@ apply_model_defaults <- function(models, defaults = list()) {
     retro_peels <- if (!is.null(model$retro_peels)) model$retro_peels else defaults$retro_peels
     jitter_seeds <- if (!is.null(model$jitter_seeds)) model$jitter_seeds else defaults$jitter_seeds
     jitter_cv <- if (!is.null(model$jitter_cv)) model$jitter_cv else if (!is.null(model$jitter_amount)) model$jitter_amount else if (!is.null(model$jitter_coverage)) model$jitter_coverage else defaults$jitter_cv
+    jitter_hessian <- if (!is.null(model$jitter_hessian)) model$jitter_hessian else defaults$jitter_hessian
     nsplit <- if (!is.null(model$nsplit)) model$nsplit else defaults$nsplit
 
     if (!identical(model$mfcl_commands, "./doitall.sh")) {
@@ -39,6 +41,7 @@ apply_model_defaults <- function(models, defaults = list()) {
     model$jitter_cv <- jitter_cv
     model$jitter_coverage <- jitter_cv
     model$jitter_amount <- jitter_cv
+    model$jitter_hessian <- jitter_hessian
     model$nsplit <- nsplit
     model
   }, models, names(models))

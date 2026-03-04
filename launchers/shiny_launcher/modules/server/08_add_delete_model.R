@@ -32,6 +32,7 @@
         jitter_cv = "0.2",
         jitter_coverage = "0.2",
         jitter_amount = "0.2",
+        jitter_hessian = "0",
         retro_peels = "1 2 3 4 5",
         nsplit = "5", 
         scalers = "110 100 90", 

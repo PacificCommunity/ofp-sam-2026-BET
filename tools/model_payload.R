@@ -577,6 +577,37 @@ mp_build_jitter_payload <- function(seed_dir, seed = NA_integer_) {
   )
   run_status <- if (!is.null(mfcl_run$run_status)) mfcl_run$run_status else run_checks$run_status
 
+  hessian_obj <- mp_safe(info_out$hessian)
+  if (is.null(hessian_obj)) {
+    hinfo_file <- file.path(seed_dir, "hessian", "hessian_info.rds")
+    if (file.exists(hinfo_file)) {
+      hraw <- mp_safe(readRDS(hinfo_file))
+      hessian_obj <- list(
+        requested = TRUE,
+        attempted = TRUE,
+        run_ok = TRUE,
+        info_file = hinfo_file,
+        is_pdh = mp_safe(as.logical(hraw$diagnostics$summary$pdh$is_pdh)),
+        is_spd = mp_safe(as.logical(hraw$diagnostics$summary$positivised_cov_is_spd)),
+        n_negative_eigenvalues = mp_safe(as.integer(hraw$eigen$n_negative_eigenvalues)),
+        n_total_eigenvalues = mp_safe(as.integer(hraw$eigen$n_total_eigenvalues)),
+        hessian_status = mp_safe(as.character(hraw$eigen$hessian_status)),
+        reliability = mp_safe(as.character(hraw$eigen$reliability))
+      )
+    }
+  }
+
+  h_is_pdh <- suppressWarnings(as.logical(if (!is.null(hessian_obj$is_pdh)) hessian_obj$is_pdh[[1]] else NA))
+  h_is_spd <- suppressWarnings(as.logical(if (!is.null(hessian_obj$is_spd)) hessian_obj$is_spd[[1]] else NA))
+  hessian_ok <- if (!is.na(h_is_pdh)) {
+    if (!is.na(h_is_spd)) isTRUE(h_is_pdh) && isTRUE(h_is_spd) else isTRUE(h_is_pdh)
+  } else {
+    NA
+  }
+  if (!is.null(hessian_obj$hessian_ok) && length(hessian_obj$hessian_ok) > 0 && !is.na(hessian_obj$hessian_ok[[1]])) {
+    hessian_ok <- isTRUE(as.logical(hessian_obj$hessian_ok[[1]]))
+  }
+
   list(
     version = "v1",
     created_at = as.character(Sys.time()),
@@ -596,6 +627,20 @@ mp_build_jitter_payload <- function(seed_dir, seed = NA_integer_) {
     parameter_changes = parameter_changes,
     fitted_parameter_changes = fitted_parameter_changes,
     derived_quantities = derived_quantities,
+    hessian_ok = hessian_ok,
+    hessian_info = list(
+      requested = if (!is.null(hessian_obj$requested)) isTRUE(as.logical(hessian_obj$requested[[1]])) else FALSE,
+      attempted = if (!is.null(hessian_obj$attempted)) isTRUE(as.logical(hessian_obj$attempted[[1]])) else FALSE,
+      run_ok = if (!is.null(hessian_obj$run_ok)) isTRUE(as.logical(hessian_obj$run_ok[[1]])) else NA,
+      pdh = h_is_pdh,
+      spd = h_is_spd,
+      n_negative_eigenvalues = suppressWarnings(as.integer(if (!is.null(hessian_obj$n_negative_eigenvalues)) hessian_obj$n_negative_eigenvalues[[1]] else NA_integer_)),
+      n_total_eigenvalues = suppressWarnings(as.integer(if (!is.null(hessian_obj$n_total_eigenvalues)) hessian_obj$n_total_eigenvalues[[1]] else NA_integer_)),
+      hessian_status = if (!is.null(hessian_obj$hessian_status)) as.character(hessian_obj$hessian_status[[1]]) else NA_character_,
+      reliability = if (!is.null(hessian_obj$reliability)) as.character(hessian_obj$reliability[[1]]) else NA_character_,
+      error = if (!is.null(hessian_obj$error)) as.character(hessian_obj$error[[1]]) else NA_character_
+    ),
+    hessian = hessian_obj,
     mfcl_run = mfcl_run,
     run_checks = run_checks
   )

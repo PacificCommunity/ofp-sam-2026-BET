@@ -269,6 +269,12 @@
       ),
       fluidRow(
         column(6,
+               div(class = "param-label", "Jitter Hessian (0/1):"),
+               textInput("edit_jitter_hessian", NULL, value = if (!is.null(model$jitter_hessian)) model$jitter_hessian else "0")
+        )
+      ),
+      fluidRow(
+        column(6,
                div(class = "param-label", "Retrospective Peels:"),
                textInput("edit_retro_peels", NULL, value = model$retro_peels)
         ),
@@ -335,6 +341,7 @@
     rv$models[[model_name]]$jitter_cv <- input$edit_jitter_cv
     rv$models[[model_name]]$jitter_coverage <- input$edit_jitter_cv
     rv$models[[model_name]]$jitter_amount <- input$edit_jitter_cv
+    rv$models[[model_name]]$jitter_hessian <- input$edit_jitter_hessian
     rv$models[[model_name]]$retro_peels <- input$edit_retro_peels
     rv$models[[model_name]]$nsplit <- as.character(input$edit_nsplit)
     rv$models[[model_name]]$scalers <- input$edit_scalers
