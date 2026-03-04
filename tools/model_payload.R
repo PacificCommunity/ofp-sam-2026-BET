@@ -95,6 +95,90 @@ mp_first_or_null <- function(x) {
   if (length(x) > 0) x[[1]] else NULL
 }
 
+mp_extract_yearly_sum <- function(slot_obj, scale = 1) {
+  slot_df <- mp_safe(as.data.frame(slot_obj))
+  if (is.null(slot_df) || nrow(slot_df) == 0) return(NULL)
+
+  slot_df$year <- suppressWarnings(as.numeric(slot_df$year))
+  slot_df$data <- suppressWarnings(as.numeric(slot_df$data))
+  slot_df <- slot_df[is.finite(slot_df$year) & is.finite(slot_df$data), , drop = FALSE]
+  if (nrow(slot_df) == 0) return(NULL)
+
+  out <- stats::aggregate(data ~ year, data = slot_df, FUN = sum)
+  out$data <- out$data / scale
+  out
+}
+
+mp_extract_recruitment_timeseries <- function(rep_obj) {
+  rec_region_df <- mp_extract_yearly_sum(mp_safe(tryCatch(rep_obj@rec_region, error = function(e) NULL)), scale = 1e6)
+  if (!is.null(rec_region_df) && nrow(rec_region_df) > 0) {
+    names(rec_region_df)[names(rec_region_df) == "data"] <- "recruitment"
+    return(rec_region_df)
+  }
+
+  eq_rec_df <- mp_extract_yearly_sum(mp_safe(tryCatch(rep_obj@eq_rec, error = function(e) NULL)), scale = 1e6)
+  if (!is.null(eq_rec_df) && nrow(eq_rec_df) > 0) {
+    names(eq_rec_df)[names(eq_rec_df) == "data"] <- "recruitment"
+    return(eq_rec_df)
+  }
+
+  rec_df <- mp_extract_yearly_sum(mp_safe(tryCatch(rep_obj@rec, error = function(e) NULL)), scale = 1)
+  if (!is.null(rec_df) && nrow(rec_df) > 0) {
+    names(rec_df)[names(rec_df) == "data"] <- "recruitment"
+    return(rec_df)
+  }
+
+  NULL
+}
+
+mp_extract_fm_timeseries <- function(rep_obj) {
+  fm_df <- mp_safe(as.data.frame(mp_safe(tryCatch(rep_obj@fm, error = function(e) NULL))))
+  popn_df <- mp_safe(as.data.frame(mp_safe(tryCatch(rep_obj@popN, error = function(e) NULL))))
+
+  if (!is.null(fm_df) && !is.null(popn_df) && nrow(fm_df) > 0 && nrow(popn_df) > 0) {
+    fm_df$data <- suppressWarnings(as.numeric(fm_df$data))
+    popn_df$data <- suppressWarnings(as.numeric(popn_df$data))
+    popn_df$N <- popn_df$data
+    popn_df$data <- NULL
+
+    numeric_cols <- intersect(c("age", "year", "unit", "season", "area", "iter"), union(names(fm_df), names(popn_df)))
+    for (col in numeric_cols) {
+      if (col %in% names(fm_df)) fm_df[[col]] <- suppressWarnings(as.numeric(fm_df[[col]]))
+      if (col %in% names(popn_df)) popn_df[[col]] <- suppressWarnings(as.numeric(popn_df[[col]]))
+    }
+
+    join_cols <- intersect(c("age", "year", "unit", "season", "area", "iter"), intersect(names(fm_df), names(popn_df)))
+    if (all(c("year", "season") %in% join_cols)) {
+      fm_popn <- merge(fm_df, popn_df, by = join_cols, all = FALSE)
+      fm_popn <- fm_popn[is.finite(fm_popn$year) & is.finite(fm_popn$season) & is.finite(fm_popn$data) & is.finite(fm_popn$N), , drop = FALSE]
+      if (nrow(fm_popn) > 0) {
+        fm_popn$catch <- fm_popn$data * fm_popn$N
+        yearly <- stats::aggregate(
+          cbind(total_catch = catch, total_N = N) ~ year + season,
+          data = fm_popn,
+          FUN = sum
+        )
+        if (nrow(yearly) > 0) {
+          yearly$harvest_rate <- yearly$total_catch / pmax(yearly$total_N, .Machine$double.eps)
+          yearly$inst_F <- -log(pmax(1 - yearly$harvest_rate, 0.001))
+          out <- stats::aggregate(inst_F ~ year, data = yearly, FUN = sum)
+          names(out)[names(out) == "inst_F"] <- "fishing_mortality"
+          return(out)
+        }
+      }
+    }
+  }
+
+  fmlevel_df <- mp_extract_yearly_sum(mp_safe(tryCatch(rep_obj@fmlevel, error = function(e) NULL)), scale = 1)
+  if (!is.null(fmlevel_df) && nrow(fmlevel_df) > 0) {
+    fmlevel_df <- stats::aggregate(data ~ year, data = fmlevel_df, FUN = function(x) mean(x, na.rm = TRUE))
+    names(fmlevel_df)[names(fmlevel_df) == "data"] <- "fishing_mortality"
+    return(fmlevel_df)
+  }
+
+  NULL
+}
+
 mp_extract_par_obj_fun <- function(par_file) {
   par_obj <- mp_safe(read.MFCLPar(par_file))
   obj_fun <- suppressWarnings(tryCatch(as.numeric(par_obj@obj_fun), error = function(e) NA_real_))
@@ -203,30 +287,14 @@ mp_extract_rep_timeseries <- function(rep_obj, scenario = NA_character_, peel = 
 
   out <- merge(dep, sp, by = "year", all = FALSE)
 
-  rec_slot <- mp_safe(tryCatch(rep_obj@rec, error = function(e) NULL))
-  rec_df <- mp_safe(as.data.frame(rec_slot))
+  rec_df <- mp_extract_recruitment_timeseries(rep_obj)
   if (!is.null(rec_df) && nrow(rec_df) > 0) {
-    rec_df$year <- suppressWarnings(as.numeric(rec_df$year))
-    rec_df$data <- suppressWarnings(as.numeric(rec_df$data))
-    rec_df <- rec_df[is.finite(rec_df$year) & is.finite(rec_df$data), , drop = FALSE]
-    if (nrow(rec_df) > 0) {
-      rec_df <- stats::aggregate(data ~ year, data = rec_df, FUN = sum)
-      names(rec_df)[names(rec_df) == "data"] <- "recruitment"
-      out <- merge(out, rec_df, by = "year", all = TRUE)
-    }
+    out <- merge(out, rec_df, by = "year", all = TRUE)
   }
 
-  fm_slot <- mp_safe(tryCatch(rep_obj@fmlevel, error = function(e) NULL))
-  fm_df <- mp_safe(as.data.frame(fm_slot))
+  fm_df <- mp_extract_fm_timeseries(rep_obj)
   if (!is.null(fm_df) && nrow(fm_df) > 0) {
-    fm_df$year <- suppressWarnings(as.numeric(fm_df$year))
-    fm_df$data <- suppressWarnings(as.numeric(fm_df$data))
-    fm_df <- fm_df[is.finite(fm_df$year) & is.finite(fm_df$data), , drop = FALSE]
-    if (nrow(fm_df) > 0) {
-      fm_df <- stats::aggregate(data ~ year, data = fm_df, FUN = function(x) mean(x, na.rm = TRUE))
-      names(fm_df)[names(fm_df) == "data"] <- "fishing_mortality"
-      out <- merge(out, fm_df, by = "year", all = TRUE)
-    }
+    out <- merge(out, fm_df, by = "year", all = TRUE)
   }
 
   out$scenario <- scenario
@@ -447,6 +515,17 @@ mp_extract_jitter_derived_quantities <- function(seed_dir, seed = NA_integer_) {
     return(NULL)
   }
 
+  recruitment_vals <- if ("recruitment" %in% names(ts_df)) {
+    suppressWarnings(as.numeric(ts_df$recruitment))
+  } else {
+    rep(NA_real_, nrow(ts_df))
+  }
+  fishing_mortality_vals <- if ("fishing_mortality" %in% names(ts_df)) {
+    suppressWarnings(as.numeric(ts_df$fishing_mortality))
+  } else {
+    rep(NA_real_, nrow(ts_df))
+  }
+
   data.frame(
     seed = rep(
       ifelse(is.na(seed), suppressWarnings(as.integer(sub(".*?(\\d+)$", "\\1", basename(seed_dir)))), seed),
@@ -455,8 +534,8 @@ mp_extract_jitter_derived_quantities <- function(seed_dir, seed = NA_integer_) {
     year = suppressWarnings(as.numeric(ts_df$year)),
     depletion = suppressWarnings(as.numeric(ts_df$depletion)),
     spawning_potential = suppressWarnings(as.numeric(ts_df$spawning_potential)),
-    recruitment = suppressWarnings(as.numeric(ts_df$recruitment)),
-    fishing_mortality = suppressWarnings(as.numeric(ts_df$fishing_mortality)),
+    recruitment = recruitment_vals,
+    fishing_mortality = fishing_mortality_vals,
     stringsAsFactors = FALSE
   )
 }

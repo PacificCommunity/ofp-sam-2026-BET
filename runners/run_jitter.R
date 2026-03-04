@@ -19,7 +19,7 @@ base_dir_abs <- file.path(project_root, base_dir)
 
 ## Jitter settings
 ## Single seed value for parallel execution via condor
-jitter_seed <- as.integer(Sys.getenv("jitter_seed", "140"))
+jitter_seed <- as.integer(Sys.getenv("jitter_seed", "40"))
 jitter_amount <- as.numeric(Sys.getenv("jitter_amount", "0.1"))
 jitter_neval <- as.integer(Sys.getenv("jitter_neval", "3"))
 
