@@ -1767,6 +1767,18 @@ mod_likelihood_server <- function(input, output, session, rv) {
   extract_reference_metrics_timeseries <- function(rep_obj, scenario) {
     if (is.null(rep_obj)) return(NULL)
 
+    extract_yearly_sum <- function(slot_obj, scale = 1) {
+      slot_df <- tryCatch(safe_array_to_df(slot_obj), error = function(e) NULL)
+      if (is.null(slot_df) || nrow(slot_df) == 0) return(NULL)
+      slot_df$year <- suppressWarnings(as.numeric(slot_df$year))
+      slot_df$data <- suppressWarnings(as.numeric(slot_df$data))
+      slot_df <- slot_df[is.finite(slot_df$year) & is.finite(slot_df$data), , drop = FALSE]
+      if (nrow(slot_df) == 0) return(NULL)
+      out <- stats::aggregate(data ~ year, data = slot_df, FUN = sum)
+      out$data <- out$data / scale
+      out
+    }
+
     bio_fish <- safe_array_to_df(rep_obj@adultBiomass) %>%
       mutate(year = suppressWarnings(as.numeric(year)), season = suppressWarnings(as.numeric(season)), data = suppressWarnings(as.numeric(data))) %>%
       filter(is.finite(year), is.finite(season), is.finite(data)) %>%
@@ -1789,29 +1801,55 @@ mod_likelihood_server <- function(input, output, session, rv) {
         .groups = "drop"
       )
 
-    rec_slot <- tryCatch(rep_obj@rec, error = function(e) NULL)
-    rec_df <- tryCatch(safe_array_to_df(rec_slot), error = function(e) NULL)
+    rec_df <- extract_yearly_sum(tryCatch(rep_obj@rec_region, error = function(e) NULL), scale = 1e6)
+    if (is.null(rec_df) || nrow(rec_df) == 0) {
+      rec_df <- extract_yearly_sum(tryCatch(rep_obj@eq_rec, error = function(e) NULL), scale = 1e6)
+    }
+    if (is.null(rec_df) || nrow(rec_df) == 0) {
+      rec_df <- extract_yearly_sum(tryCatch(rep_obj@rec, error = function(e) NULL), scale = 1)
+    }
     if (!is.null(rec_df) && nrow(rec_df) > 0) {
-      rec_df$year <- suppressWarnings(as.numeric(rec_df$year))
-      rec_df$data <- suppressWarnings(as.numeric(rec_df$data))
-      rec_df <- rec_df[is.finite(rec_df$year) & is.finite(rec_df$data), , drop = FALSE]
-      if (nrow(rec_df) > 0) {
-        rec_df <- stats::aggregate(data ~ year, data = rec_df, FUN = sum)
-        names(rec_df)[names(rec_df) == "data"] <- "recruitment"
-        merged <- merge(merged, rec_df, by = "year", all = TRUE)
-      }
+      names(rec_df)[names(rec_df) == "data"] <- "recruitment"
+      merged <- merge(merged, rec_df, by = "year", all = TRUE)
     }
 
-    fm_slot <- tryCatch(rep_obj@fmlevel, error = function(e) NULL)
-    fm_df <- tryCatch(safe_array_to_df(fm_slot), error = function(e) NULL)
-    if (!is.null(fm_df) && nrow(fm_df) > 0) {
-      fm_df$year <- suppressWarnings(as.numeric(fm_df$year))
+    fm_df <- tryCatch(safe_array_to_df(rep_obj@fm), error = function(e) NULL)
+    popn_df <- tryCatch(safe_array_to_df(rep_obj@popN), error = function(e) NULL)
+    used_fm <- FALSE
+    if (!is.null(fm_df) && !is.null(popn_df) && nrow(fm_df) > 0 && nrow(popn_df) > 0) {
       fm_df$data <- suppressWarnings(as.numeric(fm_df$data))
-      fm_df <- fm_df[is.finite(fm_df$year) & is.finite(fm_df$data), , drop = FALSE]
-      if (nrow(fm_df) > 0) {
-        fm_df <- stats::aggregate(data ~ year, data = fm_df, FUN = mean)
-        names(fm_df)[names(fm_df) == "data"] <- "fishing_mortality"
-        merged <- merge(merged, fm_df, by = "year", all = TRUE)
+      popn_df$data <- suppressWarnings(as.numeric(popn_df$data))
+      popn_df$N <- popn_df$data
+      popn_df$data <- NULL
+      numeric_cols <- intersect(c("age", "year", "unit", "season", "area", "iter"), union(names(fm_df), names(popn_df)))
+      for (col in numeric_cols) {
+        if (col %in% names(fm_df)) fm_df[[col]] <- suppressWarnings(as.numeric(fm_df[[col]]))
+        if (col %in% names(popn_df)) popn_df[[col]] <- suppressWarnings(as.numeric(popn_df[[col]]))
+      }
+      join_cols <- intersect(c("age", "year", "unit", "season", "area", "iter"), intersect(names(fm_df), names(popn_df)))
+      if (all(c("year", "season") %in% join_cols)) {
+        fm_popn <- merge(fm_df, popn_df, by = join_cols, all = FALSE)
+        fm_popn <- fm_popn[is.finite(fm_popn$year) & is.finite(fm_popn$season) & is.finite(fm_popn$data) & is.finite(fm_popn$N), , drop = FALSE]
+        if (nrow(fm_popn) > 0) {
+          fm_popn$catch <- fm_popn$data * fm_popn$N
+          yearly <- stats::aggregate(cbind(total_catch = catch, total_N = N) ~ year + season, data = fm_popn, FUN = sum)
+          if (nrow(yearly) > 0) {
+            yearly$harvest_rate <- yearly$total_catch / pmax(yearly$total_N, .Machine$double.eps)
+            yearly$inst_F <- -log(pmax(1 - yearly$harvest_rate, 0.001))
+            fm_year <- stats::aggregate(inst_F ~ year, data = yearly, FUN = sum)
+            names(fm_year)[names(fm_year) == "inst_F"] <- "fishing_mortality"
+            merged <- merge(merged, fm_year, by = "year", all = TRUE)
+            used_fm <- TRUE
+          }
+        }
+      }
+    }
+    if (!used_fm) {
+      fmlevel_df <- extract_yearly_sum(tryCatch(rep_obj@fmlevel, error = function(e) NULL), scale = 1)
+      if (!is.null(fmlevel_df) && nrow(fmlevel_df) > 0) {
+        fmlevel_df <- stats::aggregate(data ~ year, data = fmlevel_df, FUN = mean)
+        names(fmlevel_df)[names(fmlevel_df) == "data"] <- "fishing_mortality"
+        merged <- merge(merged, fmlevel_df, by = "year", all = TRUE)
       }
     }
 
@@ -3050,18 +3088,16 @@ mod_likelihood_server <- function(input, output, session, rv) {
       converged_only <- isTRUE(filters$jitter_converged_only)
       converged_max_grad <- if (is.finite(filters$jitter_converged_max_grad)) filters$jitter_converged_max_grad else 0.01
       derived_view <- if (is.null(filters$jitter_derived_view)) "summary" else filters$jitter_derived_view
-      metric_labels <- c(
-        "Depletion" = "SB / SB[F==0]",
-        "Spawning Potential (1e3 MT)" = "SB~(10^3~MT)",
-        "Recruitment" = "Recruitment",
-        "Fishing Mortality" = "F"
-      )
       jitter_counts <- format_jitter_convergence_counts(
         build_jitter_seed_status_tables(filters$scenarios, cutoff = converged_max_grad)$summary
       )
+      scenario_levels <- unique(as.character(data$scenario))
+      facet_ncol <- suppressWarnings(as.integer(input$lik_facet_ncol))
+      if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 2
+      facet_ncol <- min(max(facet_ncol, 1), 12)
+
       ref_df <- data %>%
-        distinct(scenario, metric, reference_value, year) %>%
-        mutate(metric_label = dplyr::recode(metric, !!!metric_labels, .default = metric))
+        distinct(scenario, metric, reference_value, year)
 
       summary_df <- data %>%
         group_by(scenario, metric, year) %>%
@@ -3074,93 +3110,140 @@ mod_likelihood_server <- function(input, output, session, rv) {
           q90 = stats::quantile(value, 0.90, na.rm = TRUE),
           q975 = stats::quantile(value, 0.975, na.rm = TRUE),
           .groups = "drop"
-        ) %>%
-        mutate(metric_label = dplyr::recode(metric, !!!metric_labels, .default = metric))
+        )
 
-      if (identical(derived_view, "lines")) {
-        plot_df <- data %>%
-          mutate(
-            seed_id = as.factor(seed),
-            metric_label = dplyr::recode(metric, !!!metric_labels, .default = metric)
-          )
+      make_jitter_derived_plot <- function(metric_name, y_lab, add_dep_lines = FALSE, ylim_zero = FALSE) {
+        metric_ref <- ref_df %>%
+          filter(metric == metric_name) %>%
+          mutate(scenario = factor(as.character(scenario), levels = scenario_levels))
 
-        return(
-          ggplot(plot_df, aes(x = year, y = value, group = seed, color = seed_id)) +
+        if (identical(derived_view, "lines")) {
+          metric_plot_df <- data %>%
+            filter(metric == metric_name) %>%
+            mutate(
+              scenario = factor(as.character(scenario), levels = scenario_levels),
+              seed_id = as.factor(seed)
+            )
+
+          if (nrow(metric_plot_df) == 0) {
+            return(
+              ggplot() +
+                annotate("text", x = 0.5, y = 0.5, label = paste("No", metric_name, "data"), size = 5, color = "#999") +
+                theme_void()
+            )
+          }
+
+          p <- ggplot(metric_plot_df, aes(x = year, y = value, group = seed, color = seed_id)) +
             geom_line(alpha = 0.55, linewidth = 0.6, na.rm = TRUE) +
             geom_line(
-              data = ref_df,
+              data = metric_ref,
               aes(x = year, y = reference_value, group = 1),
               inherit.aes = FALSE,
               color = "#d62728",
               linewidth = 0.9,
               na.rm = TRUE
             ) +
-            facet_grid(metric_label ~ scenario, scales = "free_y", labeller = labeller(metric_label = label_parsed)) +
+            facet_wrap(~ scenario, ncol = facet_ncol, scales = "free_y") +
             scale_color_viridis_d(option = "D", guide = "none") +
-            labs(
-              x = "Year",
-              y = "Derived quantity value",
-              title = "Jitter Derived Quantity Time Series",
-              subtitle = if (isTRUE(converged_only)) {
-                paste0(
-                  "Individual jitter runs shown as lines. Red line = original model. Converged only: max_grad <= ",
-                  format(converged_max_grad, trim = TRUE),
-                  if (!is.null(jitter_counts)) paste0(" | Converged/total: ", jitter_counts) else ""
-                )
-              } else {
-                paste0(
-                  "Individual jitter runs shown as lines. Red line = original model.",
-                  if (!is.null(jitter_counts)) paste0(" Converged/total: ", jitter_counts, ".") else ""
-                )
-              }
-            ) +
-            theme_bw(base_size = 12) +
+            labs(x = "Year", y = y_lab) +
+            theme_bw(base_size = 11) +
             theme(
               strip.text = element_text(face = "bold"),
               strip.background = element_rect(fill = "#d9edf7"),
               panel.grid.minor = element_blank()
             )
-        )
-      }
+        } else {
+          metric_summary_df <- summary_df %>%
+            filter(metric == metric_name) %>%
+            mutate(scenario = factor(as.character(scenario), levels = scenario_levels))
 
-      return(
-        ggplot(summary_df, aes(x = year)) +
-          geom_ribbon(aes(ymin = q025, ymax = q975), fill = "#d9ecf5", alpha = 0.8, na.rm = TRUE) +
-          geom_ribbon(aes(ymin = q10, ymax = q90), fill = "#9ecae1", alpha = 0.85, na.rm = TRUE) +
-          geom_ribbon(aes(ymin = q25, ymax = q75), fill = "#4f90b5", alpha = 0.9, na.rm = TRUE) +
-          geom_line(aes(y = q50), color = "#123b5d", linewidth = 0.9, na.rm = TRUE) +
-          geom_line(
-            data = ref_df,
-            aes(x = year, y = reference_value, group = 1),
-            inherit.aes = FALSE,
+          if (nrow(metric_summary_df) == 0) {
+            return(
+              ggplot() +
+                annotate("text", x = 0.5, y = 0.5, label = paste("No", metric_name, "data"), size = 5, color = "#999") +
+                theme_void()
+            )
+          }
+
+          p <- ggplot(metric_summary_df, aes(x = year)) +
+            geom_ribbon(aes(ymin = q025, ymax = q975), fill = "#d9ecf5", alpha = 0.8, na.rm = TRUE) +
+            geom_ribbon(aes(ymin = q10, ymax = q90), fill = "#9ecae1", alpha = 0.85, na.rm = TRUE) +
+            geom_ribbon(aes(ymin = q25, ymax = q75), fill = "#4f90b5", alpha = 0.9, na.rm = TRUE) +
+            geom_line(aes(y = q50), color = "#123b5d", linewidth = 0.9, na.rm = TRUE) +
+            geom_line(
+              data = metric_ref,
+              aes(x = year, y = reference_value, group = 1),
+              inherit.aes = FALSE,
               color = "#d62728",
               linewidth = 0.9,
               na.rm = TRUE
             ) +
-          facet_grid(metric_label ~ scenario, scales = "free_y", labeller = labeller(metric_label = label_parsed)) +
-          labs(
-            x = "Year",
-            y = "Derived quantity value",
-            title = "Jitter Derived Quantity Time Series",
-            subtitle = if (isTRUE(converged_only)) {
-              paste0(
-                "Bands show 95%, 80%, and 50% ranges with median line. Red line = original model. Converged only: max_grad <= ",
-                format(converged_max_grad, trim = TRUE),
-                if (!is.null(jitter_counts)) paste0(" | Converged/total: ", jitter_counts) else ""
-              )
-            } else {
-              paste0(
-                "Bands show 95%, 80%, and 50% ranges with median line. Red line = original model.",
-                if (!is.null(jitter_counts)) paste0(" Converged/total: ", jitter_counts, ".") else ""
-              )
-            }
-          ) +
-          theme_bw(base_size = 12) +
-          theme(
-            strip.text = element_text(face = "bold"),
-            strip.background = element_rect(fill = "#d9edf7"),
-            panel.grid.minor = element_blank()
+            facet_wrap(~ scenario, ncol = facet_ncol, scales = "free_y") +
+            labs(x = "Year", y = y_lab) +
+            theme_bw(base_size = 11) +
+            theme(
+              strip.text = element_text(face = "bold"),
+              strip.background = element_rect(fill = "#d9edf7"),
+              panel.grid.minor = element_blank()
+            )
+        }
+
+        if (isTRUE(add_dep_lines)) {
+          p <- p +
+            geom_hline(yintercept = 0.2, linetype = "dashed", color = "darkred") +
+            geom_hline(yintercept = 0.5, linetype = "dashed", color = "darkgreen")
+        } else if (isTRUE(ylim_zero)) {
+          p <- p + coord_cartesian(ylim = c(0, NA))
+        }
+
+        p
+      }
+
+      dep_plot <- make_jitter_derived_plot("Depletion", bquote(SB/SB["F=0"]), add_dep_lines = TRUE)
+      rec_plot <- make_jitter_derived_plot("Recruitment", "Recruitment (Millions)", ylim_zero = TRUE)
+      sp_plot <- make_jitter_derived_plot("Spawning Potential (1e3 MT)", bquote("Spawning Potential (" * 10^3 * " MT)"), ylim_zero = TRUE)
+      fm_plot <- make_jitter_derived_plot("Fishing Mortality", "Annual Instantaneous F", ylim_zero = TRUE)
+
+      combined_plot <- cowplot::plot_grid(
+        dep_plot, rec_plot, sp_plot, fm_plot,
+        ncol = 2,
+        align = "hv"
+      )
+
+      plot_title <- "Jitter Derived Quantity Time Series"
+      plot_subtitle <- if (identical(derived_view, "lines")) {
+        if (isTRUE(converged_only)) {
+          paste0(
+            "Individual jitter runs shown as lines. Red line = original model. Converged only: max_grad <= ",
+            format(converged_max_grad, trim = TRUE),
+            if (!is.null(jitter_counts)) paste0(" | Converged/total: ", jitter_counts) else ""
           )
+        } else {
+          paste0(
+            "Individual jitter runs shown as lines. Red line = original model.",
+            if (!is.null(jitter_counts)) paste0(" Converged/total: ", jitter_counts, ".") else ""
+          )
+        }
+      } else {
+        if (isTRUE(converged_only)) {
+          paste0(
+            "Bands show 95%, 80%, and 50% ranges with median line. Red line = original model. Converged only: max_grad <= ",
+            format(converged_max_grad, trim = TRUE),
+            if (!is.null(jitter_counts)) paste0(" | Converged/total: ", jitter_counts) else ""
+          )
+        } else {
+          paste0(
+            "Bands show 95%, 80%, and 50% ranges with median line. Red line = original model.",
+            if (!is.null(jitter_counts)) paste0(" Converged/total: ", jitter_counts, ".") else ""
+          )
+        }
+      }
+
+      return(
+        cowplot::ggdraw() +
+          cowplot::draw_label(plot_title, x = 0.5, y = 0.995, hjust = 0.5, vjust = 1, fontface = "bold", size = 15) +
+          cowplot::draw_label(plot_subtitle, x = 0.5, y = 0.965, hjust = 0.5, vjust = 1, size = 10) +
+          cowplot::draw_plot(combined_plot, x = 0, y = 0, width = 1, height = 0.93)
       )
     }
     
@@ -3213,13 +3296,6 @@ mod_likelihood_server <- function(input, output, session, rv) {
           )
         )
       }
-      retro_metric_labels <- c(
-        "Depletion" = "SB / SB[F==0]",
-        "Spawning potential" = "SB~(10^3~MT)",
-        "Recruitment" = "Recruitment",
-        "Fishing mortality" = "F"
-      )
-      
       rho_df <- info$rho
       dep_anno <- if (!is.null(rho_df) && nrow(rho_df) > 0) {
         rho_df %>% transmute(scenario, metric = "Depletion", label = sprintf("Mohn's rho: %.3f", mohn_rho_depletion))
@@ -3242,67 +3318,102 @@ mod_likelihood_server <- function(input, output, session, rv) {
         data.frame(scenario = character(0), metric = character(0), label = character(0), stringsAsFactors = FALSE)
       }
 
-      retro_long <- bind_rows(
-        retro_df %>%
-          transmute(scenario, year, peel, metric = "Depletion", value = depletion),
-        retro_df %>%
-          transmute(scenario, year, peel, metric = "Spawning potential", value = spawning_potential),
-        retro_df %>%
-          transmute(scenario, year, peel, metric = "Recruitment", value = recruitment),
-        retro_df %>%
-          transmute(scenario, year, peel, metric = "Fishing mortality", value = fishing_mortality)
-      ) %>%
-        filter(is.finite(value)) %>%
-        mutate(metric_label = dplyr::recode(metric, !!!retro_metric_labels, .default = metric))
-      anno_df <- bind_rows(dep_anno, sp_anno, rec_anno, fm_anno) %>%
-        mutate(metric_label = dplyr::recode(metric, !!!retro_metric_labels, .default = metric))
+      scenario_levels <- unique(as.character(retro_df$scenario))
+      facet_ncol <- suppressWarnings(as.integer(input$lik_facet_ncol))
+      if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 2
+      facet_ncol <- min(max(facet_ncol, 1), 12)
 
-      return(
-        ggplot(
-          retro_long,
-          aes(
-            x = year,
-            y = value,
-            color = factor(peel, levels = peel_levels_chr),
-            group = interaction(scenario, peel, metric)
+      make_retro_plot <- function(value_col, y_lab, anno_tbl = NULL, add_dep_lines = FALSE, ylim_zero = FALSE) {
+        plot_df <- retro_df %>%
+          transmute(
+            scenario = factor(as.character(scenario), levels = scenario_levels),
+            year = year,
+            peel = factor(as.character(peel), levels = peel_levels_chr),
+            value = .data[[value_col]]
+          ) %>%
+          filter(is.finite(value))
+
+        if (nrow(plot_df) == 0) {
+          return(
+            ggplot() +
+              annotate("text", x = 0.5, y = 0.5, label = "No numeric data", size = 5, color = "#999") +
+              theme_void()
           )
-          ) +
+        }
+
+        p <- ggplot(
+          plot_df,
+          aes(x = year, y = value, color = peel, group = interaction(scenario, peel))
+        ) +
           geom_line(linewidth = 1.0, alpha = 0.9) +
-          geom_text(
-            data = anno_df,
-            aes(x = Inf, y = Inf, label = label),
-            inherit.aes = FALSE,
-            hjust = 1.05, vjust = 1.2, size = 3.2, fontface = "bold", color = "black"
-          ) +
-          geom_hline(
-            data = data.frame(metric_label = "SB / SB[F==0]", threshold = 0.2),
-            aes(yintercept = threshold),
-            inherit.aes = FALSE,
-            linetype = "dashed",
-            color = "darkred"
-          ) +
-          geom_hline(
-            data = data.frame(metric_label = "SB / SB[F==0]", threshold = 0.5),
-            aes(yintercept = threshold),
-            inherit.aes = FALSE,
-            linetype = "dashed",
-            color = "darkgreen"
-          ) +
-          facet_grid(metric_label ~ scenario, scales = "free_y", labeller = labeller(metric_label = label_parsed)) +
           scale_color_manual(values = peel_colors, breaks = peel_levels_chr, labels = peel_labels) +
-          labs(
-            x = "Year",
-            y = NULL,
-            color = "Terminal year",
-            title = "Retrospective Diagnostics"
-          ) +
-          theme_bw(base_size = 12) +
+          facet_wrap(~ scenario, ncol = facet_ncol, scales = "free_y") +
+          labs(x = "Year", y = y_lab) +
+          theme_bw(base_size = 11) +
           theme(
             strip.text = element_text(face = "bold"),
             strip.background = element_rect(fill = "#d9edf7"),
-            panel.grid.minor = element_blank()
+            panel.grid.minor = element_blank(),
+            legend.position = "none"
           )
+
+        if (!is.null(anno_tbl) && nrow(anno_tbl) > 0) {
+          anno_tbl$scenario <- factor(as.character(anno_tbl$scenario), levels = scenario_levels)
+          p <- p + geom_text(
+            data = anno_tbl,
+            aes(x = Inf, y = Inf, label = label),
+            inherit.aes = FALSE,
+            hjust = 1.05, vjust = 1.2, size = 3.1, fontface = "bold", color = "black"
+          )
+        }
+
+        if (isTRUE(add_dep_lines)) {
+          p <- p +
+            geom_hline(yintercept = 0.2, linetype = "dashed", color = "darkred") +
+            geom_hline(yintercept = 0.5, linetype = "dashed", color = "darkgreen") +
+            coord_cartesian(ylim = c(0, 1))
+        } else if (isTRUE(ylim_zero)) {
+          p <- p + coord_cartesian(ylim = c(0, NA))
+        }
+
+        p
+      }
+
+      dep_plot <- make_retro_plot("depletion", bquote(SB/SB["F=0"]), dep_anno, add_dep_lines = TRUE)
+      rec_plot <- make_retro_plot("recruitment", "Recruitment (Millions)", rec_anno, ylim_zero = TRUE)
+      sp_plot <- make_retro_plot("spawning_potential", bquote("Spawning Potential (" * 10^3 * " MT)"), sp_anno, ylim_zero = TRUE)
+      fm_plot <- make_retro_plot("fishing_mortality", "Annual Instantaneous F", fm_anno, ylim_zero = TRUE)
+
+      combined_plot <- cowplot::plot_grid(
+        dep_plot, rec_plot, sp_plot, fm_plot,
+        ncol = 2,
+        align = "hv"
       )
+
+      retro_legend <- cowplot::get_legend(
+        ggplot(
+          retro_df %>%
+            transmute(
+              scenario = factor(as.character(scenario), levels = scenario_levels),
+              year = year,
+              peel = factor(as.character(peel), levels = peel_levels_chr),
+              value = depletion
+            ) %>%
+            filter(is.finite(value)),
+          aes(x = year, y = value, color = peel, group = interaction(scenario, peel))
+        ) +
+          geom_line(linewidth = 1.1) +
+          scale_color_manual(values = peel_colors, breaks = peel_levels_chr, labels = peel_labels) +
+          theme_bw() +
+          theme(
+            legend.position = "bottom",
+            legend.title = element_text(face = "bold"),
+            legend.key.width = unit(1.3, "cm")
+          ) +
+          labs(color = "Terminal year")
+      )
+
+      return(cowplot::plot_grid(combined_plot, retro_legend, ncol = 1, rel_heights = c(1, 0.08)))
     }
     
     if (identical(plot_kind, "hessian")) {
@@ -3411,12 +3522,20 @@ mod_likelihood_server <- function(input, output, session, rv) {
       DTOutput("jitter_info_table"),
       tags$hr(style = "margin: 12px 0 10px 0;"),
       tags$div(style = "font-weight: bold; margin-bottom: 6px;", "Seed details"),
+      uiOutput("jitter_seed_model_ui"),
       DTOutput("jitter_seed_table")
     )
   })
 
   output$retro_info_ui <- renderUI({
     if (!identical(input$lik_main_tab, "retro")) return(NULL)
+
+    info <- profile_data_reactive()
+    plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else NULL
+    retro_df <- if (!is.null(info$data)) info$data else NULL
+    rho_df <- if (!is.null(info$rho)) info$rho else NULL
+    has_retro_data <- identical(plot_kind, "retro") && !is.null(retro_df) && nrow(retro_df) > 0
+    has_rho <- !is.null(rho_df) && nrow(rho_df) > 0
 
     box(
       title = "Retro Information",
@@ -3428,7 +3547,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
       div(
         style = "margin-bottom: 10px; padding: 10px 12px; background: #fff8e1; border: 1px solid #f0d98c; border-left: 4px solid #f39c12; border-radius: 4px;",
         tags$div("Retrospective diagnostics compare the base run against successive terminal-year peels.", style = "font-weight: bold; margin-bottom: 4px;"),
-        tags$div("The plot shows depletion and spawning potential trajectories by peel. Mohn's rho is summarized in the retro plot subtitle when available.", style = "font-size: 12px; color: #333;")
+        tags$div("The plot shows depletion, recruitment, spawning potential, and F trajectories by peel. Tables below summarize Mohn's rho and terminal-year peel information.", style = "font-size: 12px; color: #333;")
+      ),
+      if (has_rho) tagList(
+        tags$div(style = "font-weight: bold; margin-bottom: 6px;", "Mohn's rho summary"),
+        DTOutput("retro_rho_table"),
+        tags$hr(style = "margin: 12px 0 10px 0;")
+      ),
+      if (has_retro_data) tagList(
+        tags$div(style = "font-weight: bold; margin-bottom: 6px;", "Peel details"),
+        uiOutput("retro_peel_model_ui"),
+        DTOutput("retro_peel_table")
       )
     )
   })
@@ -3581,8 +3710,124 @@ mod_likelihood_server <- function(input, output, session, rv) {
     seed_tbl <- if (!is.null(jitter_info)) jitter_info$seeds else NULL
     if (is.null(seed_tbl) || nrow(seed_tbl) == 0) return(NULL)
 
+    if (!is.null(input$jitter_seed_model) &&
+        nzchar(input$jitter_seed_model) &&
+        input$jitter_seed_model %in% seed_tbl$Model) {
+      seed_tbl <- seed_tbl %>% filter(Model == input$jitter_seed_model)
+    }
+
     datatable(
       seed_tbl,
+      options = list(pageLength = 12, scrollX = TRUE),
+      rownames = FALSE
+    )
+  })
+
+  output$jitter_seed_model_ui <- renderUI({
+    if (!identical(input$lik_main_tab, "jitter")) return(NULL)
+    jitter_info <- jitter_info_reactive()
+    seed_tbl <- if (!is.null(jitter_info)) jitter_info$seeds else NULL
+    if (is.null(seed_tbl) || nrow(seed_tbl) == 0) return(NULL)
+
+    model_choices <- unique(seed_tbl$Model)
+    if (length(model_choices) <= 1) return(NULL)
+
+    selectInput(
+      "jitter_seed_model",
+      "Model:",
+      choices = model_choices,
+      selected = if (!is.null(input$jitter_seed_model) && input$jitter_seed_model %in% model_choices) {
+        input$jitter_seed_model
+      } else {
+        model_choices[[1]]
+      }
+    )
+  })
+
+  output$retro_rho_table <- renderDT({
+    if (!identical(input$lik_main_tab, "retro")) return(NULL)
+    info <- profile_data_reactive()
+    plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else NULL
+    rho_df <- if (!is.null(info$rho)) info$rho else NULL
+    if (!identical(plot_kind, "retro") || is.null(rho_df) || nrow(rho_df) == 0) return(NULL)
+
+    rho_tbl <- rho_df %>%
+      transmute(
+        Model = scenario,
+        `Mohn's rho: SB/SB[F=0]` = mohn_rho_depletion,
+        `Mohn's rho: Recruitment` = mohn_rho_recruitment,
+        `Mohn's rho: SB (1e3 MT)` = mohn_rho_spawning_potential,
+        `Mohn's rho: F` = mohn_rho_fishing_mortality
+      )
+
+    datatable(
+      rho_tbl,
+      options = list(pageLength = 10, scrollX = TRUE),
+      rownames = FALSE
+    )
+  })
+
+  output$retro_peel_model_ui <- renderUI({
+    if (!identical(input$lik_main_tab, "retro")) return(NULL)
+    info <- profile_data_reactive()
+    plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else NULL
+    retro_df <- if (!is.null(info$data)) info$data else NULL
+    if (!identical(plot_kind, "retro") || is.null(retro_df) || nrow(retro_df) == 0) return(NULL)
+
+    model_choices <- unique(as.character(retro_df$scenario))
+    if (length(model_choices) <= 1) return(NULL)
+
+    selectInput(
+      "retro_peel_model",
+      "Model:",
+      choices = model_choices,
+      selected = if (!is.null(input$retro_peel_model) && input$retro_peel_model %in% model_choices) {
+        input$retro_peel_model
+      } else {
+        model_choices[[1]]
+      }
+    )
+  })
+
+  output$retro_peel_table <- renderDT({
+    if (!identical(input$lik_main_tab, "retro")) return(NULL)
+    info <- profile_data_reactive()
+    plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else NULL
+    retro_df <- if (!is.null(info$data)) info$data else NULL
+    if (!identical(plot_kind, "retro") || is.null(retro_df) || nrow(retro_df) == 0) return(NULL)
+
+    peel_tbl <- retro_df %>%
+      mutate(
+        scenario = as.character(scenario),
+        year = suppressWarnings(as.numeric(year)),
+        peel = suppressWarnings(as.integer(peel)),
+        depletion = suppressWarnings(as.numeric(depletion)),
+        spawning_potential = suppressWarnings(as.numeric(spawning_potential)),
+        recruitment = suppressWarnings(as.numeric(recruitment)),
+        fishing_mortality = suppressWarnings(as.numeric(fishing_mortality))
+      ) %>%
+      filter(is.finite(peel), peel > 0, is.finite(year)) %>%
+      group_by(scenario, peel) %>%
+      filter(year == max(year, na.rm = TRUE)) %>%
+      summarise(
+        `Terminal year` = max(year, na.rm = TRUE),
+        `SB/SB[F=0]` = dplyr::last(depletion),
+        Recruitment = dplyr::last(recruitment),
+        `SB (1e3 MT)` = dplyr::last(spawning_potential),
+        F = dplyr::last(fishing_mortality),
+        .groups = "drop"
+      ) %>%
+      rename(Model = scenario, Peel = peel) %>%
+      arrange(Model, Peel)
+
+    if (!is.null(input$retro_peel_model) &&
+        nzchar(input$retro_peel_model) &&
+        input$retro_peel_model %in% peel_tbl$Model) {
+      peel_tbl <- peel_tbl %>% filter(Model == input$retro_peel_model)
+    }
+
+    datatable(
+      peel_tbl,
       options = list(pageLength = 12, scrollX = TRUE),
       rownames = FALSE
     )
