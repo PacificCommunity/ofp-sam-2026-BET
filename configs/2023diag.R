@@ -34,8 +34,7 @@ models <- list(
     
     ## Jitter settings
     jitter_seeds = paste0(1:50, collapse = " "),
-    jitter_amount = "0.2",
-    jitter_neval= "5000",
+    jitter_cv = "0.2",
     
     ## hessian parallel settings
     nsplit="5"
@@ -48,5 +47,3 @@ models <- list(
 
 models <- apply_model_defaults(models)
 ModelIDs <- names(models)
-
-

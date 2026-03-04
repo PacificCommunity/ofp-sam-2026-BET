@@ -3,25 +3,32 @@ library(FLR4MFCL)
 library(CondorBox)
 
 source("tools/jitter.R")
+source("tools/retro.R")
 source("tools/model_payload.R")
 source("tools/condor_archive_cleanup.R")
 
 
 ## environment variables
 program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_02_04_vsn2278")
-Sys.setenv("PROGRAM_PATH" = paste0("../../", program_path))
 base_dir <- Sys.getenv("base_dir", "mfcl/inputs/2023_rep")
 model_dir <- Sys.getenv("model_dir", "model/base")
 
 ## Convert to absolute paths using getwd() (assumes script runs from project root)
 project_root <- getwd()
 base_dir_abs <- file.path(project_root, base_dir)
+program_path_abs <- file.path(project_root, program_path)
+Sys.setenv("PROGRAM_PATH" = program_path_abs)
 
 ## Jitter settings
 ## Single seed value for parallel execution via condor
 jitter_seed <- as.integer(Sys.getenv("jitter_seed", "40"))
-jitter_amount <- as.numeric(Sys.getenv("jitter_amount", "0.1"))
-jitter_neval <- as.integer(Sys.getenv("jitter_neval", "3"))
+jitter_cv_env <- Sys.getenv("jitter_cv", "")
+jitter_amount_env <- Sys.getenv("jitter_amount", "")
+jitter_coverage_env <- Sys.getenv("jitter_coverage", "")
+jitter_cv <- suppressWarnings(as.numeric(
+  if (nzchar(jitter_cv_env)) jitter_cv_env else if (nzchar(jitter_amount_env)) jitter_amount_env else if (nzchar(jitter_coverage_env)) jitter_coverage_env else "0.2"
+))
+n_mixing_periods <- 2L
 
 ## Create jitter-specific directory inside jitter folder
 jitter_dir <- file.path(model_dir, "jitter")
@@ -35,69 +42,147 @@ cat("Model directory:", model_dir, "\n")
 cat("Jitter directory:", jitter_dir_abs, "\n")
 cat("Seed directory:", seed_dir_abs, "\n")
 cat("Jitter seed:", jitter_seed, "\n")
-cat("Jitter amount:", jitter_amount, "\n")
-cat("Jitter neval:", jitter_neval, "\n")
+cat("Jitter CV:", jitter_cv, "\n")
+cat("Mixing periods (fixed for jitter pre-makepar patch):", n_mixing_periods, "\n")
 
 ## Create seed directory and copy all files from base_dir (inputs)
 dir.create(seed_dir_abs, recursive = TRUE, showWarnings = FALSE)
 files_to_copy <- list.files(base_dir_abs, full.names = TRUE)
 file.copy(files_to_copy, to = seed_dir_abs, overwrite = TRUE, recursive = TRUE)
 
-############################
-## Generate jittered par  ##
-############################
-
 par_files <- list.files(seed_dir_abs, pattern = "\\.par$", full.names = TRUE)
-frq_file <- list.files(seed_dir_abs, pattern = "\\.frq$", full.names = FALSE)
+if (length(par_files) == 0) {
+  stop("No reference .par files found in directory: ", seed_dir_abs)
+}
+file_info <- file.info(par_files)
+reference_par_file <- rownames(file_info)[which.max(file_info$mtime)]
+cat("Reference par for indepvar mapping:", basename(reference_par_file), "\n")
+copied_reference_par_files <- par_files
 
-if(length(par_files) > 0) {
-  # Get file information
-  file_info <- file.info(par_files)
-  
-  # Find the most recently modified file
-  most_recent <- rownames(file_info)[which.max(file_info$mtime)]
-  
-  cat("Most recent par file:", basename(most_recent), "\n")
-  cat("Modified time:", as.character(file_info[most_recent, "mtime"]), "\n")
-} else {
-  stop("No .par files found in directory: ", seed_dir_abs)
+############################
+## Generate jittered 00.par ##
+############################
+
+frq_file <- list.files(seed_dir_abs, pattern = "\\.frq$", full.names = FALSE)
+ini_files <- list.files(seed_dir_abs, pattern = "\\.ini$", full.names = FALSE)
+tag_files <- list.files(seed_dir_abs, pattern = "\\.tag$", full.names = FALSE)
+
+if (length(frq_file) == 0) {
+  stop("No .frq file found in directory: ", seed_dir_abs)
+}
+if (length(ini_files) == 0) {
+  stop("No .ini file found in directory: ", seed_dir_abs)
+}
+if (length(tag_files) == 0) {
+  stop("No .tag file found in directory: ", seed_dir_abs)
 }
 
-## Read par file and apply jitter
-jittered_par_name <- paste0("jittered_", jitter_seed, ".par")
+frq_file <- frq_file[[1]]
+ini_file <- ini_files[[1]]
+tag_file <- tag_files[[1]]
+
+tag_data <- read.MFCLTag(file.path(seed_dir_abs, tag_file))
+ini_data <- read.MFCLIni(file.path(seed_dir_abs, ini_file))
+max_year <- suppressWarnings(as.integer(read.MFCLFrq(file.path(seed_dir_abs, frq_file))@range["maxyear"]))
+
+mix_fixed <- retro.ini(
+  ini_data,
+  tag.obj = tag_data,
+  max_year = max_year,
+  n_mixing_periods = n_mixing_periods
+)
+FLR4MFCL::write(mix_fixed$tag, file = file.path(seed_dir_abs, tag_file))
+FLR4MFCL::write(mix_fixed$ini, file = file.path(seed_dir_abs, ini_file))
+cat("Applied pre-makepar tag/ini mixing-period fix using n_mixing_periods =", n_mixing_periods, "\n")
+
+base_00_par <- file.path(seed_dir_abs, "00.par")
+makepar_cmd <- sprintf("%s %s %s %s -makepar", shQuote(program_path_abs), shQuote(frq_file), shQuote(ini_file), shQuote("00.par"))
+cat("Creating initial 00.par from ini:", makepar_cmd, "\n")
+
+old_wd <- setwd(seed_dir_abs)
+makepar_status <- suppressWarnings(system(makepar_cmd, intern = FALSE, ignore.stdout = FALSE, ignore.stderr = FALSE))
+setwd(old_wd)
+if (!identical(makepar_status, 0L) || !file.exists(base_00_par)) {
+  stop("Failed to create initial 00.par from ini using -makepar")
+}
+
+cat("Initial 00.par created from", ini_file, "\n")
+
+## Apply jitter into the ini-generated 00.par for doitall phase1+
+jittered_par_name <- "00.par"
 indepvar_in_seed <- file.path(seed_dir_abs, "indepvar.rpt")
 
 if (!file.exists(indepvar_in_seed)) {
   stop("Missing indepvar.rpt required for jitter run: ", indepvar_in_seed)
 }
 
-jitter_run <- run_exact_jitter(
-  model_dir = seed_dir_abs,
-  jitter_bound = as.numeric(jitter_amount),
-  seed = as.numeric(jitter_seed),
-  base_par_file = most_recent,
-  indepvar_file = indepvar_in_seed,
-  out_file = file.path(seed_dir_abs, jittered_par_name),
-  output_prefix = FALSE,
-  change_tol = 1e-14
+reference_par <- read.MFCLPar(reference_par_file)
+base_par_label <- basename(reference_par_file)
+unlink(copied_reference_par_files, force = TRUE)
+cat("Removed copied reference par files after indepvar mapping load\n")
+base_00_par_obj <- read.MFCLPar(base_00_par)
+indepvar_map <- build_indepvar_mapping(reference_par, indepvar_file = indepvar_in_seed, tol = 1e-14)
+if (is.null(indepvar_map) || !all(indepvar_map$mapping$mapped)) {
+  stop("Exact indepvar mapping could not be resolved for all parameters in reference par.")
+}
+if (any(!is.finite(indepvar_map$mapping$L_bound)) || any(!is.finite(indepvar_map$mapping$U_bound))) {
+  stop("CV jitter requires finite L_bound and U_bound for all mapped free parameters.")
+}
+
+if (!is.null(jitter_seed)) set.seed(jitter_seed)
+jittered_00_par_obj <- apply_indepvar_cv_jitter(base_00_par_obj, indepvar_map, jitter_cv = jitter_cv)
+if (is.null(jittered_00_par_obj)) {
+  stop("CV jitter application failed on initial 00.par.")
+}
+FLR4MFCL::write(jittered_00_par_obj, file = file.path(seed_dir_abs, jittered_par_name))
+
+jitter_run <- list(
+  comparison = compare_indepvar_mapped(
+    base_par = base_00_par_obj,
+    jittered_par = jittered_00_par_obj,
+    indepvar_map = indepvar_map,
+    change_tol = 1e-14
+  )
 )
 
-cat("Jittered par file written:", jittered_par_name, "\n")
+cat("Jittered 00.par written for doitall workflow\n")
 
 ##############
 ## run MFCL ##
 ##############
 
-defaultswitch <- paste(
-  "-switch 1",
-  paste("1 1", jitter_neval),
-  sep = " "
+doitall_path <- file.path(seed_dir_abs, "doitall.sh")
+if (!file.exists(doitall_path)) {
+  stop("Jitter workflow requires doitall.sh in base inputs: ", doitall_path)
+}
+
+doitall_jitter_path <- file.path(seed_dir_abs, "doitall_jitter.sh")
+doitall_lines <- readLines(doitall_path, warn = FALSE)
+makepar_idx <- grep("-makepar", doitall_lines, fixed = TRUE)
+if (length(makepar_idx) == 0) {
+  stop("Could not locate phase0 -makepar command in doitall.sh")
+}
+doitall_lines[makepar_idx[1]] <- "echo 'Skipping phase 0 makepar; using jittered 00.par'"
+legacy_output_par <- paste0("jittered_out_", jitter_seed, ".par")
+legacy_output_rep <- paste0("plot-", legacy_output_par, ".rep")
+doitall_lines <- c(
+  doitall_lines,
+  "",
+  "# Preserve legacy jitter output names for downstream tooling",
+  "final_par=$(ls -1 *.par 2>/dev/null | grep -E '^[0-9]+\\.par$' | sort -V | tail -n 1)",
+  "if [ -n \"$final_par\" ] && [ -f \"$final_par\" ]; then",
+  sprintf("  cp -f \"$final_par\" %s", shQuote(legacy_output_par)),
+  "  final_rep=\"plot-${final_par}.rep\"",
+  "  if [ -f \"$final_rep\" ]; then",
+  sprintf("    cp -f \"$final_rep\" %s", shQuote(legacy_output_rep)),
+  "  fi",
+  "fi"
 )
+writeLines(doitall_lines, doitall_jitter_path)
 
-output_par_name <- paste0("jittered_out_", jitter_seed, ".par")
-mfcl_commands <- paste0("../../../../", program_path, " ", frq_file, " ", jittered_par_name, " ", output_par_name, " ", defaultswitch)
+mfcl_commands <- "sh ./doitall_jitter.sh"
 
-cat("Running MFCL with commands:", mfcl_commands, "\n")
+cat("Running jittered doitall workflow:", mfcl_commands, "\n")
 
 mfcl_error <- NULL
 mfcl_run_ok <- TRUE
@@ -119,10 +204,12 @@ tryCatch(
 fitted_parameter_changes <- NULL
 fitted_parameter_change_summary <- NULL
 fitted_parameter_change_overall <- NULL
-output_par_path <- file.path(seed_dir_abs, output_par_name)
-base_par_obj <- suppressWarnings(tryCatch(read.MFCLPar(most_recent), error = function(e) NULL))
-output_par_obj <- if (file.exists(output_par_path)) {
-  suppressWarnings(tryCatch(read.MFCLPar(output_par_path), error = function(e) NULL))
+legacy_final_par_path <- file.path(seed_dir_abs, legacy_output_par)
+final_par_path <- if (file.exists(legacy_final_par_path)) legacy_final_par_path else mp_final_par(seed_dir_abs)
+output_par_name <- if (!is.null(final_par_path)) basename(final_par_path) else NA_character_
+base_par_obj <- reference_par
+output_par_obj <- if (!is.null(final_par_path) && file.exists(final_par_path)) {
+  suppressWarnings(tryCatch(read.MFCLPar(final_par_path), error = function(e) NULL))
 } else {
   NULL
 }
@@ -151,14 +238,17 @@ if (!is.null(base_par_obj) && !is.null(output_par_obj)) {
 # Save jitter run info
 info_list <- list(
   jitter_seed   = jitter_seed,
-  jitter_amount = jitter_amount,
-  jitter_neval  = jitter_neval,
+  jitter_cv = jitter_cv,
+  jitter_coverage = jitter_cv,
+  jitter_amount = jitter_cv,
   frq_file      = frq_file,
   program_path  = program_path,
   model_dir     = model_dir,
   seed_dir      = seed_dir,
   seed_dir_abs  = seed_dir_abs,
-  input_par     = basename(most_recent),
+  input_par     = base_par_label,
+  input_00_par  = basename(base_00_par),
+  input_ini     = ini_file,
   jittered_par  = jittered_par_name,
   parameter_changes = jitter_run$comparison,
   parameter_change_summary = jitter_run$comparison$summary,
@@ -177,7 +267,7 @@ info_list <- list(
     run_ok = mfcl_run_ok,
     error = mfcl_error,
     output_par = output_par_name,
-    output_par_exists = file.exists(output_par_path),
+    output_par_exists = !is.null(final_par_path) && file.exists(final_par_path),
     log_file = file.path(seed_dir_abs, "mfcl_log.txt")
   ),
   fitted_parameter_changes = fitted_parameter_changes,

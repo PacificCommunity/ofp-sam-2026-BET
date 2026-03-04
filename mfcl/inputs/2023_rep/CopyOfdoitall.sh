@@ -280,7 +280,7 @@ PHASE1
 # ---------
 
 $program_path bet.frq 01.par 02.par -file - <<PHASE2
-  1 1 1  # set max. number of function evaluations per phase to 100
+  1 1 100  # set max. number of function evaluations per phase to 100
   1 50 0   # set convergence criterion to 1
   2 113 0  # scaling init pop - turned off
   1 190 1  # write plot-xxx.par.rep
@@ -294,7 +294,7 @@ $program_path bet.frq 02.par 03.par -file - <<PHASE3
   2 70 1   # activate time series of reg recruitment parameters
   2 71 1   # estimate temporal changes in recruitment distribution
   2 178 1  # constrain regional recruitments
-  1 1 1
+  1 1 200
 PHASE3
 
 # ---------
@@ -332,7 +332,7 @@ $program_path bet.frq 05.par 06.par -file - <<PHASE6
   1 14 1   # estimate von Bertalanffy K
   1 12 1   # estimate mean length of age 1
   1 13 1   # estimate length of age n
-  1 1 1  # function evaluations
+  1 1 300  # function evaluations
 PHASE6
 
 # ---------
@@ -345,7 +345,7 @@ $program_path bet.frq 06.par 07.par -file - <<PHASE7
   1 173 0  # activate independent mean lengths for first 0 age classes
   1 182 0  # penalty weight
   1 184 0  # estimate parameters
-  1 1 1  # function evaluations
+  1 1 500  # function evaluations
 PHASE7
 
 # ---------
@@ -370,7 +370,7 @@ $program_path bet.frq 07.par 08.par -file - <<PHASE8
   1 187 1    # write temporary_tag_report
   1 188 1    # write ests.rep
   1 189 1    # write .fit files
-  1 1 1    # function evaluations
+  1 1 500    # function evaluations
   1 50 -2    # convergence criteria
   2 116 100  # increase F bound for NR to 1.0
 PHASE8
@@ -381,7 +381,7 @@ PHASE8
 
 $program_path bet.frq 08.par 09.par -file - <<PHASE9
   2 145 -1   # use SRR parameters - low penalty for deviation
-  1 1 1    # function evaluations
+  1 1 500    # function evaluations
   1 50 -2    # convergence criteria
   2 116 300  # increase F bound for NR to 3.0
 PHASE9
@@ -391,7 +391,7 @@ PHASE9
 # ----------
 
 $program_path bet.frq 09.par 10.par -file - <<PHASE10
-  1 1 1  # function evaluations
+  1 1 10000  # function evaluations
   1 50 -5    # convergence criteria
   1 121 1    # estimate scaling parameter for Lorenzen (age_pars(5,1))
 PHASE10
@@ -401,6 +401,6 @@ PHASE10
 # ----------
 
 $program_path bet.frq 10.par 11.par -file - <<PHASE11
-  1 1 1
+  1 1 5000
   1 50 -5   # convergence criteria
 PHASE11

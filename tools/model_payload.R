@@ -544,11 +544,19 @@ mp_build_jitter_payload <- function(seed_dir, seed = NA_integer_) {
   info_file <- file.path(seed_dir, "jitter_info.rds")
   info_out <- if (file.exists(info_file)) mp_safe(readRDS(info_file)) else NULL
   seed_val <- ifelse(is.na(seed), suppressWarnings(as.integer(sub(".*?(\\d+)$", "\\1", basename(seed_dir)))), seed)
+  mfcl_run <- mp_safe(info_out$mfcl_run)
 
   out_par <- mp_first_or_null(list.files(seed_dir, pattern = "jittered_out_\\d+\\.par$", full.names = TRUE))
   if (is.null(out_par) && !is.null(info_out$output_par)) {
     candidate_out <- file.path(seed_dir, info_out$output_par)
     if (file.exists(candidate_out)) out_par <- candidate_out
+  }
+  if (is.null(out_par) && !is.null(mfcl_run$output_par)) {
+    candidate_out <- file.path(seed_dir, mfcl_run$output_par)
+    if (file.exists(candidate_out)) out_par <- candidate_out
+  }
+  if (is.null(out_par)) {
+    out_par <- mp_final_par(seed_dir)
   }
 
   out_exists <- !is.null(out_par) && file.exists(out_par)
@@ -559,7 +567,6 @@ mp_build_jitter_payload <- function(seed_dir, seed = NA_integer_) {
   parameter_changes <- mp_read_jitter_parameter_changes(seed_dir, seed, field_name = "parameter_changes")
   fitted_parameter_changes <- mp_read_jitter_parameter_changes(seed_dir, seed, field_name = "fitted_parameter_changes")
   derived_quantities <- mp_extract_jitter_derived_quantities(seed_dir, seed_val)
-  mfcl_run <- mp_safe(info_out$mfcl_run)
   exit_status <- suppressWarnings(as.integer(mp_safe(mfcl_run$exit_status)))
   run_checks <- mp_detect_jitter_run_state(
     seed_dir = seed_dir,

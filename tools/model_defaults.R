@@ -9,8 +9,7 @@ apply_model_defaults <- function(models, defaults = list()) {
       scalers = paste0(seq(140, 50, by = -5), collapse = " "),
       retro_peels = "1 2 3 4 5",
       jitter_seeds = paste0(1:10, collapse = " "),
-      jitter_amount = "0.01",
-      jitter_neval = "3",
+      jitter_cv = "0.2",
       nsplit = "5"
     ),
     defaults
@@ -23,8 +22,7 @@ apply_model_defaults <- function(models, defaults = list()) {
     scalers <- if (!is.null(model$scalers)) model$scalers else defaults$scalers
     retro_peels <- if (!is.null(model$retro_peels)) model$retro_peels else defaults$retro_peels
     jitter_seeds <- if (!is.null(model$jitter_seeds)) model$jitter_seeds else defaults$jitter_seeds
-    jitter_amount <- if (!is.null(model$jitter_amount)) model$jitter_amount else defaults$jitter_amount
-    jitter_neval <- if (!is.null(model$jitter_neval)) model$jitter_neval else defaults$jitter_neval
+    jitter_cv <- if (!is.null(model$jitter_cv)) model$jitter_cv else if (!is.null(model$jitter_amount)) model$jitter_amount else if (!is.null(model$jitter_coverage)) model$jitter_coverage else defaults$jitter_cv
     nsplit <- if (!is.null(model$nsplit)) model$nsplit else defaults$nsplit
 
     if (!identical(model$mfcl_commands, "./doitall.sh")) {
@@ -38,8 +36,9 @@ apply_model_defaults <- function(models, defaults = list()) {
     model$scalers <- scalers
     model$retro_peels <- retro_peels
     model$jitter_seeds <- jitter_seeds
-    model$jitter_amount <- jitter_amount
-    model$jitter_neval <- jitter_neval
+    model$jitter_cv <- jitter_cv
+    model$jitter_coverage <- jitter_cv
+    model$jitter_amount <- jitter_cv
     model$nsplit <- nsplit
     model
   }, models, names(models))

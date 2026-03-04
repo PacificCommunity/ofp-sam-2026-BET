@@ -37,6 +37,169 @@ jitter_sample_uniform_pct <- function(current_val, bound, lower = -Inf, upper = 
   current_val * (1 + runif(1, pct_min, pct_max))
 }
 
+jitter_interior_bounds <- function(lower = -Inf, upper = Inf, eps = 1e-12) {
+  lo <- lower
+  hi <- upper
+
+  if (is.finite(lo) && is.finite(hi)) {
+    span <- hi - lo
+    margin <- max(abs(span) * 1e-8, eps)
+    lo <- lo + margin
+    hi <- hi - margin
+  } else if (is.finite(lo)) {
+    lo <- lo + max(abs(lo) * 1e-8, eps)
+  } else if (is.finite(hi)) {
+    hi <- hi - max(abs(hi) * 1e-8, eps)
+  }
+
+  list(lower = lo, upper = hi)
+}
+
+jitter_sample_uniform_coverage <- function(current_val,
+                                           coverage = 0.9,
+                                           lower = -Inf,
+                                           upper = Inf,
+                                           eps = 1e-12) {
+  if (!is.finite(current_val) || !is.finite(coverage) || coverage <= 0) {
+    return(current_val)
+  }
+
+  interior <- jitter_interior_bounds(lower = lower, upper = upper, eps = eps)
+  lo <- interior$lower
+  hi <- interior$upper
+
+  if (!is.finite(lo) || !is.finite(hi) || lo > hi) {
+    return(current_val)
+  }
+
+  coverage <- min(coverage, 1)
+  span <- hi - lo
+  if (!is.finite(span) || span <= eps) {
+    return(max(lo, min(hi, current_val)))
+  }
+
+  margin <- 0.5 * (1 - coverage) * span
+  draw_lo <- lo + margin
+  draw_hi <- hi - margin
+
+  if (!is.finite(draw_lo) || !is.finite(draw_hi) || draw_lo > draw_hi) {
+    return(max(lo, min(hi, current_val)))
+  }
+  if ((draw_hi - draw_lo) <= eps) {
+    return(0.5 * (draw_lo + draw_hi))
+  }
+
+  runif(1, draw_lo, draw_hi)
+}
+
+jitter_sigma_from_cv <- function(jitter_cv) {
+  if (!is.finite(jitter_cv) || jitter_cv <= 0) {
+    return(0)
+  }
+  sqrt(log1p(jitter_cv^2))
+}
+
+jitter_clip <- function(x, lower = -Inf, upper = Inf, eps = 1e-12) {
+  interior <- jitter_interior_bounds(lower = lower, upper = upper, eps = eps)
+  max(interior$lower, min(interior$upper, x))
+}
+
+jitter_sample_multiplicative_cv <- function(current_val,
+                                            jitter_cv,
+                                            lower = -Inf,
+                                            upper = Inf,
+                                            eps = 1e-12,
+                                            max_tries = 200) {
+  if (!is.finite(current_val) || !is.finite(jitter_cv) || jitter_cv <= 0) {
+    return(jitter_clip(current_val, lower = lower, upper = upper, eps = eps))
+  }
+  if (current_val <= eps) {
+    return(jitter_clip(current_val, lower = lower, upper = upper, eps = eps))
+  }
+  interior <- jitter_interior_bounds(lower = lower, upper = upper, eps = eps)
+  if (!is.finite(interior$lower) || !is.finite(interior$upper) || interior$lower > interior$upper) {
+    return(jitter_clip(current_val, lower = lower, upper = upper, eps = eps))
+  }
+  sigma <- jitter_sigma_from_cv(jitter_cv)
+  for (iter in seq_len(max_tries)) {
+    proposal <- current_val * exp(rnorm(1, mean = 0, sd = sigma))
+    if (proposal > interior$lower && proposal < interior$upper) {
+      return(proposal)
+    }
+  }
+  jitter_clip(current_val, lower = lower, upper = upper, eps = eps)
+}
+
+jitter_sample_bounded_cv <- function(current_val,
+                                     jitter_cv,
+                                     lower = -Inf,
+                                     upper = Inf,
+                                     eps = 1e-12,
+                                     max_tries = 200) {
+  if (!is.finite(current_val) || !is.finite(jitter_cv) || jitter_cv <= 0) {
+    return(jitter_clip(current_val, lower = lower, upper = upper, eps = eps))
+  }
+  interior <- jitter_interior_bounds(lower = lower, upper = upper, eps = eps)
+  lo <- interior$lower
+  hi <- interior$upper
+  if (!is.finite(lo) || !is.finite(hi) || lo > hi) {
+    return(jitter_clip(current_val, lower = lower, upper = upper, eps = eps))
+  }
+  span <- hi - lo
+  if (!is.finite(span) || span <= eps) {
+    return(jitter_clip(current_val, lower = lower, upper = upper, eps = eps))
+  }
+
+  # For values already on/near a boundary, move the latent center slightly inside
+  # using a CV-scaled offset rather than pinning everything to the same floor.
+  offset_p <- max(min(jitter_cv^2, 0.1), 1e-4)
+  p0 <- (current_val - lo) / span
+  if (!is.finite(p0) || p0 <= 0) {
+    p0 <- offset_p
+  } else if (p0 >= 1) {
+    p0 <- 1 - offset_p
+  } else {
+    p0 <- min(max(p0, 1e-6), 1 - 1e-6)
+  }
+
+  sigma <- jitter_sigma_from_cv(jitter_cv)
+  mu <- qlogis(p0)
+  for (iter in seq_len(max_tries)) {
+    proposal_p <- plogis(rnorm(1, mean = mu, sd = sigma))
+    proposal <- lo + proposal_p * span
+    if (proposal > lo && proposal < hi) {
+      return(proposal)
+    }
+  }
+  jitter_clip(current_val, lower = lower, upper = upper, eps = eps)
+}
+
+jitter_sample_additive_cv <- function(current_val,
+                                      jitter_cv,
+                                      lower = -Inf,
+                                      upper = Inf,
+                                      scale_val = 1,
+                                      eps = 1e-12,
+                                      max_tries = 200) {
+  if (!is.finite(current_val) || !is.finite(jitter_cv) || jitter_cv <= 0) {
+    return(jitter_clip(current_val, lower = lower, upper = upper, eps = eps))
+  }
+  if (!is.finite(scale_val) || scale_val <= eps) {
+    scale_val <- 1
+  }
+  interior <- jitter_interior_bounds(lower = lower, upper = upper, eps = eps)
+  if (!is.finite(interior$lower) || !is.finite(interior$upper) || interior$lower > interior$upper) {
+    return(jitter_clip(current_val, lower = lower, upper = upper, eps = eps))
+  }
+  for (iter in seq_len(max_tries)) {
+    proposal <- rnorm(1, mean = current_val, sd = jitter_cv * scale_val)
+    if (proposal > interior$lower && proposal < interior$upper) {
+      return(proposal)
+    }
+  }
+  jitter_clip(current_val, lower = lower, upper = upper, eps = eps)
+}
+
 jitter_sample_uniform_delta <- function(current_val,
                                         bound,
                                         scale_val = NULL,
@@ -187,6 +350,59 @@ sample_bounded_simplex <- function(current_vals,
   x
 }
 
+sample_dirichlet_bounded_cv <- function(current_vals,
+                                        jitter_cv,
+                                        lower = NULL,
+                                        upper = NULL,
+                                        eps = 1e-12,
+                                        max_tries = 500) {
+  current_vals <- as.numeric(current_vals)
+  n <- length(current_vals)
+  total_sum <- sum(current_vals)
+
+  if (n == 0 || !all(is.finite(current_vals)) || !is.finite(total_sum) || total_sum <= eps) {
+    return(current_vals)
+  }
+
+  if (is.null(lower)) lower <- rep(0, n)
+  if (is.null(upper)) upper <- rep(total_sum, n)
+
+  lower <- as.numeric(lower)
+  upper <- as.numeric(upper)
+  if (length(lower) != n || length(upper) != n) {
+    return(current_vals)
+  }
+
+  lower <- pmax(lower, 0)
+  upper <- pmax(upper, lower)
+
+  interiors <- lapply(seq_len(n), function(i) {
+    jitter_interior_bounds(lower = lower[i], upper = upper[i], eps = eps)
+  })
+  lower_i <- vapply(interiors, `[[`, numeric(1), "lower")
+  upper_i <- vapply(interiors, `[[`, numeric(1), "upper")
+
+  if (sum(lower_i) > total_sum + eps || sum(upper_i) < total_sum - eps) {
+    return(current_vals)
+  }
+
+  probs <- pmax(current_vals / total_sum, eps)
+  probs <- probs / sum(probs)
+  alpha0 <- max((n - 1) / max(jitter_cv^2, eps) - 1, 1)
+  alpha <- pmax(alpha0 * probs, eps)
+
+  for (iter in seq_len(max_tries)) {
+    g <- rgamma(n, shape = alpha, rate = 1)
+    if (!all(is.finite(g)) || sum(g) <= eps) next
+    proposal <- total_sum * g / sum(g)
+    if (all(proposal > lower_i & proposal < upper_i)) {
+      return(proposal)
+    }
+  }
+
+  current_vals
+}
+
 resolve_indepvar_file <- function(indepvar_file = NULL, search_root = getwd()) {
   if (!is.null(indepvar_file)) {
     return(if (file.exists(indepvar_file)) normalizePath(indepvar_file, winslash = "/", mustWork = TRUE) else NULL)
@@ -298,6 +514,7 @@ build_indepvar_mapping <- function(par, indepvar_file = NULL, tol = 1e-12) {
     key1 = NA_integer_,
     key2 = NA_integer_,
     key3 = NA_integer_,
+    key4 = NA_integer_,
     note = NA_character_,
     stringsAsFactors = FALSE
   )
@@ -353,14 +570,15 @@ build_indepvar_mapping <- function(par, indepvar_file = NULL, tol = 1e-12) {
         next
       }
 
-      for (j in seq_along(grp_rows)) {
-        mapping$mapped[grp_rows[j]] <- TRUE
-        mapping$key1[grp_rows[j]] <- g
-        mapping$key2[grp_rows[j]] <- positions[[j]][1]
-        mapping$key3[grp_rows[j]] <- positions[[j]][2]
-      }
+            for (j in seq_along(grp_rows)) {
+                mapping$mapped[grp_rows[j]] <- TRUE
+                mapping$key1[grp_rows[j]] <- g
+                mapping$key2[grp_rows[j]] <- positions[[j]][1]
+                mapping$key3[grp_rows[j]] <- positions[[j]][2]
+                mapping$key4[grp_rows[j]] <- fish_idx
+            }
+        }
     }
-  }
 
   recr_idx <- grepl("^recr\\([0-9]+\\)$", report$Var_name)
   if (any(recr_idx)) {
@@ -653,6 +871,421 @@ apply_indepvar_exact_jitter <- function(par, indepvar_map, jitter_bound, eps = 1
   }
 
   par
+}
+
+apply_indepvar_coverage_jitter <- function(par, indepvar_map, jitter_coverage, eps = 1e-12) {
+  mapping <- indepvar_map$mapping
+  if (!all(mapping$mapped)) {
+    return(NULL)
+  }
+
+  diff_rows <- which(mapping$family == "diff_coffs")
+  for (i in diff_rows) {
+    r <- mapping$key1[i]
+    c <- mapping$key2[i]
+    diff_coffs(par)[r, c] <- jitter_sample_uniform_coverage(
+      diff_coffs(par)[r, c],
+      jitter_coverage,
+      lower = max(eps, mapping$L_bound[i]),
+      upper = mapping$U_bound[i],
+      eps = eps
+    )
+  }
+
+  rrd_rows <- which(mapping$family == "region_rec_diffs")
+  if (length(rrd_rows) > 0) {
+    rrv_export <- matrix(
+      as.vector(aperm(region_rec_var(par), c(4, 2, 5, 1, 3, 6))),
+      ncol = dimensions(par)["regions"]
+    )
+    for (i in rrd_rows) {
+      rrv_export[mapping$key2[i], mapping$key1[i]] <- jitter_sample_uniform_coverage(
+        rrv_export[mapping$key2[i], mapping$key1[i]],
+        jitter_coverage,
+        lower = mapping$L_bound[i],
+        upper = mapping$U_bound[i],
+        eps = eps
+      )
+    }
+    vec <- as.vector(rrv_export)
+    current_rrv <- region_rec_var(par)
+    current_rrv[] <- aperm(
+      array(vec, dim = c(dimensions(par)["seasons"], dim(region_rec_var(par))[2], dimensions(par)["regions"], 1, 1, 1)),
+      c(4, 2, 5, 1, 3, 6)
+    )
+    slot(par, "region_rec_var") <- current_rrv
+  }
+
+  bs_rows <- which(mapping$family == "bs_selcoff_gp")
+  if (length(bs_rows) > 0) {
+    ff24 <- flagval(par, -1:-dimensions(par)["fisheries"], 24)$value
+    for (i in bs_rows) {
+      group_id <- mapping$key1[i]
+      age_idx <- mapping$key2[i]
+      ssn_idx <- mapping$key3[i]
+      fish_idx <- which(ff24 == group_id)
+      current_val <- fishery_sel(par)[age_idx, 1, fish_idx[1], ssn_idx, 1, 1]
+      new_val <- jitter_sample_uniform_coverage(
+        current_val,
+        jitter_coverage,
+        lower = mapping$L_bound[i],
+        upper = mapping$U_bound[i],
+        eps = eps
+      )
+      fishery_sel(par)[age_idx, 1, fish_idx, ssn_idx, 1, 1] <- new_val
+    }
+  }
+
+  recr_rows <- which(mapping$family == "recr")
+  if (length(recr_rows) > 0) {
+    rel_flat <- as.vector(aperm(rel_rec(par), c(4, 2, 1, 3, 5, 6)))
+    log_rel <- log(pmax(rel_flat, eps))
+    for (i in recr_rows) {
+      pos <- mapping$key1[i]
+      log_rel[pos] <- jitter_sample_uniform_coverage(
+        log_rel[pos],
+        jitter_coverage,
+        lower = mapping$L_bound[i],
+        upper = mapping$U_bound[i],
+        eps = eps
+      )
+    }
+    rel_flat <- exp(log_rel)
+    current_rel <- rel_rec(par)
+    current_rel[] <- aperm(
+      array(rel_flat, dim = c(dimensions(par)["seasons"], dim(rel_rec(par))[2], 1, 1, 1, 1)),
+      order(c(4, 2, 1, 3, 5, 6))
+    )
+    slot(par, "rel_rec") <- current_rel
+  }
+
+  tot_rows <- which(mapping$family == "totpop")
+  if (length(tot_rows) == 1) {
+    tot_pop(par) <- jitter_sample_uniform_coverage(
+      tot_pop(par),
+      jitter_coverage,
+      lower = max(eps, mapping$L_bound[tot_rows]),
+      upper = mapping$U_bound[tot_rows],
+      eps = eps
+    )
+  }
+
+  tag_rows <- which(mapping$family == "tag_fish_rep")
+  if (length(tag_rows) > 0) {
+    grp_mat <- tag_fish_rep_grp(par)
+    flag_mat <- tag_fish_rep_flags(par)
+    for (i in tag_rows) {
+      grp_id <- mapping$key1[i]
+      idx <- which(grp_mat == grp_id & flag_mat == 1, arr.ind = TRUE)
+      if (nrow(idx) == 0) next
+      current_val <- tag_fish_rep_rate(par)[idx[1, 1], idx[1, 2]]
+      new_val <- jitter_sample_uniform_coverage(
+        current_val,
+        jitter_coverage,
+        lower = max(eps, mapping$L_bound[i]),
+        upper = mapping$U_bound[i],
+        eps = eps
+      )
+      tag_fish_rep_rate(par)[idx] <- new_val
+    }
+  }
+
+  rp_rows <- which(mapping$family == "region_pars")
+  if (length(rp_rows) > 0) {
+    for (row_id in sort(unique(mapping$key1[rp_rows]))) {
+      row_map <- rp_rows[mapping$key1[rp_rows] == row_id]
+      cols <- mapping$key2[row_map]
+      current_vals <- region_pars(par)[row_id, cols]
+      span <- mapping$U_bound[row_map] - mapping$L_bound[row_map]
+      margin <- 0.5 * (1 - min(jitter_coverage, 1)) * span
+      lower_bounds <- mapping$L_bound[row_map] + margin
+      upper_bounds <- mapping$U_bound[row_map] - margin
+      proposed <- sample_bounded_simplex(
+        current_vals,
+        total_sum = sum(current_vals),
+        lower = lower_bounds,
+        upper = upper_bounds,
+        eps = eps
+      )
+      region_pars(par)[row_id, cols] <- proposed
+    }
+  }
+
+  sv_rows <- which(mapping$family == "sv")
+  for (i in sv_rows) {
+    idx <- mapping$key1[i]
+    season_growth_pars(par)[idx] <- jitter_sample_uniform_coverage(
+      season_growth_pars(par)[idx],
+      jitter_coverage,
+      lower = mapping$L_bound[i],
+      upper = mapping$U_bound[i],
+      eps = eps
+    )
+  }
+
+  age_rows <- which(mapping$family == "age_pars")
+  if (length(age_rows) > 0) {
+    age_mat <- build_age_pars_matrix(par)
+    for (i in age_rows) {
+      row_id <- mapping$key1[i]
+      col_id <- mapping$key2[i]
+      age_mat[row_id, col_id] <- jitter_sample_uniform_coverage(
+        age_mat[row_id, col_id],
+        jitter_coverage,
+        lower = mapping$L_bound[i],
+        upper = mapping$U_bound[i],
+        eps = eps
+      )
+    }
+    par <- set_age_pars_matrix(par, age_mat)
+  }
+
+  vb_rows <- which(mapping$family == "vb_coff")
+  for (i in vb_rows) {
+    idx <- mapping$key1[i]
+    growth(par)[idx, 1] <- jitter_sample_uniform_coverage(
+      growth(par)[idx, 1],
+      jitter_coverage,
+      lower = max(eps, mapping$L_bound[i]),
+      upper = mapping$U_bound[i],
+      eps = eps
+    )
+  }
+
+  var_rows <- which(mapping$family == "var_coff")
+  for (i in var_rows) {
+    idx <- mapping$key1[i]
+    growth_var_pars(par)[idx, 1] <- jitter_sample_uniform_coverage(
+      growth_var_pars(par)[idx, 1],
+      jitter_coverage,
+      lower = max(eps, mapping$L_bound[i]),
+      upper = mapping$U_bound[i],
+      eps = eps
+    )
+  }
+
+  par
+}
+
+apply_indepvar_cv_jitter <- function(par, indepvar_map, jitter_cv, eps = 1e-12) {
+  mapping <- indepvar_map$mapping
+  if (!all(mapping$mapped)) {
+    return(NULL)
+  }
+
+  diff_rows <- which(mapping$family == "diff_coffs")
+  for (i in diff_rows) {
+    r <- mapping$key1[i]
+    c <- mapping$key2[i]
+    diff_coffs(par)[r, c] <- jitter_sample_multiplicative_cv(
+      diff_coffs(par)[r, c], jitter_cv,
+      lower = max(eps, mapping$L_bound[i]), upper = mapping$U_bound[i], eps = eps
+    )
+  }
+
+  rrd_rows <- which(mapping$family == "region_rec_diffs")
+  if (length(rrd_rows) > 0) {
+    rrv_export <- matrix(
+      as.vector(aperm(region_rec_var(par), c(4, 2, 5, 1, 3, 6))),
+      ncol = dimensions(par)["regions"]
+    )
+    for (i in rrd_rows) {
+      rrv_export[mapping$key2[i], mapping$key1[i]] <- jitter_sample_additive_cv(
+        rrv_export[mapping$key2[i], mapping$key1[i]], jitter_cv,
+        lower = mapping$L_bound[i], upper = mapping$U_bound[i], scale_val = 1, eps = eps
+      )
+    }
+    vec <- as.vector(rrv_export)
+    current_rrv <- region_rec_var(par)
+    current_rrv[] <- aperm(
+      array(vec, dim = c(dimensions(par)["seasons"], dim(region_rec_var(par))[2], dimensions(par)["regions"], 1, 1, 1)),
+      c(4, 2, 5, 1, 3, 6)
+    )
+    slot(par, "region_rec_var") <- current_rrv
+  }
+
+  bs_rows <- which(mapping$family == "bs_selcoff_gp")
+  if (length(bs_rows) > 0) {
+    for (i in bs_rows) {
+      fish_idx <- mapping$key4[i]
+      if (!is.finite(fish_idx)) next
+      fishery_sel(par)[mapping$key2[i], 1, fish_idx, mapping$key3[i], 1, 1] <- jitter_sample_bounded_cv(
+        fishery_sel(par)[mapping$key2[i], 1, fish_idx, mapping$key3[i], 1, 1], jitter_cv,
+        lower = mapping$L_bound[i], upper = mapping$U_bound[i], eps = eps
+      )
+    }
+  }
+
+  recr_rows <- which(mapping$family == "recr")
+  if (length(recr_rows) > 0) {
+    rel_flat <- as.vector(aperm(rel_rec(par), c(4, 2, 1, 3, 5, 6)))
+    for (i in recr_rows) {
+      pos <- mapping$key1[i]
+      rel_flat[pos] <- jitter_sample_multiplicative_cv(
+        rel_flat[pos], jitter_cv,
+        lower = exp(mapping$L_bound[i]), upper = exp(mapping$U_bound[i]), eps = eps
+      )
+    }
+    current_rel <- rel_rec(par)
+    current_rel[] <- aperm(
+      array(rel_flat, dim = c(dimensions(par)["seasons"], dim(rel_rec(par))[2], 1, 1, 1, 1)),
+      order(c(4, 2, 1, 3, 5, 6))
+    )
+    slot(par, "rel_rec") <- current_rel
+  }
+
+  tot_rows <- which(mapping$family == "totpop")
+  if (length(tot_rows) == 1) {
+    tot_pop(par) <- jitter_sample_multiplicative_cv(
+      tot_pop(par), jitter_cv,
+      lower = max(eps, mapping$L_bound[tot_rows]), upper = mapping$U_bound[tot_rows], eps = eps
+    )
+  }
+
+  tag_rows <- which(mapping$family == "tag_fish_rep")
+  if (length(tag_rows) > 0) {
+    grp_mat <- tag_fish_rep_grp(par)
+    flag_mat <- tag_fish_rep_flags(par)
+    for (i in tag_rows) {
+      grp_id <- mapping$key1[i]
+      idx <- which(grp_mat == grp_id & flag_mat == 1, arr.ind = TRUE)
+      if (nrow(idx) == 0) next
+      tag_fish_rep_rate(par)[idx] <- jitter_sample_bounded_cv(
+        tag_fish_rep_rate(par)[idx[1, 1], idx[1, 2]], jitter_cv,
+        lower = mapping$L_bound[i], upper = mapping$U_bound[i], eps = eps
+      )
+    }
+  }
+
+  rp_rows <- which(mapping$family == "region_pars")
+  if (length(rp_rows) > 0) {
+    for (row_id in sort(unique(mapping$key1[rp_rows]))) {
+      row_map <- rp_rows[mapping$key1[rp_rows] == row_id]
+      cols <- mapping$key2[row_map]
+      current_vals <- region_pars(par)[row_id, cols]
+      lower_bounds <- pmax(mapping$L_bound[row_map], eps)
+      upper_bounds <- mapping$U_bound[row_map]
+      proposed <- sample_dirichlet_bounded_cv(
+        current_vals,
+        jitter_cv = jitter_cv,
+        lower = lower_bounds,
+        upper = upper_bounds,
+        eps = eps
+      )
+      region_pars(par)[row_id, cols] <- proposed
+    }
+  }
+
+  sv_rows <- which(mapping$family == "sv")
+  for (i in sv_rows) {
+    idx <- mapping$key1[i]
+    season_growth_pars(par)[idx] <- jitter_sample_multiplicative_cv(
+      season_growth_pars(par)[idx], jitter_cv,
+      lower = max(eps, mapping$L_bound[i]), upper = mapping$U_bound[i], eps = eps
+    )
+  }
+
+  age_rows <- which(mapping$family == "age_pars")
+  if (length(age_rows) > 0) {
+    age_mat <- build_age_pars_matrix(par)
+    for (i in age_rows) {
+      row_id <- mapping$key1[i]
+      col_id <- mapping$key2[i]
+      age_mat[row_id, col_id] <- jitter_sample_multiplicative_cv(
+        age_mat[row_id, col_id], jitter_cv,
+        lower = max(eps, mapping$L_bound[i]), upper = mapping$U_bound[i], eps = eps
+      )
+    }
+    par <- set_age_pars_matrix(par, age_mat)
+  }
+
+  vb_rows <- which(mapping$family == "vb_coff")
+  for (i in vb_rows) {
+    idx <- mapping$key1[i]
+    growth(par)[idx, 1] <- jitter_sample_multiplicative_cv(
+      growth(par)[idx, 1], jitter_cv,
+      lower = max(eps, mapping$L_bound[i]), upper = mapping$U_bound[i], eps = eps
+    )
+  }
+
+  var_rows <- which(mapping$family == "var_coff")
+  for (i in var_rows) {
+    idx <- mapping$key1[i]
+    growth_var_pars(par)[idx, 1] <- jitter_sample_multiplicative_cv(
+      growth_var_pars(par)[idx, 1], jitter_cv,
+      lower = max(eps, mapping$L_bound[i]), upper = mapping$U_bound[i], eps = eps
+    )
+  }
+
+  par
+}
+
+run_indepvar_coverage_jitter <- function(model_dir,
+                                         jitter_coverage = 0.9,
+                                         seed = 1,
+                                         base_par_file = NULL,
+                                         indepvar_file = NULL,
+                                         out_file = NULL,
+                                         output_prefix = NULL,
+                                         change_tol = 1e-14) {
+  files <- resolve_model_jitter_files(
+    model_dir = model_dir,
+    base_par_file = base_par_file,
+    indepvar_file = indepvar_file
+  )
+
+  if (is.null(files$indepvar_file)) {
+    stop("indepvar.rpt is required for the indepvar CV-jitter workflow.")
+  }
+
+  if (is.null(out_file)) {
+    out_file <- file.path(files$model_dir, "00.par")
+  } else if (!grepl("^/", out_file) &&
+             !startsWith(out_file, paste0(files$model_dir_input, "/")) &&
+             !startsWith(out_file, paste0(files$model_dir, "/"))) {
+    out_file <- file.path(files$model_dir, out_file)
+  }
+
+  if (isFALSE(output_prefix) || (length(output_prefix) == 1 && is.na(output_prefix))) {
+    output_prefix <- NULL
+  } else if (!is.null(output_prefix) && !grepl("^/", output_prefix) &&
+             !startsWith(output_prefix, paste0(files$model_dir_input, "/")) &&
+             !startsWith(output_prefix, paste0(files$model_dir, "/"))) {
+    output_prefix <- file.path(files$model_dir, output_prefix)
+  }
+
+  base_par <- read.MFCLPar(files$base_par_file)
+  indepvar_map <- build_indepvar_mapping(base_par, indepvar_file = files$indepvar_file)
+  if (is.null(indepvar_map) || !all(indepvar_map$mapping$mapped)) {
+    stop("Exact indepvar mapping could not be resolved for all parameters.")
+  }
+  if (any(!is.finite(indepvar_map$mapping$L_bound)) || any(!is.finite(indepvar_map$mapping$U_bound))) {
+    stop("Coverage jitter requires finite L_bound and U_bound for all mapped free parameters.")
+  }
+
+  if (!is.null(seed)) set.seed(seed)
+  jittered_par <- apply_indepvar_coverage_jitter(base_par, indepvar_map, jitter_coverage = jitter_coverage)
+  if (is.null(jittered_par)) {
+    stop("Coverage jitter application failed.")
+  }
+
+  out_file <- write_jittered_par(jittered_par, out_file)
+  comparison <- compare_exact_jitter(
+    base_par = base_par,
+    jittered_par = jittered_par,
+    indepvar_file = files$indepvar_file,
+    change_tol = change_tol,
+    output_prefix = output_prefix
+  )
+
+  invisible(list(
+    files = files,
+    jitter_coverage = jitter_coverage,
+    seed = seed,
+    out_file = out_file,
+    output_prefix = output_prefix,
+    comparison = comparison
+  ))
 }
 
 audit_indepvar_exact_mapping <- function(par,
@@ -1164,8 +1797,6 @@ extract_indepvar_values <- function(par, indepvar_map) {
     ncol = dimensions(par)["regions"]
   )
   age_mat <- build_age_pars_matrix(par)
-  ff24 <- flagval(par, -1:-dimensions(par)["fisheries"], 24)$value
-  rep_fish <- tapply(seq_along(ff24), ff24, function(x) x[1])
   grp_mat <- tag_fish_rep_grp(par)
   flag_mat <- tag_fish_rep_flags(par)
 
@@ -1177,7 +1808,7 @@ extract_indepvar_values <- function(par, indepvar_map) {
     } else if (fam == "region_rec_diffs") {
       values[i] <- rrv_export[mapping$key2[i], mapping$key1[i]]
     } else if (fam == "bs_selcoff_gp") {
-      fish_idx <- rep_fish[[as.character(mapping$key1[i])]]
+      fish_idx <- mapping$key4[i]
       values[i] <- fishery_sel(par)[mapping$key2[i], 1, fish_idx, mapping$key3[i], 1, 1]
     } else if (fam == "recr") {
       values[i] <- log(rel_flat[mapping$key1[i]])
@@ -1202,6 +1833,74 @@ extract_indepvar_values <- function(par, indepvar_map) {
   }
 
   values
+}
+
+inject_indepvar_values <- function(par, indepvar_map, values, eps = 1e-12) {
+  mapping <- indepvar_map$mapping
+  stopifnot(length(values) == nrow(mapping))
+
+  if (!all(mapping$mapped)) {
+    stop("Cannot inject indepvar values: some labels are not mapped.")
+  }
+
+  rrv_export <- matrix(
+    as.vector(aperm(region_rec_var(par), c(4, 2, 5, 1, 3, 6))),
+    ncol = dimensions(par)["regions"]
+  )
+  age_mat <- build_age_pars_matrix(par)
+  grp_mat <- tag_fish_rep_grp(par)
+  flag_mat <- tag_fish_rep_flags(par)
+
+  for (i in seq_len(nrow(mapping))) {
+    fam <- mapping$family[i]
+    val <- values[i]
+    if (!is.finite(val)) next
+
+    if (fam == "diff_coffs") {
+      diff_coffs(par)[mapping$key1[i], mapping$key2[i]] <- val
+    } else if (fam == "region_rec_diffs") {
+      rrv_export[mapping$key2[i], mapping$key1[i]] <- val
+    } else if (fam == "bs_selcoff_gp") {
+      fish_idx <- mapping$key4[i]
+      if (!is.finite(fish_idx)) next
+      fishery_sel(par)[mapping$key2[i], 1, fish_idx, mapping$key3[i], 1, 1] <- val
+    } else if (fam == "recr") {
+      rel_flat <- as.vector(aperm(rel_rec(par), c(4, 2, 1, 3, 5, 6)))
+      rel_flat[mapping$key1[i]] <- exp(val)
+      current_rel <- rel_rec(par)
+      current_rel[] <- aperm(
+        array(rel_flat, dim = c(dimensions(par)["seasons"], dim(rel_rec(par))[2], 1, 1, 1, 1)),
+        order(c(4, 2, 1, 3, 5, 6))
+      )
+      slot(par, "rel_rec") <- current_rel
+    } else if (fam == "totpop") {
+      tot_pop(par) <- val
+    } else if (fam == "tag_fish_rep") {
+      idx <- which(grp_mat == mapping$key1[i] & flag_mat == 1, arr.ind = TRUE)
+      if (nrow(idx) > 0) {
+        tag_fish_rep_rate(par)[idx] <- val
+      }
+    } else if (fam == "region_pars") {
+      region_pars(par)[mapping$key1[i], mapping$key2[i]] <- val
+    } else if (fam == "sv") {
+      season_growth_pars(par)[mapping$key1[i]] <- val
+    } else if (fam == "age_pars") {
+      age_mat[mapping$key1[i], mapping$key2[i]] <- val
+    } else if (fam == "vb_coff") {
+      growth(par)[mapping$key1[i], 1] <- val
+    } else if (fam == "var_coff") {
+      growth_var_pars(par)[mapping$key1[i], 1] <- val
+    }
+  }
+
+  current_rrv <- region_rec_var(par)
+  current_rrv[] <- aperm(
+    array(as.vector(rrv_export), dim = c(dimensions(par)["seasons"], dim(region_rec_var(par))[2], dimensions(par)["regions"], 1, 1, 1)),
+    c(4, 2, 5, 1, 3, 6)
+  )
+  slot(par, "region_rec_var") <- current_rrv
+  par <- set_age_pars_matrix(par, age_mat)
+  par
 }
 
 compare_exact_jitter <- function(base_par,
@@ -1258,6 +1957,41 @@ compare_exact_jitter <- function(base_par,
       main = sprintf("Exact jitter summary (tol=%.0e)", change_tol)
     )
   }
+
+  list(
+    indepvar_file = indepvar_map$indepvar_file,
+    labels = labels_df,
+    summary = summary_df,
+    change_tol = change_tol
+  )
+}
+
+compare_indepvar_mapped <- function(base_par,
+                                    jittered_par,
+                                    indepvar_map,
+                                    change_tol = 1e-14) {
+  mapping <- indepvar_map$mapping
+  label_values_before <- extract_indepvar_values(base_par, indepvar_map)
+  label_values_after <- extract_indepvar_values(jittered_par, indepvar_map)
+  deltas <- label_values_after - label_values_before
+
+  labels_df <- transform(
+    mapping,
+    before = label_values_before,
+    after = label_values_after,
+    delta = deltas,
+    changed = abs(deltas) > change_tol,
+    family = ifelse(is.na(family), "unclassified", family)
+  )
+
+  summary_df <- aggregate(
+    cbind(total = 1L, mapped = as.integer(labels_df$mapped), changed = as.integer(labels_df$changed)) ~ family,
+    data = labels_df,
+    FUN = sum
+  )
+  summary_df$unchanged <- summary_df$total - summary_df$changed
+  summary_df$changed_pct <- round(100 * summary_df$changed / summary_df$total, 1)
+  summary_df <- summary_df[order(-summary_df$total, summary_df$family), ]
 
   list(
     indepvar_file = indepvar_map$indepvar_file,

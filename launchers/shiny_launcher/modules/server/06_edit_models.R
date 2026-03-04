@@ -263,8 +263,8 @@
                textInput("edit_jitter_seeds", NULL, value = model$jitter_seeds)
         ),
         column(6,
-               div(class = "param-label", "Jitter Amount:"),
-               textInput("edit_jitter_amount", NULL, value = model$jitter_amount)
+               div(class = "param-label", "Jitter CV:"),
+               textInput("edit_jitter_cv", NULL, value = if (!is.null(model$jitter_cv)) model$jitter_cv else if (!is.null(model$jitter_amount)) model$jitter_amount else model$jitter_coverage)
         )
       ),
       fluidRow(
@@ -332,7 +332,9 @@
     rv$models[[model_name]]$program_path <- input$edit_program_path
     rv$models[[model_name]]$base_dir <- input$edit_base_dir
     rv$models[[model_name]]$jitter_seeds <- input$edit_jitter_seeds
-    rv$models[[model_name]]$jitter_amount <- input$edit_jitter_amount
+    rv$models[[model_name]]$jitter_cv <- input$edit_jitter_cv
+    rv$models[[model_name]]$jitter_coverage <- input$edit_jitter_cv
+    rv$models[[model_name]]$jitter_amount <- input$edit_jitter_cv
     rv$models[[model_name]]$retro_peels <- input$edit_retro_peels
     rv$models[[model_name]]$nsplit <- as.character(input$edit_nsplit)
     rv$models[[model_name]]$scalers <- input$edit_scalers

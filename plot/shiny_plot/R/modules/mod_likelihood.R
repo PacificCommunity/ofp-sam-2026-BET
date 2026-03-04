@@ -136,7 +136,7 @@ mod_likelihood_ui <- function() {
               "lik_jitter_param_view",
               "Jitter Param View:",
               choices = c(
-                "Original vs jittered pars distribution" = "input",
+                "Jittered input pars distribution" = "input",
                 "Original vs final fitted pars distribution" = "final"
               ),
               selected = "input"
@@ -162,18 +162,40 @@ mod_likelihood_ui <- function() {
                 round = TRUE
               )
             ),
-            selectInput(
-              "lik_jitter_param_metric",
-              "Jitter Param Scale:",
-              choices = c(
-                "Parameter value" = "value",
-                "Change from original" = "delta",
-                "% change from original" = "pct_change"
-              ),
-              selected = "pct_change"
+            conditionalPanel(
+              condition = "input.lik_jitter_param_view == 'input'",
+              tagList(
+                selectInput(
+                  "lik_jitter_param_input_scale",
+                  "Input Param Scale:",
+                  choices = c(
+                    "Bound position (0-1)" = "bound_position",
+                    "Raw value" = "value"
+                  ),
+                  selected = "bound_position"
+                ),
+                tags$small(
+                  "Bound position is computed as (value - L_bound) / (U_bound - L_bound). 0 = lower bound, 1 = upper bound, 0.5 = midpoint.",
+                  style = "display:block; margin-top:-6px; margin-bottom:6px; color:#666;"
+                )
+              )
             ),
             conditionalPanel(
-              condition = "input.lik_jitter_param_metric != 'value'",
+              condition = "input.lik_jitter_param_view == 'final'",
+              selectInput(
+                "lik_jitter_param_metric",
+                "Jitter Param Scale:",
+                choices = c(
+                  "Bound position (0-1)" = "bound_position",
+                  "Parameter value" = "value",
+                  "Change from original" = "delta",
+                  "% change from original" = "pct_change"
+                ),
+                selected = "bound_position"
+              )
+            ),
+            conditionalPanel(
+              condition = "input.lik_jitter_param_view == 'final' && ['delta', 'pct_change'].includes(input.lik_jitter_param_metric)",
               selectInput(
                 "lik_jitter_param_range",
                 "Jitter Param Range:",
@@ -391,6 +413,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       jitter_converged_only = isTRUE(input$lik_jitter_converged_only),
       jitter_converged_max_grad = if (is.null(input$lik_jitter_converged_max_grad)) 0.001 else suppressWarnings(as.numeric(input$lik_jitter_converged_max_grad)),
       jitter_derived_view = if (is.null(input$lik_jitter_derived_view)) "summary" else input$lik_jitter_derived_view,
+      jitter_param_input_scale = if (is.null(input$lik_jitter_param_input_scale)) "bound_position" else input$lik_jitter_param_input_scale,
       jitter_param_metric = if (is.null(input$lik_jitter_param_metric)) "pct_change" else input$lik_jitter_param_metric,
       jitter_param_range = if (is.null(input$lik_jitter_param_range)) "focused" else input$lik_jitter_param_range
     )
@@ -416,6 +439,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       jitter_converged_only = filters$jitter_converged_only,
       jitter_converged_max_grad = filters$jitter_converged_max_grad,
       jitter_derived_view = filters$jitter_derived_view,
+      jitter_param_input_scale = filters$jitter_param_input_scale,
       jitter_param_metric = filters$jitter_param_metric,
       jitter_param_range = filters$jitter_param_range
     )
@@ -839,6 +863,20 @@ mod_likelihood_server <- function(input, output, session, rv) {
   build_jitter_seed_status_tables <- function(scenarios, cutoff = 0.001) {
     if (length(scenarios) == 0) return(list(summary = NULL, seeds = NULL))
 
+    scalar_chr <- function(x) {
+      if (is.null(x) || length(x) == 0) return(NA_character_)
+      out <- as.character(x[[1]])
+      if (is.na(out) || !nzchar(out)) return(NA_character_)
+      out
+    }
+
+    scalar_num <- function(x) {
+      if (is.null(x) || length(x) == 0) return(NA_real_)
+      out <- suppressWarnings(as.numeric(x[[1]]))
+      if (length(out) == 0 || !is.finite(out)) return(NA_real_)
+      out
+    }
+
     extract_hessian_ok <- function(jit) {
       if (!is.list(jit)) return(NA)
       if (!is.null(jit$hessian_ok)) return(isTRUE(as.logical(jit$hessian_ok[[1]])))
@@ -859,22 +897,21 @@ mod_likelihood_server <- function(input, output, session, rv) {
         info <- jitter_infos[[seed_id]]
 
         run_completed <- isTRUE(jit$run_completed)
-        run_status <- if (!is.null(jit$run_status) && nzchar(jit$run_status)) {
-          as.character(jit$run_status)
-        } else if (!is.null(info$mfcl_run$run_status) && nzchar(info$mfcl_run$run_status)) {
-          as.character(info$mfcl_run$run_status)
+        run_status_jit <- scalar_chr(jit$run_status)
+        run_status_info <- scalar_chr(info$mfcl_run$run_status)
+        run_status <- if (!is.na(run_status_jit)) {
+          run_status_jit
+        } else if (!is.na(run_status_info)) {
+          run_status_info
         } else {
           "unknown"
         }
 
-        obj_fun <- suppressWarnings(as.numeric(jit$obj_fun))
-        if (!is.finite(obj_fun)) obj_fun <- NA_real_
-
-        max_grad <- suppressWarnings(as.numeric(jit$max_grad))
-        if (!is.finite(max_grad)) max_grad <- NA_real_
-
-        jitter_amount <- suppressWarnings(as.numeric(info$jitter_amount))
-        if (!is.finite(jitter_amount)) jitter_amount <- NA_real_
+        obj_fun <- scalar_num(jit$obj_fun)
+        max_grad <- scalar_num(jit$max_grad)
+        jitter_cv <- scalar_num(
+          if (!is.null(info$jitter_cv)) info$jitter_cv else if (!is.null(info$jitter_amount)) info$jitter_amount else info$jitter_coverage
+        )
 
         hessian_ok <- extract_hessian_ok(jit)
         converged_for_cutoff <- isTRUE(run_completed) &&
@@ -885,7 +922,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         data.frame(
           Model = sc,
           Seed = suppressWarnings(as.integer(seed_id)),
-          `Jitter amount` = jitter_amount,
+          `Jitter CV` = jitter_cv,
           `Run status` = run_status,
           Completed = run_completed,
           `Objective Function` = obj_fun,
@@ -904,14 +941,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
     summary_df <- seeds_df %>%
       group_by(Model) %>%
       summarise(
-        `Jitter amount` = {
-          amount_vals <- sort(unique(.data[["Jitter amount"]][is.finite(.data[["Jitter amount"]])]))
-          if (length(amount_vals) == 0) {
+        `Jitter CV` = {
+          cv_vals <- sort(unique(.data[["Jitter CV"]][is.finite(.data[["Jitter CV"]])]))
+          if (length(cv_vals) == 0) {
             NA_character_
-          } else if (length(amount_vals) == 1) {
-            format(amount_vals[[1]], trim = TRUE)
+          } else if (length(cv_vals) == 1) {
+            format(cv_vals[[1]], trim = TRUE)
           } else {
-            paste0(format(min(amount_vals), trim = TRUE), " to ", format(max(amount_vals), trim = TRUE))
+            paste0(format(min(cv_vals), trim = TRUE), " to ", format(max(cv_vals), trim = TRUE))
           }
         },
         `Seeds loaded` = dplyr::n(),
@@ -2694,7 +2731,21 @@ mod_likelihood_server <- function(input, output, session, rv) {
         summarise(ref_grad = first(ref_grad), .groups = "drop") %>%
         mutate(ref_grad = ifelse(ref_grad > 0, ref_grad, NA_real_))
 
-      point_df <- plot_df %>% filter(is.finite(max_grad), is.finite(plot_pct_diff))
+      point_df <- plot_df %>% filter(is.finite(max_grad), max_grad > 0, is.finite(plot_pct_diff))
+      if (nrow(point_df) == 0) {
+        return(
+          ggplot() +
+            annotate(
+              "text",
+              x = 0.5,
+              y = 0.5,
+              label = "No positive finite max_grad values available for jitter diagnostics.",
+              size = 6,
+              color = "#999999"
+            ) +
+            theme_void()
+        )
+      }
       outlier_df <- point_df %>% filter(is_outlier)
 
       return(
@@ -2758,8 +2809,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
       param_window <- if (is.null(filters$jitter_param_window)) c(1L, 100L) else as.integer(filters$jitter_param_window)
       converged_only <- isTRUE(filters$jitter_converged_only) && identical(param_view, "final")
       converged_max_grad <- if (is.finite(filters$jitter_converged_max_grad)) filters$jitter_converged_max_grad else 0.01
-      metric <- if (is.null(filters$jitter_param_metric)) "pct_change" else filters$jitter_param_metric
-      range_mode <- if (is.null(filters$jitter_param_range)) "focused" else filters$jitter_param_range
+      metric <- if (identical(param_view, "input")) {
+        if (is.null(filters$jitter_param_input_scale)) "bound_position" else filters$jitter_param_input_scale
+      } else if (is.null(filters$jitter_param_metric)) "pct_change" else filters$jitter_param_metric
+      range_mode <- if (identical(param_view, "input")) "full" else if (is.null(filters$jitter_param_range)) "focused" else filters$jitter_param_range
       jitter_counts <- format_jitter_convergence_counts(
         build_jitter_seed_status_tables(filters$scenarios, cutoff = converged_max_grad)$summary
       )
@@ -2852,6 +2905,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
         mutate(
           param_label = paste0(Var_name, "\n[", family, "]"),
           plot_value = case_when(
+            metric == "bound_position" & is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) ~
+              (after - L_bound) / (U_bound - L_bound),
             metric == "value" ~ after,
             metric == "delta" ~ delta,
             TRUE ~ dplyr::case_when(
@@ -2862,7 +2917,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
             )
           ),
           original_value = case_when(
-            metric == "value" ~ before,
+            metric == "bound_position" & is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) &
+              is.finite(before) ~ (before - L_bound) / (U_bound - L_bound),
+            metric == "value" && identical(param_view, "final") ~ before,
             TRUE ~ 0
           )
         )
@@ -2896,6 +2953,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
       original_df <- plot_df_all %>%
         group_by(scenario, param_key, param_label) %>%
         summarise(original_value = first(original_value), .groups = "drop")
+      if (identical(param_view, "input")) {
+        original_df <- original_df[0, , drop = FALSE]
+      }
 
       plot_limit <- NULL
       if (metric %in% c("delta", "pct_change") && identical(range_mode, "focused")) {
@@ -2946,12 +3006,16 @@ mod_likelihood_server <- function(input, output, session, rv) {
       }
 
       y_label <- case_when(
+        metric == "bound_position" ~ "Position within indepvar bounds",
+        metric == "value" && identical(param_view, "input") ~ "Jittered input parameter value",
         metric == "value" ~ "Parameter value",
         metric == "delta" ~ "Change from original",
         TRUE ~ "% change from original"
       )
 
       plot_title <- case_when(
+        metric == "bound_position" ~ "Jittered Input Parameter Bound Positions",
+        metric == "bound_position" && identical(param_view, "final") ~ "Final Fitted Parameter Bound Positions",
         metric == "value" && identical(param_view, "final") ~ "Final Fitted Parameter Distributions",
         metric == "delta" && identical(param_view, "final") ~ "Final Fitted Parameter Changes",
         metric == "pct_change" && identical(param_view, "final") ~ "Final Fitted Parameter % Changes",
@@ -2961,15 +3025,18 @@ mod_likelihood_server <- function(input, output, session, rv) {
       )
 
       plot_subtitle <- case_when(
+        metric == "bound_position" && identical(param_view, "final") && converged_only ~ paste0("About 20 parameters per scenario from converged final runs (max_grad <= ", format(converged_max_grad, trim = TRUE), "), shown as position within indepvar bounds. Red diamond = original position."),
+        metric == "bound_position" && identical(param_view, "final") ~ "About 20 parameters per scenario from completed final runs, shown as position within indepvar bounds. Red diamond = original position.",
+        metric == "bound_position" ~ "About 20 parameters per scenario from jittered input pars, shown as position within indepvar bounds.",
         metric == "value" && identical(param_view, "final") && converged_only ~ paste0("About 20 parameters per scenario from converged final runs (max_grad <= ", format(converged_max_grad, trim = TRUE), "). Red diamond = original value"),
         metric == "delta" && identical(param_view, "final") && converged_only ~ paste0("About 20 parameters per scenario from converged final runs (max_grad <= ", format(converged_max_grad, trim = TRUE), "). Red diamond = no change"),
         metric == "pct_change" && identical(param_view, "final") && converged_only ~ paste0("About 20 parameters per scenario from converged final runs (max_grad <= ", format(converged_max_grad, trim = TRUE), "). Red diamond = 0% change"),
         metric == "value" && identical(param_view, "final") ~ "About 20 parameters per scenario from completed final runs. Red diamond = original value",
         metric == "delta" && identical(param_view, "final") ~ "About 20 parameters per scenario from completed final runs. Red diamond = no change",
         metric == "pct_change" && identical(param_view, "final") ~ "About 20 parameters per scenario from completed final runs. Red diamond = 0% change",
-        metric == "value" ~ "About 20 parameters per scenario from jittered input pars. Red diamond = original value",
-        metric == "delta" ~ "About 20 parameters per scenario from jittered input pars. Red diamond = no change",
-        TRUE ~ "About 20 parameters per scenario from jittered input pars. Red diamond = 0% change"
+        metric == "value" ~ "About 20 parameters per scenario from jittered input pars.",
+        metric == "delta" ~ "About 20 parameters per scenario from jittered input pars.",
+        TRUE ~ "About 20 parameters per scenario from jittered input pars."
       )
 
       if (identical(param_scope, "all")) {
@@ -3013,17 +3080,19 @@ mod_likelihood_server <- function(input, output, session, rv) {
             size = 1.4,
             na.rm = TRUE
           ) +
-          geom_point(
-            data = original_df,
-            aes(x = param_key, y = original_value),
-            inherit.aes = FALSE,
-            color = "#d62728",
-            fill = "#d62728",
-            shape = 23,
-            size = 2.6,
-            stroke = 0.4,
-            na.rm = TRUE
-          )
+          {
+            if (nrow(original_df) > 0) geom_point(
+              data = original_df,
+              aes(x = param_key, y = original_value),
+              inherit.aes = FALSE,
+              color = "#d62728",
+              fill = "#d62728",
+              shape = 23,
+              size = 2.6,
+              stroke = 0.4,
+              na.rm = TRUE
+            )
+          }
       } else {
         p <- ggplot(plot_df, aes(x = param_key, y = plot_value)) +
           geom_boxplot(
@@ -3040,17 +3109,19 @@ mod_likelihood_server <- function(input, output, session, rv) {
             color = "#1f4e79",
             na.rm = TRUE
           ) +
-          geom_point(
-            data = original_df,
-            aes(x = param_key, y = original_value),
-            inherit.aes = FALSE,
-            color = "#d62728",
-            fill = "#d62728",
-            shape = 23,
-            size = 2.8,
-            stroke = 0.4,
-            na.rm = TRUE
-          )
+          {
+            if (nrow(original_df) > 0) geom_point(
+              data = original_df,
+              aes(x = param_key, y = original_value),
+              inherit.aes = FALSE,
+              color = "#d62728",
+              fill = "#d62728",
+              shape = 23,
+              size = 2.8,
+              stroke = 0.4,
+              na.rm = TRUE
+            )
+          }
       }
 
       p <- p +
@@ -3439,7 +3510,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
                     input$lik_jitter_grad_reference, input$lik_jitter_converged_only_diagnostics,
                     input$lik_jitter_param_view, input$lik_jitter_param_scope, input$lik_jitter_param_window,
                     input$lik_jitter_converged_only, input$lik_jitter_converged_max_grad,
-                    input$lik_jitter_derived_view,
+                    input$lik_jitter_derived_view, input$lik_jitter_param_input_scale,
                     input$lik_jitter_param_metric, input$lik_jitter_param_range), {
     req(rv$data_loaded)
     if (!isTRUE(input$live_update_plots)) return()
