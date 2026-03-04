@@ -99,12 +99,22 @@ mfcl_commands <- paste0("../../../../", program_path, " ", frq_file, " ", jitter
 
 cat("Running MFCL with commands:", mfcl_commands, "\n")
 
-run_commands(commands = mfcl_commands,
-             work_dirs = seed_dir_abs, 
-             save_log = T, 
-             parallel = F, 
-             verbose = T, 
-             log_file = file.path(seed_dir_abs, "mfcl_log.txt"))
+mfcl_error <- NULL
+mfcl_run_ok <- TRUE
+tryCatch(
+  {
+    run_commands(commands = mfcl_commands,
+                 work_dirs = seed_dir_abs, 
+                 save_log = TRUE, 
+                 parallel = FALSE, 
+                 verbose = TRUE, 
+                 log_file = file.path(seed_dir_abs, "mfcl_log.txt"))
+  },
+  error = function(e) {
+    mfcl_run_ok <<- FALSE
+    mfcl_error <<- conditionMessage(e)
+  }
+)
 
 fitted_parameter_changes <- NULL
 fitted_parameter_change_summary <- NULL
@@ -162,6 +172,14 @@ info_list <- list(
     mean_abs_pct_change = mean(abs(100 * (jitter_run$comparison$labels$delta / ifelse(abs(jitter_run$comparison$labels$before) > .Machine$double.eps, abs(jitter_run$comparison$labels$before), NA_real_))), na.rm = TRUE),
     median_abs_pct_change = stats::median(abs(100 * (jitter_run$comparison$labels$delta / ifelse(abs(jitter_run$comparison$labels$before) > .Machine$double.eps, abs(jitter_run$comparison$labels$before), NA_real_))), na.rm = TRUE)
   ),
+  mfcl_run = list(
+    command = mfcl_commands,
+    run_ok = mfcl_run_ok,
+    error = mfcl_error,
+    output_par = output_par_name,
+    output_par_exists = file.exists(output_par_path),
+    log_file = file.path(seed_dir_abs, "mfcl_log.txt")
+  ),
   fitted_parameter_changes = fitted_parameter_changes,
   fitted_parameter_change_summary = fitted_parameter_change_summary,
   fitted_parameter_change_overall = fitted_parameter_change_overall
@@ -191,5 +209,9 @@ deleted_n <- mp_cleanup_files(
 cat("Cleanup removed", deleted_n, "non-core files in", seed_dir, "\n")
 
 cb_condor_keep_only_model_cleanup()
+
+if (!isTRUE(mfcl_run_ok)) {
+  stop(if (!is.null(mfcl_error) && nzchar(mfcl_error)) mfcl_error else paste0("Jitter MFCL run failed for seed ", jitter_seed))
+}
 
 cat("✅ Jitter run completed for seed", jitter_seed, "\n")
