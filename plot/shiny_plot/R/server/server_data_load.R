@@ -193,7 +193,22 @@ server_data_load <- function(input, output, session, rv) {
                     pars <- setNames(lapply(seed_dirs, function(d) {
                       result_file <- file.path(d, "jitter_result.rds")
                       if (file.exists(result_file)) {
-                        return(tryCatch(readRDS(result_file), error = function(e) NULL))
+                        existing <- tryCatch(readRDS(result_file), error = function(e) NULL)
+                        needs_refresh <- FALSE
+                        if (!is.null(existing)) {
+                          dq <- existing$derived_quantities
+                          if (!is.null(dq) && is.data.frame(dq)) {
+                            needs_refresh <- !all(c("recruitment", "fishing_mortality") %in% names(dq))
+                          }
+                        }
+                        if (!is.null(existing) && !isTRUE(needs_refresh)) {
+                          return(existing)
+                        }
+                        rebuilt <- tryCatch(mp_build_jitter_payload(d), error = function(e) NULL)
+                        if (!is.null(rebuilt)) {
+                          return(rebuilt)
+                        }
+                        return(existing)
                       }
                       tryCatch(mp_build_jitter_payload(d), error = function(e) NULL)
                     }), seeds)

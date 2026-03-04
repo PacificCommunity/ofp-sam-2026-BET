@@ -11,36 +11,27 @@ jitter_sample_uniform_pct <- function(current_val, bound, lower = -Inf, upper = 
     return(current_val)
   }
 
-  if (abs(current_val) <= eps) {
-    return(jitter_sample_uniform_delta(
-      current_val,
-      bound,
-      scale_val = max(abs(current_val), eps),
-      lower = lower,
-      upper = upper,
-      eps = eps
-    ))
+  # Exact zero has no meaningful multiplicative percent perturbation.
+  # Keep it unchanged rather than switching to absolute-delta jitter.
+  if (current_val == 0) {
+    return(current_val)
   }
 
   pct_min <- -bound
   pct_max <- bound
 
-  if (is.finite(lower)) {
-    pct_min <- max(pct_min, lower / current_val - 1)
-  }
-  if (is.finite(upper)) {
-    pct_max <- min(pct_max, upper / current_val - 1)
+  if (is.finite(lower) || is.finite(upper)) {
+    bound_vals <- c(lower, upper)
+    bound_vals <- bound_vals[is.finite(bound_vals)]
+    if (length(bound_vals) > 0) {
+      pct_bounds <- bound_vals / current_val - 1
+      pct_min <- max(pct_min, min(pct_bounds))
+      pct_max <- min(pct_max, max(pct_bounds))
+    }
   }
 
   if (pct_min > pct_max) {
-    return(jitter_sample_uniform_delta(
-      current_val,
-      bound,
-      scale_val = max(abs(current_val), eps),
-      lower = lower,
-      upper = upper,
-      eps = eps
-    ))
+    return(max(lower, min(upper, current_val)))
   }
 
   current_val * (1 + runif(1, pct_min, pct_max))

@@ -27,29 +27,62 @@ mod_likelihood_ui <- function() {
             size = 10
           )
         ),
-
-        selectInput(
-          "lik_profile_type",
-          "Diagnostics Type:",
-          choices = c(
-            "Likelihood: Components" = "components",
-            "Likelihood: CPUE by Fishery" = "cpues",
-            "Likelihood: Length Frequencies" = "lfs",
-            "Likelihood: Weight Frequencies" = "wfs",
-            "Likelihood: Tagging" = "tagging",
-            "Likelihood: CAL by Fishery" = "cal_fishery",
-            "Likelihood: CAL by Year" = "cal_year",
-            "Jitter Diagnostics" = "jitter",
-            "Jitter Parameters" = "jitter_params",
-            "Jitter Derived Quantities" = "jitter_derived",
-            "Retrospective: Depletion & Spawning Potential" = "retro",
-            "Hessian Diagnostics (PDH / SPD)" = "hessian"
+        tabsetPanel(
+          id = "lik_main_tab",
+          type = "tabs",
+          selected = "likelihood",
+          tabPanel(
+            "Likelihood",
+            value = "likelihood",
+            selectInput(
+              "lik_profile_type",
+              "Diagnostics Type:",
+              choices = c(
+                "Likelihood: Components" = "components",
+                "Likelihood: CPUE by Fishery" = "cpues",
+                "Likelihood: Length Frequencies" = "lfs",
+                "Likelihood: Weight Frequencies" = "wfs",
+                "Likelihood: Tagging" = "tagging",
+                "Likelihood: CAL by Fishery" = "cal_fishery",
+                "Likelihood: CAL by Year" = "cal_year"
+              ),
+              selected = "components"
+            )
           ),
-          selected = "components"
+          tabPanel(
+            "Jitter",
+            value = "jitter",
+            selectInput(
+              "lik_jitter_type",
+              "Jitter Type:",
+              choices = c(
+                "Jitter Diagnostics" = "jitter",
+                "Jitter Parameters" = "jitter_params",
+                "Jitter Derived Quantities" = "jitter_derived"
+              ),
+              selected = "jitter"
+            )
+          ),
+          tabPanel(
+            "Retro",
+            value = "retro",
+            tags$p(
+              "Retrospective depletion and spawning potential diagnostics.",
+              style = "margin: 8px 2px 0 2px; color: #555;"
+            )
+          ),
+          tabPanel(
+            "Hessian",
+            value = "hessian",
+            tags$p(
+              "Hessian PDH / SPD diagnostics and summary table.",
+              style = "margin: 8px 2px 0 2px; color: #555;"
+            )
+          )
         ),
 
         conditionalPanel(
-          condition = "!['jitter', 'jitter_params', 'jitter_derived', 'retro', 'hessian'].includes(input.lik_profile_type)",
+          condition = "input.lik_main_tab == 'likelihood'",
           pickerInput(
             "lik_groups",
             "Lines:",
@@ -69,7 +102,7 @@ mod_likelihood_ui <- function() {
           )
         ),
         conditionalPanel(
-          condition = "['cpues', 'lfs', 'wfs', 'cal_fishery'].includes(input.lik_profile_type)",
+          condition = "input.lik_main_tab == 'likelihood' && ['cpues', 'lfs', 'wfs', 'cal_fishery'].includes(input.lik_profile_type)",
           tagList(
             checkboxInput(
               "lik_split_by_region",
@@ -97,7 +130,7 @@ mod_likelihood_ui <- function() {
         ),
         selectInput("lik_facet_ncol", "Facet columns:", choices = as.character(1:12), selected = "2"),
         conditionalPanel(
-          condition = "input.lik_profile_type == 'jitter_params'",
+          condition = "input.lik_main_tab == 'jitter' && input.lik_jitter_type == 'jitter_params'",
           tagList(
             selectInput(
               "lik_jitter_param_view",
@@ -129,14 +162,6 @@ mod_likelihood_ui <- function() {
                 round = TRUE
               )
             ),
-            conditionalPanel(
-              condition = "input.lik_jitter_param_view == 'final'",
-              checkboxInput(
-                "lik_jitter_final_converged_only",
-                "Converged only (max_grad <= 0.01)",
-                value = FALSE
-              )
-            ),
             selectInput(
               "lik_jitter_param_metric",
               "Jitter Param Scale:",
@@ -159,6 +184,62 @@ mod_likelihood_ui <- function() {
                 selected = "focused"
               )
             )
+          )
+        ),
+        conditionalPanel(
+          condition = "input.lik_main_tab == 'jitter' && input.lik_jitter_type == 'jitter'",
+          tagList(
+            checkboxInput(
+              "lik_jitter_converged_only_diagnostics",
+              "Converged only",
+              value = FALSE
+            ),
+            selectInput(
+              "lik_jitter_grad_reference",
+              "Jitter max_grad reference line:",
+              choices = c(
+                "0.1" = "0.1",
+                "0.01" = "0.01",
+                "0.001" = "0.001",
+                "0.0001" = "0.0001",
+                "0.00001" = "0.00001"
+              ),
+              selected = "0.001"
+            )
+          )
+        ),
+        conditionalPanel(
+          condition = "input.lik_main_tab == 'jitter' && ['jitter_params', 'jitter_derived'].includes(input.lik_jitter_type)",
+          tagList(
+            checkboxInput(
+              "lik_jitter_converged_only",
+              "Converged only",
+              value = FALSE
+            ),
+            selectInput(
+              "lik_jitter_converged_max_grad",
+              "Converged max_grad cutoff:",
+              choices = c(
+                "0.1" = "0.1",
+                "0.01" = "0.01",
+                "0.001" = "0.001",
+                "0.0001" = "0.0001",
+                "0.00001" = "0.00001"
+              ),
+              selected = "0.001"
+            )
+          )
+        ),
+        conditionalPanel(
+          condition = "input.lik_main_tab == 'jitter' && input.lik_jitter_type == 'jitter_derived'",
+          selectInput(
+            "lik_jitter_derived_view",
+            "Jitter Derived View:",
+            choices = c(
+              "Summary bands" = "summary",
+              "Individual lines" = "lines"
+            ),
+            selected = "summary"
           )
         ),
         actionButton("lik_apply_filters", "Apply", class = "btn-primary", style = "width: 100%;"),
@@ -203,9 +284,24 @@ mod_likelihood_ui <- function() {
     ),
 
     fluidRow(
-      uiOutput("profile_target_info_ui"),
-      uiOutput("likelihood_table_ui"),
-      uiOutput("profile_gradient_table_ui")
+      conditionalPanel(
+        condition = "input.lik_main_tab == 'likelihood'",
+        uiOutput("likelihood_info_ui"),
+        uiOutput("profile_gradient_table_ui")
+      ),
+      conditionalPanel(
+        condition = "input.lik_main_tab == 'jitter'",
+        uiOutput("jitter_info_ui")
+      ),
+      conditionalPanel(
+        condition = "input.lik_main_tab == 'retro'",
+        uiOutput("retro_info_ui")
+      ),
+      conditionalPanel(
+        condition = "input.lik_main_tab == 'hessian'",
+        uiOutput("hessian_info_ui"),
+        uiOutput("likelihood_table_ui")
+      )
     )
   )
 }
@@ -268,18 +364,33 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }
   lik_live_update_nonce <- reactiveVal(0)
   fishery_region_types <- c("cpues", "lfs", "wfs", "cal_fishery")
+  current_profile_type <- reactive({
+    if (identical(input$lik_main_tab, "jitter")) {
+      if (is.null(input$lik_jitter_type)) "jitter" else input$lik_jitter_type
+    } else if (identical(input$lik_main_tab, "retro")) {
+      "retro"
+    } else if (identical(input$lik_main_tab, "hessian")) {
+      "hessian"
+    } else {
+      if (is.null(input$lik_profile_type)) "components" else input$lik_profile_type
+    }
+  })
   lik_filters_current <- reactive({
     list(
       scenarios = sort(input$lik_scenarios),
-      profile_type = if (is.null(input$lik_profile_type)) "components" else input$lik_profile_type,
+      profile_type = current_profile_type(),
       groups = input$lik_groups,
       regions = input$lik_regions,
       split_by_region = isTRUE(input$lik_split_by_region),
       facet_ncol = input$lik_facet_ncol,
+      jitter_grad_reference = if (is.null(input$lik_jitter_grad_reference)) 0.001 else suppressWarnings(as.numeric(input$lik_jitter_grad_reference)),
+      jitter_converged_only_diagnostics = isTRUE(input$lik_jitter_converged_only_diagnostics),
       jitter_param_view = if (is.null(input$lik_jitter_param_view)) "input" else input$lik_jitter_param_view,
       jitter_param_scope = if (is.null(input$lik_jitter_param_scope)) "top" else input$lik_jitter_param_scope,
       jitter_param_window = if (is.null(input$lik_jitter_param_window)) c(1L, 100L) else pmax(1L, pmin(100L, as.integer(input$lik_jitter_param_window))),
-      jitter_final_converged_only = isTRUE(input$lik_jitter_final_converged_only),
+      jitter_converged_only = isTRUE(input$lik_jitter_converged_only),
+      jitter_converged_max_grad = if (is.null(input$lik_jitter_converged_max_grad)) 0.001 else suppressWarnings(as.numeric(input$lik_jitter_converged_max_grad)),
+      jitter_derived_view = if (is.null(input$lik_jitter_derived_view)) "summary" else input$lik_jitter_derived_view,
       jitter_param_metric = if (is.null(input$lik_jitter_param_metric)) "pct_change" else input$lik_jitter_param_metric,
       jitter_param_range = if (is.null(input$lik_jitter_param_range)) "focused" else input$lik_jitter_param_range
     )
@@ -297,10 +408,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
       profile_type = filters$profile_type,
       regions = filters$regions,
       split_by_region = filters$split_by_region,
+      jitter_grad_reference = filters$jitter_grad_reference,
+      jitter_converged_only_diagnostics = filters$jitter_converged_only_diagnostics,
       jitter_param_view = filters$jitter_param_view,
       jitter_param_scope = filters$jitter_param_scope,
-      jitter_param_percentile = filters$jitter_param_percentile,
-      jitter_final_converged_only = filters$jitter_final_converged_only,
+      jitter_param_window = filters$jitter_param_window,
+      jitter_converged_only = filters$jitter_converged_only,
+      jitter_converged_max_grad = filters$jitter_converged_max_grad,
+      jitter_derived_view = filters$jitter_derived_view,
       jitter_param_metric = filters$jitter_param_metric,
       jitter_param_range = filters$jitter_param_range
     )
@@ -325,18 +440,37 @@ mod_likelihood_server <- function(input, output, session, rv) {
     clear_fishery_diag_cache()
     clear_jitter_data_cache()
     clear_jitter_param_cache()
-  }, ignoreInit = TRUE)
+  }, ignoreInit = FALSE)
 
   observeEvent(input$load_data, {
     clear_heavy_cache()
     clear_fishery_diag_cache()
     clear_jitter_data_cache()
     clear_jitter_param_cache()
-  }, ignoreInit = TRUE)
+  }, ignoreInit = FALSE)
 
   observeEvent(input$lik_apply_filters, {
     lik_filters_applied(isolate(lik_filters_current()))
-  }, ignoreInit = TRUE)
+  }, ignoreInit = FALSE)
+
+  observeEvent(
+    list(input$lik_main_tab, input$lik_profile_type, input$lik_jitter_type),
+    {
+      req(rv$data_loaded)
+      lik_filters_applied(isolate(lik_filters_current()))
+    },
+    ignoreInit = TRUE
+  )
+
+  observeEvent(rv$data_loaded, {
+    req(rv$data_loaded)
+    if (is.null(input$lik_main_tab) || !nzchar(input$lik_main_tab)) {
+      updateTabsetPanel(session, "lik_main_tab", selected = "likelihood")
+    }
+    if (is.null(lik_filters_applied())) {
+      lik_filters_applied(isolate(lik_filters_current()))
+    }
+  }, ignoreInit = FALSE)
 
   # Update scenario choices when data is loaded
   observeEvent(rv$data_loaded, {
@@ -354,10 +488,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
     )
   }, ignoreInit = TRUE)
 
-  observeEvent(list(rv$data_loaded, input$lik_scenarios, input$lik_profile_type), {
+  observeEvent(list(rv$data_loaded, input$lik_scenarios, input$lik_main_tab, input$lik_profile_type, input$lik_jitter_type), {
     req(rv$data_loaded)
 
-    type <- isolate(input$lik_profile_type)
+    type <- isolate(current_profile_type())
     if (!(type %in% fishery_region_types)) {
       updatePickerInput(session, "lik_regions", choices = character(0), selected = character(0))
       return()
@@ -702,6 +836,145 @@ mod_likelihood_server <- function(input, output, session, rv) {
     lik_data_filters()
   )
 
+  build_jitter_seed_status_tables <- function(scenarios, cutoff = 0.001) {
+    if (length(scenarios) == 0) return(list(summary = NULL, seeds = NULL))
+
+    extract_hessian_ok <- function(jit) {
+      if (!is.list(jit)) return(NA)
+      if (!is.null(jit$hessian_ok)) return(isTRUE(as.logical(jit$hessian_ok[[1]])))
+      if (!is.null(jit$hessian_info$pdh)) return(isTRUE(as.logical(jit$hessian_info$pdh[[1]])))
+      if (!is.null(jit$hessian$ok)) return(isTRUE(as.logical(jit$hessian$ok[[1]])))
+      NA
+    }
+
+    seed_rows <- lapply(scenarios, function(sc) {
+      jitter_payloads <- rv$JitterPars_list[[sc]]
+      jitter_infos <- rv$JitterInfos_list[[sc]]
+
+      seed_ids <- sort(unique(c(names(jitter_payloads), names(jitter_infos))))
+      if (length(seed_ids) == 0) return(NULL)
+
+      bind_rows(lapply(seed_ids, function(seed_id) {
+        jit <- jitter_payloads[[seed_id]]
+        info <- jitter_infos[[seed_id]]
+
+        run_completed <- isTRUE(jit$run_completed)
+        run_status <- if (!is.null(jit$run_status) && nzchar(jit$run_status)) {
+          as.character(jit$run_status)
+        } else if (!is.null(info$mfcl_run$run_status) && nzchar(info$mfcl_run$run_status)) {
+          as.character(info$mfcl_run$run_status)
+        } else {
+          "unknown"
+        }
+
+        obj_fun <- suppressWarnings(as.numeric(jit$obj_fun))
+        if (!is.finite(obj_fun)) obj_fun <- NA_real_
+
+        max_grad <- suppressWarnings(as.numeric(jit$max_grad))
+        if (!is.finite(max_grad)) max_grad <- NA_real_
+
+        jitter_amount <- suppressWarnings(as.numeric(info$jitter_amount))
+        if (!is.finite(jitter_amount)) jitter_amount <- NA_real_
+
+        hessian_ok <- extract_hessian_ok(jit)
+        converged_for_cutoff <- isTRUE(run_completed) &&
+          isTRUE(is.finite(max_grad)) &&
+          isTRUE(abs(max_grad) <= cutoff) &&
+          (is.na(hessian_ok) || isTRUE(hessian_ok))
+
+        data.frame(
+          Model = sc,
+          Seed = suppressWarnings(as.integer(seed_id)),
+          `Jitter amount` = jitter_amount,
+          `Run status` = run_status,
+          Completed = run_completed,
+          `Objective Function` = obj_fun,
+          `Max Gradient` = max_grad,
+          `Hessian OK` = if (is.na(hessian_ok)) NA else isTRUE(hessian_ok),
+          Converged = converged_for_cutoff,
+          stringsAsFactors = FALSE,
+          check.names = FALSE
+        )
+      }))
+    })
+
+    seeds_df <- bind_rows(seed_rows)
+    if (nrow(seeds_df) == 0) return(list(summary = NULL, seeds = NULL))
+
+    summary_df <- seeds_df %>%
+      group_by(Model) %>%
+      summarise(
+        `Jitter amount` = {
+          amount_vals <- sort(unique(.data[["Jitter amount"]][is.finite(.data[["Jitter amount"]])]))
+          if (length(amount_vals) == 0) {
+            NA_character_
+          } else if (length(amount_vals) == 1) {
+            format(amount_vals[[1]], trim = TRUE)
+          } else {
+            paste0(format(min(amount_vals), trim = TRUE), " to ", format(max(amount_vals), trim = TRUE))
+          }
+        },
+        `Seeds loaded` = dplyr::n(),
+        Completed = sum(Completed, na.rm = TRUE),
+        Failed = sum(.data[["Run status"]] == "failed", na.rm = TRUE),
+        Incomplete = sum(.data[["Run status"]] == "incomplete", na.rm = TRUE),
+        Unknown = sum(.data[["Run status"]] == "unknown", na.rm = TRUE),
+        `Converged seeds` = sum(Converged, na.rm = TRUE),
+        `Converged / Total` = paste0(sum(Converged, na.rm = TRUE), " / ", dplyr::n()),
+        `Median |max_grad| (completed)` = {
+          completed_grads <- abs(.data[["Max Gradient"]][Completed & is.finite(.data[["Max Gradient"]])])
+          if (length(completed_grads) > 0) stats::median(completed_grads, na.rm = TRUE) else NA_real_
+        },
+        `Best |max_grad| (completed)` = {
+          completed_grads <- abs(.data[["Max Gradient"]][Completed & is.finite(.data[["Max Gradient"]])])
+          if (length(completed_grads) > 0) min(completed_grads, na.rm = TRUE) else NA_real_
+        },
+        .groups = "drop"
+      )
+
+    seeds_df <- seeds_df %>%
+      arrange(Model, Seed)
+
+    list(summary = summary_df, seeds = seeds_df)
+  }
+
+  format_jitter_convergence_counts <- function(seed_summary_df) {
+    if (is.null(seed_summary_df) || nrow(seed_summary_df) == 0) return(NULL)
+    paste(
+      paste0(seed_summary_df$Model, " ", seed_summary_df$`Converged / Total`),
+      collapse = " | "
+    )
+  }
+
+  jitter_info_reactive <- reactive({
+    filters <- lik_filters_current()
+    req(filters)
+
+    type <- filters$profile_type
+    if (!(type %in% c("jitter", "jitter_params", "jitter_derived"))) return(NULL)
+
+    scenarios <- filters$scenarios
+    if (length(scenarios) == 0) return(NULL)
+
+    cutoff <- if (identical(type, "jitter")) {
+      if (is.finite(filters$jitter_grad_reference)) filters$jitter_grad_reference else 0.001
+    } else {
+      if (is.finite(filters$jitter_converged_max_grad)) filters$jitter_converged_max_grad else 0.001
+    }
+
+    build_jitter_seed_status_tables(scenarios = scenarios, cutoff = cutoff)
+  })
+  jitter_info_reactive <- bindCache(
+    jitter_info_reactive,
+    input$model_dir,
+    list(
+      scenarios = sort(input$lik_scenarios),
+      profile_type = current_profile_type(),
+      grad_reference = input$lik_jitter_grad_reference,
+      converged_max_grad = input$lik_jitter_converged_max_grad
+    )
+  )
+
   profile_gradient_table_reactive <- reactive({
     filters <- lik_data_filters()
     req(filters)
@@ -791,6 +1064,29 @@ mod_likelihood_server <- function(input, output, session, rv) {
             paste("Region", as.character(region))
           )
       )
+    }
+
+    if (isTRUE(split_by_region) && "region" %in% names(data)) {
+      valid_regions <- data %>%
+        group_by(scenario, region) %>%
+        summarise(
+          has_non_total = any(.data[[group_var]] != "Total"),
+          has_signal = any(.data[[group_var]] != "Total" & is.finite(change) & abs(change) > 1e-10),
+          .groups = "drop"
+        ) %>%
+        filter(has_non_total, has_signal) %>%
+        select(scenario, region)
+
+      data <- data %>%
+        inner_join(valid_regions, by = c("scenario", "region"))
+
+      if (nrow(data) == 0) {
+        return(
+          ggplot() +
+            annotate("text", x = 0.5, y = 0.5, label = "No region panels with fishery lines after filtering", size = 6, color = "#999") +
+            theme_void()
+        )
+      }
     }
 
     unique_groups <- unique(data[[group_var]])
@@ -1279,9 +1575,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
     bind_rows(lapply(scenarios, get_cal_rows_for_scenario))
   }
 
-  build_jitter_data <- function(scenarios, par_out_list, jitter_pars_list) {
+  build_jitter_data <- function(scenarios, par_out_list, jitter_pars_list,
+                                converged_only = FALSE, converged_max_grad = 0.001) {
     get_jitter_diag_rows <- function(sc) {
-      cached <- jitter_data_cache$diagnostics[[sc]]
+      cache_key <- paste(sc, as.character(isTRUE(converged_only)), format(converged_max_grad, trim = TRUE), sep = "::")
+      cached <- jitter_data_cache$diagnostics[[cache_key]]
       if (!is.null(cached)) {
         return(cached)
       }
@@ -1289,15 +1587,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
       ref_par <- par_out_list[[sc]]
       jit_list <- jitter_pars_list[[sc]]
       if (is.null(ref_par) || is.null(jit_list) || length(jit_list) == 0) {
-        jitter_data_cache$diagnostics[[sc]] <- data.frame()
-        return(jitter_data_cache$diagnostics[[sc]])
+        jitter_data_cache$diagnostics[[cache_key]] <- data.frame()
+        return(jitter_data_cache$diagnostics[[cache_key]])
       }
 
       ref_obj <- suppressWarnings(as.numeric(ref_par@obj_fun))
       ref_grad <- suppressWarnings(as.numeric(ref_par@max_grad))
       if (!is.finite(ref_obj)) {
-        jitter_data_cache$diagnostics[[sc]] <- data.frame()
-        return(jitter_data_cache$diagnostics[[sc]])
+        jitter_data_cache$diagnostics[[cache_key]] <- data.frame()
+        return(jitter_data_cache$diagnostics[[cache_key]])
       }
 
       seeds <- names(jit_list)
@@ -1316,9 +1614,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
       obj_vals <- sapply(jit_list, extract_jitter_obj)
       grad_vals <- sapply(jit_list, extract_jitter_grad)
       keep <- is.finite(obj_vals) & is.finite(grad_vals)
+      if (isTRUE(converged_only)) {
+        keep <- keep & abs(grad_vals) <= converged_max_grad
+      }
       if (!any(keep)) {
-        jitter_data_cache$diagnostics[[sc]] <- data.frame()
-        return(jitter_data_cache$diagnostics[[sc]])
+        jitter_data_cache$diagnostics[[cache_key]] <- data.frame()
+        return(jitter_data_cache$diagnostics[[cache_key]])
       }
 
       obj_vals <- obj_vals[keep]
@@ -1326,7 +1627,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       seeds <- seeds[keep]
       pct_diff <- ((obj_vals - ref_obj) / abs(ref_obj)) * 100
 
-      jitter_data_cache$diagnostics[[sc]] <- data.frame(
+      jitter_data_cache$diagnostics[[cache_key]] <- data.frame(
         scenario = sc,
         seed = as.character(seeds),
         ref_obj = as.numeric(ref_obj),
@@ -1337,15 +1638,23 @@ mod_likelihood_server <- function(input, output, session, rv) {
         jitter_id = seq_along(obj_vals),
         stringsAsFactors = FALSE
       )
-      jitter_data_cache$diagnostics[[sc]]
+      jitter_data_cache$diagnostics[[cache_key]]
     }
 
     bind_rows(lapply(scenarios, get_jitter_diag_rows))
   }
 
-  build_jitter_parameter_data <- function(scenarios, jitter_pars_list, view = "input", converged_only = FALSE) {
+  build_jitter_parameter_data <- function(scenarios, jitter_pars_list, view = "input", converged_only = FALSE,
+                                          converged_max_grad = 0.01) {
     get_jitter_parameter_rows <- function(sc) {
-      cache_key <- paste(sc, view, as.character(isTRUE(converged_only)), sep = "::")
+      cache_key <- paste(
+        "v3",
+        sc,
+        view,
+        as.character(isTRUE(converged_only)),
+        format(converged_max_grad, trim = TRUE),
+        sep = "::"
+      )
       cached <- jitter_param_cache$rows[[cache_key]]
       if (!is.null(cached)) {
         return(cached)
@@ -1367,7 +1676,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
         jit <- jit_list[[i]]
         if (identical(view, "final")) {
           if (!isTRUE(jit$run_completed)) next
-          if (isTRUE(converged_only) && !isTRUE(jit$converged)) next
+          if (isTRUE(converged_only)) {
+            jit_max_grad <- suppressWarnings(as.numeric(jit$max_grad))
+            if (!is.finite(jit_max_grad) || abs(jit_max_grad) > converged_max_grad) next
+          }
         }
         param_changes <- if (identical(view, "final")) {
           if (is.list(jit) && !is.null(jit$fitted_parameter_changes)) jit$fitted_parameter_changes else NULL
@@ -1386,8 +1698,16 @@ mod_likelihood_server <- function(input, output, session, rv) {
             after = suppressWarnings(as.numeric(after)),
             delta = suppressWarnings(as.numeric(delta)),
             pct_change = suppressWarnings(as.numeric(pct_change)),
-            abs_pct_change = suppressWarnings(as.numeric(abs_pct_change)),
             family = ifelse(is.na(family) | !nzchar(family), "unclassified", family)
+          ) %>%
+          mutate(
+            pct_change = dplyr::case_when(
+              is.finite(pct_change) ~ pct_change,
+              is.finite(before) & is.finite(after) & before != 0 ~
+                100 * (after - before) / before,
+              TRUE ~ NA_real_
+            ),
+            abs_pct_change = abs(pct_change)
           ) %>%
           filter(is.finite(before), is.finite(after))
 
@@ -1469,14 +1789,48 @@ mod_likelihood_server <- function(input, output, session, rv) {
         .groups = "drop"
       )
 
+    rec_slot <- tryCatch(rep_obj@rec, error = function(e) NULL)
+    rec_df <- tryCatch(safe_array_to_df(rec_slot), error = function(e) NULL)
+    if (!is.null(rec_df) && nrow(rec_df) > 0) {
+      rec_df$year <- suppressWarnings(as.numeric(rec_df$year))
+      rec_df$data <- suppressWarnings(as.numeric(rec_df$data))
+      rec_df <- rec_df[is.finite(rec_df$year) & is.finite(rec_df$data), , drop = FALSE]
+      if (nrow(rec_df) > 0) {
+        rec_df <- stats::aggregate(data ~ year, data = rec_df, FUN = sum)
+        names(rec_df)[names(rec_df) == "data"] <- "recruitment"
+        merged <- merge(merged, rec_df, by = "year", all = TRUE)
+      }
+    }
+
+    fm_slot <- tryCatch(rep_obj@fmlevel, error = function(e) NULL)
+    fm_df <- tryCatch(safe_array_to_df(fm_slot), error = function(e) NULL)
+    if (!is.null(fm_df) && nrow(fm_df) > 0) {
+      fm_df$year <- suppressWarnings(as.numeric(fm_df$year))
+      fm_df$data <- suppressWarnings(as.numeric(fm_df$data))
+      fm_df <- fm_df[is.finite(fm_df$year) & is.finite(fm_df$data), , drop = FALSE]
+      if (nrow(fm_df) > 0) {
+        fm_df <- stats::aggregate(data ~ year, data = fm_df, FUN = mean)
+        names(fm_df)[names(fm_df) == "data"] <- "fishing_mortality"
+        merged <- merge(merged, fm_df, by = "year", all = TRUE)
+      }
+    }
+
     if (nrow(merged) == 0) return(NULL)
     merged %>%
       mutate(scenario = scenario)
   }
 
-  build_jitter_derived_data <- function(scenarios, rep_out_list, jitter_pars_list) {
+  build_jitter_derived_data <- function(scenarios, rep_out_list, jitter_pars_list, converged_only = FALSE,
+                                        converged_max_grad = 0.01) {
     get_jitter_derived_rows <- function(sc) {
-      cached <- jitter_data_cache$derived[[sc]]
+      cache_key <- paste(
+        "v2",
+        sc,
+        as.character(isTRUE(converged_only)),
+        format(converged_max_grad, trim = TRUE),
+        sep = "::"
+      )
+      cached <- jitter_data_cache$derived[[cache_key]]
       if (!is.null(cached)) {
         return(cached)
       }
@@ -1484,8 +1838,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       ref_metrics <- extract_reference_metrics_timeseries(rep_out_list[[sc]], sc)
       jit_list <- jitter_pars_list[[sc]]
       if (is.null(ref_metrics) || is.null(jit_list) || length(jit_list) == 0) {
-        jitter_data_cache$derived[[sc]] <- data.frame()
-        return(jitter_data_cache$derived[[sc]])
+        jitter_data_cache$derived[[cache_key]] <- data.frame()
+        return(jitter_data_cache$derived[[cache_key]])
       }
 
       seeds <- names(jit_list)
@@ -1497,8 +1851,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
       for (i in seq_along(jit_list)) {
         jit <- jit_list[[i]]
+        if (isTRUE(converged_only)) {
+          jit_max_grad <- suppressWarnings(as.numeric(jit$max_grad))
+          if (!isTRUE(jit$run_completed) || !is.finite(jit_max_grad) || abs(jit_max_grad) > converged_max_grad) next
+        }
         derived <- if (is.list(jit) && !is.null(jit$derived_quantities)) jit$derived_quantities else NULL
         if (is.null(derived) || !is.data.frame(derived) || nrow(derived) == 0) next
+        if (!"recruitment" %in% names(derived)) derived$recruitment <- NA_real_
+        if (!"fishing_mortality" %in% names(derived)) derived$fishing_mortality <- NA_real_
 
         seed_df <- derived %>%
           mutate(
@@ -1510,7 +1870,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
             seed = seed,
             year = suppressWarnings(as.numeric(year)),
             depletion = suppressWarnings(as.numeric(depletion)),
-            spawning_potential = suppressWarnings(as.numeric(spawning_potential))
+            spawning_potential = suppressWarnings(as.numeric(spawning_potential)),
+            recruitment = suppressWarnings(as.numeric(recruitment)),
+            fishing_mortality = suppressWarnings(as.numeric(fishing_mortality))
           )
 
         rows[[length(rows) + 1]] <- seed_df
@@ -1518,8 +1880,19 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
       value_rows <- bind_rows(rows)
       if (nrow(value_rows) == 0) {
-        jitter_data_cache$derived[[sc]] <- data.frame()
-        return(jitter_data_cache$derived[[sc]])
+        jitter_data_cache$derived[[cache_key]] <- data.frame()
+        return(jitter_data_cache$derived[[cache_key]])
+      }
+
+      ref_recruitment <- if ("recruitment" %in% names(ref_metrics)) {
+        suppressWarnings(as.numeric(ref_metrics$recruitment))
+      } else {
+        rep(NA_real_, nrow(ref_metrics))
+      }
+      ref_fishing_mortality <- if ("fishing_mortality" %in% names(ref_metrics)) {
+        suppressWarnings(as.numeric(ref_metrics$fishing_mortality))
+      } else {
+        rep(NA_real_, nrow(ref_metrics))
       }
 
       ref_rows <- bind_rows(
@@ -1536,32 +1909,50 @@ mod_likelihood_server <- function(input, output, session, rv) {
           reference_value = suppressWarnings(as.numeric(ref_metrics$spawning_potential)),
           year = suppressWarnings(as.numeric(ref_metrics$year)),
           stringsAsFactors = FALSE
+        ),
+        data.frame(
+          scenario = sc,
+          metric = "Recruitment",
+          reference_value = ref_recruitment,
+          year = suppressWarnings(as.numeric(ref_metrics$year)),
+          stringsAsFactors = FALSE
+        ),
+        data.frame(
+          scenario = sc,
+          metric = "Fishing Mortality",
+          reference_value = ref_fishing_mortality,
+          year = suppressWarnings(as.numeric(ref_metrics$year)),
+          stringsAsFactors = FALSE
         )
       )
       if (is.null(ref_rows) || nrow(ref_rows) == 0) {
-        jitter_data_cache$derived[[sc]] <- data.frame()
-        return(jitter_data_cache$derived[[sc]])
+        jitter_data_cache$derived[[cache_key]] <- data.frame()
+        return(jitter_data_cache$derived[[cache_key]])
       }
 
       value_long <- bind_rows(
         value_rows %>%
           transmute(scenario, seed, year, metric = "Depletion", value = depletion),
         value_rows %>%
-          transmute(scenario, seed, year, metric = "Spawning Potential (1e3 MT)", value = spawning_potential)
+          transmute(scenario, seed, year, metric = "Spawning Potential (1e3 MT)", value = spawning_potential),
+        value_rows %>%
+          transmute(scenario, seed, year, metric = "Recruitment", value = recruitment),
+        value_rows %>%
+          transmute(scenario, seed, year, metric = "Fishing Mortality", value = fishing_mortality)
       ) %>%
         filter(is.finite(value))
 
       if (nrow(value_long) == 0) {
-        jitter_data_cache$derived[[sc]] <- data.frame()
-        return(jitter_data_cache$derived[[sc]])
+        jitter_data_cache$derived[[cache_key]] <- data.frame()
+        return(jitter_data_cache$derived[[cache_key]])
       }
 
-      jitter_data_cache$derived[[sc]] <- value_long %>%
+      jitter_data_cache$derived[[cache_key]] <- value_long %>%
         left_join(ref_rows, by = c("scenario", "metric", "year")) %>%
         mutate(
           pct_change = 100 * (value - reference_value) / pmax(abs(reference_value), .Machine$double.eps)
         )
-      jitter_data_cache$derived[[sc]]
+      jitter_data_cache$derived[[cache_key]]
     }
 
     bind_rows(lapply(scenarios, get_jitter_derived_rows))
@@ -1594,8 +1985,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       sp <- bio_fish %>%
         group_by(year) %>%
         summarise(spawning_potential = mean(bio_fish, na.rm = TRUE) / 1e3, .groups = "drop")
-      
-      dep %>%
+
+      out <- dep %>%
         inner_join(sp, by = "year") %>%
         mutate(
           year = suppressWarnings(as.numeric(year)),
@@ -1605,6 +1996,34 @@ mod_likelihood_server <- function(input, output, session, rv) {
           peel = as.integer(peel)
         ) %>%
         filter(is.finite(year), is.finite(depletion), is.finite(spawning_potential))
+
+      rec_slot <- tryCatch(rep_obj@rec, error = function(e) NULL)
+      rec_df <- tryCatch(safe_array_to_df(rec_slot), error = function(e) NULL)
+      if (!is.null(rec_df) && nrow(rec_df) > 0) {
+        rec_df$year <- suppressWarnings(as.numeric(rec_df$year))
+        rec_df$data <- suppressWarnings(as.numeric(rec_df$data))
+        rec_df <- rec_df[is.finite(rec_df$year) & is.finite(rec_df$data), , drop = FALSE]
+        if (nrow(rec_df) > 0) {
+          rec_df <- stats::aggregate(data ~ year, data = rec_df, FUN = sum)
+          names(rec_df)[names(rec_df) == "data"] <- "recruitment"
+          out <- merge(out, rec_df, by = "year", all = TRUE)
+        }
+      }
+
+      fm_slot <- tryCatch(rep_obj@fmlevel, error = function(e) NULL)
+      fm_df <- tryCatch(safe_array_to_df(fm_slot), error = function(e) NULL)
+      if (!is.null(fm_df) && nrow(fm_df) > 0) {
+        fm_df$year <- suppressWarnings(as.numeric(fm_df$year))
+        fm_df$data <- suppressWarnings(as.numeric(fm_df$data))
+        fm_df <- fm_df[is.finite(fm_df$year) & is.finite(fm_df$data), , drop = FALSE]
+        if (nrow(fm_df) > 0) {
+          fm_df <- stats::aggregate(data ~ year, data = fm_df, FUN = function(x) mean(x, na.rm = TRUE))
+          names(fm_df)[names(fm_df) == "data"] <- "fishing_mortality"
+          out <- merge(out, fm_df, by = "year", all = TRUE)
+        }
+      }
+
+      out
     }
 
     retro_rows <- list()
@@ -1737,21 +2156,41 @@ mod_likelihood_server <- function(input, output, session, rv) {
     selected <- filters$scenarios
 
     if (type == "jitter") {
-      data <- build_jitter_data(selected, rv$ParOut_list, rv$JitterPars_list)
+      converged_only <- isTRUE(filters$jitter_converged_only_diagnostics)
+      converged_max_grad <- if (is.finite(filters$jitter_grad_reference)) filters$jitter_grad_reference else 0.001
+      data <- build_jitter_data(
+        selected,
+        rv$ParOut_list,
+        rv$JitterPars_list,
+        converged_only = converged_only,
+        converged_max_grad = converged_max_grad
+      )
       if (nrow(data) == 0) {
-        return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No jitter analysis results found", plot_kind = "jitter"))
+        msg <- if (isTRUE(converged_only)) {
+          paste0("No converged jitter analysis results found (max_grad <= ", format(converged_max_grad, trim = TRUE), ")")
+        } else {
+          "No jitter analysis results found"
+        }
+        return(list(data = data.frame(), group_col = NULL, label = NULL, message = msg, plot_kind = "jitter"))
       }
       return(list(data = data, group_col = NULL, label = "Jitter", message = NULL, plot_kind = "jitter"))
     }
 
     if (type == "jitter_params") {
       jitter_param_view <- if (is.null(filters$jitter_param_view)) "input" else filters$jitter_param_view
-      converged_only <- isTRUE(filters$jitter_final_converged_only)
-      data <- build_jitter_parameter_data(selected, rv$JitterPars_list, view = jitter_param_view, converged_only = converged_only)
+      converged_only <- isTRUE(filters$jitter_converged_only) && identical(jitter_param_view, "final")
+      converged_max_grad <- if (is.finite(filters$jitter_converged_max_grad)) filters$jitter_converged_max_grad else 0.01
+      data <- build_jitter_parameter_data(
+        selected,
+        rv$JitterPars_list,
+        view = jitter_param_view,
+        converged_only = converged_only,
+        converged_max_grad = converged_max_grad
+      )
       if (nrow(data) == 0) {
         msg <- if (identical(jitter_param_view, "final")) {
           if (isTRUE(converged_only)) {
-            "No converged jitter runs with final parameter distributions found"
+            paste0("No converged jitter runs with final parameter distributions found (max_grad <= ", format(converged_max_grad, trim = TRUE), ")")
           } else {
             "No completed jitter runs with final parameter distributions found"
           }
@@ -1764,9 +2203,22 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     if (type == "jitter_derived") {
-      data <- build_jitter_derived_data(selected, rv$RepOut_list, rv$JitterPars_list)
+      converged_only <- isTRUE(filters$jitter_converged_only)
+      converged_max_grad <- if (is.finite(filters$jitter_converged_max_grad)) filters$jitter_converged_max_grad else 0.01
+      data <- build_jitter_derived_data(
+        selected,
+        rv$RepOut_list,
+        rv$JitterPars_list,
+        converged_only = converged_only,
+        converged_max_grad = converged_max_grad
+      )
       if (nrow(data) == 0) {
-        return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No jitter derived quantity distributions found", plot_kind = "jitter_derived"))
+        msg <- if (isTRUE(converged_only)) {
+          paste0("No converged jitter derived quantity distributions found (max_grad <= ", format(converged_max_grad, trim = TRUE), ")")
+        } else {
+          "No jitter derived quantity distributions found"
+        }
+        return(list(data = data.frame(), group_col = NULL, label = NULL, message = msg, plot_kind = "jitter_derived"))
       }
       return(list(data = data, group_col = NULL, label = "Jitter Derived Quantities", message = NULL, plot_kind = "jitter_derived"))
     }
@@ -1784,11 +2236,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No retrospective outputs found", plot_kind = "retro"))
       }
+      if (!"recruitment" %in% names(data)) data$recruitment <- NA_real_
+      if (!"fishing_mortality" %in% names(data)) data$fishing_mortality <- NA_real_
       data <- data %>%
         mutate(
           year = suppressWarnings(as.numeric(year)),
           depletion = suppressWarnings(as.numeric(depletion)),
           spawning_potential = suppressWarnings(as.numeric(spawning_potential)),
+          recruitment = suppressWarnings(as.numeric(recruitment)),
+          fishing_mortality = suppressWarnings(as.numeric(fishing_mortality)),
           peel = as.integer(peel)
         ) %>%
         filter(is.finite(year), is.finite(depletion), is.finite(spawning_potential))
@@ -1799,7 +2255,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
       eps <- .Machine$double.eps
       base_terminal <- data %>%
         filter(peel == 0) %>%
-        select(scenario, year, depletion_base = depletion, spawning_potential_base = spawning_potential)
+        select(
+          scenario,
+          year,
+          depletion_base = depletion,
+          spawning_potential_base = spawning_potential,
+          recruitment_base = recruitment,
+          fishing_mortality_base = fishing_mortality
+        )
       
       peel_terminal <- data %>%
         filter(peel > 0) %>%
@@ -1809,6 +2272,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
           year = max(year, na.rm = TRUE),
           depletion_peel = dplyr::last(depletion),
           spawning_potential_peel = dplyr::last(spawning_potential),
+          recruitment_peel = dplyr::last(recruitment),
+          fishing_mortality_peel = dplyr::last(fishing_mortality),
           .groups = "drop"
         )
       
@@ -1816,12 +2281,16 @@ mod_likelihood_server <- function(input, output, session, rv) {
         left_join(base_terminal, by = c("scenario", "year")) %>%
         mutate(
           rho_dep_component = (depletion_peel - depletion_base) / pmax(abs(depletion_base), eps),
-          rho_sp_component = (spawning_potential_peel - spawning_potential_base) / pmax(abs(spawning_potential_base), eps)
+          rho_sp_component = (spawning_potential_peel - spawning_potential_base) / pmax(abs(spawning_potential_base), eps),
+          rho_rec_component = (recruitment_peel - recruitment_base) / pmax(abs(recruitment_base), eps),
+          rho_f_component = (fishing_mortality_peel - fishing_mortality_base) / pmax(abs(fishing_mortality_base), eps)
         ) %>%
         group_by(scenario) %>%
         summarise(
           mohn_rho_depletion = ifelse(sum(is.finite(rho_dep_component)) > 0, mean(rho_dep_component, na.rm = TRUE), NA_real_),
           mohn_rho_spawning_potential = ifelse(sum(is.finite(rho_sp_component)) > 0, mean(rho_sp_component, na.rm = TRUE), NA_real_),
+          mohn_rho_recruitment = ifelse(sum(is.finite(rho_rec_component)) > 0, mean(rho_rec_component, na.rm = TRUE), NA_real_),
+          mohn_rho_fishing_mortality = ifelse(sum(is.finite(rho_f_component)) > 0, mean(rho_f_component, na.rm = TRUE), NA_real_),
           .groups = "drop"
         )
       
@@ -2095,6 +2564,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     if (identical(plot_kind, "jitter")) {
+      grad_reference <- if (is.finite(filters$jitter_grad_reference) && filters$jitter_grad_reference > 0) filters$jitter_grad_reference else 0.001
+      converged_only <- isTRUE(filters$jitter_converged_only_diagnostics)
+      jitter_counts <- format_jitter_convergence_counts(
+        build_jitter_seed_status_tables(filters$scenarios, cutoff = grad_reference)$summary
+      )
       plot_df <- data %>%
         mutate(
           max_grad = ifelse(max_grad > 0, max_grad, NA_real_),
@@ -2141,7 +2615,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
             color = "red", size = 5, shape = 18, na.rm = TRUE
           ) +
           geom_hline(yintercept = 0, linetype = "dashed", color = "red", linewidth = 0.8, alpha = 0.5) +
-          geom_vline(xintercept = 0.001, linetype = "dotted", color = "gray50", linewidth = 0.6) +
+          geom_vline(xintercept = grad_reference, linetype = "dotted", color = "gray50", linewidth = 0.6) +
           scale_x_log10() +
           scale_color_viridis_c(option = "D", guide = "none") +
           coord_cartesian(ylim = c(-5, 20)) +
@@ -2150,7 +2624,19 @@ mod_likelihood_server <- function(input, output, session, rv) {
             x = "Maximum Gradient (log scale)",
             y = "% Difference in Objective Function",
             title = "Jitter Analysis: Convergence Diagnostics",
-            subtitle = "Red diamond = Reference model | Gray line = 0.001 | Orange triangles = Outliers"
+            subtitle = if (isTRUE(converged_only)) {
+              paste0(
+                "Converged only: max_grad <= ", format(grad_reference, trim = TRUE),
+                " | Red diamond = Reference model | Orange triangles = Outliers",
+                if (!is.null(jitter_counts)) paste0(" | Converged/total: ", jitter_counts) else ""
+              )
+            } else {
+              paste0(
+                "Red diamond = Reference model | Gray line = ", format(grad_reference, trim = TRUE),
+                " | Orange triangles = Outliers",
+                if (!is.null(jitter_counts)) paste0(" | Converged/total: ", jitter_counts) else ""
+              )
+            }
           ) +
           theme_bw(base_size = 12) +
           theme(
@@ -2166,12 +2652,22 @@ mod_likelihood_server <- function(input, output, session, rv) {
       param_view <- if (is.null(filters$jitter_param_view)) "input" else filters$jitter_param_view
       param_scope <- if (is.null(filters$jitter_param_scope)) "top" else filters$jitter_param_scope
       param_window <- if (is.null(filters$jitter_param_window)) c(1L, 100L) else as.integer(filters$jitter_param_window)
-      converged_only <- isTRUE(filters$jitter_final_converged_only)
+      converged_only <- isTRUE(filters$jitter_converged_only) && identical(param_view, "final")
+      converged_max_grad <- if (is.finite(filters$jitter_converged_max_grad)) filters$jitter_converged_max_grad else 0.01
       metric <- if (is.null(filters$jitter_param_metric)) "pct_change" else filters$jitter_param_metric
       range_mode <- if (is.null(filters$jitter_param_range)) "focused" else filters$jitter_param_range
+      jitter_counts <- format_jitter_convergence_counts(
+        build_jitter_seed_status_tables(filters$scenarios, cutoff = converged_max_grad)$summary
+      )
 
-      ranked_params <- data %>%
+      ranked_params_all <- data %>%
         distinct(scenario, param_key, Index, Var_name, family, median_abs_pct_change, mean_abs_pct_change) %>%
+        mutate(
+          median_abs_pct_change = suppressWarnings(as.numeric(median_abs_pct_change)),
+          mean_abs_pct_change = suppressWarnings(as.numeric(mean_abs_pct_change))
+        )
+
+      ranked_params <- ranked_params_all %>%
         filter(is.finite(median_abs_pct_change))
 
       selected_params <- ranked_params %>%
@@ -2204,9 +2700,16 @@ mod_likelihood_server <- function(input, output, session, rv) {
       if (identical(param_scope, "all")) {
         window_start <- max(1L, min(param_window[1], 100L))
         window_end <- max(window_start, min(param_window[2], 100L))
-        selected_params <- ranked_params %>%
+        selected_params <- ranked_params_all %>%
           group_by(scenario) %>%
-          arrange(dplyr::desc(median_abs_pct_change), dplyr::desc(mean_abs_pct_change), Var_name, Index, .by_group = TRUE) %>%
+          arrange(
+            dplyr::desc(is.finite(median_abs_pct_change)),
+            dplyr::desc(median_abs_pct_change),
+            dplyr::desc(mean_abs_pct_change),
+            Var_name,
+            Index,
+            .by_group = TRUE
+          ) %>%
           mutate(
             plot_rank = row_number(),
             n_params = dplyr::n(),
@@ -2218,23 +2721,75 @@ mod_likelihood_server <- function(input, output, session, rv) {
           select(-n_params, -window_rank_min, -window_rank_max)
       }
 
-      plot_df <- data %>%
+      global_rank_caption <- NULL
+      if (identical(param_scope, "all") && nrow(selected_params) > 0) {
+        rank_span <- selected_params %>%
+          group_by(scenario) %>%
+          summarise(
+            rank_min = min(plot_rank, na.rm = TRUE),
+            rank_max = max(plot_rank, na.rm = TRUE),
+            rank_total = dplyr::n_distinct(plot_rank),
+            .groups = "drop"
+          )
+        rank_totals <- ranked_params_all %>%
+          group_by(scenario) %>%
+          summarise(rank_total = dplyr::n(), .groups = "drop")
+        rank_span <- rank_span %>%
+          select(-rank_total) %>%
+          left_join(rank_totals, by = "scenario")
+        global_rank_caption <- paste(
+          paste0(rank_span$scenario, " ranks ", rank_span$rank_min, "-", rank_span$rank_max, " of ", rank_span$rank_total),
+          collapse = " | "
+        )
+      }
+
+      plot_df_all <- data %>%
         inner_join(selected_params %>% select(scenario, param_key, plot_rank), by = c("scenario", "param_key")) %>%
         mutate(
           param_label = paste0(Var_name, "\n[", family, "]"),
           plot_value = case_when(
             metric == "value" ~ after,
             metric == "delta" ~ delta,
-            TRUE ~ pct_change
+            TRUE ~ dplyr::case_when(
+              is.finite(pct_change) ~ pct_change,
+              is.finite(before) & is.finite(after) & before != 0 ~
+                100 * (after - before) / before,
+              TRUE ~ NA_real_
+            )
           ),
           original_value = case_when(
             metric == "value" ~ before,
             TRUE ~ 0
           )
-        ) %>%
+        )
+
+      scaffold_df <- selected_params %>%
+        transmute(
+          scenario,
+          param_key,
+          plot_rank,
+          param_label = paste0(Var_name, "\n[", family, "]")
+        )
+
+      plot_df <- plot_df_all %>%
         filter(is.finite(plot_value))
 
-      original_df <- plot_df %>%
+      if (nrow(plot_df) == 0 && !identical(param_scope, "all")) {
+        return(
+          ggplot() +
+            annotate(
+              "text",
+              x = 0.5,
+              y = 0.5,
+              label = "No finite parameter values in the selected percentile window for this scale.",
+              size = 6,
+              color = "#999"
+            ) +
+            theme_void()
+        )
+      }
+
+      original_df <- plot_df_all %>%
         group_by(scenario, param_key, param_label) %>%
         summarise(original_value = first(original_value), .groups = "drop")
 
@@ -2267,22 +2822,23 @@ mod_likelihood_server <- function(input, output, session, rv) {
           q90 = stats::quantile(plot_value, 0.9, na.rm = TRUE),
           .groups = "drop"
         )
+      if (identical(param_scope, "all")) {
+        summary_df <- scaffold_df %>%
+          left_join(summary_df, by = c("scenario", "param_key", "param_label"))
+      }
       summary_df$param_key <- factor(summary_df$param_key, levels = unique(param_levels))
       label_map <- plot_df %>%
         distinct(param_key, param_label) %>%
         mutate(param_key = as.character(param_key))
       if (identical(param_scope, "all")) {
-        sparse_keys <- selected_params %>%
-          distinct(scenario, param_key, plot_rank) %>%
-          group_by(scenario) %>%
-          arrange(plot_rank, .by_group = TRUE) %>%
-          mutate(show_label = plot_rank %in% unique(round(seq(1, max(plot_rank), length.out = min(10, max(plot_rank)))))) %>%
-          ungroup() %>%
-          filter(show_label) %>%
-          pull(param_key) %>%
-          as.character()
-        label_map <- label_map %>%
-          mutate(param_label = ifelse(param_key %in% sparse_keys, param_label, ""))
+        label_map <- selected_params %>%
+          distinct(param_key, plot_rank) %>%
+          arrange(plot_rank) %>%
+          mutate(
+            param_key = as.character(param_key),
+            param_label = as.character(plot_rank)
+          ) %>%
+          select(param_key, param_label)
       }
 
       y_label <- case_when(
@@ -2301,9 +2857,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
       )
 
       plot_subtitle <- case_when(
-        metric == "value" && identical(param_view, "final") && converged_only ~ "About 20 parameters per scenario from converged final runs (max_grad <= 0.01). Red diamond = original value",
-        metric == "delta" && identical(param_view, "final") && converged_only ~ "About 20 parameters per scenario from converged final runs (max_grad <= 0.01). Red diamond = no change",
-        metric == "pct_change" && identical(param_view, "final") && converged_only ~ "About 20 parameters per scenario from converged final runs (max_grad <= 0.01). Red diamond = 0% change",
+        metric == "value" && identical(param_view, "final") && converged_only ~ paste0("About 20 parameters per scenario from converged final runs (max_grad <= ", format(converged_max_grad, trim = TRUE), "). Red diamond = original value"),
+        metric == "delta" && identical(param_view, "final") && converged_only ~ paste0("About 20 parameters per scenario from converged final runs (max_grad <= ", format(converged_max_grad, trim = TRUE), "). Red diamond = no change"),
+        metric == "pct_change" && identical(param_view, "final") && converged_only ~ paste0("About 20 parameters per scenario from converged final runs (max_grad <= ", format(converged_max_grad, trim = TRUE), "). Red diamond = 0% change"),
         metric == "value" && identical(param_view, "final") ~ "About 20 parameters per scenario from completed final runs. Red diamond = original value",
         metric == "delta" && identical(param_view, "final") ~ "About 20 parameters per scenario from completed final runs. Red diamond = no change",
         metric == "pct_change" && identical(param_view, "final") ~ "About 20 parameters per scenario from completed final runs. Red diamond = 0% change",
@@ -2319,6 +2875,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
           plot_subtitle,
           fixed = TRUE
         )
+        if (!is.null(global_rank_caption)) {
+          plot_subtitle <- paste0(plot_subtitle, " Global ranks: ", global_rank_caption, ".")
+        }
       }
 
       if (metric %in% c("delta", "pct_change")) {
@@ -2326,6 +2885,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
           plot_subtitle,
           if (identical(range_mode, "focused")) " Showing focused range." else " Showing full range."
         )
+      }
+      if (!is.null(jitter_counts)) {
+        plot_subtitle <- paste0(plot_subtitle, " Converged/total: ", jitter_counts, ".")
       }
 
       if (identical(param_scope, "all")) {
@@ -2389,7 +2951,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
       p <- p +
         facet_wrap(~ scenario, scales = "free", ncol = facet_ncol) +
-        scale_x_discrete(labels = function(x) {
+        scale_x_discrete(drop = FALSE, labels = function(x) {
           lab_map <- setNames(as.character(label_map$param_label), as.character(label_map$param_key))
           unname(lab_map[as.character(x)])
         }) +
@@ -2419,30 +2981,113 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     if (identical(plot_kind, "jitter_derived")) {
+      converged_only <- isTRUE(filters$jitter_converged_only)
+      converged_max_grad <- if (is.finite(filters$jitter_converged_max_grad)) filters$jitter_converged_max_grad else 0.01
+      derived_view <- if (is.null(filters$jitter_derived_view)) "summary" else filters$jitter_derived_view
+      metric_labels <- c(
+        "Depletion" = "SB / SB[F==0]",
+        "Spawning Potential (1e3 MT)" = "SB~(10^3~MT)",
+        "Recruitment" = "Recruitment",
+        "Fishing Mortality" = "F"
+      )
+      jitter_counts <- format_jitter_convergence_counts(
+        build_jitter_seed_status_tables(filters$scenarios, cutoff = converged_max_grad)$summary
+      )
       ref_df <- data %>%
-        distinct(scenario, metric, reference_value, year)
+        distinct(scenario, metric, reference_value, year) %>%
+        mutate(metric_label = dplyr::recode(metric, !!!metric_labels, .default = metric))
 
-      plot_df <- data %>%
-        mutate(seed_value = suppressWarnings(as.numeric(seed)))
+      summary_df <- data %>%
+        group_by(scenario, metric, year) %>%
+        summarise(
+          q025 = stats::quantile(value, 0.025, na.rm = TRUE),
+          q10 = stats::quantile(value, 0.10, na.rm = TRUE),
+          q25 = stats::quantile(value, 0.25, na.rm = TRUE),
+          q50 = stats::quantile(value, 0.50, na.rm = TRUE),
+          q75 = stats::quantile(value, 0.75, na.rm = TRUE),
+          q90 = stats::quantile(value, 0.90, na.rm = TRUE),
+          q975 = stats::quantile(value, 0.975, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        mutate(metric_label = dplyr::recode(metric, !!!metric_labels, .default = metric))
+
+      if (identical(derived_view, "lines")) {
+        plot_df <- data %>%
+          mutate(
+            seed_id = as.factor(seed),
+            metric_label = dplyr::recode(metric, !!!metric_labels, .default = metric)
+          )
+
+        return(
+          ggplot(plot_df, aes(x = year, y = value, group = seed, color = seed_id)) +
+            geom_line(alpha = 0.55, linewidth = 0.6, na.rm = TRUE) +
+            geom_line(
+              data = ref_df,
+              aes(x = year, y = reference_value, group = 1),
+              inherit.aes = FALSE,
+              color = "#d62728",
+              linewidth = 0.9,
+              na.rm = TRUE
+            ) +
+            facet_grid(metric_label ~ scenario, scales = "free_y", labeller = labeller(metric_label = label_parsed)) +
+            scale_color_viridis_d(option = "D", guide = "none") +
+            labs(
+              x = "Year",
+              y = "Derived quantity value",
+              title = "Jitter Derived Quantity Time Series",
+              subtitle = if (isTRUE(converged_only)) {
+                paste0(
+                  "Individual jitter runs shown as lines. Red line = original model. Converged only: max_grad <= ",
+                  format(converged_max_grad, trim = TRUE),
+                  if (!is.null(jitter_counts)) paste0(" | Converged/total: ", jitter_counts) else ""
+                )
+              } else {
+                paste0(
+                  "Individual jitter runs shown as lines. Red line = original model.",
+                  if (!is.null(jitter_counts)) paste0(" Converged/total: ", jitter_counts, ".") else ""
+                )
+              }
+            ) +
+            theme_bw(base_size = 12) +
+            theme(
+              strip.text = element_text(face = "bold"),
+              strip.background = element_rect(fill = "#d9edf7"),
+              panel.grid.minor = element_blank()
+            )
+        )
+      }
 
       return(
-        ggplot(plot_df, aes(x = year, y = value, group = seed, color = seed_value)) +
-          geom_line(alpha = 0.6, linewidth = 0.6, na.rm = TRUE) +
+        ggplot(summary_df, aes(x = year)) +
+          geom_ribbon(aes(ymin = q025, ymax = q975), fill = "#d9ecf5", alpha = 0.8, na.rm = TRUE) +
+          geom_ribbon(aes(ymin = q10, ymax = q90), fill = "#9ecae1", alpha = 0.85, na.rm = TRUE) +
+          geom_ribbon(aes(ymin = q25, ymax = q75), fill = "#4f90b5", alpha = 0.9, na.rm = TRUE) +
+          geom_line(aes(y = q50), color = "#123b5d", linewidth = 0.9, na.rm = TRUE) +
           geom_line(
             data = ref_df,
             aes(x = year, y = reference_value, group = 1),
             inherit.aes = FALSE,
-            color = "#d62728",
-            linewidth = 0.9,
-            na.rm = TRUE
-          ) +
-          facet_grid(metric ~ scenario, scales = "free_y") +
-          scale_color_viridis_c(option = "D", name = "Jitter seed", na.value = "#2e6b3f") +
+              color = "#d62728",
+              linewidth = 0.9,
+              na.rm = TRUE
+            ) +
+          facet_grid(metric_label ~ scenario, scales = "free_y", labeller = labeller(metric_label = label_parsed)) +
           labs(
             x = "Year",
             y = "Derived quantity value",
             title = "Jitter Derived Quantity Time Series",
-            subtitle = "Green lines = jitter runs. Red line = original model time series"
+            subtitle = if (isTRUE(converged_only)) {
+              paste0(
+                "Bands show 95%, 80%, and 50% ranges with median line. Red line = original model. Converged only: max_grad <= ",
+                format(converged_max_grad, trim = TRUE),
+                if (!is.null(jitter_counts)) paste0(" | Converged/total: ", jitter_counts) else ""
+              )
+            } else {
+              paste0(
+                "Bands show 95%, 80%, and 50% ranges with median line. Red line = original model.",
+                if (!is.null(jitter_counts)) paste0(" Converged/total: ", jitter_counts, ".") else ""
+              )
+            }
           ) +
           theme_bw(base_size = 12) +
           theme(
@@ -2454,11 +3099,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
     
     if (identical(plot_kind, "retro")) {
+      if (!"recruitment" %in% names(data)) data$recruitment <- NA_real_
+      if (!"fishing_mortality" %in% names(data)) data$fishing_mortality <- NA_real_
       retro_df <- data %>%
         mutate(
           year = suppressWarnings(as.numeric(year)),
           depletion = suppressWarnings(as.numeric(depletion)),
           spawning_potential = suppressWarnings(as.numeric(spawning_potential)),
+          recruitment = suppressWarnings(as.numeric(recruitment)),
+          fishing_mortality = suppressWarnings(as.numeric(fishing_mortality)),
           scenario = factor(scenario, levels = unique(scenario)),
           peel = as.integer(peel)
         ) %>%
@@ -2498,75 +3147,96 @@ mod_likelihood_server <- function(input, output, session, rv) {
           )
         )
       }
+      retro_metric_labels <- c(
+        "Depletion" = "SB / SB[F==0]",
+        "Spawning potential" = "SB~(10^3~MT)",
+        "Recruitment" = "Recruitment",
+        "Fishing mortality" = "F"
+      )
       
       rho_df <- info$rho
       dep_anno <- if (!is.null(rho_df) && nrow(rho_df) > 0) {
-        rho_df %>% transmute(scenario, label = sprintf("Mohn's rho: %.3f", mohn_rho_depletion))
+        rho_df %>% transmute(scenario, metric = "Depletion", label = sprintf("Mohn's rho: %.3f", mohn_rho_depletion))
       } else {
-        data.frame(scenario = character(0), label = character(0), stringsAsFactors = FALSE)
+        data.frame(scenario = character(0), metric = character(0), label = character(0), stringsAsFactors = FALSE)
       }
       sp_anno <- if (!is.null(rho_df) && nrow(rho_df) > 0) {
-        rho_df %>% transmute(scenario, label = sprintf("Mohn's rho: %.3f", mohn_rho_spawning_potential))
+        rho_df %>% transmute(scenario, metric = "Spawning potential", label = sprintf("Mohn's rho: %.3f", mohn_rho_spawning_potential))
       } else {
-        data.frame(scenario = character(0), label = character(0), stringsAsFactors = FALSE)
+        data.frame(scenario = character(0), metric = character(0), label = character(0), stringsAsFactors = FALSE)
       }
-      
-      dep_plot <- ggplot(
-        retro_df,
-        aes(
-          x = year,
-          y = depletion,
-          color = factor(peel, levels = peel_levels_chr),
-          group = interaction(scenario, peel)
-        )
-      ) +
-        geom_line(linewidth = 1.1, alpha = 0.9) +
-        geom_text(
-          data = dep_anno,
-          aes(x = Inf, y = Inf, label = label),
-          inherit.aes = FALSE,
-          hjust = 1.05, vjust = 1.2, size = 3.4, fontface = "bold", color = "black"
-        ) +
-        facet_wrap(~scenario, scales = "free_x", ncol = facet_ncol) +
-        scale_color_manual(values = peel_colors, breaks = peel_levels_chr, labels = peel_labels) +
-        geom_hline(yintercept = 0.2, linetype = "dashed", color = "darkred") +
-        geom_hline(yintercept = 0.5, linetype = "dashed", color = "darkgreen") +
-        labs(
-          x = "Year",
-          y = bquote(SB/SB["F=0"]),
-          color = "Terminal year",
-          title = "Retrospective Depletion"
-        ) +
-        coord_cartesian(ylim = c(0, 1.1)) +
-        theme_bw(base_size = 12)
-      
-      sp_plot <- ggplot(
-        retro_df,
-        aes(
-          x = year,
-          y = spawning_potential,
-          color = factor(peel, levels = peel_levels_chr),
-          group = interaction(scenario, peel)
-        )
-      ) +
-        geom_line(linewidth = 1.1, alpha = 0.9) +
-        geom_text(
-          data = sp_anno,
-          aes(x = Inf, y = Inf, label = label),
-          inherit.aes = FALSE,
-          hjust = 1.05, vjust = 1.2, size = 3.4, fontface = "bold", color = "black"
-        ) +
-        facet_wrap(~scenario, scales = "free_x", ncol = facet_ncol) +
-        scale_color_manual(values = peel_colors, breaks = peel_levels_chr, labels = peel_labels) +
-        labs(
-          x = "Year",
-          y = bquote("Spawning Potential (" * 10^3 * " MT)"),
-          color = "Terminal year",
-          title = "Retrospective Spawning Potential"
-        ) +
-        theme_bw(base_size = 12)
-      
-      return(cowplot::plot_grid(dep_plot, sp_plot, ncol = 1, align = "v"))
+      rec_anno <- if (!is.null(rho_df) && nrow(rho_df) > 0) {
+        rho_df %>% transmute(scenario, metric = "Recruitment", label = sprintf("Mohn's rho: %.3f", mohn_rho_recruitment))
+      } else {
+        data.frame(scenario = character(0), metric = character(0), label = character(0), stringsAsFactors = FALSE)
+      }
+      fm_anno <- if (!is.null(rho_df) && nrow(rho_df) > 0) {
+        rho_df %>% transmute(scenario, metric = "Fishing mortality", label = sprintf("Mohn's rho: %.3f", mohn_rho_fishing_mortality))
+      } else {
+        data.frame(scenario = character(0), metric = character(0), label = character(0), stringsAsFactors = FALSE)
+      }
+
+      retro_long <- bind_rows(
+        retro_df %>%
+          transmute(scenario, year, peel, metric = "Depletion", value = depletion),
+        retro_df %>%
+          transmute(scenario, year, peel, metric = "Spawning potential", value = spawning_potential),
+        retro_df %>%
+          transmute(scenario, year, peel, metric = "Recruitment", value = recruitment),
+        retro_df %>%
+          transmute(scenario, year, peel, metric = "Fishing mortality", value = fishing_mortality)
+      ) %>%
+        filter(is.finite(value)) %>%
+        mutate(metric_label = dplyr::recode(metric, !!!retro_metric_labels, .default = metric))
+      anno_df <- bind_rows(dep_anno, sp_anno, rec_anno, fm_anno) %>%
+        mutate(metric_label = dplyr::recode(metric, !!!retro_metric_labels, .default = metric))
+
+      return(
+        ggplot(
+          retro_long,
+          aes(
+            x = year,
+            y = value,
+            color = factor(peel, levels = peel_levels_chr),
+            group = interaction(scenario, peel, metric)
+          )
+          ) +
+          geom_line(linewidth = 1.0, alpha = 0.9) +
+          geom_text(
+            data = anno_df,
+            aes(x = Inf, y = Inf, label = label),
+            inherit.aes = FALSE,
+            hjust = 1.05, vjust = 1.2, size = 3.2, fontface = "bold", color = "black"
+          ) +
+          geom_hline(
+            data = data.frame(metric_label = "SB / SB[F==0]", threshold = 0.2),
+            aes(yintercept = threshold),
+            inherit.aes = FALSE,
+            linetype = "dashed",
+            color = "darkred"
+          ) +
+          geom_hline(
+            data = data.frame(metric_label = "SB / SB[F==0]", threshold = 0.5),
+            aes(yintercept = threshold),
+            inherit.aes = FALSE,
+            linetype = "dashed",
+            color = "darkgreen"
+          ) +
+          facet_grid(metric_label ~ scenario, scales = "free_y", labeller = labeller(metric_label = label_parsed)) +
+          scale_color_manual(values = peel_colors, breaks = peel_levels_chr, labels = peel_labels) +
+          labs(
+            x = "Year",
+            y = NULL,
+            color = "Terminal year",
+            title = "Retrospective Diagnostics"
+          ) +
+          theme_bw(base_size = 12) +
+          theme(
+            strip.text = element_text(face = "bold"),
+            strip.background = element_rect(fill = "#d9edf7"),
+            panel.grid.minor = element_blank()
+          )
+      )
     }
     
     if (identical(plot_kind, "hessian")) {
@@ -2587,10 +3257,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
       split_by_region = isTRUE(filters$split_by_region)
     )
   })
-  observeEvent(list(input$live_update_plots, input$lik_scenarios, input$lik_profile_type,
+  observeEvent(list(input$live_update_plots, input$lik_main_tab, input$lik_scenarios, input$lik_profile_type, input$lik_jitter_type,
                     input$lik_groups, input$lik_regions, input$lik_split_by_region, input$lik_facet_ncol,
+                    input$lik_jitter_grad_reference, input$lik_jitter_converged_only_diagnostics,
                     input$lik_jitter_param_view, input$lik_jitter_param_scope, input$lik_jitter_param_window,
-                    input$lik_jitter_final_converged_only,
+                    input$lik_jitter_converged_only, input$lik_jitter_converged_max_grad,
+                    input$lik_jitter_derived_view,
                     input$lik_jitter_param_metric, input$lik_jitter_param_range), {
     req(rv$data_loaded)
     if (!isTRUE(input$live_update_plots)) return()
@@ -2616,7 +3288,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
     likelihood_plot_reactive()
   })
 
-  output$profile_target_info_ui <- renderUI({
+  output$likelihood_info_ui <- renderUI({
+    if (!identical(input$lik_main_tab, "likelihood")) return(NULL)
     target_tbl <- profile_target_info_reactive()
     if (is.null(target_tbl) || nrow(target_tbl) == 0) return(NULL)
 
@@ -2635,8 +3308,85 @@ mod_likelihood_server <- function(input, output, session, rv) {
       DTOutput("profile_target_info_table")
     )
   })
+
+  output$jitter_info_ui <- renderUI({
+    if (!identical(input$lik_main_tab, "jitter")) return(NULL)
+
+    filters <- lik_filters_current()
+    jitter_info <- jitter_info_reactive()
+    if (is.null(jitter_info) || is.null(jitter_info$summary) || nrow(jitter_info$summary) == 0) return(NULL)
+
+    cutoff <- if (identical(filters$profile_type, "jitter")) {
+      if (is.finite(filters$jitter_grad_reference)) filters$jitter_grad_reference else 0.001
+    } else {
+      if (is.finite(filters$jitter_converged_max_grad)) filters$jitter_converged_max_grad else 0.001
+    }
+
+    box(
+      title = "Jitter Information",
+      width = 12,
+      solidHeader = TRUE,
+      status = "warning",
+      collapsible = TRUE,
+      collapsed = TRUE,
+      div(
+        style = "margin-bottom: 10px; padding: 10px 12px; background: #fff8e1; border: 1px solid #f0d98c; border-left: 4px solid #f39c12; border-radius: 4px;",
+        tags$div("Summary of jitter seeds loaded for each selected model.", style = "font-weight: bold; margin-bottom: 4px;"),
+        tags$div(
+          paste0(
+            "Converged means completed runs with |max_grad| <= ",
+            format(cutoff, trim = TRUE),
+            ", and Hessian OK when Hessian information exists."
+          ),
+          style = "font-size: 12px; color: #333;"
+        )
+      ),
+      tags$div(style = "font-weight: bold; margin-bottom: 6px;", "Model summary"),
+      DTOutput("jitter_info_table"),
+      tags$hr(style = "margin: 12px 0 10px 0;"),
+      tags$div(style = "font-weight: bold; margin-bottom: 6px;", "Seed details"),
+      DTOutput("jitter_seed_table")
+    )
+  })
+
+  output$retro_info_ui <- renderUI({
+    if (!identical(input$lik_main_tab, "retro")) return(NULL)
+
+    box(
+      title = "Retro Information",
+      width = 12,
+      solidHeader = TRUE,
+      status = "warning",
+      collapsible = TRUE,
+      collapsed = TRUE,
+      div(
+        style = "margin-bottom: 10px; padding: 10px 12px; background: #fff8e1; border: 1px solid #f0d98c; border-left: 4px solid #f39c12; border-radius: 4px;",
+        tags$div("Retrospective diagnostics compare the base run against successive terminal-year peels.", style = "font-weight: bold; margin-bottom: 4px;"),
+        tags$div("The plot shows depletion and spawning potential trajectories by peel. Mohn's rho is summarized in the retro plot subtitle when available.", style = "font-size: 12px; color: #333;")
+      )
+    )
+  })
+
+  output$hessian_info_ui <- renderUI({
+    if (!identical(input$lik_main_tab, "hessian")) return(NULL)
+
+    box(
+      title = "Hessian Information",
+      width = 12,
+      solidHeader = TRUE,
+      status = "warning",
+      collapsible = TRUE,
+      collapsed = TRUE,
+      div(
+        style = "margin-bottom: 10px; padding: 10px 12px; background: #fff8e1; border: 1px solid #f0d98c; border-left: 4px solid #f39c12; border-radius: 4px;",
+        tags$div("Hessian diagnostics summarise PDH / SPD status and the count of negative eigenvalues.", style = "font-weight: bold; margin-bottom: 4px;"),
+        tags$div("Use the Hessian table below to compare model-level status, reliability, and eigenvalue summaries.", style = "font-size: 12px; color: #333;")
+      )
+    )
+  })
   
   output$likelihood_table_ui <- renderUI({
+    if (!identical(input$lik_main_tab, "hessian")) return(NULL)
     info <- profile_data_reactive()
     plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else "piner"
     if (!identical(plot_kind, "hessian")) return(NULL)
@@ -2661,9 +3411,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
   })
 
   output$profile_gradient_table_ui <- renderUI({
+    if (!identical(input$lik_main_tab, "likelihood")) return(NULL)
+    info <- profile_data_reactive()
+    plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else "piner"
     grad_tbl <- profile_gradient_table_reactive()
     filters <- lik_filters()
     if (is.null(filters) || !identical(filters$profile_type, "components")) return(NULL)
+    if (!identical(plot_kind, "piner")) return(NULL)
     if (is.null(grad_tbl) || nrow(grad_tbl) == 0) return(NULL)
 
     box(
@@ -2677,8 +3431,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
       DTOutput("profile_gradient_table")
     )
   })
-  
+
   output$likelihood_table <- renderDT({
+    if (!identical(input$lik_main_tab, "hessian")) return(NULL)
     info <- profile_data_reactive()
     plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else "piner"
     if (!identical(plot_kind, "hessian") || nrow(info$data) == 0) return(NULL)
@@ -2730,12 +3485,39 @@ mod_likelihood_server <- function(input, output, session, rv) {
   })
 
   output$profile_target_info_table <- renderDT({
+    if (!identical(input$lik_main_tab, "likelihood")) return(NULL)
     target_tbl <- profile_target_info_reactive()
     if (is.null(target_tbl) || nrow(target_tbl) == 0) return(NULL)
 
     datatable(
       target_tbl,
       options = list(pageLength = 10, scrollX = TRUE),
+      rownames = FALSE
+    )
+  })
+
+  output$jitter_info_table <- renderDT({
+    if (!identical(input$lik_main_tab, "jitter")) return(NULL)
+    jitter_info <- jitter_info_reactive()
+    jitter_tbl <- if (!is.null(jitter_info)) jitter_info$summary else NULL
+    if (is.null(jitter_tbl) || nrow(jitter_tbl) == 0) return(NULL)
+
+    datatable(
+      jitter_tbl,
+      options = list(pageLength = 10, scrollX = TRUE),
+      rownames = FALSE
+    )
+  })
+
+  output$jitter_seed_table <- renderDT({
+    if (!identical(input$lik_main_tab, "jitter")) return(NULL)
+    jitter_info <- jitter_info_reactive()
+    seed_tbl <- if (!is.null(jitter_info)) jitter_info$seeds else NULL
+    if (is.null(seed_tbl) || nrow(seed_tbl) == 0) return(NULL)
+
+    datatable(
+      seed_tbl,
+      options = list(pageLength = 12, scrollX = TRUE),
       rownames = FALSE
     )
   })

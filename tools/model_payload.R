@@ -202,6 +202,33 @@ mp_extract_rep_timeseries <- function(rep_obj, scenario = NA_character_, peel = 
   sp$bio_fish <- NULL
 
   out <- merge(dep, sp, by = "year", all = FALSE)
+
+  rec_slot <- mp_safe(tryCatch(rep_obj@rec, error = function(e) NULL))
+  rec_df <- mp_safe(as.data.frame(rec_slot))
+  if (!is.null(rec_df) && nrow(rec_df) > 0) {
+    rec_df$year <- suppressWarnings(as.numeric(rec_df$year))
+    rec_df$data <- suppressWarnings(as.numeric(rec_df$data))
+    rec_df <- rec_df[is.finite(rec_df$year) & is.finite(rec_df$data), , drop = FALSE]
+    if (nrow(rec_df) > 0) {
+      rec_df <- stats::aggregate(data ~ year, data = rec_df, FUN = sum)
+      names(rec_df)[names(rec_df) == "data"] <- "recruitment"
+      out <- merge(out, rec_df, by = "year", all = TRUE)
+    }
+  }
+
+  fm_slot <- mp_safe(tryCatch(rep_obj@fmlevel, error = function(e) NULL))
+  fm_df <- mp_safe(as.data.frame(fm_slot))
+  if (!is.null(fm_df) && nrow(fm_df) > 0) {
+    fm_df$year <- suppressWarnings(as.numeric(fm_df$year))
+    fm_df$data <- suppressWarnings(as.numeric(fm_df$data))
+    fm_df <- fm_df[is.finite(fm_df$year) & is.finite(fm_df$data), , drop = FALSE]
+    if (nrow(fm_df) > 0) {
+      fm_df <- stats::aggregate(data ~ year, data = fm_df, FUN = function(x) mean(x, na.rm = TRUE))
+      names(fm_df)[names(fm_df) == "data"] <- "fishing_mortality"
+      out <- merge(out, fm_df, by = "year", all = TRUE)
+    }
+  }
+
   out$scenario <- scenario
   out$peel <- as.integer(peel)
   out
@@ -428,6 +455,8 @@ mp_extract_jitter_derived_quantities <- function(seed_dir, seed = NA_integer_) {
     year = suppressWarnings(as.numeric(ts_df$year)),
     depletion = suppressWarnings(as.numeric(ts_df$depletion)),
     spawning_potential = suppressWarnings(as.numeric(ts_df$spawning_potential)),
+    recruitment = suppressWarnings(as.numeric(ts_df$recruitment)),
+    fishing_mortality = suppressWarnings(as.numeric(ts_df$fishing_mortality)),
     stringsAsFactors = FALSE
   )
 }
