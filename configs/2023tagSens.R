@@ -29,6 +29,12 @@ models <- list(
     jitter_seeds = paste0(1:50, collapse = " "),
     jitter_cv = "0.2",
     
+    ## post-run hessian toggles
+    jitter_hessian = "0",
+    model_hessian = "0",
+    prof_hessian = "0",
+    retro_hessian = "0",
+    
     ## hessian parallel settings
     nsplit="5"
   ),
@@ -59,6 +65,12 @@ models <- list(
     ## Jitter settings
     jitter_seeds = paste0(1:50, collapse = " "),
     jitter_cv = "0.2",
+    
+    ## post-run hessian toggles
+    jitter_hessian = "0",
+    model_hessian = "0",
+    prof_hessian = "0",
+    retro_hessian = "0",
     
     ## hessian parallel settings
     nsplit="5"
@@ -91,6 +103,12 @@ models <- list(
     jitter_seeds = paste0(1:50, collapse = " "),
     jitter_cv = "0.2",
     
+    ## post-run hessian toggles
+    jitter_hessian = "0",
+    model_hessian = "0",
+    prof_hessian = "0",
+    retro_hessian = "0",
+    
     ## hessian parallel settings
     nsplit="5"
   )
@@ -102,4 +120,3 @@ models <- list(
 
 models <- apply_model_defaults(models)
 ModelIDs <- names(models)
-

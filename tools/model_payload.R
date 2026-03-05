@@ -394,6 +394,19 @@ mp_build_profile_payload <- function(scaler_dir) {
     obj_fun = if (!is.null(par_file) && file.exists(par_file)) mp_extract_par_obj_fun(par_file) else NA_real_,
     max_grad = if (!is.null(par_file) && file.exists(par_file)) mp_extract_par_max_grad(par_file) else NA_real_,
     output_par = if (!is.null(par_file)) basename(par_file) else NA_character_,
+    hessian_requested = if (!is.null(info_out$hessian$requested)) isTRUE(info_out$hessian$requested) else NA,
+    hessian_attempted = if (!is.null(info_out$hessian$attempted)) isTRUE(info_out$hessian$attempted) else NA,
+    hessian_ok = if (!is.null(info_out$hessian$hessian_ok)) {
+      if (is.na(info_out$hessian$hessian_ok)) NA else isTRUE(info_out$hessian$hessian_ok)
+    } else if (!is.null(info_out$hessian$is_pdh)) {
+      if (is.na(info_out$hessian$is_pdh)) NA else isTRUE(info_out$hessian$is_pdh)
+    } else {
+      NA
+    },
+    hessian_status = if (!is.null(info_out$hessian$hessian_status)) as.character(info_out$hessian$hessian_status) else NA_character_,
+    hessian_reliability = if (!is.null(info_out$hessian$reliability)) as.character(info_out$hessian$reliability) else NA_character_,
+    hessian_n_negative = if (!is.null(info_out$hessian$n_negative_eigenvalues)) suppressWarnings(as.integer(info_out$hessian$n_negative_eigenvalues)) else NA_integer_,
+    hessian_n_total = if (!is.null(info_out$hessian$n_total_eigenvalues)) suppressWarnings(as.integer(info_out$hessian$n_total_eigenvalues)) else NA_integer_,
     lik_out = mp_safe(read.MFCLLikelihood(out_file)),
     lik_raw = mp_safe(readLines(out_file))
   )

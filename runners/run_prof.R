@@ -4,6 +4,7 @@ library(CondorBox)
 
 source("tools/ProfLike_utils.R")
 source("tools/model_payload.R")
+source("tools/post_hessian.R")
 source("tools/condor_archive_cleanup.R")
 
 ## environment variables
@@ -28,6 +29,7 @@ AgeFlags <- c(
   Af173 = as.numeric(Sys.getenv("Af173", "0")),
   Af174 = as.numeric(Sys.getenv("Af174", "0"))
 )
+prof_hessian <- tolower(Sys.getenv("prof_hessian", Sys.getenv("likelihood_hessian", Sys.getenv("hessian", "0")))) %in% c("1", "true", "yes", "y")
 
 safe_read_scalar <- function(path) {
   if (!is.character(path) || length(path) != 1 || !nzchar(path) || !file.exists(path)) {
@@ -87,6 +89,7 @@ cat("Scaler:", scaler, "\n")
 cat("Reps:", Reps, "\n")
 cat("QuantityType:", QuantityType, "\n")
 cat("AgeFlags:", AgeFlags, "\n")
+cat("Profile post-hessian:", prof_hessian, "\n")
 
 ## Create scaler directory and copy all files from base_dir (inputs)
 dir.create(scaler_dir, recursive = TRUE, showWarnings = FALSE)
@@ -161,6 +164,17 @@ run_commands(commands = "./ProfLike.sh",
              save_log = F,
              verbose = T)
 
+final_profile_par <- mp_final_par(scaler_dir)
+hessian_summary <- mp_run_post_hessian(
+  work_dir = scaler_dir,
+  program_path_abs = program_path_abs,
+  program_path = program_path,
+  frq_file = frq_file,
+  input_par = if (!is.null(final_profile_par)) basename(final_profile_par) else basename(most_recent),
+  project_root = project_root,
+  requested = prof_hessian
+)
+
 final_quantity_info <- detect_quantity_file(scaler_dir)
 actual_quantity <- safe_read_scalar(final_quantity_info$path)
 target_rel_err <- suppressWarnings(abs(actual_quantity - target_quantity) / pmax(abs(target_quantity), .Machine$double.eps))
@@ -178,7 +192,8 @@ info_list <- list(
   frq_file     = frq_file,
   program_path = program_path,
   model_dir    = model_dir,
-  scaler_dir   = scaler_dir
+  scaler_dir   = scaler_dir,
+  hessian      = hessian_summary
 )
 
 saveRDS(

@@ -4,6 +4,7 @@ library(CondorBox)
 
 source("tools/retro.R")
 source("tools/model_payload.R")
+source("tools/post_hessian.R")
 source("tools/condor_archive_cleanup.R")
 
 ## environment variables
@@ -24,6 +25,7 @@ retro_peel <- as.integer(Sys.getenv("retro_peel", "4"))
 
 ## mixing period
 n_mixing_periods <- as.integer(Sys.getenv("n_mixing_periods", "2"))
+retro_hessian <- tolower(Sys.getenv("retro_hessian", Sys.getenv("hessian", "0"))) %in% c("1", "true", "yes", "y")
 
 ## Create retro-specific directory inside retro folder
 retro_dir <- file.path(model_dir, "retro")
@@ -35,6 +37,7 @@ cat("Model directory:", model_dir, "\n")
 cat("Retro directory:", retro_dir, "\n")
 cat("Peel directory:", peel_dir, "\n")
 cat("Retro peel:", retro_peel, "years\n")
+cat("Retro post-hessian:", retro_hessian, "\n")
 
 ## Create peel directory and copy all files from base_dir (inputs)
 dir.create(peel_dir, recursive = TRUE, showWarnings = FALSE)
@@ -134,6 +137,17 @@ run_commands(commands = mfcl_commands,
              verbose = TRUE, 
              log_file = file.path(peel_dir, "mfcl_log.txt"))
 
+final_retro_par <- mp_final_par(peel_dir)
+hessian_summary <- mp_run_post_hessian(
+  work_dir = peel_dir,
+  program_path_abs = program_path_abs,
+  program_path = program_path,
+  frq_file = frq_file,
+  input_par = if (!is.null(final_retro_par)) basename(final_retro_par) else "00.par",
+  project_root = project_root,
+  requested = retro_hessian
+)
+
 # Save retro run info
 info_list <- list(
   retro_peel    = retro_peel,
@@ -145,7 +159,8 @@ info_list <- list(
   ini_file      = ini_file,
   program_path  = program_path,
   model_dir     = model_dir,
-  peel_dir      = peel_dir
+  peel_dir      = peel_dir,
+  hessian       = hessian_summary
 )
 
 saveRDS(

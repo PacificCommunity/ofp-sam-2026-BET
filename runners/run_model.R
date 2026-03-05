@@ -14,6 +14,7 @@
 library(FLR4MFCL)
 library(CondorBox)
 source("tools/model_payload.R")
+source("tools/post_hessian.R")
 source("tools/condor_archive_cleanup.R")
 
 ## -------------------------
@@ -24,6 +25,7 @@ base_dir     <- Sys.getenv("base_dir", "mfcl/inputs/2023_rep")
 model_dir    <- Sys.getenv("model_dir", "model/base")
 description  <- Sys.getenv("description", "")
 config_summary <- Sys.getenv("config_summary", "")
+model_hessian <- tolower(Sys.getenv("model_hessian", Sys.getenv("hessian", "0"))) %in% c("1", "true", "yes", "y")
 
 n_mixing_periods <- as.numeric(Sys.getenv("n_mixing_periods", ""))
 min_year         <- as.numeric(Sys.getenv("min_year", ""))
@@ -113,6 +115,7 @@ mfcl_commands <- if (identical(mfcl_commands_raw, "./doitall.sh")) {
 }
 
 cat("Running MFCL with commands:\n", mfcl_commands, "\n")
+cat("Model post-hessian:", model_hessian, "\n")
 
 ## -------------------------
 ## 6) Prepare model directory and copy inputs
@@ -138,6 +141,26 @@ run_commands(
 )
 
 ## -------------------------
+## 7b) Optional post-hessian
+## -------------------------
+final_model_par <- mp_final_par(model_dir)
+post_hessian_input_par <- if (!is.null(final_model_par) && file.exists(final_model_par)) {
+  basename(final_model_par)
+} else {
+  par_out
+}
+
+hessian_summary <- mp_run_post_hessian(
+  work_dir = model_dir,
+  program_path_abs = file.path(project_root, program_path),
+  program_path = program_path,
+  frq_file = frq_file,
+  input_par = post_hessian_input_par,
+  project_root = project_root,
+  requested = model_hessian
+)
+
+## -------------------------
 ## 8) Save model run info
 ## -------------------------
 info_list <- list(
@@ -147,11 +170,12 @@ info_list <- list(
   mfcl_commands    = mfcl_commands_raw,  # raw (without ../../) is usually easier to inspect later
   frq_file         = frq_file,
   par_in           = par_in,
-  par_out          = par_out,
+  par_out          = post_hessian_input_par,
   base_dir         = base_dir,
   model_dir        = model_dir,
   n_mixing_periods = n_mixing_periods,
-  min_year         = min_year
+  min_year         = min_year,
+  hessian          = hessian_summary
 )
 
 saveRDS(

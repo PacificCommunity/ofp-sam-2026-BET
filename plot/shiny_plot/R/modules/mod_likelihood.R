@@ -669,9 +669,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
       if (any(has_payload)) {
         payloads <- map(payload_files[has_payload], ~ tryCatch(readRDS(.x), error = function(e) NULL))
         payloads <- payloads[!vapply(payloads, is.null, logical(1))]
+        scaler_keys <- basename(scaler_dirs[has_payload]) %>% str_extract("\\d+$")
         info_files <- file.path(scaler_dirs[has_payload], "info.rds")
-        info_payloads <- map(info_files[file.exists(info_files)], ~ tryCatch(readRDS(.x), error = function(e) NULL))
-        info_payloads <- info_payloads[!vapply(info_payloads, is.null, logical(1))]
+        info_payloads <- setNames(
+          lapply(info_files, function(x) if (file.exists(x)) tryCatch(readRDS(x), error = function(e) NULL) else NULL),
+          scaler_keys
+        )
 
         if (length(payloads) > 0) {
           existing_scales <- as.character(vapply(payloads, function(x) as.numeric(x$scaler), numeric(1)))
@@ -686,28 +689,64 @@ mod_likelihood_server <- function(input, output, session, rv) {
           af172 <- if (length(af172_vals) > 0) af172_vals[1] else NA_real_
           af173_vals <- suppressWarnings(vapply(payloads, function(x) safe_payload_numeric(x, "af173"), numeric(1)))
           af174_vals <- suppressWarnings(vapply(payloads, function(x) safe_payload_numeric(x, "af174"), numeric(1)))
-          if (length(af173_vals) == 0 && length(info_payloads) > 0) {
-            af173_vals <- suppressWarnings(vapply(info_payloads, function(x) as.numeric(x$AgeFlags["Af173"]), numeric(1)))
+          valid_infos <- info_payloads[!vapply(info_payloads, is.null, logical(1))]
+          if (length(af173_vals) == 0 && length(valid_infos) > 0) {
+            af173_vals <- suppressWarnings(vapply(valid_infos, function(x) as.numeric(x$AgeFlags["Af173"]), numeric(1)))
           }
-          if (length(af174_vals) == 0 && length(info_payloads) > 0) {
-            af174_vals <- suppressWarnings(vapply(info_payloads, function(x) as.numeric(x$AgeFlags["Af174"]), numeric(1)))
+          if (length(af174_vals) == 0 && length(valid_infos) > 0) {
+            af174_vals <- suppressWarnings(vapply(valid_infos, function(x) as.numeric(x$AgeFlags["Af174"]), numeric(1)))
           }
-          if (!is.finite(af172) && length(info_payloads) > 0) {
-            af172_fallback <- suppressWarnings(vapply(info_payloads, function(x) as.numeric(x$AgeFlags["Af172"]), numeric(1)))
+          if (!is.finite(af172) && length(valid_infos) > 0) {
+            af172_fallback <- suppressWarnings(vapply(valid_infos, function(x) as.numeric(x$AgeFlags["Af172"]), numeric(1)))
             af172 <- if (length(af172_fallback) > 0) af172_fallback[1] else NA_real_
           }
           af173 <- if (length(af173_vals) > 0) af173_vals[1] else NA_real_
           af174 <- if (length(af174_vals) > 0) af174_vals[1] else NA_real_
           quantity_label_vals <- unlist(map(payloads, "quantity_label"), use.names = FALSE)
           quantity_label_vals <- quantity_label_vals[nzchar(quantity_label_vals)]
-          if (length(quantity_label_vals) == 0 && length(info_payloads) > 0) {
-            quantity_label_vals <- unlist(map(info_payloads, "quantity_label"), use.names = FALSE)
+          if (length(quantity_label_vals) == 0 && length(valid_infos) > 0) {
+            quantity_label_vals <- unlist(map(valid_infos, "quantity_label"), use.names = FALSE)
             quantity_label_vals <- quantity_label_vals[nzchar(quantity_label_vals)]
           }
           quantity_label <- if (length(quantity_label_vals) > 0) quantity_label_vals[1] else NA_character_
           par_obj <- rv$ParOut_list[[scenario]]
           max_year <- suppressWarnings(as.numeric(tryCatch(par_obj@range["maxyear"], error = function(e) NA_real_)))
           seasons <- suppressWarnings(as.numeric(tryCatch(par_obj@dimensions["seasons"], error = function(e) NA_real_)))
+
+          hessian_rows <- lapply(existing_scales, function(sc) {
+            info_sc <- valid_infos[[as.character(sc)]]
+            hs <- if (!is.null(info_sc) && is.list(info_sc$hessian)) info_sc$hessian else NULL
+            attempted <- isTRUE(hs$attempted)
+            requested <- isTRUE(hs$requested)
+            ok <- if (!is.null(hs$hessian_ok) && !is.na(hs$hessian_ok)) isTRUE(hs$hessian_ok) else if (!is.null(hs$is_pdh) && !is.na(hs$is_pdh)) isTRUE(hs$is_pdh) else NA
+            status <- if (!is.null(hs$hessian_status) && nzchar(as.character(hs$hessian_status))) as.character(hs$hessian_status) else NA_character_
+            data.frame(
+              scaler = as.character(sc),
+              requested = requested,
+              attempted = attempted,
+              ok = ok,
+              status = status,
+              stringsAsFactors = FALSE
+            )
+          })
+          hessian_df <- bind_rows(hessian_rows)
+          hessian_df <- hessian_df[!is.na(hessian_df$requested) | !is.na(hessian_df$attempted) | !is.na(hessian_df$ok), , drop = FALSE]
+          profile_hessian_attempted <- if (nrow(hessian_df) > 0) sum(hessian_df$attempted, na.rm = TRUE) else 0L
+          profile_hessian_ok <- if (nrow(hessian_df) > 0) sum(hessian_df$attempted & hessian_df$ok %in% TRUE, na.rm = TRUE) else 0L
+          profile_hessian_requested <- if (nrow(hessian_df) > 0) sum(hessian_df$requested, na.rm = TRUE) else 0L
+          profile_hessian_status <- if (nrow(hessian_df) > 0) {
+            vals <- unique(na.omit(as.character(hessian_df$status)))
+            if (length(vals) > 0) paste(vals, collapse = ", ") else NA_character_
+          } else {
+            NA_character_
+          }
+          profile_hessian_summary <- if (profile_hessian_attempted > 0) {
+            paste0(profile_hessian_ok, "/", profile_hessian_attempted, " OK")
+          } else if (profile_hessian_requested > 0) {
+            "Requested (not completed)"
+          } else {
+            "Not requested"
+          }
         } else {
           lik_out <- list()
           lik_raw <- list()
@@ -723,6 +762,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
           quantity_label <- NA_character_
           max_year <- NA_real_
           seasons <- NA_real_
+          profile_hessian_attempted <- 0L
+          profile_hessian_ok <- 0L
+          profile_hessian_requested <- 0L
+          profile_hessian_status <- NA_character_
+          profile_hessian_summary <- "Not requested"
         }
       } else {
         scales <- basename(scaler_dirs) %>% str_extract("\\d+$")
@@ -749,6 +793,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
         quantity_label <- NA_character_
         max_year <- NA_real_
         seasons <- NA_real_
+        profile_hessian_attempted <- 0L
+        profile_hessian_ok <- 0L
+        profile_hessian_requested <- 0L
+        profile_hessian_status <- NA_character_
+        profile_hessian_summary <- "Not requested"
       }
     } else {
       output_files <- list.files(folder, pattern = "^test_plot_output_\\d+$", full.names = TRUE)
@@ -774,6 +823,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
       quantity_label <- NA_character_
       max_year <- NA_real_
       seasons <- NA_real_
+      profile_hessian_attempted <- 0L
+      profile_hessian_ok <- 0L
+      profile_hessian_requested <- 0L
+      profile_hessian_status <- NA_character_
+      profile_hessian_summary <- "Not requested"
     }
 
     list(
@@ -790,7 +844,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
       af174 = af174,
       quantity_label = quantity_label,
       max_year = max_year,
-      seasons = seasons
+      seasons = seasons,
+      profile_hessian_attempted = profile_hessian_attempted,
+      profile_hessian_ok = profile_hessian_ok,
+      profile_hessian_requested = profile_hessian_requested,
+      profile_hessian_status = profile_hessian_status,
+      profile_hessian_summary = profile_hessian_summary
     )
   }
 
@@ -816,6 +875,37 @@ mod_likelihood_server <- function(input, output, session, rv) {
     lik_profile_output_filters()
   )
 
+  hessian_label_from_summary <- function(hs) {
+    if (is.null(hs) || !is.list(hs)) return("Not available")
+    attempted <- isTRUE(hs$attempted)
+    requested <- isTRUE(hs$requested)
+    ok <- if (!is.null(hs$hessian_ok) && !is.na(hs$hessian_ok)) {
+      isTRUE(hs$hessian_ok)
+    } else if (!is.null(hs$is_pdh) && !is.na(hs$is_pdh)) {
+      isTRUE(hs$is_pdh)
+    } else {
+      NA
+    }
+    status <- if (!is.null(hs$hessian_status) && nzchar(as.character(hs$hessian_status))) as.character(hs$hessian_status) else NA_character_
+    neg <- if (!is.null(hs$n_negative_eigenvalues) && !is.null(hs$n_total_eigenvalues) &&
+               is.finite(suppressWarnings(as.numeric(hs$n_negative_eigenvalues))) &&
+               is.finite(suppressWarnings(as.numeric(hs$n_total_eigenvalues)))) {
+      paste0(as.integer(hs$n_negative_eigenvalues), "/", as.integer(hs$n_total_eigenvalues))
+    } else {
+      NA_character_
+    }
+
+    if (attempted) {
+      core <- if (is.na(ok)) "Attempted" else if (ok) "OK" else "Failed"
+      extras <- na.omit(c(status, if (!is.na(neg)) paste("Neg", neg) else NA_character_))
+      if (length(extras) > 0) paste(core, paste(extras, collapse = ", "), sep = " | ") else core
+    } else if (requested) {
+      "Requested (not completed)"
+    } else {
+      "Not requested"
+    }
+  }
+
   profile_target_info_reactive <- reactive({
     filters <- lik_data_filters()
     req(filters)
@@ -834,6 +924,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       af174 <- suppressWarnings(as.numeric(pd$af174))
       max_year <- suppressWarnings(as.numeric(pd$max_year))
       seasons <- suppressWarnings(as.numeric(pd$seasons))
+      model_info <- rv$Info_list[[sc]]
+      model_hessian_label <- hessian_label_from_summary(if (!is.null(model_info)) model_info$hessian else NULL)
 
       data.frame(
         Model = sc,
@@ -852,6 +944,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
           "Not available"
         },
         `Period definition` = profile_period_label(quantity_label, af173, af174, max_year, seasons),
+        `Model Hessian` = model_hessian_label,
+        `Likelihood Hessian` = if (!is.null(pd$profile_hessian_summary)) pd$profile_hessian_summary else "Not requested",
+        `Likelihood Hessian Status` = if (!is.null(pd$profile_hessian_status) && nzchar(as.character(pd$profile_hessian_status))) pd$profile_hessian_status else NA_character_,
         stringsAsFactors = FALSE
       )
     })
@@ -3819,6 +3914,70 @@ mod_likelihood_server <- function(input, output, session, rv) {
     )
   })
 
+  retro_hessian_info_reactive <- reactive({
+    if (!identical(input$lik_main_tab, "retro")) return(NULL)
+    filters <- lik_data_filters()
+    req(filters)
+    if (!identical(filters$profile_type, "retro")) return(NULL)
+    scenarios <- filters$scenarios
+    if (length(scenarios) == 0) return(NULL)
+
+    rows <- list()
+    for (sc in scenarios) {
+      base_hs <- rv$Info_list[[sc]]$hessian
+      rows[[length(rows) + 1]] <- data.frame(
+        Model = sc,
+        Peel = 0L,
+        `Hessian` = hessian_label_from_summary(base_hs),
+        `Hessian Status` = if (!is.null(base_hs$hessian_status) && nzchar(as.character(base_hs$hessian_status))) as.character(base_hs$hessian_status) else NA_character_,
+        `Neg. Eigen` = if (!is.null(base_hs$n_negative_eigenvalues) && !is.null(base_hs$n_total_eigenvalues) &&
+          is.finite(suppressWarnings(as.numeric(base_hs$n_negative_eigenvalues))) &&
+          is.finite(suppressWarnings(as.numeric(base_hs$n_total_eigenvalues)))) {
+          sprintf("%d / %d", as.integer(base_hs$n_negative_eigenvalues), as.integer(base_hs$n_total_eigenvalues))
+        } else {
+          NA_character_
+        },
+        stringsAsFactors = FALSE
+      )
+
+      retro_dir <- file.path(input$model_dir, sc, "retro")
+      peel_dirs <- list.dirs(retro_dir, recursive = FALSE, full.names = TRUE)
+      peel_dirs <- peel_dirs[grepl("peel_\\d+$", peel_dirs)]
+
+      for (pd in peel_dirs) {
+        peel_num <- suppressWarnings(as.integer(stringr::str_extract(basename(pd), "\\d+$")))
+        if (!is.finite(peel_num)) next
+        info_file <- file.path(pd, "retro_info.rds")
+        if (!file.exists(info_file)) next
+        rinfo <- tryCatch(readRDS(info_file), error = function(e) NULL)
+        hs <- if (!is.null(rinfo) && is.list(rinfo$hessian)) rinfo$hessian else NULL
+        rows[[length(rows) + 1]] <- data.frame(
+          Model = sc,
+          Peel = as.integer(peel_num),
+          `Hessian` = hessian_label_from_summary(hs),
+          `Hessian Status` = if (!is.null(hs$hessian_status) && nzchar(as.character(hs$hessian_status))) as.character(hs$hessian_status) else NA_character_,
+          `Neg. Eigen` = if (!is.null(hs$n_negative_eigenvalues) && !is.null(hs$n_total_eigenvalues) &&
+            is.finite(suppressWarnings(as.numeric(hs$n_negative_eigenvalues))) &&
+            is.finite(suppressWarnings(as.numeric(hs$n_total_eigenvalues)))) {
+            sprintf("%d / %d", as.integer(hs$n_negative_eigenvalues), as.integer(hs$n_total_eigenvalues))
+          } else {
+            NA_character_
+          },
+          stringsAsFactors = FALSE
+        )
+      }
+    }
+
+    out <- bind_rows(rows)
+    if (nrow(out) == 0) return(NULL)
+    out %>% arrange(Model, Peel)
+  })
+  retro_hessian_info_reactive <- bindCache(
+    retro_hessian_info_reactive,
+    input$model_dir,
+    list(scenarios = sort(input$lik_scenarios), profile_type = current_profile_type())
+  )
+
   output$retro_rho_table <- renderDT({
     if (!identical(input$lik_main_tab, "retro")) return(NULL)
     info <- profile_data_reactive()
@@ -3834,6 +3993,25 @@ mod_likelihood_server <- function(input, output, session, rv) {
         `Mohn's rho: SB (1e3 MT)` = mohn_rho_spawning_potential,
         `Mohn's rho: F` = mohn_rho_fishing_mortality
       )
+
+    retro_hs <- retro_hessian_info_reactive()
+    if (!is.null(retro_hs) && nrow(retro_hs) > 0) {
+      hs_summary <- retro_hs %>%
+        group_by(Model) %>%
+        summarise(
+          `Retro Hessian (OK/attempted)` = {
+            attempted <- grepl("^OK|^Failed|^Attempted", `Hessian`)
+            ok <- grepl("^OK", `Hessian`)
+            if (sum(attempted, na.rm = TRUE) > 0) {
+              sprintf("%d/%d", sum(ok, na.rm = TRUE), sum(attempted, na.rm = TRUE))
+            } else {
+              "Not requested"
+            }
+          },
+          .groups = "drop"
+        )
+      rho_tbl <- rho_tbl %>% left_join(hs_summary, by = "Model")
+    }
 
     datatable(
       rho_tbl,
@@ -3894,6 +4072,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
       ) %>%
       rename(Model = scenario, Peel = peel) %>%
       arrange(Model, Peel)
+
+    retro_hs <- retro_hessian_info_reactive()
+    if (!is.null(retro_hs) && nrow(retro_hs) > 0) {
+      peel_tbl <- peel_tbl %>% left_join(retro_hs, by = c("Model", "Peel"))
+    }
 
     if (!is.null(input$retro_peel_model) &&
         nzchar(input$retro_peel_model) &&
