@@ -195,16 +195,14 @@ launch_tab_ui <- function() {
 
                 shiny::hr(),
 
-                checkboxInput(
-                  "condor_exclude_pattern_enabled",
-                  "Enable pattern-based extra slot exclusion",
-                  value = FALSE
-                ),
-                textInput(
-                  "condor_exclude_host_pattern",
-                  "Exclude Pattern (regex, optional):",
-                  value = "",
-                  placeholder = "e.g. suva|noumea"
+                selectInput(
+                  "condor_run_target",
+                  "Run Selected Condor Nodes:",
+                  choices = c(
+                    "nouofp" = "nouofp",
+                    "suvofp" = "suvofp"
+                  ),
+                  selected = "nouofp"
                 )
               )
             )

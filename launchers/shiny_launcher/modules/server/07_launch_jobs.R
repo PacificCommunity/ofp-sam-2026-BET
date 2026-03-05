@@ -88,13 +88,9 @@
     pats[nzchar(pats)]
   }
 
-  discover_condor_slots_by_pattern <- function(remote_user, remote_host, pattern_text) {
-    patterns <- parse_condor_exclude_patterns(pattern_text)
-    if (length(patterns) == 0) {
-      return(character(0))
-    }
+  fetch_condor_slot_table <- function(remote_user, remote_host) {
     if (is.null(remote_user) || !nzchar(trimws(remote_user)) || is.null(remote_host) || !nzchar(trimws(remote_host))) {
-      return(character(0))
+      return(data.frame(slot = character(0), machine = character(0), stringsAsFactors = FALSE))
     }
 
     ssh_target <- sprintf("%s@%s", trimws(remote_user), trimws(remote_host))
@@ -109,21 +105,62 @@
       error = function(e) character(0)
     )
     if (length(slot_lines) == 0) {
-      return(character(0))
+      return(data.frame(slot = character(0), machine = character(0), stringsAsFactors = FALSE))
     }
 
     slot_names <- trimws(sub("\\s+.*$", "", slot_lines))
     machine_names <- trimws(sub("^\\S+\\s*", "", slot_lines))
-    slot_names <- slot_names[nzchar(slot_names)]
-    if (length(slot_names) == 0) {
+    keep <- nzchar(slot_names)
+    data.frame(
+      slot = slot_names[keep],
+      machine = machine_names[keep],
+      stringsAsFactors = FALSE
+    )
+  }
+
+  match_condor_slots_by_patterns <- function(slot_table, patterns) {
+    if (!is.data.frame(slot_table) || nrow(slot_table) == 0 || length(patterns) == 0) {
       return(character(0))
     }
-
-    matched <- vapply(seq_along(slot_names), function(i) {
-      target <- paste(slot_names[[i]], if (i <= length(machine_names)) machine_names[[i]] else "", sep = " ")
+    matched <- vapply(seq_len(nrow(slot_table)), function(i) {
+      target <- paste(slot_table$slot[[i]], slot_table$machine[[i]], sep = " ")
       any(vapply(patterns, function(pat) grepl(pat, target, ignore.case = TRUE, perl = TRUE), logical(1)))
     }, logical(1))
-    unique(slot_names[matched])
+    unique(slot_table$slot[matched])
+  }
+
+  condor_target_patterns <- function(run_target) {
+    target <- if (!is.null(run_target) && nzchar(run_target)) run_target else "nouofp"
+    switch(
+      target,
+      nouofp = c("nouofp", "nou"),
+      suvofp = c("suvofp", "suv"),
+      c("nouofp", "nou")
+    )
+  }
+
+  build_condor_exclude_slots <- function(remote_user, remote_host, run_target) {
+    base_exclude <- default_condor_exclude_slots()
+    patterns <- condor_target_patterns(run_target = run_target)
+
+    slot_table <- fetch_condor_slot_table(remote_user = remote_user, remote_host = remote_host)
+    all_slots <- unique(slot_table$slot)
+    matched_slots <- match_condor_slots_by_patterns(slot_table, patterns)
+    if (length(all_slots) == 0 || length(matched_slots) == 0) {
+      return(list(
+        exclude_slots = base_exclude,
+        matched_slots = matched_slots,
+        all_slots = all_slots,
+        target_mode = if (!is.null(run_target) && nzchar(run_target)) run_target else "nouofp"
+      ))
+    }
+    additional_exclude <- setdiff(all_slots, matched_slots)
+    list(
+      exclude_slots = unique(c(base_exclude, additional_exclude)),
+      matched_slots = matched_slots,
+      all_slots = all_slots,
+      target_mode = if (!is.null(run_target) && nzchar(run_target)) run_target else "nouofp"
+    )
   }
 
   launch_single_job_local_raw <- function(spec, common_params) {
@@ -347,15 +384,22 @@
     } else {
       input$output_dir
     }
-    condor_exclude_slots <- default_condor_exclude_slots()
-    if (identical(launch_mode, "condor") && isTRUE(input$condor_exclude_pattern_enabled)) {
-      discovered_slots <- discover_condor_slots_by_pattern(
+    condor_target <- "nouofp"
+    condor_target_info <- list(
+      exclude_slots = default_condor_exclude_slots(),
+      matched_slots = character(0),
+      all_slots = character(0),
+      target_mode = "nouofp"
+    )
+    if (identical(launch_mode, "condor")) {
+      condor_target <- if (!is.null(input$condor_run_target) && nzchar(input$condor_run_target)) input$condor_run_target else "nouofp"
+      condor_target_info <- build_condor_exclude_slots(
         remote_user = input$remote_user,
         remote_host = input$remote_host,
-        pattern_text = input$condor_exclude_host_pattern
+        run_target = condor_target
       )
-      condor_exclude_slots <- unique(c(condor_exclude_slots, discovered_slots))
     }
+    condor_exclude_slots <- condor_target_info$exclude_slots
 
     # Initialize log with total job count
     rv$launch_log <- paste0(
@@ -364,7 +408,11 @@
       "📊 Total jobs to ", action_word, ": ", total_jobs, "\n",
       "Mode: ", if (identical(launch_mode, "local_docker")) "Local Docker" else if (identical(launch_mode, "local_native")) "Local Native" else "Condor", "\n",
       if (identical(launch_mode, "condor")) {
-        paste0("Exclude slots: ", length(condor_exclude_slots), "\n")
+        paste0(
+          "Run target: ", condor_target, "\n",
+          "Matched slots: ", length(condor_target_info$matched_slots), "\n",
+          "Exclude slots: ", length(condor_exclude_slots), "\n"
+        )
       } else {
         ""
       },
