@@ -410,6 +410,7 @@ if [ ! -f 10.par ]; then
   1 1 10000      # function evaluations for the final phase - TO BEGIN WITH
   1 50 -5        # convergence criteria 
   1 121 1        # Estimate scaling parameter for Lorenzen (age_pars(5,1))    
+  1 246 1        # indepvar.rpt
 PHASE10
   
 fi

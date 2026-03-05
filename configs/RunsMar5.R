@@ -13,7 +13,7 @@ models <- list(
     base_dir = "mfcl/inputs/2023_rep",                   # Model-specific dir
     
     ## configuration for profiling
-    Reps = "15 25 25 1000 500 500",
+    Reps = "15 25 25 1000 1000 500",
     scalers = paste0((seq(130, 70, by=-5)), collapse = " "),
     Af172 = "0",
     Af173 = "0",
@@ -50,10 +50,10 @@ models <- list(
     
     mfcl_commands ="./doitall.sh",
     program_path = "mfcl/exe/mfclo64_2026_02_04_vsn2278",  # Model-specific path
-    base_dir = "mfcl/inputs/2023_rep",                   # Model-specific dir
+    base_dir = "mfcl/inputs/2023_6region",                   # Model-specific dir
     
     ## configuration for profiling
-    Reps = "15 25 25 1000 500 500",
+    Reps = "15 25 25 1000 1000 500",
     scalers = paste0((seq(130, 70, by=-5)), collapse = " "),
     Af172 = "0",
     Af173 = "0",
@@ -95,7 +95,7 @@ models <- list(
     base_dir = "mfcl/inputs/2023_rep_exclude_RTTP",                   # Model-specific dir
     
     ## configuration for profiling
-    Reps = "15 25 25 1000 500 500",
+    Reps = "15 25 25 1000 1000 500",
     scalers = paste0((seq(130, 70, by=-5)), collapse = " "),
     
     ## retrospective configuration
