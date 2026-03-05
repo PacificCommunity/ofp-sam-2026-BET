@@ -403,4 +403,5 @@ PHASE10
 $program_path bet.frq 10.par 11.par -file - <<PHASE11
   1 1 5000
   1 50 -5   # convergence criteria
+  1 246 1   # indepvar.rpt
 PHASE11

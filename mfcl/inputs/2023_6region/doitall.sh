@@ -98,7 +98,7 @@ if [ ! -f 01.par ]; then
   2 32 1          # and estimate the totpop parameter
   2 93 4          # sets no. of recruitments per year to 4 (is this used?)
   2 57 4          # sets no. of recruitments per year to 4
-  2 94 1 2 128 10 # initial age structure based on 1.0*M(age) - initial F set to zero
+  2 94 1 2 128 100 # initial age structure based on 1.0*M(age) - initial F set to zero
 
 #
 #------------------------------------------------------------------------------
