@@ -12,6 +12,12 @@ prof:
 jitter:
 	Rscript runners/run_jitter.R
 
+jitter_smoke:
+	jitter_smoke_only=1 Rscript runners/run_jitter.R
+
+jitter_smoke_hessian:
+	jitter_smoke_only=1 jitter_hessian=1 jitter_smoke_hessian=1 Rscript runners/run_jitter.R
+
 hessian:
 	Rscript runners/run_hessian.R
 
@@ -50,6 +56,12 @@ docker-prof:
 docker-jitter:
 	docker run --rm --user "$(DOCKER_USER)" -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript runners/run_jitter.R
 
+docker-jitter-smoke:
+	docker run --rm --user "$(DOCKER_USER)" -e jitter_smoke_only=1 -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript runners/run_jitter.R
+
+docker-jitter-smoke-hessian:
+	docker run --rm --user "$(DOCKER_USER)" -e jitter_smoke_only=1 -e jitter_hessian=1 -e jitter_smoke_hessian=1 -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript runners/run_jitter.R
+
 docker-hessian:
 	docker run --rm --user "$(DOCKER_USER)" -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript runners/run_hessian.R
 
@@ -74,7 +86,7 @@ docker-report:
 	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(stitch-hessian docker-run docker-model docker-prof docker-jitter docker-hessian docker-collate-hessian docker-stitch
 
 	
-.PHONY: plot run model prof jitter hessian retro collate-hessian stitch-hessian stitch-hessian-all docker-run docker-model docker-prof docker-jitter docker-hessian docker-retro docker-collate-hessian docker-stitch-hessian docker-stitch-hessian-all docker-plot prepaw report docker-report
+.PHONY: plot run model prof jitter jitter_smoke jitter_smoke_hessian hessian retro collate-hessian stitch-hessian stitch-hessian-all docker-run docker-model docker-prof docker-jitter docker-jitter-smoke docker-jitter-smoke-hessian docker-hessian docker-retro docker-collate-hessian docker-stitch-hessian docker-stitch-hessian-all docker-plot prepaw report docker-report
 
 
 
