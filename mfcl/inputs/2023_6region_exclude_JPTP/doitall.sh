@@ -1,11 +1,20 @@
 #!/bin/sh
+
+program_path=${PROGRAM_PATH}
+
+if [ -z "$program_path" ]; then
+  echo "PROGRAM_PATH is not set. Exiting."
+  exit 1
+fi
+
+
 #  ------------------------
 #  PHASE 0 - create initial par file
 #  ------------------------
 #
 
 if [ ! -f 00.par ]; then
-  mfclo64 bet.frq bet.ini 00.par -makepar
+  $program_path bet.frq bet.ini 00.par -makepar
   
 fi
 #
@@ -14,7 +23,7 @@ fi
 #  ------------------------
 #
 if [ ! -f 01.par ]; then
-  mfclo64 bet.frq 00.par 01.par -file - <<PHASE1
+  $program_path bet.frq 00.par 01.par -file - <<PHASE1
 #------------------------------------------------------------------------------
 # Initial phase control option
 # Using default quasi-Newton minimizer 
@@ -288,7 +297,7 @@ fi
 #   PHASE 2
 #------------------------------------------------------------------------------
 if [ ! -f 02.par ]; then
-  mfclo64 bet.frq 01.par 02.par -file - <<PHASE2
+  $program_path bet.frq 01.par 02.par -file - <<PHASE2
   1 1 100         # set max. number of function evaluations per phase to 100
   1 50 0          # set convergence criterion to 1 
   2 113 0         # scaling init pop - turned off
@@ -300,7 +309,7 @@ fi
 #   PHASE 3
 #------------------------------------------------------------------------------
 if [ ! -f 03.par ]; then
-  mfclo64 bet.frq 02.par 03.par -file - <<PHASE3
+  $program_path bet.frq 02.par 03.par -file - <<PHASE3
   2 70 1          # activate parameters and turn on
   2 71 1          # estimation of temporal changes in recruitment distribution
   2 178 1         # constraint on regional recruitments to be equal to one each model period #SJH2014
@@ -312,7 +321,7 @@ fi
 #   PHASE 4
 #------------------------------------------------------------------------------
 if [ ! -f 04.par ]; then
-  mfclo64 bet.frq 03.par 04.par -file - <<PHASE4
+  $program_path bet.frq 03.par 04.par -file - <<PHASE4
   2 68 1          # estimate movement coefficients
   2 69 1
   2 27 -1         # penalty wt 0.1 computed against prior  
@@ -323,7 +332,7 @@ fi
 #   PHASE 5
 #------------------------------------------------------------------------------
 if [ ! -f 05.par ]; then
-  mfclo64 bet.frq 04.par 05.par -file - <<PHASE5
+  $program_path bet.frq 04.par 05.par -file - <<PHASE5
   -100000 1 1     # estimate
   -100000 2 1     # time-invariant
   -100000 3 1     # distribution
@@ -337,7 +346,7 @@ fi
 #   PHASE 6
 #------------------------------------------------------------------------------
 if [ ! -f 06.par ]; then
-  mfclo64 bet.frq 05.par 06.par -file - <<PHASE6
+  $program_path bet.frq 05.par 06.par -file - <<PHASE6
   1 240 1         # Fit to age-length data
   1 14 1          # estimate von Bertalanffy K
   1 12 1          # and mean length of age 1
@@ -350,7 +359,7 @@ fi
 #   PHASE 7
 #------------------------------------------------------------------------------
 if [ ! -f 07.par ]; then
-  mfclo64 bet.frq 06.par 07.par -file - <<PHASE7
+  $program_path bet.frq 06.par 07.par -file - <<PHASE7
   1 15 1       # estimate "generic" SD of length-at-age
   1 16 1       # estimate length dependent SD
   1 173 0      # activate independent mean lengths for 1st 8 age classes
@@ -364,7 +373,7 @@ fi
 #   PHASE 8
 #------------------------------------------------------------------------------
 if [ ! -f 08.par ]; then
-  mfclo64 bet.frq 07.par 08.par -file - <<PHASE8
+  $program_path bet.frq 07.par 08.par -file - <<PHASE8
   2 145 1       # use SRR parameters - low penalty for deviation
   2 146 1        # estimate SRR parameters
   2 182 1        # make SRR annual rather than quarterly
@@ -392,7 +401,7 @@ fi
 #   PHASE 9
 #------------------------------------------------------------------------------
 if [ ! -f 09.par ]; then
-  mfclo64 bet.frq 08.par 09.par -file - <<PHASE9
+  $program_path bet.frq 08.par 09.par -file - <<PHASE9
   2 145 -1       # use SRR parameters - low penalty for deviation
   1 1 500        # FUNCTION evaluations for the final phase - TO BEGIN WITH
   1 50 -2        # convergence criteria
@@ -406,7 +415,7 @@ fi
 #  PHASE 10 Estimate M scaling parameter
 # ---------
 if [ ! -f 10.par ]; then
-  mfclo64 bet.frq 09.par 10.par -file - <<PHASE10
+  $program_path bet.frq 09.par 10.par -file - <<PHASE10
   1 1 10000      # function evaluations for the final phase - TO BEGIN WITH
   1 50 -5        # convergence criteria 
   1 121 1        # Estimate scaling parameter for Lorenzen (age_pars(5,1))    
