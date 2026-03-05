@@ -64,45 +64,6 @@ mp_parse_npars_from_par <- function(par_path, fallback_work_dir = NULL) {
   if (!is.finite(npars) || is.na(npars) || npars <= 0) NA_integer_ else as.integer(npars)
 }
 
-mp_compute_hessian_ranges <- function(npars, nsplit) {
-  npars <- as.integer(npars)
-  nsplit <- as.integer(max(1L, nsplit))
-  base_size <- floor(npars / nsplit)
-  remainder <- npars %% nsplit
-
-  ranges <- vector("list", nsplit)
-  for (part in seq_len(nsplit)) {
-    if (part <= remainder) {
-      start_par <- (part - 1L) * (base_size + 1L) + 1L
-      end_par <- part * (base_size + 1L)
-    } else {
-      offset <- remainder * (base_size + 1L)
-      start_par <- offset + (part - remainder - 1L) * base_size + 1L
-      end_par <- offset + (part - remainder) * base_size
-    }
-    ranges[[part]] <- data.frame(
-      part = as.integer(part),
-      start_par = as.integer(start_par),
-      end_par = as.integer(end_par),
-      stringsAsFactors = FALSE
-    )
-  }
-  do.call(rbind, ranges)
-}
-
-mp_detect_post_hessian_nsplit <- function(npars) {
-  detected <- suppressWarnings(parallel::detectCores(logical = FALSE))
-  if (!is.finite(detected) || is.na(detected) || detected <= 0) {
-    detected <- suppressWarnings(parallel::detectCores())
-  }
-  workers <- if (is.finite(detected) && !is.na(detected) && detected > 1) {
-    as.integer(detected - 2L)
-  } else {
-    1L
-  }
-  min(as.integer(npars), max(1L, workers))
-}
-
 mp_run_post_hessian <- function(work_dir,
                                 program_path_abs,
                                 program_path,
@@ -134,83 +95,44 @@ mp_run_post_hessian <- function(work_dir,
 
   summary$attempted <- TRUE
   hessian_dir <- file.path(work_dir, "hessian")
-  dir.create(hessian_dir, recursive = TRUE, showWarnings = FALSE)
+  part_dir <- file.path(hessian_dir, "part_1")
+  dir.create(part_dir, recursive = TRUE, showWarnings = FALSE)
 
-  npars <- mp_parse_npars_from_par(input_par_path, fallback_work_dir = work_dir)
+  seed_files <- list.files(work_dir, full.names = TRUE, recursive = FALSE)
+  seed_files <- seed_files[file.info(seed_files)$isdir %in% FALSE]
+  if (length(seed_files) > 0) {
+    file.copy(seed_files, to = part_dir, overwrite = TRUE, recursive = FALSE)
+  }
+
+  npars <- mp_parse_npars_from_par(file.path(part_dir, input_par_name), fallback_work_dir = work_dir)
   if (!is.finite(npars) || is.na(npars) || npars <= 0) {
     summary$run_ok <- FALSE
     summary$error <- "Failed to determine number of parameters for post-hessian run."
     return(summary)
   }
 
-  nsplit <- mp_detect_post_hessian_nsplit(npars)
-  ranges <- mp_compute_hessian_ranges(npars = npars, nsplit = nsplit)
-  nsplit <- nrow(ranges)
-
-  seed_files <- list.files(work_dir, full.names = TRUE, recursive = FALSE)
-  seed_files <- seed_files[file.info(seed_files)$isdir %in% FALSE]
-  part_dirs <- file.path(hessian_dir, paste0("part_", ranges$part))
-  for (part_dir in part_dirs) {
-    dir.create(part_dir, recursive = TRUE, showWarnings = FALSE)
-    if (length(seed_files) > 0) {
-      file.copy(seed_files, to = part_dir, overwrite = TRUE, recursive = FALSE)
-    }
-  }
-
-  run_one_part <- function(i) {
-    part <- ranges$part[[i]]
-    start_par <- ranges$start_par[[i]]
-    end_par <- ranges$end_par[[i]]
-    part_dir <- part_dirs[[i]]
-
-    hessian_switch <- paste("-switch 3", "1 145 1", "1 223", start_par, "1 224", end_par, sep = " ")
-    hessian_out_par <- paste0("hessian_", part, ".par")
-    hessian_cmd <- paste(
-      shQuote(program_path_abs),
-      shQuote(frq_file),
-      shQuote(input_par_name),
-      shQuote(hessian_out_par),
-      hessian_switch
-    )
-
-    run_commands(
-      commands = hessian_cmd,
-      work_dirs = part_dir,
-      save_log = TRUE,
-      parallel = FALSE,
-      verbose = TRUE,
-      log_file = file.path(part_dir, "mfcl_hessian_log.txt")
-    )
-
-    part_info <- list(
-      hessian_part = as.integer(part),
-      nsplit = as.integer(nsplit),
-      start_par = as.integer(start_par),
-      end_par = as.integer(end_par),
-      npars = as.integer(npars),
-      frq_file = frq_file,
-      program_path = program_path,
-      model_dir = work_dir,
-      part_dir = part_dir,
-      base_dir = work_dir,
-      input_par = input_par_name,
-      output_par = hessian_out_par
-    )
-    saveRDS(part_info, file = file.path(part_dir, "hessian_info.rds"), compress = "xz")
-    TRUE
-  }
+  hessian_switch <- paste("-switch 3", "1 145 1", "1 223 1", "1 224", npars, sep = " ")
+  hessian_out_par <- "hessian_1.par"
+  hessian_cmd <- paste(
+    shQuote(program_path_abs),
+    shQuote(frq_file),
+    shQuote(input_par_name),
+    shQuote(hessian_out_par),
+    hessian_switch
+  )
 
   hessian_run_ok <- TRUE
   hessian_error <- NULL
   tryCatch(
     {
-      if (nsplit <= 1) {
-        run_one_part(1L)
-      } else if (.Platform$OS.type == "unix") {
-        parallel::mclapply(seq_len(nsplit), run_one_part, mc.cores = nsplit)
-      } else {
-        lapply(seq_len(nsplit), run_one_part)
-      }
+      run_commands(
+        commands = hessian_cmd,
+        work_dirs = part_dir,
+        save_log = TRUE,
+        parallel = FALSE,
+        verbose = TRUE,
+        log_file = file.path(part_dir, "mfcl_hessian_log.txt")
+      )
     },
     error = function(e) {
       hessian_run_ok <<- FALSE
@@ -223,6 +145,22 @@ mp_run_post_hessian <- function(work_dir,
     summary$error <- if (!is.null(hessian_error) && nzchar(hessian_error)) hessian_error else "Post-hessian MFCL run failed."
     return(summary)
   }
+
+  part_info <- list(
+    hessian_part = 1L,
+    nsplit = 1L,
+    start_par = 1L,
+    end_par = as.integer(npars),
+    npars = as.integer(npars),
+    frq_file = frq_file,
+    program_path = program_path,
+    model_dir = work_dir,
+    part_dir = part_dir,
+    base_dir = work_dir,
+    input_par = input_par_name,
+    output_par = hessian_out_par
+  )
+  saveRDS(part_info, file = file.path(part_dir, "hessian_info.rds"), compress = "xz")
 
   collate_script <- file.path(project_root, "tools", "collate_hessian_mfcl.R")
   collate_cmd <- paste("Rscript", shQuote(collate_script), shQuote(work_dir))
