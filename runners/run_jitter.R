@@ -23,10 +23,8 @@ Sys.setenv("PROGRAM_PATH" = program_path_abs)
 ## Single seed value for parallel execution via condor
 jitter_seed <- as.integer(Sys.getenv("jitter_seed", "40"))
 jitter_cv_env <- Sys.getenv("jitter_cv", "")
-jitter_amount_env <- Sys.getenv("jitter_amount", "")
-jitter_coverage_env <- Sys.getenv("jitter_coverage", "")
 jitter_cv <- suppressWarnings(as.numeric(
-  if (nzchar(jitter_cv_env)) jitter_cv_env else if (nzchar(jitter_amount_env)) jitter_amount_env else if (nzchar(jitter_coverage_env)) jitter_coverage_env else "0.2"
+  if (nzchar(jitter_cv_env)) jitter_cv_env else "0.2"
 ))
 jitter_hessian <- tolower(Sys.getenv("jitter_hessian", "0")) %in% c("1", "true", "yes", "y")
 jitter_smoke_only <- tolower(Sys.getenv("jitter_smoke_only", "0")) %in% c("1", "true", "yes", "y")
@@ -293,8 +291,6 @@ if (isTRUE(jitter_smoke_only)) {
   info_list <- list(
     jitter_seed = jitter_seed,
     jitter_cv = jitter_cv,
-    jitter_coverage = jitter_cv,
-    jitter_amount = jitter_cv,
     smoke_only = TRUE,
     frq_file = frq_file,
     program_path = program_path,
@@ -579,8 +575,6 @@ if (!is.null(base_par_obj) && !is.null(output_par_obj)) {
 info_list <- list(
   jitter_seed   = jitter_seed,
   jitter_cv = jitter_cv,
-  jitter_coverage = jitter_cv,
-  jitter_amount = jitter_cv,
   frq_file      = frq_file,
   program_path  = program_path,
   model_dir     = model_dir,

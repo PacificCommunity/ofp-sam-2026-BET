@@ -30,8 +30,6 @@
         base_dir = "mfcl/inputs/2023_rep",
         jitter_seeds = "1 2 3", 
         jitter_cv = "0.2",
-        jitter_coverage = "0.2",
-        jitter_amount = "0.2",
         jitter_hessian = "0",
         model_hessian = "0",
         prof_hessian = "0",

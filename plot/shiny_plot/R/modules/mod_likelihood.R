@@ -1008,9 +1008,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
         obj_fun <- scalar_num(jit$obj_fun)
         max_grad <- scalar_num(jit$max_grad)
-        jitter_cv <- scalar_num(
-          if (!is.null(info$jitter_cv)) info$jitter_cv else if (!is.null(info$jitter_amount)) info$jitter_amount else info$jitter_coverage
-        )
+        jitter_cv <- scalar_num(info$jitter_cv)
 
         hessian_ok <- extract_hessian_ok(jit)
         converged_for_cutoff <- isTRUE(run_completed) &&

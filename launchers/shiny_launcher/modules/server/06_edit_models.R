@@ -264,7 +264,7 @@
         ),
         column(6,
                div(class = "param-label", "Jitter CV:"),
-               textInput("edit_jitter_cv", NULL, value = if (!is.null(model$jitter_cv)) model$jitter_cv else if (!is.null(model$jitter_amount)) model$jitter_amount else model$jitter_coverage)
+               textInput("edit_jitter_cv", NULL, value = if (!is.null(model$jitter_cv)) model$jitter_cv else "0.2")
         )
       ),
       fluidRow(
@@ -353,8 +353,6 @@
     rv$models[[model_name]]$base_dir <- input$edit_base_dir
     rv$models[[model_name]]$jitter_seeds <- input$edit_jitter_seeds
     rv$models[[model_name]]$jitter_cv <- input$edit_jitter_cv
-    rv$models[[model_name]]$jitter_coverage <- input$edit_jitter_cv
-    rv$models[[model_name]]$jitter_amount <- input$edit_jitter_cv
     rv$models[[model_name]]$jitter_hessian <- input$edit_jitter_hessian
     rv$models[[model_name]]$model_hessian <- input$edit_model_hessian
     rv$models[[model_name]]$prof_hessian <- input$edit_prof_hessian

@@ -26,7 +26,7 @@ apply_model_defaults <- function(models, defaults = list()) {
     scalers <- if (!is.null(model$scalers)) model$scalers else defaults$scalers
     retro_peels <- if (!is.null(model$retro_peels)) model$retro_peels else defaults$retro_peels
     jitter_seeds <- if (!is.null(model$jitter_seeds)) model$jitter_seeds else defaults$jitter_seeds
-    jitter_cv <- if (!is.null(model$jitter_cv)) model$jitter_cv else if (!is.null(model$jitter_amount)) model$jitter_amount else if (!is.null(model$jitter_coverage)) model$jitter_coverage else defaults$jitter_cv
+    jitter_cv <- if (!is.null(model$jitter_cv)) model$jitter_cv else defaults$jitter_cv
     jitter_hessian <- if (!is.null(model$jitter_hessian)) model$jitter_hessian else defaults$jitter_hessian
     model_hessian <- if (!is.null(model$model_hessian)) model$model_hessian else defaults$model_hessian
     prof_hessian <- if (!is.null(model$prof_hessian)) model$prof_hessian else defaults$prof_hessian
@@ -45,8 +45,6 @@ apply_model_defaults <- function(models, defaults = list()) {
     model$retro_peels <- retro_peels
     model$jitter_seeds <- jitter_seeds
     model$jitter_cv <- jitter_cv
-    model$jitter_coverage <- jitter_cv
-    model$jitter_amount <- jitter_cv
     model$jitter_hessian <- jitter_hessian
     model$model_hessian <- model_hessian
     model$prof_hessian <- prof_hessian
