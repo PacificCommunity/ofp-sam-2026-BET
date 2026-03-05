@@ -664,10 +664,36 @@ mod_likelihood_server <- function(input, output, session, rv) {
       ),
       tags$tbody(
         lapply(seq_len(nrow(df)), function(i) {
-          tags$tr(lapply(cols, function(cn) tags$td(as.character(df[[cn]][i]))))
+          tags$tr(lapply(cols, function(cn) {
+            val <- df[[cn]][i]
+            if (length(val) == 0 || is.na(val)) val <- "NA"
+            tags$td(as.character(val))
+          }))
         })
       )
     )
+  }
+  format_hessian_display_cols <- function(df) {
+    if (is.null(df) || nrow(df) == 0) return(df)
+
+    logical_cols <- intersect(c("Hessian.Requested", "Hessian.Attempted", "Post.Hessian.Requested", "Post.Hessian.Attempted"), names(df))
+    for (cn in logical_cols) {
+      vals <- df[[cn]]
+      df[[cn]] <- ifelse(
+        is.na(vals),
+        "NA",
+        ifelse(as.logical(vals), "TRUE", "FALSE")
+      )
+    }
+
+    status_cols <- intersect(c("Hessian.Status", "Neg..Eigen", "Post.Hessian.Status", "Post.Neg..Eigen"), names(df))
+    for (cn in status_cols) {
+      vals <- as.character(df[[cn]])
+      vals[is.na(vals) | !nzchar(trimws(vals))] <- "NA"
+      df[[cn]] <- vals
+    }
+
+    df
   }
 
   quantity_axis_label <- function(profile_data) {
@@ -835,12 +861,20 @@ mod_likelihood_server <- function(input, output, session, rv) {
             requested <- isTRUE(hs$requested)
             ok <- if (!is.null(hs$hessian_ok) && !is.na(hs$hessian_ok)) isTRUE(hs$hessian_ok) else if (!is.null(hs$is_pdh) && !is.na(hs$is_pdh)) isTRUE(hs$is_pdh) else NA
             status <- if (!is.null(hs$hessian_status) && nzchar(as.character(hs$hessian_status))) as.character(hs$hessian_status) else NA_character_
+            neg_eigen <- if (!is.null(hs$n_negative_eigenvalues) && !is.null(hs$n_total_eigenvalues) &&
+              is.finite(suppressWarnings(as.numeric(hs$n_negative_eigenvalues))) &&
+              is.finite(suppressWarnings(as.numeric(hs$n_total_eigenvalues)))) {
+              sprintf("%d / %d", as.integer(hs$n_negative_eigenvalues), as.integer(hs$n_total_eigenvalues))
+            } else {
+              NA_character_
+            }
             data.frame(
               scaler = as.character(sc),
               requested = requested,
               attempted = attempted,
               ok = ok,
               status = status,
+              neg_eigen = neg_eigen,
               stringsAsFactors = FALSE
             )
           })
@@ -850,11 +884,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
             hessian_status_by_scaler <- setNames(as.list(hessian_df$status), hessian_df$scaler)
             hessian_requested_by_scaler <- setNames(as.list(hessian_df$requested), hessian_df$scaler)
             hessian_attempted_by_scaler <- setNames(as.list(hessian_df$attempted), hessian_df$scaler)
+            hessian_neg_by_scaler <- setNames(as.list(hessian_df$neg_eigen), hessian_df$scaler)
           } else {
             hessian_ok_by_scaler <- list()
             hessian_status_by_scaler <- list()
             hessian_requested_by_scaler <- list()
             hessian_attempted_by_scaler <- list()
+            hessian_neg_by_scaler <- list()
           }
           hessian_df <- hessian_df[!is.na(hessian_df$requested) | !is.na(hessian_df$attempted) | !is.na(hessian_df$ok), , drop = FALSE]
           profile_hessian_attempted <- if (nrow(hessian_df) > 0) sum(hessian_df$attempted, na.rm = TRUE) else 0L
@@ -897,6 +933,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           hessian_status_by_scaler <- list()
           hessian_requested_by_scaler <- list()
           hessian_attempted_by_scaler <- list()
+          hessian_neg_by_scaler <- list()
         }
       } else {
         scales <- basename(scaler_dirs) %>% str_extract("\\d+$")
@@ -932,6 +969,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         hessian_status_by_scaler <- list()
         hessian_requested_by_scaler <- list()
         hessian_attempted_by_scaler <- list()
+        hessian_neg_by_scaler <- list()
       }
     } else {
       output_files <- list.files(folder, pattern = "^test_plot_output_\\d+$", full.names = TRUE)
@@ -966,6 +1004,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       hessian_status_by_scaler <- list()
       hessian_requested_by_scaler <- list()
       hessian_attempted_by_scaler <- list()
+      hessian_neg_by_scaler <- list()
     }
 
     list(
@@ -991,7 +1030,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       profile_hessian_ok_by_scaler = hessian_ok_by_scaler,
       profile_hessian_status_by_scaler = hessian_status_by_scaler,
       profile_hessian_requested_by_scaler = hessian_requested_by_scaler,
-      profile_hessian_attempted_by_scaler = hessian_attempted_by_scaler
+      profile_hessian_attempted_by_scaler = hessian_attempted_by_scaler,
+      profile_hessian_neg_by_scaler = hessian_neg_by_scaler
     )
   }
 
@@ -1017,37 +1057,6 @@ mod_likelihood_server <- function(input, output, session, rv) {
     lik_profile_output_filters()
   )
 
-  hessian_label_from_summary <- function(hs) {
-    if (is.null(hs) || !is.list(hs)) return("Not available")
-    attempted <- isTRUE(hs$attempted)
-    requested <- isTRUE(hs$requested)
-    ok <- if (!is.null(hs$hessian_ok) && !is.na(hs$hessian_ok)) {
-      isTRUE(hs$hessian_ok)
-    } else if (!is.null(hs$is_pdh) && !is.na(hs$is_pdh)) {
-      isTRUE(hs$is_pdh)
-    } else {
-      NA
-    }
-    status <- if (!is.null(hs$hessian_status) && nzchar(as.character(hs$hessian_status))) as.character(hs$hessian_status) else NA_character_
-    neg <- if (!is.null(hs$n_negative_eigenvalues) && !is.null(hs$n_total_eigenvalues) &&
-               is.finite(suppressWarnings(as.numeric(hs$n_negative_eigenvalues))) &&
-               is.finite(suppressWarnings(as.numeric(hs$n_total_eigenvalues)))) {
-      paste0(as.integer(hs$n_negative_eigenvalues), "/", as.integer(hs$n_total_eigenvalues))
-    } else {
-      NA_character_
-    }
-
-    if (attempted) {
-      core <- if (is.na(ok)) "Attempted" else if (ok) "OK" else "Failed"
-      extras <- na.omit(c(status, if (!is.na(neg)) paste("Neg", neg) else NA_character_))
-      if (length(extras) > 0) paste(core, paste(extras, collapse = ", "), sep = " | ") else core
-    } else if (requested) {
-      "Requested (not completed)"
-    } else {
-      "Not requested"
-    }
-  }
-
   profile_target_info_reactive <- reactive({
     filters <- lik_data_filters()
     req(filters)
@@ -1066,8 +1075,6 @@ mod_likelihood_server <- function(input, output, session, rv) {
       af174 <- suppressWarnings(as.numeric(pd$af174))
       max_year <- suppressWarnings(as.numeric(pd$max_year))
       seasons <- suppressWarnings(as.numeric(pd$seasons))
-      model_info <- rv$Info_list[[sc]]
-      model_hessian_label <- hessian_label_from_summary(if (!is.null(model_info)) model_info$hessian else NULL)
 
       data.frame(
         Model = sc,
@@ -1086,9 +1093,6 @@ mod_likelihood_server <- function(input, output, session, rv) {
           "Not available"
         },
         `Period definition` = profile_period_label(quantity_label, af173, af174, max_year, seasons),
-        `Model Hessian` = model_hessian_label,
-        `Likelihood Hessian` = if (!is.null(pd$profile_hessian_summary)) pd$profile_hessian_summary else "Not requested",
-        `Likelihood Hessian Status` = if (!is.null(pd$profile_hessian_status) && nzchar(as.character(pd$profile_hessian_status))) pd$profile_hessian_status else NA_character_,
         stringsAsFactors = FALSE
       )
     })
@@ -1117,13 +1121,73 @@ mod_likelihood_server <- function(input, output, session, rv) {
       if (length(out) == 0 || !is.finite(out)) return(NA_real_)
       out
     }
+    scalar_lgl <- function(x) {
+      if (is.null(x) || length(x) == 0) return(NA)
+      out <- suppressWarnings(as.logical(x[[1]]))
+      if (length(out) == 0 || is.na(out)) return(NA)
+      isTRUE(out)
+    }
 
-    extract_hessian_ok <- function(jit) {
+    extract_hessian_fields <- function(jit, info) {
+      hs_jit <- if (is.list(jit) && is.list(jit$hessian_info)) jit$hessian_info else NULL
+      hs_info <- if (is.list(info) && is.list(info$hessian)) info$hessian else NULL
+      hs_raw <- if (is.list(jit) && is.list(jit$hessian)) jit$hessian else NULL
+
+      requested <- NA
+      attempted <- NA
+      status <- NA_character_
+      neg_eigen <- NA_character_
+      neg_from <- function(x) {
+        if (!is.null(x) && is.list(x) &&
+          !is.null(x$n_negative_eigenvalues) && !is.null(x$n_total_eigenvalues) &&
+          is.finite(suppressWarnings(as.numeric(x$n_negative_eigenvalues))) &&
+          is.finite(suppressWarnings(as.numeric(x$n_total_eigenvalues)))) {
+          return(sprintf("%d / %d", as.integer(x$n_negative_eigenvalues), as.integer(x$n_total_eigenvalues)))
+        }
+        NA_character_
+      }
+
+      if (!is.null(hs_jit)) {
+        requested <- scalar_lgl(hs_jit$requested)
+        attempted <- scalar_lgl(hs_jit$attempted)
+        status <- scalar_chr(hs_jit$hessian_status)
+        neg_eigen <- neg_from(hs_jit)
+      }
+      if (!is.null(hs_info)) {
+        if (is.na(requested)) requested <- scalar_lgl(hs_info$requested)
+        if (is.na(attempted)) attempted <- scalar_lgl(hs_info$attempted)
+        if (is.na(status)) status <- scalar_chr(hs_info$hessian_status)
+        if (is.na(neg_eigen)) neg_eigen <- neg_from(hs_info)
+      }
+      if (!is.null(hs_raw)) {
+        if (is.na(requested)) requested <- scalar_lgl(hs_raw$requested)
+        if (is.na(attempted)) attempted <- scalar_lgl(hs_raw$attempted)
+        if (is.na(status)) status <- scalar_chr(hs_raw$hessian_status)
+        if (is.na(neg_eigen)) neg_eigen <- neg_from(hs_raw)
+      }
+
       if (!is.list(jit)) return(NA)
-      if (!is.null(jit$hessian_ok)) return(isTRUE(as.logical(jit$hessian_ok[[1]])))
-      if (!is.null(jit$hessian_info$pdh)) return(isTRUE(as.logical(jit$hessian_info$pdh[[1]])))
-      if (!is.null(jit$hessian$ok)) return(isTRUE(as.logical(jit$hessian$ok[[1]])))
-      NA
+      hessian_ok <- if (!is.null(jit$hessian_ok)) {
+        scalar_lgl(jit$hessian_ok)
+      } else if (!is.null(hs_jit) && !is.null(hs_jit$pdh)) {
+        scalar_lgl(hs_jit$pdh)
+      } else if (!is.null(hs_info) && !is.null(hs_info$hessian_ok)) {
+        scalar_lgl(hs_info$hessian_ok)
+      } else if (!is.null(hs_info) && !is.null(hs_info$is_pdh)) {
+        scalar_lgl(hs_info$is_pdh)
+      } else if (!is.null(hs_raw) && !is.null(hs_raw$ok)) {
+        scalar_lgl(hs_raw$ok)
+      } else {
+        NA
+      }
+
+      list(
+        requested = requested,
+        attempted = attempted,
+        ok = hessian_ok,
+        status = status,
+        neg_eigen = neg_eigen
+      )
     }
 
     seed_rows <- lapply(scenarios, function(sc) {
@@ -1152,11 +1216,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
         max_grad <- scalar_num(jit$max_grad)
         jitter_cv <- scalar_num(info$jitter_cv)
 
-        hessian_ok <- extract_hessian_ok(jit)
+        hessian <- extract_hessian_fields(jit, info)
         converged_for_cutoff <- isTRUE(run_completed) &&
           isTRUE(is.finite(max_grad)) &&
-          isTRUE(abs(max_grad) <= cutoff) &&
-          (is.na(hessian_ok) || isTRUE(hessian_ok))
+          isTRUE(abs(max_grad) <= cutoff)
 
         data.frame(
           Model = sc,
@@ -1166,7 +1229,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
           Completed = run_completed,
           `Objective Function` = obj_fun,
           `Max Gradient` = max_grad,
-          `Hessian OK` = if (is.na(hessian_ok)) NA else isTRUE(hessian_ok),
+          `Hessian.Requested` = if (is.na(hessian$requested)) NA else isTRUE(hessian$requested),
+          `Hessian.Attempted` = if (is.na(hessian$attempted)) NA else isTRUE(hessian$attempted),
+          `Hessian.Status` = if (is.na(hessian$status)) NA_character_ else hessian$status,
+          `Neg..Eigen` = if (is.na(hessian$neg_eigen)) NA_character_ else hessian$neg_eigen,
           Converged = converged_for_cutoff,
           stringsAsFactors = FALSE,
           check.names = FALSE
@@ -1197,6 +1263,30 @@ mod_likelihood_server <- function(input, output, session, rv) {
         Unknown = sum(.data[["Run status"]] == "unknown", na.rm = TRUE),
         `Converged seeds` = sum(Converged, na.rm = TRUE),
         `Converged / Total` = paste0(sum(Converged, na.rm = TRUE), " / ", dplyr::n()),
+        `Hessian.Requested` = {
+          vals <- .data[["Hessian.Requested"]]
+          if (sum(!is.na(vals)) == 0) {
+            NA_character_
+          } else {
+            paste0(sum(vals %in% TRUE, na.rm = TRUE), " / ", sum(!is.na(vals)))
+          }
+        },
+        `Hessian.Attempted` = {
+          vals <- .data[["Hessian.Attempted"]]
+          if (sum(!is.na(vals)) == 0) {
+            NA_character_
+          } else {
+            paste0(sum(vals %in% TRUE, na.rm = TRUE), " / ", sum(!is.na(vals)))
+          }
+        },
+        `Hessian.Status` = {
+          vals <- unique(na.omit(as.character(.data[["Hessian.Status"]])))
+          if (length(vals) == 0) NA_character_ else paste(vals, collapse = ", ")
+        },
+        `Neg..Eigen` = {
+          vals <- unique(na.omit(as.character(.data[["Neg..Eigen"]])))
+          if (length(vals) == 0) NA_character_ else paste(vals, collapse = ", ")
+        },
         `Median |max_grad| (completed)` = {
           completed_grads <- abs(.data[["Max Gradient"]][Completed & is.finite(.data[["Max Gradient"]])])
           if (length(completed_grads) > 0) stats::median(completed_grads, na.rm = TRUE) else NA_real_
@@ -1272,8 +1362,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
         actual_quantity <- pd$actual_quantity[[as.character(scl)]]
         target_quantity <- pd$target_quantity[[as.character(scl)]]
         target_rel_err <- pd$target_rel_err[[as.character(scl)]]
-        h_ok <- if (!is.null(pd$profile_hessian_ok_by_scaler)) pd$profile_hessian_ok_by_scaler[[as.character(scl)]] else NA
         h_status <- if (!is.null(pd$profile_hessian_status_by_scaler)) pd$profile_hessian_status_by_scaler[[as.character(scl)]] else NA
+        h_neg <- if (!is.null(pd$profile_hessian_neg_by_scaler)) pd$profile_hessian_neg_by_scaler[[as.character(scl)]] else NA
         h_requested <- if (!is.null(pd$profile_hessian_requested_by_scaler)) pd$profile_hessian_requested_by_scaler[[as.character(scl)]] else FALSE
         h_attempted <- if (!is.null(pd$profile_hessian_attempted_by_scaler)) pd$profile_hessian_attempted_by_scaler[[as.character(scl)]] else FALSE
         rows[[length(rows) + 1]] <- data.frame(
@@ -1286,8 +1376,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
           max_grad = suppressWarnings(as.numeric(grad_val)),
           hessian_requested = isTRUE(h_requested),
           hessian_attempted = isTRUE(h_attempted),
-          hessian_ok = if (is.null(h_ok) || is.na(h_ok)) NA else isTRUE(h_ok),
           hessian_status = if (is.null(h_status) || !nzchar(as.character(h_status))) NA_character_ else as.character(h_status),
+          hessian_neg = if (is.null(h_neg) || !nzchar(as.character(h_neg))) NA_character_ else as.character(h_neg),
           stringsAsFactors = FALSE
         )
       }
@@ -1312,10 +1402,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
         `Gap (%)` = target_gap_pct,
         `Objective Function` = obj_fun,
         `Max Gradient` = max_grad,
-        `Hessian Requested` = hessian_requested,
-        `Hessian Attempted` = hessian_attempted,
-        `Hessian OK` = hessian_ok,
-        `Hessian Status` = hessian_status
+        `Hessian.Requested` = hessian_requested,
+        `Hessian.Attempted` = hessian_attempted,
+        `Hessian.Status` = hessian_status,
+        `Neg..Eigen` = hessian_neg
       ) %>%
       arrange(Model, Scaler)
   })
@@ -2452,7 +2542,39 @@ mod_likelihood_server <- function(input, output, session, rv) {
     bind_rows(retro_rows)
   }
 
-  build_hessian_data_for_scenario <- function(scenario, model_dir) {
+  post_hessian_cols_from_info <- function(model_info) {
+      hs <- if (!is.null(model_info) && is.list(model_info) && is.list(model_info$hessian)) model_info$hessian else NULL
+      requested <- if (!is.null(hs$requested) && !is.na(suppressWarnings(as.logical(hs$requested)))) {
+        if (isTRUE(as.logical(hs$requested))) "TRUE" else "FALSE"
+      } else {
+        "NA"
+      }
+      attempted <- if (!is.null(hs$attempted) && !is.na(suppressWarnings(as.logical(hs$attempted)))) {
+        if (isTRUE(as.logical(hs$attempted))) "TRUE" else "FALSE"
+      } else {
+        "NA"
+      }
+      status <- if (!is.null(hs$hessian_status) && nzchar(as.character(hs$hessian_status))) {
+        as.character(hs$hessian_status)
+      } else {
+        "NA"
+      }
+      neg_eigen <- if (!is.null(hs$n_negative_eigenvalues) && !is.null(hs$n_total_eigenvalues) &&
+        is.finite(suppressWarnings(as.numeric(hs$n_negative_eigenvalues))) &&
+        is.finite(suppressWarnings(as.numeric(hs$n_total_eigenvalues)))) {
+        sprintf("%d / %d", as.integer(hs$n_negative_eigenvalues), as.integer(hs$n_total_eigenvalues))
+      } else {
+        "NA"
+      }
+      list(
+        `Post.Hessian.Requested` = requested,
+        `Post.Hessian.Attempted` = attempted,
+        `Post.Hessian.Status` = status,
+        `Post.Neg..Eigen` = neg_eigen
+      )
+  }
+
+  build_hessian_data_for_scenario <- function(scenario, model_dir, model_info = NULL) {
       hfile <- file.path(model_dir, scenario, "hessian", "hessian_info.rds")
       part_files <- list.files(
         file.path(model_dir, scenario, "hessian"),
@@ -2460,6 +2582,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         full.names = TRUE,
         recursive = TRUE
       )
+      post_cols <- post_hessian_cols_from_info(model_info)
       
       if (!file.exists(hfile)) {
         return(data.frame(
@@ -2472,6 +2595,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
           Reliability = NA_character_,
           `Stitch Complete` = NA_character_,
           `Parts (found/expected)` = ifelse(length(part_files) > 0, as.character(length(part_files)), NA_character_),
+          `Post.Hessian.Requested` = post_cols$`Post.Hessian.Requested`,
+          `Post.Hessian.Attempted` = post_cols$`Post.Hessian.Attempted`,
+          `Post.Hessian.Status` = post_cols$`Post.Hessian.Status`,
+          `Post.Neg..Eigen` = post_cols$`Post.Neg..Eigen`,
           stringsAsFactors = FALSE
         ))
       }
@@ -2488,6 +2615,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
           Reliability = NA_character_,
           `Stitch Complete` = NA_character_,
           `Parts (found/expected)` = ifelse(length(part_files) > 0, as.character(length(part_files)), NA_character_),
+          `Post.Hessian.Requested` = post_cols$`Post.Hessian.Requested`,
+          `Post.Hessian.Attempted` = post_cols$`Post.Hessian.Attempted`,
+          `Post.Hessian.Status` = post_cols$`Post.Hessian.Status`,
+          `Post.Neg..Eigen` = post_cols$`Post.Neg..Eigen`,
           stringsAsFactors = FALSE
         ))
       }
@@ -2532,6 +2663,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
           as.character(found_parts),
           sprintf("%d / %d", as.integer(found_parts), as.integer(n_parts_expected))
         ),
+        `Post.Hessian.Requested` = post_cols$`Post.Hessian.Requested`,
+        `Post.Hessian.Attempted` = post_cols$`Post.Hessian.Attempted`,
+        `Post.Hessian.Status` = post_cols$`Post.Hessian.Status`,
+        `Post.Neg..Eigen` = post_cols$`Post.Neg..Eigen`,
         stringsAsFactors = FALSE
       )
   }
@@ -2703,7 +2838,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         get_cached_heavy(
           "hessian",
           k,
-          function() build_hessian_data_for_scenario(sc, input$model_dir)
+          function() build_hessian_data_for_scenario(sc, input$model_dir, rv$Info_list[[sc]])
         )
       }))
       if (nrow(data) == 0) {
@@ -3865,7 +4000,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           paste0(
             "Converged means completed runs with |max_grad| <= ",
             format(cutoff, trim = TRUE),
-            ", and Hessian OK when Hessian information exists."
+            "."
           ),
           style = "font-size: 12px; color: #333;"
         )
@@ -3990,7 +4125,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (!identical(plot_kind, "hessian") || nrow(info$data) == 0) return(NULL)
     
     datatable(
-      info$data,
+      format_hessian_display_cols(info$data),
       options = list(pageLength = 10, scrollX = TRUE),
       rownames = FALSE
     )
@@ -4007,7 +4142,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     datatable(
-      grad_tbl,
+      format_hessian_display_cols(grad_tbl),
       options = list(pageLength = 10, scrollX = TRUE),
       rownames = FALSE
     )
@@ -4054,7 +4189,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (is.null(jitter_tbl) || nrow(jitter_tbl) == 0) return(NULL)
 
     datatable(
-      jitter_tbl,
+      format_hessian_display_cols(jitter_tbl),
       options = list(pageLength = 10, scrollX = TRUE),
       rownames = FALSE
     )
@@ -4073,7 +4208,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     datatable(
-      seed_tbl,
+      format_hessian_display_cols(seed_tbl),
       options = list(pageLength = 12, scrollX = TRUE),
       rownames = FALSE
     )
@@ -4112,12 +4247,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
     rows <- list()
     for (sc in scenarios) {
       base_hs <- rv$Info_list[[sc]]$hessian
+      base_requested <- if (!is.null(base_hs$requested) && !is.na(suppressWarnings(as.logical(base_hs$requested)))) isTRUE(as.logical(base_hs$requested)) else NA
+      base_attempted <- if (!is.null(base_hs$attempted) && !is.na(suppressWarnings(as.logical(base_hs$attempted)))) isTRUE(as.logical(base_hs$attempted)) else NA
       rows[[length(rows) + 1]] <- data.frame(
         Model = sc,
         Peel = 0L,
-        `Hessian` = hessian_label_from_summary(base_hs),
-        `Hessian Status` = if (!is.null(base_hs$hessian_status) && nzchar(as.character(base_hs$hessian_status))) as.character(base_hs$hessian_status) else NA_character_,
-        `Neg. Eigen` = if (!is.null(base_hs$n_negative_eigenvalues) && !is.null(base_hs$n_total_eigenvalues) &&
+        `Hessian.Requested` = if (is.na(base_requested)) NA else isTRUE(base_requested),
+        `Hessian.Attempted` = if (is.na(base_attempted)) NA else isTRUE(base_attempted),
+        `Hessian.Status` = if (!is.null(base_hs$hessian_status) && nzchar(as.character(base_hs$hessian_status))) as.character(base_hs$hessian_status) else NA_character_,
+        `Neg..Eigen` = if (!is.null(base_hs$n_negative_eigenvalues) && !is.null(base_hs$n_total_eigenvalues) &&
           is.finite(suppressWarnings(as.numeric(base_hs$n_negative_eigenvalues))) &&
           is.finite(suppressWarnings(as.numeric(base_hs$n_total_eigenvalues)))) {
           sprintf("%d / %d", as.integer(base_hs$n_negative_eigenvalues), as.integer(base_hs$n_total_eigenvalues))
@@ -4138,12 +4276,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
         if (!file.exists(info_file)) next
         rinfo <- tryCatch(readRDS(info_file), error = function(e) NULL)
         hs <- if (!is.null(rinfo) && is.list(rinfo$hessian)) rinfo$hessian else NULL
+        hs_requested <- if (!is.null(hs$requested) && !is.na(suppressWarnings(as.logical(hs$requested)))) isTRUE(as.logical(hs$requested)) else NA
+        hs_attempted <- if (!is.null(hs$attempted) && !is.na(suppressWarnings(as.logical(hs$attempted)))) isTRUE(as.logical(hs$attempted)) else NA
         rows[[length(rows) + 1]] <- data.frame(
           Model = sc,
           Peel = as.integer(peel_num),
-          `Hessian` = hessian_label_from_summary(hs),
-          `Hessian Status` = if (!is.null(hs$hessian_status) && nzchar(as.character(hs$hessian_status))) as.character(hs$hessian_status) else NA_character_,
-          `Neg. Eigen` = if (!is.null(hs$n_negative_eigenvalues) && !is.null(hs$n_total_eigenvalues) &&
+          `Hessian.Requested` = if (is.na(hs_requested)) NA else isTRUE(hs_requested),
+          `Hessian.Attempted` = if (is.na(hs_attempted)) NA else isTRUE(hs_attempted),
+          `Hessian.Status` = if (!is.null(hs$hessian_status) && nzchar(as.character(hs$hessian_status))) as.character(hs$hessian_status) else NA_character_,
+          `Neg..Eigen` = if (!is.null(hs$n_negative_eigenvalues) && !is.null(hs$n_total_eigenvalues) &&
             is.finite(suppressWarnings(as.numeric(hs$n_negative_eigenvalues))) &&
             is.finite(suppressWarnings(as.numeric(hs$n_total_eigenvalues)))) {
             sprintf("%d / %d", as.integer(hs$n_negative_eigenvalues), as.integer(hs$n_total_eigenvalues))
@@ -4166,45 +4307,74 @@ mod_likelihood_server <- function(input, output, session, rv) {
   )
 
   output$retro_rho_table <- renderUI({
-    if (!identical(input$lik_main_tab, "retro")) return(NULL)
-    info <- profile_data_reactive()
-    plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else NULL
-    rho_df <- if (!is.null(info$rho)) info$rho else NULL
-    if (!identical(plot_kind, "retro") || is.null(rho_df) || nrow(rho_df) == 0) {
-      return(simple_html_table(data.frame(
-        Message = "Mohn's rho summary is not available for the current selection.",
-        stringsAsFactors = FALSE
-      )))
-    }
+    tryCatch({
+      if (!identical(input$lik_main_tab, "retro")) return(NULL)
+      info <- profile_data_reactive()
+      plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else NULL
+      rho_df <- if (!is.null(info$rho)) info$rho else NULL
+      if (!identical(plot_kind, "retro") || is.null(rho_df) || nrow(rho_df) == 0) {
+        return(simple_html_table(data.frame(
+          Message = "Mohn's rho summary is not available for the current selection.",
+          stringsAsFactors = FALSE
+        )))
+      }
 
-    rho_tbl <- rho_df %>%
-      transmute(
-        Model = scenario,
-        `Mohn's rho: SB/SB[F=0]` = mohn_rho_depletion,
-        `Mohn's rho: Recruitment` = mohn_rho_recruitment,
-        `Mohn's rho: SB (1e3 MT)` = mohn_rho_spawning_potential,
-        `Mohn's rho: F` = mohn_rho_fishing_mortality
+      required_rho_cols <- c(
+        "scenario",
+        "mohn_rho_depletion",
+        "mohn_rho_recruitment",
+        "mohn_rho_spawning_potential",
+        "mohn_rho_fishing_mortality"
       )
+      if (!all(required_rho_cols %in% names(rho_df))) {
+        return(simple_html_table(data.frame(
+          Message = "Mohn's rho columns are missing in retro data.",
+          stringsAsFactors = FALSE
+        )))
+      }
 
-    retro_hs <- retro_hessian_info_reactive()
-    if (!is.null(retro_hs) && nrow(retro_hs) > 0) {
-      hs_summary <- retro_hs %>%
-        group_by(Model) %>%
-        summarise(
-          `Retro Hessian (OK/attempted)` = {
-            attempted <- grepl("^OK|^Failed|^Attempted", `Hessian`)
-            ok <- grepl("^OK", `Hessian`)
-            if (sum(attempted, na.rm = TRUE) > 0) {
-              sprintf("%d/%d", sum(ok, na.rm = TRUE), sum(attempted, na.rm = TRUE))
-            } else {
-              "Not requested"
-            }
-          },
-          .groups = "drop"
+      rho_tbl <- rho_df %>%
+        transmute(
+          Model = scenario,
+          `Mohn's rho: SB/SB[F=0]` = mohn_rho_depletion,
+          `Mohn's rho: Recruitment` = mohn_rho_recruitment,
+          `Mohn's rho: SB (1e3 MT)` = mohn_rho_spawning_potential,
+          `Mohn's rho: F` = mohn_rho_fishing_mortality
         )
-      rho_tbl <- rho_tbl %>% left_join(hs_summary, by = "Model")
-    }
-    simple_html_table(rho_tbl)
+
+      retro_hs <- retro_hessian_info_reactive()
+      required_hs_cols <- c("Model", "Hessian.Requested", "Hessian.Attempted", "Hessian.Status", "Neg..Eigen")
+      if (!is.null(retro_hs) && nrow(retro_hs) > 0 && all(required_hs_cols %in% names(retro_hs))) {
+        hs_summary <- retro_hs %>%
+          group_by(Model) %>%
+          summarise(
+            `Hessian.Requested` = {
+              vals <- .data[["Hessian.Requested"]]
+              if (sum(!is.na(vals)) == 0) NA_character_ else paste0(sum(vals %in% TRUE, na.rm = TRUE), " / ", sum(!is.na(vals)))
+            },
+            `Hessian.Attempted` = {
+              vals <- .data[["Hessian.Attempted"]]
+              if (sum(!is.na(vals)) == 0) NA_character_ else paste0(sum(vals %in% TRUE, na.rm = TRUE), " / ", sum(!is.na(vals)))
+            },
+            `Hessian.Status` = {
+              vals <- unique(na.omit(as.character(.data[["Hessian.Status"]])))
+              if (length(vals) == 0) NA_character_ else paste(vals, collapse = ", ")
+            },
+            `Neg..Eigen` = {
+              vals <- unique(na.omit(as.character(.data[["Neg..Eigen"]])))
+              if (length(vals) == 0) NA_character_ else paste(vals, collapse = ", ")
+            },
+            .groups = "drop"
+          )
+        rho_tbl <- rho_tbl %>% left_join(hs_summary, by = "Model")
+      }
+      simple_html_table(format_hessian_display_cols(rho_tbl))
+    }, error = function(e) {
+      simple_html_table(data.frame(
+        Message = paste("Retro rho summary rendering error:", conditionMessage(e)),
+        stringsAsFactors = FALSE
+      ))
+    })
   })
 
   output$retro_peel_model_ui <- renderUI({
@@ -4282,7 +4452,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         stringsAsFactors = FALSE
       )))
     }
-    simple_html_table(peel_tbl)
+    simple_html_table(format_hessian_display_cols(peel_tbl))
   })
   outputOptions(output, "retro_info_ui", suspendWhenHidden = FALSE)
   outputOptions(output, "retro_rho_table", suspendWhenHidden = FALSE)
