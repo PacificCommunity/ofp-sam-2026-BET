@@ -5,6 +5,7 @@ library(CondorBox)
 source("tools/jitter.R")
 source("tools/retro.R")
 source("tools/model_payload.R")
+source("tools/post_hessian.R")
 source("tools/condor_archive_cleanup.R")
 
 
@@ -172,117 +173,16 @@ if (isTRUE(jitter_smoke_only)) {
   )
 
   if (isTRUE(jitter_hessian) && isTRUE(jitter_smoke_hessian)) {
-    hessian_summary_smoke$attempted <- TRUE
-    hessian_dir <- file.path(seed_dir_abs, "hessian")
-    part_dir <- file.path(hessian_dir, "part_1")
-    dir.create(part_dir, recursive = TRUE, showWarnings = FALSE)
-
-    seed_files <- list.files(seed_dir_abs, full.names = TRUE, recursive = FALSE)
-    seed_files <- seed_files[file.info(seed_files)$isdir %in% FALSE]
-    if (length(seed_files) > 0) {
-      file.copy(seed_files, to = part_dir, overwrite = TRUE, recursive = FALSE)
-    }
-
-    hessian_input_par <- basename(base_00_par)
-    npars <- NA_integer_
-    par_in_part <- file.path(part_dir, hessian_input_par)
-    if (file.exists(par_in_part)) {
-      par_lines <- readLines(par_in_part, warn = FALSE)
-      npars_line <- grep("# The number of parameters", par_lines)
-      if (length(npars_line) > 0) {
-        npars <- suppressWarnings(as.integer(scan(par_in_part, skip = npars_line, nlines = 1, quiet = TRUE)))
-      }
-    }
-    if ((!is.finite(npars) || is.na(npars) || npars <= 0) && !is.null(indepvar_map$mapping)) {
-      npars <- nrow(indepvar_map$mapping)
-    }
-
-    if (!is.finite(npars) || is.na(npars) || npars <= 0) {
-      hessian_summary_smoke$run_ok <- FALSE
-      hessian_summary_smoke$error <- "Failed to parse number of parameters from 00.par for smoke hessian."
-    } else {
-      hessian_switch <- paste("-switch 3", "1 145 1", "1 223 1", "1 224", npars, sep = " ")
-      hessian_out_par <- "hessian_1.par"
-      hessian_cmd <- paste(
-        shQuote(program_path_abs),
-        shQuote(frq_file),
-        shQuote(hessian_input_par),
-        shQuote(hessian_out_par),
-        hessian_switch
-      )
-      hessian_run_ok <- TRUE
-      hessian_error <- NULL
-      tryCatch(
-        {
-          run_commands(
-            commands = hessian_cmd,
-            work_dirs = part_dir,
-            save_log = TRUE,
-            parallel = FALSE,
-            verbose = TRUE,
-            log_file = file.path(part_dir, "mfcl_hessian_log.txt")
-          )
-        },
-        error = function(e) {
-          hessian_run_ok <<- FALSE
-          hessian_error <<- conditionMessage(e)
-        }
-      )
-
-      if (!isTRUE(hessian_run_ok)) {
-        hessian_summary_smoke$run_ok <- FALSE
-        hessian_summary_smoke$error <- if (!is.null(hessian_error) && nzchar(hessian_error)) hessian_error else "Smoke hessian MFCL run failed."
-      } else {
-        part_info <- list(
-          hessian_part = 1L,
-          nsplit = 1L,
-          start_par = 1L,
-          end_par = as.integer(npars),
-          npars = as.integer(npars),
-          frq_file = frq_file,
-          program_path = program_path,
-          model_dir = seed_dir_abs,
-          part_dir = part_dir,
-          base_dir = seed_dir_abs,
-          input_par = hessian_input_par,
-          output_par = hessian_out_par
-        )
-        saveRDS(part_info, file = file.path(part_dir, "hessian_info.rds"), compress = "xz")
-        collate_script <- file.path(project_root, "tools", "collate_hessian_mfcl.R")
-        collate_cmd <- paste("Rscript", shQuote(collate_script), shQuote(seed_dir_abs))
-        collate_status <- suppressWarnings(system(collate_cmd, intern = FALSE, ignore.stdout = FALSE, ignore.stderr = FALSE))
-        hessian_info_file <- file.path(hessian_dir, "hessian_info.rds")
-        hessian_summary_smoke$info_file <- hessian_info_file
-
-        if (!identical(collate_status, 0L) || !file.exists(hessian_info_file)) {
-          hessian_summary_smoke$run_ok <- FALSE
-          hessian_summary_smoke$error <- "Smoke hessian collate failed or hessian_info.rds not produced."
-        } else {
-          hinfo <- suppressWarnings(tryCatch(readRDS(hessian_info_file), error = function(e) NULL))
-          pdh_val <- suppressWarnings(tryCatch(as.logical(hinfo$diagnostics$summary$pdh$is_pdh), error = function(e) NA))
-          spd_val <- suppressWarnings(tryCatch(as.logical(hinfo$diagnostics$summary$positivised_cov_is_spd), error = function(e) NA))
-          n_neg <- suppressWarnings(tryCatch(as.integer(hinfo$eigen$n_negative_eigenvalues), error = function(e) NA_integer_))
-          n_tot <- suppressWarnings(tryCatch(as.integer(hinfo$eigen$n_total_eigenvalues), error = function(e) NA_integer_))
-          h_status <- suppressWarnings(tryCatch(as.character(hinfo$eigen$hessian_status), error = function(e) NA_character_))
-          rel_status <- suppressWarnings(tryCatch(as.character(hinfo$eigen$reliability), error = function(e) NA_character_))
-
-          pdh_scalar <- if (length(pdh_val) > 0) pdh_val[[1]] else NA
-          spd_scalar <- if (length(spd_val) > 0) spd_val[[1]] else NA
-          hessian_summary_smoke$run_ok <- TRUE
-          hessian_summary_smoke$is_pdh <- pdh_scalar
-          hessian_summary_smoke$is_spd <- spd_scalar
-          hessian_summary_smoke$hessian_ok <- if (!is.na(pdh_scalar)) {
-            if (!is.na(spd_scalar)) isTRUE(pdh_scalar) && isTRUE(spd_scalar) else isTRUE(pdh_scalar)
-          } else {
-            NA
-          }
-          hessian_summary_smoke$n_negative_eigenvalues <- if (length(n_neg) > 0) n_neg[[1]] else NA_integer_
-          hessian_summary_smoke$n_total_eigenvalues <- if (length(n_tot) > 0) n_tot[[1]] else NA_integer_
-          hessian_summary_smoke$hessian_status <- if (length(h_status) > 0) h_status[[1]] else NA_character_
-          hessian_summary_smoke$reliability <- if (length(rel_status) > 0) rel_status[[1]] else NA_character_
-        }
-      }
-    }
+    hessian_summary_smoke <- mp_run_post_hessian(
+      work_dir = seed_dir_abs,
+      program_path_abs = program_path_abs,
+      program_path = program_path,
+      frq_file = frq_file,
+      input_par = basename(base_00_par),
+      project_root = project_root,
+      requested = TRUE
+    )
+    hessian_summary_smoke$smoke_hessian <- TRUE
   } else if (isTRUE(jitter_hessian) && !isTRUE(jitter_smoke_hessian)) {
     hessian_summary_smoke$run_ok <- FALSE
     hessian_summary_smoke$error <- "Skipped in smoke-only mode. Set jitter_smoke_hessian=1 to run hessian on jittered 00.par."
@@ -430,123 +330,15 @@ if (isTRUE(jitter_hessian)) {
     hessian_summary$run_ok <- FALSE
     hessian_summary$error <- "Skipped: jitter fit did not complete successfully or final par missing."
   } else {
-    hessian_summary$attempted <- TRUE
-    hessian_dir <- file.path(seed_dir_abs, "hessian")
-    part_dir <- file.path(hessian_dir, "part_1")
-    dir.create(part_dir, recursive = TRUE, showWarnings = FALSE)
-
-    seed_files <- list.files(seed_dir_abs, full.names = TRUE, recursive = FALSE)
-    seed_files <- seed_files[file.info(seed_files)$isdir %in% FALSE]
-    if (length(seed_files) > 0) {
-      file.copy(seed_files, to = part_dir, overwrite = TRUE, recursive = FALSE)
-    }
-
-    final_par_for_hessian <- basename(final_par_path)
-    final_par_in_part <- file.path(part_dir, final_par_for_hessian)
-    npars <- NA_integer_
-    if (file.exists(final_par_in_part)) {
-      par_lines <- readLines(final_par_in_part, warn = FALSE)
-      npars_line <- grep("# The number of parameters", par_lines)
-      if (length(npars_line) > 0) {
-        npars <- suppressWarnings(as.integer(scan(final_par_in_part, skip = npars_line, nlines = 1, quiet = TRUE)))
-      }
-    }
-
-    if (!is.finite(npars) || is.na(npars) || npars <= 0) {
-      hessian_summary$run_ok <- FALSE
-      hessian_summary$error <- "Failed to parse number of parameters from final par for jitter hessian."
-    } else {
-      hessian_switch <- paste(
-        "-switch 3",
-        "1 145 1",
-        "1 223 1",
-        "1 224", npars,
-        sep = " "
-      )
-      hessian_out_par <- "hessian_1.par"
-      hessian_cmd <- paste(
-        shQuote(program_path_abs),
-        shQuote(frq_file),
-        shQuote(final_par_for_hessian),
-        shQuote(hessian_out_par),
-        hessian_switch
-      )
-
-      hessian_run_ok <- TRUE
-      hessian_error <- NULL
-      tryCatch(
-        {
-          run_commands(
-            commands = hessian_cmd,
-            work_dirs = part_dir,
-            save_log = TRUE,
-            parallel = FALSE,
-            verbose = TRUE,
-            log_file = file.path(part_dir, "mfcl_hessian_log.txt")
-          )
-        },
-        error = function(e) {
-          hessian_run_ok <<- FALSE
-          hessian_error <<- conditionMessage(e)
-        }
-      )
-
-      if (!isTRUE(hessian_run_ok)) {
-        hessian_summary$run_ok <- FALSE
-        hessian_summary$error <- if (!is.null(hessian_error) && nzchar(hessian_error)) hessian_error else "Hessian MFCL run failed."
-      } else {
-        part_info <- list(
-          hessian_part = 1L,
-          nsplit = 1L,
-          start_par = 1L,
-          end_par = as.integer(npars),
-          npars = as.integer(npars),
-          frq_file = frq_file,
-          program_path = program_path,
-          model_dir = seed_dir_abs,
-          part_dir = part_dir,
-          base_dir = seed_dir_abs,
-          input_par = final_par_for_hessian,
-          output_par = hessian_out_par
-        )
-        saveRDS(part_info, file = file.path(part_dir, "hessian_info.rds"), compress = "xz")
-
-        collate_script <- file.path(project_root, "tools", "collate_hessian_mfcl.R")
-        collate_cmd <- paste("Rscript", shQuote(collate_script), shQuote(seed_dir_abs))
-        collate_status <- suppressWarnings(system(collate_cmd, intern = FALSE, ignore.stdout = FALSE, ignore.stderr = FALSE))
-
-        hessian_info_file <- file.path(hessian_dir, "hessian_info.rds")
-        hessian_summary$info_file <- hessian_info_file
-        if (!identical(collate_status, 0L) || !file.exists(hessian_info_file)) {
-          hessian_summary$run_ok <- FALSE
-          hessian_summary$error <- "Hessian collate failed or hessian_info.rds not produced."
-        } else {
-          hinfo <- suppressWarnings(tryCatch(readRDS(hessian_info_file), error = function(e) NULL))
-          pdh_val <- suppressWarnings(tryCatch(as.logical(hinfo$diagnostics$summary$pdh$is_pdh), error = function(e) NA))
-          spd_val <- suppressWarnings(tryCatch(as.logical(hinfo$diagnostics$summary$positivised_cov_is_spd), error = function(e) NA))
-          n_neg <- suppressWarnings(tryCatch(as.integer(hinfo$eigen$n_negative_eigenvalues), error = function(e) NA_integer_))
-          n_tot <- suppressWarnings(tryCatch(as.integer(hinfo$eigen$n_total_eigenvalues), error = function(e) NA_integer_))
-          h_status <- suppressWarnings(tryCatch(as.character(hinfo$eigen$hessian_status), error = function(e) NA_character_))
-          rel_status <- suppressWarnings(tryCatch(as.character(hinfo$eigen$reliability), error = function(e) NA_character_))
-
-          pdh_scalar <- if (length(pdh_val) > 0) pdh_val[[1]] else NA
-          spd_scalar <- if (length(spd_val) > 0) spd_val[[1]] else NA
-
-          hessian_summary$run_ok <- TRUE
-          hessian_summary$is_pdh <- pdh_scalar
-          hessian_summary$is_spd <- spd_scalar
-          hessian_summary$hessian_ok <- if (!is.na(pdh_scalar)) {
-            if (!is.na(spd_scalar)) isTRUE(pdh_scalar) && isTRUE(spd_scalar) else isTRUE(pdh_scalar)
-          } else {
-            NA
-          }
-          hessian_summary$n_negative_eigenvalues <- if (length(n_neg) > 0) n_neg[[1]] else NA_integer_
-          hessian_summary$n_total_eigenvalues <- if (length(n_tot) > 0) n_tot[[1]] else NA_integer_
-          hessian_summary$hessian_status <- if (length(h_status) > 0) h_status[[1]] else NA_character_
-          hessian_summary$reliability <- if (length(rel_status) > 0) rel_status[[1]] else NA_character_
-        }
-      }
-    }
+    hessian_summary <- mp_run_post_hessian(
+      work_dir = seed_dir_abs,
+      program_path_abs = program_path_abs,
+      program_path = program_path,
+      frq_file = frq_file,
+      input_par = basename(final_par_path),
+      project_root = project_root,
+      requested = TRUE
+    )
   }
 }
 

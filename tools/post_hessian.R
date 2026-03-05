@@ -163,8 +163,16 @@ mp_run_post_hessian <- function(work_dir,
   saveRDS(part_info, file = file.path(part_dir, "hessian_info.rds"), compress = "xz")
 
   collate_script <- file.path(project_root, "tools", "collate_hessian_mfcl.R")
-  collate_cmd <- paste("Rscript", shQuote(collate_script), shQuote(work_dir))
-  collate_status <- suppressWarnings(system(collate_cmd, intern = FALSE, ignore.stdout = FALSE, ignore.stderr = FALSE))
+  collate_status <- suppressWarnings(system2(
+    "Rscript",
+    args = c(collate_script, work_dir),
+    env = c(
+      "hessian_compact_cleanup=true",
+      "hessian_keep_hes=false"
+    ),
+    stdout = FALSE,
+    stderr = FALSE
+  ))
 
   hessian_info_file <- file.path(hessian_dir, "hessian_info.rds")
   summary$info_file <- hessian_info_file
@@ -180,6 +188,8 @@ mp_run_post_hessian <- function(work_dir,
     summary$error <- "Failed to read hessian_info.rds after post-hessian run."
     return(summary)
   }
-
-  mp_parse_hessian_summary_from_info(hinfo, summary)
+  summary <- mp_parse_hessian_summary_from_info(hinfo, summary)
+  summary$info_file <- NA_character_
+  unlink(hessian_dir, recursive = TRUE, force = TRUE)
+  summary
 }
