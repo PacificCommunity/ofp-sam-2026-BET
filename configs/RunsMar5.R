@@ -82,7 +82,7 @@ models <- list(
   
   "2023R9_ExPTTP" = list(
     
-    "description"="Exclude RTTP tags from 2023 BET diagnostic model",
+    "description"="Exclude PTTP tags from 2023 BET diagnostic model",
     
     mfcl_commands = "./doitall.sh",
     program_path = "mfcl/exe/mfclo64_2026_02_04_vsn2278",  # Model-specific path
