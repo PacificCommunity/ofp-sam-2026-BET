@@ -96,7 +96,7 @@ mp_detect_post_hessian_nsplit <- function(npars) {
     detected <- suppressWarnings(parallel::detectCores())
   }
   workers <- if (is.finite(detected) && !is.na(detected) && detected > 1) {
-    as.integer(detected - 1L)
+    as.integer(detected - 2L)
   } else {
     1L
   }
