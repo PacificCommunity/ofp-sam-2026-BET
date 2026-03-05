@@ -4123,9 +4123,16 @@ mod_likelihood_server <- function(input, output, session, rv) {
     info <- profile_data_reactive()
     plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else "piner"
     if (!identical(plot_kind, "hessian") || nrow(info$data) == 0) return(NULL)
-    
+
+    htbl <- format_hessian_display_cols(info$data)
+    htbl[] <- lapply(htbl, function(col) {
+      out <- as.character(col)
+      out[is.na(col) | !nzchar(trimws(out))] <- "NA"
+      out
+    })
+
     datatable(
-      format_hessian_display_cols(info$data),
+      htbl,
       options = list(pageLength = 10, scrollX = TRUE),
       rownames = FALSE
     )
