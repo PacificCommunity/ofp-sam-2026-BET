@@ -335,7 +335,8 @@ mod_likelihood_ui <- function() {
 mod_likelihood_server <- function(input, output, session, rv) {
   heavy_cache <- reactiveValues(
     retro = list(),
-    hessian = list()
+    hessian = list(),
+    retro_plot = list()
   )
   fishery_diag_cache <- reactiveValues(
     cpue = list(),
@@ -373,6 +374,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
   clear_heavy_cache <- function() {
     heavy_cache$retro <- list()
     heavy_cache$hessian <- list()
+    heavy_cache$retro_plot <- list()
   }
   clear_fishery_diag_cache <- function() {
     fishery_diag_cache$cpue <- list()
@@ -455,6 +457,97 @@ mod_likelihood_server <- function(input, output, session, rv) {
       scenarios = filters$scenarios
     )
   })
+  lik_data_cache_key <- reactive({
+    filters <- lik_data_filters()
+    if (is.null(filters)) return(NULL)
+
+    key <- list(
+      profile_type = filters$profile_type,
+      scenarios = sort(filters$scenarios)
+    )
+
+    if (identical(filters$profile_type, "jitter")) {
+      key$jitter_converged_only_diagnostics <- isTRUE(filters$jitter_converged_only_diagnostics)
+      key$jitter_grad_reference <- if (is.finite(filters$jitter_grad_reference)) filters$jitter_grad_reference else 0.001
+      return(key)
+    }
+
+    if (identical(filters$profile_type, "jitter_params")) {
+      key$jitter_param_view <- filters$jitter_param_view
+      key$jitter_param_scope <- filters$jitter_param_scope
+      key$jitter_param_window <- filters$jitter_param_window
+      key$jitter_converged_only <- isTRUE(filters$jitter_converged_only)
+      key$jitter_converged_max_grad <- if (is.finite(filters$jitter_converged_max_grad)) filters$jitter_converged_max_grad else 0.01
+      key$jitter_param_input_scale <- filters$jitter_param_input_scale
+      key$jitter_param_metric <- filters$jitter_param_metric
+      key$jitter_param_range <- filters$jitter_param_range
+      return(key)
+    }
+
+    if (identical(filters$profile_type, "jitter_derived")) {
+      key$jitter_converged_only <- isTRUE(filters$jitter_converged_only)
+      key$jitter_converged_max_grad <- if (is.finite(filters$jitter_converged_max_grad)) filters$jitter_converged_max_grad else 0.01
+      key$jitter_derived_view <- filters$jitter_derived_view
+      return(key)
+    }
+
+    if (filters$profile_type %in% fishery_region_types) {
+      key$regions <- sort(filters$regions)
+      key$split_by_region <- isTRUE(filters$split_by_region)
+      return(key)
+    }
+
+    key
+  })
+  lik_plot_cache_key <- reactive({
+    filters <- lik_filters()
+    if (is.null(filters)) return(NULL)
+
+    key <- list(
+      profile_type = filters$profile_type,
+      scenarios = sort(filters$scenarios),
+      facet_ncol = filters$facet_ncol
+    )
+
+    if (identical(filters$profile_type, "jitter")) {
+      key$jitter_converged_only_diagnostics <- isTRUE(filters$jitter_converged_only_diagnostics)
+      key$jitter_grad_reference <- if (is.finite(filters$jitter_grad_reference)) filters$jitter_grad_reference else 0.001
+      return(key)
+    }
+
+    if (identical(filters$profile_type, "jitter_params")) {
+      key$jitter_param_view <- filters$jitter_param_view
+      key$jitter_param_scope <- filters$jitter_param_scope
+      key$jitter_param_window <- filters$jitter_param_window
+      key$jitter_converged_only <- isTRUE(filters$jitter_converged_only)
+      key$jitter_converged_max_grad <- if (is.finite(filters$jitter_converged_max_grad)) filters$jitter_converged_max_grad else 0.01
+      key$jitter_param_input_scale <- filters$jitter_param_input_scale
+      key$jitter_param_metric <- filters$jitter_param_metric
+      key$jitter_param_range <- filters$jitter_param_range
+      return(key)
+    }
+
+    if (identical(filters$profile_type, "jitter_derived")) {
+      key$jitter_converged_only <- isTRUE(filters$jitter_converged_only)
+      key$jitter_converged_max_grad <- if (is.finite(filters$jitter_converged_max_grad)) filters$jitter_converged_max_grad else 0.01
+      key$jitter_derived_view <- filters$jitter_derived_view
+      return(key)
+    }
+
+    if (filters$profile_type %in% fishery_region_types) {
+      key$regions <- sort(filters$regions)
+      key$split_by_region <- isTRUE(filters$split_by_region)
+      key$groups <- sort(filters$groups)
+      return(key)
+    }
+
+    if (filters$profile_type %in% c("components", "tagging", "cal_year")) {
+      key$groups <- sort(filters$groups)
+      return(key)
+    }
+
+    key
+  })
 
   observe({
     req(rv$data_loaded)
@@ -482,13 +575,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }, ignoreInit = FALSE)
 
   observeEvent(
-    list(input$lik_main_tab, input$lik_profile_type, input$lik_jitter_type),
+    list(input$lik_profile_type, input$lik_jitter_type),
     {
       req(rv$data_loaded)
       lik_filters_applied(isolate(lik_filters_current()))
     },
     ignoreInit = TRUE
   )
+  observeEvent(input$lik_main_tab, {
+    req(rv$data_loaded)
+    lik_filters_applied(isolate(lik_filters_current()))
+  }, ignoreInit = TRUE, priority = 100)
 
   observeEvent(rv$data_loaded, {
     req(rv$data_loaded)
@@ -553,6 +650,24 @@ mod_likelihood_server <- function(input, output, session, rv) {
   # Safe read helper for scalar files
   safe_read_scalar <- function(path) {
     if (file.exists(path)) suppressWarnings(as.numeric(read.table(path))) else NA_real_
+  }
+  simple_html_table <- function(df) {
+    if (is.null(df) || nrow(df) == 0) {
+      return(tags$div(style = "color:#777;", "No rows to display."))
+    }
+    cols <- names(df)
+    tags$table(
+      class = "table table-striped table-bordered table-condensed",
+      style = "width:100%; margin-bottom:0;",
+      tags$thead(
+        tags$tr(lapply(cols, function(cn) tags$th(cn)))
+      ),
+      tags$tbody(
+        lapply(seq_len(nrow(df)), function(i) {
+          tags$tr(lapply(cols, function(cn) tags$td(as.character(df[[cn]][i]))))
+        })
+      )
+    )
   }
 
   quantity_axis_label <- function(profile_data) {
@@ -730,6 +845,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
             )
           })
           hessian_df <- bind_rows(hessian_rows)
+          if (nrow(hessian_df) > 0) {
+            hessian_ok_by_scaler <- setNames(as.list(hessian_df$ok), hessian_df$scaler)
+            hessian_status_by_scaler <- setNames(as.list(hessian_df$status), hessian_df$scaler)
+            hessian_requested_by_scaler <- setNames(as.list(hessian_df$requested), hessian_df$scaler)
+            hessian_attempted_by_scaler <- setNames(as.list(hessian_df$attempted), hessian_df$scaler)
+          } else {
+            hessian_ok_by_scaler <- list()
+            hessian_status_by_scaler <- list()
+            hessian_requested_by_scaler <- list()
+            hessian_attempted_by_scaler <- list()
+          }
           hessian_df <- hessian_df[!is.na(hessian_df$requested) | !is.na(hessian_df$attempted) | !is.na(hessian_df$ok), , drop = FALSE]
           profile_hessian_attempted <- if (nrow(hessian_df) > 0) sum(hessian_df$attempted, na.rm = TRUE) else 0L
           profile_hessian_ok <- if (nrow(hessian_df) > 0) sum(hessian_df$attempted & hessian_df$ok %in% TRUE, na.rm = TRUE) else 0L
@@ -767,6 +893,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
           profile_hessian_requested <- 0L
           profile_hessian_status <- NA_character_
           profile_hessian_summary <- "Not requested"
+          hessian_ok_by_scaler <- list()
+          hessian_status_by_scaler <- list()
+          hessian_requested_by_scaler <- list()
+          hessian_attempted_by_scaler <- list()
         }
       } else {
         scales <- basename(scaler_dirs) %>% str_extract("\\d+$")
@@ -798,6 +928,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
         profile_hessian_requested <- 0L
         profile_hessian_status <- NA_character_
         profile_hessian_summary <- "Not requested"
+        hessian_ok_by_scaler <- list()
+        hessian_status_by_scaler <- list()
+        hessian_requested_by_scaler <- list()
+        hessian_attempted_by_scaler <- list()
       }
     } else {
       output_files <- list.files(folder, pattern = "^test_plot_output_\\d+$", full.names = TRUE)
@@ -828,6 +962,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
       profile_hessian_requested <- 0L
       profile_hessian_status <- NA_character_
       profile_hessian_summary <- "Not requested"
+      hessian_ok_by_scaler <- list()
+      hessian_status_by_scaler <- list()
+      hessian_requested_by_scaler <- list()
+      hessian_attempted_by_scaler <- list()
     }
 
     list(
@@ -849,7 +987,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
       profile_hessian_ok = profile_hessian_ok,
       profile_hessian_requested = profile_hessian_requested,
       profile_hessian_status = profile_hessian_status,
-      profile_hessian_summary = profile_hessian_summary
+      profile_hessian_summary = profile_hessian_summary,
+      profile_hessian_ok_by_scaler = hessian_ok_by_scaler,
+      profile_hessian_status_by_scaler = hessian_status_by_scaler,
+      profile_hessian_requested_by_scaler = hessian_requested_by_scaler,
+      profile_hessian_attempted_by_scaler = hessian_attempted_by_scaler
     )
   }
 
@@ -1130,6 +1272,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
         actual_quantity <- pd$actual_quantity[[as.character(scl)]]
         target_quantity <- pd$target_quantity[[as.character(scl)]]
         target_rel_err <- pd$target_rel_err[[as.character(scl)]]
+        h_ok <- if (!is.null(pd$profile_hessian_ok_by_scaler)) pd$profile_hessian_ok_by_scaler[[as.character(scl)]] else NA
+        h_status <- if (!is.null(pd$profile_hessian_status_by_scaler)) pd$profile_hessian_status_by_scaler[[as.character(scl)]] else NA
+        h_requested <- if (!is.null(pd$profile_hessian_requested_by_scaler)) pd$profile_hessian_requested_by_scaler[[as.character(scl)]] else FALSE
+        h_attempted <- if (!is.null(pd$profile_hessian_attempted_by_scaler)) pd$profile_hessian_attempted_by_scaler[[as.character(scl)]] else FALSE
         rows[[length(rows) + 1]] <- data.frame(
           scenario = sc,
           scaler = suppressWarnings(as.numeric(scl)),
@@ -1138,6 +1284,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
           target_rel_err = suppressWarnings(as.numeric(target_rel_err)),
           obj_fun = suppressWarnings(as.numeric(obj_fun)),
           max_grad = suppressWarnings(as.numeric(grad_val)),
+          hessian_requested = isTRUE(h_requested),
+          hessian_attempted = isTRUE(h_attempted),
+          hessian_ok = if (is.null(h_ok) || is.na(h_ok)) NA else isTRUE(h_ok),
+          hessian_status = if (is.null(h_status) || !nzchar(as.character(h_status))) NA_character_ else as.character(h_status),
           stringsAsFactors = FALSE
         )
       }
@@ -1161,7 +1311,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
         `Target Quantity (k MT)` = target_quantity_kmt,
         `Gap (%)` = target_gap_pct,
         `Objective Function` = obj_fun,
-        `Max Gradient` = max_grad
+        `Max Gradient` = max_grad,
+        `Hessian Requested` = hessian_requested,
+        `Hessian Attempted` = hessian_attempted,
+        `Hessian OK` = hessian_ok,
+        `Hessian Status` = hessian_status
       ) %>%
       arrange(Model, Scaler)
   })
@@ -2716,7 +2870,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     profile_data_reactive,
     rv$data_loaded,
     input$model_dir,
-    lik_data_filters()
+    lik_data_cache_key()
   )
 
   observeEvent(profile_data_reactive(), {
@@ -2789,7 +2943,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 2
     facet_ncol <- min(max(facet_ncol, 1), 12)
 
-    if (!(plot_kind %in% c("jitter", "jitter_params", "jitter_derived")) && !is.null(filters$groups) && length(filters$groups) > 0) {
+    if (!(plot_kind %in% c("jitter", "jitter_params", "jitter_derived")) &&
+        !is.null(group_col) &&
+        length(group_col) == 1 &&
+        nzchar(group_col) &&
+        group_col %in% names(data) &&
+        !is.null(filters$groups) &&
+        length(filters$groups) > 0) {
       data <- data[data[[group_col]] %in% filters$groups, , drop = FALSE]
     }
 
@@ -3436,6 +3596,28 @@ mod_likelihood_server <- function(input, output, session, rv) {
             theme_void()
         )
       }
+
+      retro_plot_cache_key <- paste(
+        normalizePath(input$model_dir, winslash = "/", mustWork = FALSE),
+        paste(sort(unique(as.character(retro_df$scenario))), collapse = "|"),
+        nrow(retro_df),
+        suppressWarnings(min(retro_df$year, na.rm = TRUE)),
+        suppressWarnings(max(retro_df$year, na.rm = TRUE)),
+        paste(sort(unique(as.integer(retro_df$peel))), collapse = "|"),
+        as.character(input$lik_facet_ncol),
+        if (!is.null(info$rho) && nrow(info$rho) > 0) {
+          paste(
+            apply(info$rho, 1, function(x) paste(as.character(x), collapse = "|")),
+            collapse = "||"
+          )
+        } else {
+          "no_rho"
+        },
+        sep = "::"
+      )
+
+      return(
+        get_cached_heavy("retro_plot", retro_plot_cache_key, function() {
       
       peel_levels <- sort(unique(retro_df$peel))
       peel_levels_chr <- as.character(peel_levels)
@@ -3581,7 +3763,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
           labs(color = "Terminal year")
       )
 
-      return(cowplot::plot_grid(combined_plot, retro_legend, ncol = 1, rel_heights = c(1, 0.08)))
+      cowplot::plot_grid(combined_plot, retro_legend, ncol = 1, rel_heights = c(1, 0.08))
+      })
+      )
     }
     
     if (identical(plot_kind, "hessian")) {
@@ -3626,7 +3810,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     likelihood_plot_reactive,
     rv$data_loaded,
     input$model_dir,
-    lik_filters()
+    lik_plot_cache_key()
   )
 
   output$likelihood_plot <- renderPlot({
@@ -3717,16 +3901,20 @@ mod_likelihood_server <- function(input, output, session, rv) {
         tags$div("Retrospective diagnostics compare the base run against successive terminal-year peels.", style = "font-weight: bold; margin-bottom: 4px;"),
         tags$div("The plot shows depletion, recruitment, spawning potential, and F trajectories by peel. Tables below summarize Mohn's rho and terminal-year peel information.", style = "font-size: 12px; color: #333;")
       ),
-      if (has_rho) tagList(
-        tags$div(style = "font-weight: bold; margin-bottom: 6px;", "Mohn's rho summary"),
-        DTOutput("retro_rho_table"),
-        tags$hr(style = "margin: 12px 0 10px 0;")
+      tags$div(style = "font-weight: bold; margin-bottom: 6px;", "Mohn's rho summary"),
+      if (!has_rho) tags$div(
+        style = "margin-bottom: 8px; color: #777;",
+        "Mohn's rho summary is not available for the current selection."
       ),
-      if (has_retro_data) tagList(
-        tags$div(style = "font-weight: bold; margin-bottom: 6px;", "Peel details"),
-        uiOutput("retro_peel_model_ui"),
-        DTOutput("retro_peel_table")
-      )
+      uiOutput("retro_rho_table"),
+      tags$hr(style = "margin: 12px 0 10px 0;"),
+      tags$div(style = "font-weight: bold; margin-bottom: 6px;", "Peel details"),
+      if (!has_retro_data) tags$div(
+        style = "margin-bottom: 8px; color: #777;",
+        "Retro peel details are not available for the current selection."
+      ),
+      uiOutput("retro_peel_model_ui"),
+      uiOutput("retro_peel_table")
     )
   })
 
@@ -3913,11 +4101,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
   })
 
   retro_hessian_info_reactive <- reactive({
-    if (!identical(input$lik_main_tab, "retro")) return(NULL)
     filters <- lik_data_filters()
-    req(filters)
-    if (!identical(filters$profile_type, "retro")) return(NULL)
-    scenarios <- filters$scenarios
+    scenarios <- if (!is.null(filters) && length(filters$scenarios) > 0) {
+      filters$scenarios
+    } else {
+      input$lik_scenarios
+    }
     if (length(scenarios) == 0) return(NULL)
 
     rows <- list()
@@ -3976,12 +4165,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
     list(scenarios = sort(input$lik_scenarios), profile_type = current_profile_type())
   )
 
-  output$retro_rho_table <- renderDT({
+  output$retro_rho_table <- renderUI({
     if (!identical(input$lik_main_tab, "retro")) return(NULL)
     info <- profile_data_reactive()
     plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else NULL
     rho_df <- if (!is.null(info$rho)) info$rho else NULL
-    if (!identical(plot_kind, "retro") || is.null(rho_df) || nrow(rho_df) == 0) return(NULL)
+    if (!identical(plot_kind, "retro") || is.null(rho_df) || nrow(rho_df) == 0) {
+      return(simple_html_table(data.frame(
+        Message = "Mohn's rho summary is not available for the current selection.",
+        stringsAsFactors = FALSE
+      )))
+    }
 
     rho_tbl <- rho_df %>%
       transmute(
@@ -4010,12 +4204,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         )
       rho_tbl <- rho_tbl %>% left_join(hs_summary, by = "Model")
     }
-
-    datatable(
-      rho_tbl,
-      options = list(pageLength = 10, scrollX = TRUE),
-      rownames = FALSE
-    )
+    simple_html_table(rho_tbl)
   })
 
   output$retro_peel_model_ui <- renderUI({
@@ -4040,12 +4229,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
     )
   })
 
-  output$retro_peel_table <- renderDT({
+  output$retro_peel_table <- renderUI({
     if (!identical(input$lik_main_tab, "retro")) return(NULL)
     info <- profile_data_reactive()
     plot_kind <- if (!is.null(info$plot_kind)) info$plot_kind else NULL
     retro_df <- if (!is.null(info$data)) info$data else NULL
-    if (!identical(plot_kind, "retro") || is.null(retro_df) || nrow(retro_df) == 0) return(NULL)
+    if (!identical(plot_kind, "retro") || is.null(retro_df) || nrow(retro_df) == 0) {
+      return(simple_html_table(data.frame(
+        Message = "Retro peel details are not available for the current selection.",
+        stringsAsFactors = FALSE
+      )))
+    }
 
     peel_tbl <- retro_df %>%
       mutate(
@@ -4082,12 +4276,19 @@ mod_likelihood_server <- function(input, output, session, rv) {
       peel_tbl <- peel_tbl %>% filter(Model == input$retro_peel_model)
     }
 
-    datatable(
-      peel_tbl,
-      options = list(pageLength = 12, scrollX = TRUE),
-      rownames = FALSE
-    )
+    if (nrow(peel_tbl) == 0) {
+      return(simple_html_table(data.frame(
+        Message = "No peeled retrospective runs were found (peel > 0).",
+        stringsAsFactors = FALSE
+      )))
+    }
+    simple_html_table(peel_tbl)
   })
+  outputOptions(output, "retro_info_ui", suspendWhenHidden = FALSE)
+  outputOptions(output, "retro_rho_table", suspendWhenHidden = FALSE)
+  outputOptions(output, "retro_peel_model_ui", suspendWhenHidden = FALSE)
+  outputOptions(output, "retro_peel_table", suspendWhenHidden = FALSE)
+  outputOptions(output, "likelihood_plot", suspendWhenHidden = FALSE)
 
   observeEvent(input$show_lik_download_modal, {
     show_download_modal("lik", "Likelihood Profile Plot", current_save_dir = input$plot_export_dir)
