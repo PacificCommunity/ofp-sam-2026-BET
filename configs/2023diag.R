@@ -16,11 +16,11 @@ models <- list(
     base_dir = "mfcl/inputs/2023_rep",                   # Model-specific dir
     
     ## configuration for profiling
-    Reps = "15 25 25 1000 500 500",
+    Reps = "15 25 25 1000 1000 500",
     scalers = paste0((seq(140, 60, by=-5)), collapse = " "),
     Af172 = "0",
     Af173 = "0",
-    Af174 = "50",
+    Af174 = "0",
     
     ## retrospective configuration
     retro_peels = "1 2 3 4 5 6 7",
@@ -37,10 +37,10 @@ models <- list(
     jitter_cv = "0.2",
     
     ## post-run hessian toggles
-    jitter_hessian = "0",
-    model_hessian = "0",
-    prof_hessian = "0",
-    retro_hessian = "0",
+    jitter_hessian = "1",
+    model_hessian = "1",
+    prof_hessian = "1",
+    retro_hessian = "1",
     
     ## hessian parallel settings
     nsplit="5"
