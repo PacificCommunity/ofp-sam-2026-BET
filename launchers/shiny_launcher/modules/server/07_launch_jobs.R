@@ -73,6 +73,59 @@
     paste(trimws(paste(run_spec$command, args)), collapse = " ")
   }
 
+  default_condor_exclude_slots <- function() {
+    c(
+      "slot1@nouofpcand27", "slot1@nouofpcand28", "slot1@nouofpcand29", "slot1@nouofpcand30",
+      "slot1_1@suvofpcand26.corp.spc.int", "slot1_2@suvofpcand26.corp.spc.int", "slot1_3@suvofpcand26.corp.spc.int"
+    )
+  }
+
+  parse_condor_exclude_patterns <- function(raw_pattern) {
+    if (is.null(raw_pattern) || !nzchar(trimws(raw_pattern))) {
+      return(character(0))
+    }
+    pats <- trimws(unlist(strsplit(raw_pattern, "[,\n;]+")))
+    pats[nzchar(pats)]
+  }
+
+  discover_condor_slots_by_pattern <- function(remote_user, remote_host, pattern_text) {
+    patterns <- parse_condor_exclude_patterns(pattern_text)
+    if (length(patterns) == 0) {
+      return(character(0))
+    }
+    if (is.null(remote_user) || !nzchar(trimws(remote_user)) || is.null(remote_host) || !nzchar(trimws(remote_host))) {
+      return(character(0))
+    }
+
+    ssh_target <- sprintf("%s@%s", trimws(remote_user), trimws(remote_host))
+    slot_lines <- tryCatch(
+      suppressWarnings(system2(
+        "ssh",
+        args = c("-o", "BatchMode=yes", "-o", "ConnectTimeout=8", ssh_target, "condor_status -af Name Machine"),
+        stdout = TRUE,
+        stderr = FALSE,
+        timeout = 20
+      )),
+      error = function(e) character(0)
+    )
+    if (length(slot_lines) == 0) {
+      return(character(0))
+    }
+
+    slot_names <- trimws(sub("\\s+.*$", "", slot_lines))
+    machine_names <- trimws(sub("^\\S+\\s*", "", slot_lines))
+    slot_names <- slot_names[nzchar(slot_names)]
+    if (length(slot_names) == 0) {
+      return(character(0))
+    }
+
+    matched <- vapply(seq_along(slot_names), function(i) {
+      target <- paste(slot_names[[i]], if (i <= length(machine_names)) machine_names[[i]] else "", sep = " ")
+      any(vapply(patterns, function(pat) grepl(pat, target, ignore.case = TRUE, perl = TRUE), logical(1)))
+    }, logical(1))
+    unique(slot_names[matched])
+  }
+
   launch_single_job_local_raw <- function(spec, common_params) {
     model_env_list <- common_params$model_env_lists[[spec$model_name]]
     if (is.null(model_env_list)) {
@@ -294,6 +347,15 @@
     } else {
       input$output_dir
     }
+    condor_exclude_slots <- default_condor_exclude_slots()
+    if (identical(launch_mode, "condor") && isTRUE(input$condor_exclude_pattern_enabled)) {
+      discovered_slots <- discover_condor_slots_by_pattern(
+        remote_user = input$remote_user,
+        remote_host = input$remote_host,
+        pattern_text = input$condor_exclude_host_pattern
+      )
+      condor_exclude_slots <- unique(c(condor_exclude_slots, discovered_slots))
+    }
 
     # Initialize log with total job count
     rv$launch_log <- paste0(
@@ -301,6 +363,11 @@
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
       "📊 Total jobs to ", action_word, ": ", total_jobs, "\n",
       "Mode: ", if (identical(launch_mode, "local_docker")) "Local Docker" else if (identical(launch_mode, "local_native")) "Local Native" else "Condor", "\n",
+      if (identical(launch_mode, "condor")) {
+        paste0("Exclude slots: ", length(condor_exclude_slots), "\n")
+      } else {
+        ""
+      },
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
     )
     
@@ -389,10 +456,7 @@
                 ghcr_login = isTRUE(input$ghcr_login),
                 output_dir = input$output_dir,
                 model_env_lists = model_env_lists,
-                exclude_slots = c(
-                  "slot1@nouofpcand27", "slot1@nouofpcand28", "slot1@nouofpcand29", "slot1@nouofpcand30",
-                  "slot1_1@suvofpcand26.corp.spc.int", "slot1_2@suvofpcand26.corp.spc.int", "slot1_3@suvofpcand26.corp.spc.int"
-                )
+                exclude_slots = condor_exclude_slots
               )
               parallel::clusterEvalQ(cl, { library(CondorBox) })
               parallel::clusterExport(cl, varlist = c("launch_single_job_raw", "common_params"), envir = environment())
@@ -486,7 +550,7 @@
                           current_job, total_jobs, model_name, seed)
                 )
                 
-                result <- launch_single_job(model_name, model_env, job_type = job_type, seed = seed)
+                result <- launch_single_job(model_name, model_env, job_type = job_type, seed = seed, exclude_slots = condor_exclude_slots)
                 batch_names <- c(batch_names, result$batch_name)
                 remote_dirs <- c(remote_dirs, result$remote_dir)
                 
@@ -524,7 +588,7 @@
                           current_job, total_jobs, model_name, part)
                 )
                 
-                result <- launch_single_job(model_name, model_env, job_type = job_type, part = part)
+                result <- launch_single_job(model_name, model_env, job_type = job_type, part = part, exclude_slots = condor_exclude_slots)
                 batch_names <- c(batch_names, result$batch_name)
                 remote_dirs <- c(remote_dirs, result$remote_dir)
                 
@@ -563,7 +627,7 @@
                           current_job, total_jobs, model_name, peel)
                 )
                 
-                result <- launch_single_job(model_name, model_env, job_type = job_type, peel = peel)
+                result <- launch_single_job(model_name, model_env, job_type = job_type, peel = peel, exclude_slots = condor_exclude_slots)
                 batch_names <- c(batch_names, result$batch_name)
                 remote_dirs <- c(remote_dirs, result$remote_dir)
                 
@@ -602,7 +666,7 @@
                           current_job, total_jobs, model_name, sc)
                 )
                 
-                result <- launch_single_job(model_name, model_env, job_type = job_type, scaler = sc)
+                result <- launch_single_job(model_name, model_env, job_type = job_type, scaler = sc, exclude_slots = condor_exclude_slots)
                 batch_names <- c(batch_names, result$batch_name)
                 remote_dirs <- c(remote_dirs, result$remote_dir)
                 
@@ -639,7 +703,7 @@
                         current_job, total_jobs, model_name)
               )
               
-              result <- launch_single_job(model_name, model_env, job_type = job_type)
+              result <- launch_single_job(model_name, model_env, job_type = job_type, exclude_slots = condor_exclude_slots)
               batch_names <- c(batch_names, result$batch_name)
               remote_dirs <- c(remote_dirs, result$remote_dir)
               
@@ -887,7 +951,7 @@
     return(list(batch_name = batch_name, remote_dir = remote_dir, job_id = job_id))
   }
   
-  launch_single_job <- function(model_name, model_env, job_type, seed = NULL, part = NULL, peel = NULL, scaler = NULL, log = TRUE) {
+  launch_single_job <- function(model_name, model_env, job_type, seed = NULL, part = NULL, peel = NULL, scaler = NULL, log = TRUE, exclude_slots = NULL) {
     if (input$launch_mode %in% c("local_native", "local_docker")) {
       return(
         launch_single_job_local(
@@ -953,8 +1017,7 @@
       branch = input$branch, 
       rmclone_script = "no", 
       ghcr_login = isTRUE(input$ghcr_login),
-      exclude_slots = c("slot1@nouofpcand27", "slot1@nouofpcand28", "slot1@nouofpcand29", "slot1@nouofpcand30",
-                        "slot1_1@suvofpcand26.corp.spc.int", "slot1_2@suvofpcand26.corp.spc.int", "slot1_3@suvofpcand26.corp.spc.int"),
+      exclude_slots = if (!is.null(exclude_slots)) exclude_slots else default_condor_exclude_slots(),
       custom_batch_name = batch_name, 
       condor_environment = as.list(job_env, all.names = TRUE)
     )

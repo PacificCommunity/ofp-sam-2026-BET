@@ -191,7 +191,21 @@ launch_tab_ui <- function() {
                              value = 12, min = 1, max = 128, step = 1),
                 
                 numericInput("condor_disk", "Disk (GB):",
-                             value = 10, min = 1, max = 100, step = 1)
+                             value = 10, min = 1, max = 100, step = 1),
+
+                shiny::hr(),
+
+                checkboxInput(
+                  "condor_exclude_pattern_enabled",
+                  "Enable pattern-based extra slot exclusion",
+                  value = FALSE
+                ),
+                textInput(
+                  "condor_exclude_host_pattern",
+                  "Exclude Pattern (regex, optional):",
+                  value = "",
+                  placeholder = "e.g. suva|noumea"
+                )
               )
             )
             
