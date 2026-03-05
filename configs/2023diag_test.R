@@ -16,8 +16,8 @@ models <- list(
     base_dir = "mfcl/inputs/2023_rep",                   # Model-specific dir
     
     ## configuration for profiling
-    Reps = "15 25 25 1000 500 500",
-    scalers = paste0((seq(140, 60, by=-5)), collapse = " "),
+    Reps = "1 1 1 10 10 10",
+    scalers = paste0((seq(120, 80, by=-5)), collapse = " "),
     Af172 = "0",
     Af173 = "0",
     Af174 = "50",
@@ -33,7 +33,7 @@ models <- list(
     min_year= "1952",
     
     ## Jitter settings
-    jitter_seeds = paste0(1:50, collapse = " "),
+    jitter_seeds = paste0(1:10, collapse = " "),
     jitter_cv = "0.2",
     
     ## post-run hessian toggles
