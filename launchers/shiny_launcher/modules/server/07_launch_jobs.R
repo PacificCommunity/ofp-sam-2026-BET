@@ -769,23 +769,56 @@
         }
       }
       
-      # Save job history if config file exists
+      # Save launch records
+      launch_status <- if (cancel_launch()) "cancelled" else if (is_local_mode) "completed_local" else "launched"
+      job_record <- data.frame(
+        timestamp = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+        job_type = paste(selected_job_types, collapse = ", "),
+        model_names = paste(selected_models, collapse = ", "),
+        output_dir = effective_output_dir,
+        batch_names = paste(batch_names, collapse = ", "),
+        remote_dirs = paste(remote_dirs, collapse = ", "),
+        branch = input$branch,
+        status = launch_status,
+        launch_mode = launch_mode,
+        stringsAsFactors = FALSE
+      )
+
       if (!is.null(rv$current_config_file)) {
-        job_record <- data.frame(
-          timestamp = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
-          job_type = paste(selected_job_types, collapse = ", "),
-          model_names = paste(selected_models, collapse = ", "),
-          output_dir = effective_output_dir,
-          batch_names = paste(batch_names, collapse = ", "),
-          remote_dirs = paste(remote_dirs, collapse = ", "),
-          branch = input$branch,
-          status = if (cancel_launch()) "cancelled" else if (is_local_mode) "completed_local" else "launched",
-          launch_mode = launch_mode,
-          stringsAsFactors = FALSE
-        )
         save_job_history(rv$current_config_file, job_record)
         rv$launch_log <- paste0(rv$launch_log, "📝 Job history saved to config file\n")
       }
+
+      launcher_log_record <- data.frame(
+        run_at = job_record$timestamp,
+        output_dir = as.character(effective_output_dir),
+        summary = if (!is.null(rv$run_metadata$summary) && nzchar(as.character(rv$run_metadata$summary))) {
+          as.character(rv$run_metadata$summary)
+        } else {
+          "NA"
+        },
+        run_description = if (!is.null(input$run_description) && nzchar(trimws(as.character(input$run_description)))) {
+          as.character(input$run_description)
+        } else {
+          "NA"
+        },
+        config_file = if (!is.null(rv$config_path) && nzchar(as.character(rv$config_path))) {
+          as.character(rv$config_path)
+        } else {
+          "NA"
+        },
+        job_types = as.character(job_record$job_type),
+        model_names = as.character(job_record$model_names),
+        launch_mode = as.character(job_record$launch_mode),
+        status = as.character(job_record$status),
+        branch = as.character(job_record$branch),
+        batch_names = as.character(job_record$batch_names),
+        remote_dirs = as.character(job_record$remote_dirs),
+        stringsAsFactors = FALSE
+      )
+      save_launcher_job_log(launcher_log_record)
+      rv$launcher_job_log_trigger <- rv$launcher_job_log_trigger + 1
+      rv$launch_log <- paste0(rv$launch_log, "📝 Launcher job log updated\n")
       
       if (cancel_launch()) {
         removeNotification("launch_progress")

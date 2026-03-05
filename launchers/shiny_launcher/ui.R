@@ -27,7 +27,8 @@ ui <- dashboardPage(
       id = "tabs",
       menuItem("Launch Jobs", tabName = "launch", icon = icon("rocket")),
       menuItem("Monitor Jobs", tabName = "monitor", icon = icon("chart-line")),
-      menuItem("Retrieve Results", tabName = "retrieve", icon = icon("download")) #,
+      menuItem("Retrieve Results", tabName = "retrieve", icon = icon("download")),
+      menuItem("Job Log", tabName = "joblog", icon = icon("table")) #,
   #    menuItem("Edit Models", tabName = "edit", icon = icon("edit")),
   #    menuItem("Settings", tabName = "settings", icon = icon("cog"))
     )
@@ -591,6 +592,7 @@ ui <- dashboardPage(
       edit_tab_ui(),
       monitor_tab_ui(),
       retrieve_tab_ui(),
+      joblog_tab_ui(),
       settings_tab_ui()
     )
   )

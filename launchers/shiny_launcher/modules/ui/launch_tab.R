@@ -64,6 +64,13 @@ launch_tab_ui <- function() {
               textInput("output_dir", "Output Directory:", 
                         value = "quick/test_run")
             ),
+            textAreaInput(
+              "run_description",
+              "Run Description:",
+              value = "",
+              placeholder = "Describe this launch run (purpose, notes, differences, etc.)",
+              rows = 3
+            ),
 
             conditionalPanel(
               condition = "input.launch_mode == 'local_native' || input.launch_mode == 'local_docker'",

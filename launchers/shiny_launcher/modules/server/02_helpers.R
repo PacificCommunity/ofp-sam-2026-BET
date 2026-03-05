@@ -35,6 +35,63 @@
     history <- rbind(history, job_record)
     saveRDS(history, job_file)
   }
+
+  # ========== LAUNCHER JOB LOG (GLOBAL) ==========
+
+  get_launcher_job_log_file <- function() {
+    file.path(resolve_repo_path(".models_ran"), "launcher_job_log.rds")
+  }
+
+  load_launcher_job_log <- function() {
+    log_file <- get_launcher_job_log_file()
+    if (is.null(log_file) || !file.exists(log_file)) {
+      return(data.frame(
+        run_at = character(),
+        output_dir = character(),
+        summary = character(),
+        run_description = character(),
+        config_file = character(),
+        job_types = character(),
+        model_names = character(),
+        launch_mode = character(),
+        status = character(),
+        branch = character(),
+        batch_names = character(),
+        remote_dirs = character(),
+        stringsAsFactors = FALSE
+      ))
+    }
+    out <- tryCatch(readRDS(log_file), error = function(e) NULL)
+    if (!is.data.frame(out)) {
+      return(data.frame(
+        run_at = character(),
+        output_dir = character(),
+        summary = character(),
+        run_description = character(),
+        config_file = character(),
+        job_types = character(),
+        model_names = character(),
+        launch_mode = character(),
+        status = character(),
+        branch = character(),
+        batch_names = character(),
+        remote_dirs = character(),
+        stringsAsFactors = FALSE
+      ))
+    }
+    out
+  }
+
+  save_launcher_job_log <- function(job_record) {
+    log_file <- get_launcher_job_log_file()
+    if (is.null(log_file)) return(invisible(FALSE))
+    log_dir <- dirname(log_file)
+    if (!dir.exists(log_dir)) dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+    history <- load_launcher_job_log()
+    history <- rbind(history, job_record)
+    saveRDS(history, log_file)
+    invisible(TRUE)
+  }
   
   # ========== LOAD MODELS FUNCTION ==========
   

@@ -565,6 +565,8 @@
     pending_basedir_path = NULL,
     pending_config_file = NULL,
     launcher_settings_loaded = FALSE
+    ,
+    launcher_job_log_trigger = 0
   )
 
   observeEvent(repo_root_val(), {
