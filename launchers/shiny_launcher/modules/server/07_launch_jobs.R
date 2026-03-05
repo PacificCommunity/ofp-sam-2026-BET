@@ -287,6 +287,55 @@
       common_params = common_params
     )
   }
+
+  parse_numeric_tokens <- function(x) {
+    if (is.null(x) || !nzchar(trimws(as.character(x)))) return(numeric(0))
+    vals <- suppressWarnings(as.numeric(strsplit(as.character(x), "\\s+")[[1]]))
+    vals[is.finite(vals)]
+  }
+
+  selected_models_from_checkboxes <- function() {
+    if (length(rv$models) == 0) return(character(0))
+    names(rv$models)[vapply(names(rv$models), function(model_name) {
+      checkbox_id <- paste0("model_check_", gsub("[^a-zA-Z0-9]", "_", model_name))
+      isTRUE(input[[checkbox_id]])
+    }, logical(1))]
+  }
+
+  estimate_total_jobs <- function(selected_models, selected_job_types) {
+    total_jobs <- 0L
+    if (length(selected_models) == 0 || length(selected_job_types) == 0) return(total_jobs)
+
+    for (model_name in selected_models) {
+      model_env <- rv$models[[model_name]]
+      if (is.null(model_env)) next
+      for (job_type in selected_job_types) {
+        if (identical(job_type, "jitter")) {
+          total_jobs <- total_jobs + length(parse_numeric_tokens(model_env$jitter_seeds))
+        } else if (identical(job_type, "hessian")) {
+          nsplit <- suppressWarnings(as.integer(model_env$nsplit))
+          if (!is.finite(nsplit) || nsplit < 1) nsplit <- 0L
+          total_jobs <- total_jobs + nsplit
+        } else if (identical(job_type, "retro")) {
+          total_jobs <- total_jobs + length(parse_numeric_tokens(model_env$retro_peels))
+        } else if (identical(job_type, "prof")) {
+          total_jobs <- total_jobs + length(parse_numeric_tokens(model_env$scalers))
+        } else {
+          total_jobs <- total_jobs + 1L
+        }
+      }
+    }
+    as.integer(total_jobs)
+  }
+
+  output$estimated_jobs_text <- renderText({
+    if (length(rv$models) == 0) return("0 (load config first)")
+    selected_job_types <- input$job_types
+    if (is.null(selected_job_types) || length(selected_job_types) == 0) return("0 (select job type)")
+    selected_models <- selected_models_from_checkboxes()
+    if (length(selected_models) == 0) return("0 (select model)")
+    as.character(estimate_total_jobs(selected_models, selected_job_types))
+  })
   
   observeEvent(input$launch_btn, {
     if (length(rv$models) == 0) { 
@@ -295,10 +344,7 @@
     }
     
     # Recompute selected models from current checkbox inputs
-    selected_models <- names(rv$models)[sapply(names(rv$models), function(model_name) {
-      checkbox_id <- paste0("model_check_", gsub("[^a-zA-Z0-9]", "_", model_name))
-      isTRUE(input[[checkbox_id]])
-    })]
+    selected_models <- selected_models_from_checkboxes()
     rv$selected_models <- selected_models
     
     # Validate model selection
@@ -336,24 +382,26 @@
       model_env <- rv$models[[model_name]]
       for (job_type in selected_job_types) {
         if (job_type == "jitter") {
-          seeds <- as.numeric(strsplit(model_env$jitter_seeds, "\\s+")[[1]])
+          seeds <- parse_numeric_tokens(model_env$jitter_seeds)
           total_jobs <- total_jobs + length(seeds)
           for (seed in seeds) {
             add_job_spec(model_name, job_type, seed = seed)
           }
         } else if (job_type == "hessian") {
-          total_jobs <- total_jobs + as.numeric(model_env$nsplit)
-          for (part in 1:as.numeric(model_env$nsplit)) {
+          nsplit <- suppressWarnings(as.integer(model_env$nsplit))
+          if (!is.finite(nsplit) || nsplit < 1) nsplit <- 0L
+          total_jobs <- total_jobs + nsplit
+          for (part in seq_len(nsplit)) {
             add_job_spec(model_name, job_type, part = part)
           }
         } else if (job_type == "retro") {
-          peels <- as.numeric(strsplit(model_env$retro_peels, "\\s+")[[1]])
+          peels <- parse_numeric_tokens(model_env$retro_peels)
           total_jobs <- total_jobs + length(peels)
           for (peel in peels) {
             add_job_spec(model_name, job_type, peel = peel)
           }
         } else if (job_type == "prof") {
-          scalers <- as.numeric(strsplit(model_env$scalers, "\\s+")[[1]])
+          scalers <- parse_numeric_tokens(model_env$scalers)
           total_jobs <- total_jobs + length(scalers)
           for (sc in scalers) {
             add_job_spec(model_name, job_type, scaler = sc)
@@ -575,7 +623,7 @@
             if (cancel_launch()) stop("Launch cancelled")
             
             if (job_type == "jitter") {
-              seeds <- as.numeric(strsplit(model_env$jitter_seeds, "\\s+")[[1]])
+              seeds <- parse_numeric_tokens(model_env$jitter_seeds)
               for (seed in seeds) {
                 if (cancel_launch()) stop("Launch cancelled")
                 current_job <- current_job + 1
@@ -614,7 +662,9 @@
               }
               if (cancel_launch()) stop("Launch cancelled")
             } else if (job_type == "hessian") {
-              for (part in 1:as.numeric(model_env$nsplit)) {
+              nsplit <- suppressWarnings(as.integer(model_env$nsplit))
+              if (!is.finite(nsplit) || nsplit < 1) nsplit <- 0L
+              for (part in seq_len(nsplit)) {
                 if (cancel_launch()) stop("Launch cancelled")
                 current_job <- current_job + 1
                 
@@ -652,7 +702,7 @@
               }
               if (cancel_launch()) stop("Launch cancelled")
             } else if (job_type == "retro") {
-              peels <- as.numeric(strsplit(model_env$retro_peels, "\\s+")[[1]])
+              peels <- parse_numeric_tokens(model_env$retro_peels)
               for (peel in peels) {
                 if (cancel_launch()) stop("Launch cancelled")
                 current_job <- current_job + 1
@@ -691,7 +741,7 @@
               }
               if (cancel_launch()) stop("Launch cancelled")
             } else if (job_type == "prof") {
-              scalers <- as.numeric(strsplit(model_env$scalers, "\\s+")[[1]])
+              scalers <- parse_numeric_tokens(model_env$scalers)
               for (sc in scalers) {
                 if (cancel_launch()) stop("Launch cancelled")
                 current_job <- current_job + 1

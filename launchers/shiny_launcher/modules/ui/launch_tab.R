@@ -121,6 +121,12 @@ launch_tab_ui <- function() {
             br(),
             
             uiOutput("model_selection_ui"),
+
+            div(
+              style = "margin-top: 10px; padding: 8px 10px; background: #f4f8fb; border-left: 4px solid #3c8dbc;",
+              strong("Estimated Jobs: "),
+              textOutput("estimated_jobs_text", inline = TRUE)
+            ),
             
             actionButton("launch_btn", "Launch Job(s)", 
                          class = "btn-primary btn-launch", 
