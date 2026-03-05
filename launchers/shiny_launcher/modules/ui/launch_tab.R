@@ -199,10 +199,11 @@ launch_tab_ui <- function() {
                   "condor_run_target",
                   "Run Selected Condor Nodes:",
                   choices = c(
+                    "all (no extra filtering)" = "all",
                     "nouofp" = "nouofp",
                     "suvofp" = "suvofp"
                   ),
-                  selected = "nouofp"
+                  selected = "all"
                 )
               )
             )

@@ -130,12 +130,12 @@
   }
 
   condor_target_patterns <- function(run_target) {
-    target <- if (!is.null(run_target) && nzchar(run_target)) run_target else "nouofp"
+    target <- if (!is.null(run_target) && nzchar(run_target)) run_target else "all"
     switch(
       target,
       nouofp = c("nouofp", "nou"),
       suvofp = c("suvofp", "suv"),
-      c("nouofp", "nou")
+      character(0)
     )
   }
 
@@ -151,7 +151,7 @@
         exclude_slots = base_exclude,
         matched_slots = matched_slots,
         all_slots = all_slots,
-        target_mode = if (!is.null(run_target) && nzchar(run_target)) run_target else "nouofp"
+        target_mode = if (!is.null(run_target) && nzchar(run_target)) run_target else "all"
       ))
     }
     additional_exclude <- setdiff(all_slots, matched_slots)
@@ -159,7 +159,7 @@
       exclude_slots = unique(c(base_exclude, additional_exclude)),
       matched_slots = matched_slots,
       all_slots = all_slots,
-      target_mode = if (!is.null(run_target) && nzchar(run_target)) run_target else "nouofp"
+      target_mode = if (!is.null(run_target) && nzchar(run_target)) run_target else "all"
     )
   }
 
@@ -384,15 +384,15 @@
     } else {
       input$output_dir
     }
-    condor_target <- "nouofp"
+    condor_target <- "all"
     condor_target_info <- list(
       exclude_slots = default_condor_exclude_slots(),
       matched_slots = character(0),
       all_slots = character(0),
-      target_mode = "nouofp"
+      target_mode = "all"
     )
     if (identical(launch_mode, "condor")) {
-      condor_target <- if (!is.null(input$condor_run_target) && nzchar(input$condor_run_target)) input$condor_run_target else "nouofp"
+      condor_target <- if (!is.null(input$condor_run_target) && nzchar(input$condor_run_target)) input$condor_run_target else "all"
       condor_target_info <- build_condor_exclude_slots(
         remote_user = input$remote_user,
         remote_host = input$remote_host,
