@@ -4456,12 +4456,6 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
     simple_html_table(format_hessian_display_cols(peel_tbl))
   })
-  outputOptions(output, "retro_info_ui", suspendWhenHidden = FALSE)
-  outputOptions(output, "retro_rho_table", suspendWhenHidden = FALSE)
-  outputOptions(output, "retro_peel_model_ui", suspendWhenHidden = FALSE)
-  outputOptions(output, "retro_peel_table", suspendWhenHidden = FALSE)
-  outputOptions(output, "likelihood_plot", suspendWhenHidden = FALSE)
-
   observeEvent(input$show_lik_download_modal, {
     show_download_modal("lik", "Likelihood Profile Plot", current_save_dir = input$plot_export_dir)
   })

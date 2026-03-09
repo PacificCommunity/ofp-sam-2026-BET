@@ -121,6 +121,55 @@ mod_cpue_server <- function(input, output, session, rv) {
     cpue_filters_applied()
   })
 
+  cpue_prepped_outputs <- reactive({
+    req(rv$data_loaded)
+    model_names <- names(rv$RepOut_list)
+    setNames(lapply(model_names, function(scenario) {
+      rep_obj <- rv$RepOut_list[[scenario]]
+      fishery_map <- rv$FISHERY_MAPS[[scenario]]
+      if (is.null(rep_obj)) return(NULL)
+
+      obs <- tryCatch(as.data.frame(cpue_obs(rep_obj)), error = function(e) NULL)
+      fit <- tryCatch(as.data.frame(cpue_pred(rep_obj)), error = function(e) NULL)
+      if (is.null(obs) || is.null(fit) || nrow(obs) == 0 || nrow(fit) == 0) return(NULL)
+
+      names(obs)[names(obs) == "data"] <- "obs"
+      names(fit)[names(fit) == "data"] <- "fit"
+
+      cpue <- merge(obs, fit)
+      cpue <- type.convert(cpue, as.is = TRUE)
+
+      cpue <- cpue %>%
+        mutate(
+          Scenario = scenario,
+          unit = suppressWarnings(as.numeric(as.character(unit))),
+          year = suppressWarnings(as.numeric(as.character(year))),
+          season = suppressWarnings(as.numeric(as.character(season))),
+          fishery_name = vapply(
+            as.character(unit),
+            function(x) get_fishery_name(x, fishery_map),
+            character(1)
+          ),
+          year_season = year + (season - 1) / 4,
+          obs_log = suppressWarnings(as.numeric(obs)),
+          fit_log = suppressWarnings(as.numeric(fit)),
+          obs = exp(obs_log),
+          fit = exp(fit_log),
+          residual = obs - fit
+        ) %>%
+        filter(is.finite(unit), is.finite(year_season), is.finite(obs), is.finite(fit))
+
+      cpue
+    }), model_names)
+  })
+  cpue_prepped_outputs <- bindCache(
+    cpue_prepped_outputs,
+    rv$data_loaded,
+    input$model_dir,
+    sort(names(rv$RepOut_list)),
+    vapply(rv$RepOut_list, function(x) if (is.null(x)) 0 else as.numeric(object.size(x)), numeric(1))
+  )
+
   observe({
     req(rv$data_loaded)
     pending <- !isTRUE(input$live_update_plots) &&
@@ -138,13 +187,9 @@ mod_cpue_server <- function(input, output, session, rv) {
     }
 
     units <- map(scenarios, function(sc) {
-      rep_obj <- rv$RepOut_list[[sc]]
-      if (is.null(rep_obj)) return(character(0))
-
-      obs <- tryCatch(as.data.frame(cpue_obs(rep_obj)), error = function(e) NULL)
-      if (is.null(obs) || nrow(obs) == 0 || !"unit" %in% names(obs)) return(character(0))
-
-      as.character(sort(unique(obs$unit)))
+      df <- cpue_prepped_outputs()[[sc]]
+      if (is.null(df) || nrow(df) == 0 || !"unit" %in% names(df)) return(character(0))
+      as.character(sort(unique(df$unit)))
     })
 
     sort(unique(unlist(units)))
@@ -152,28 +197,10 @@ mod_cpue_server <- function(input, output, session, rv) {
 
   build_cpue_df <- function(scenarios, fisheries) {
     map_dfr(scenarios, function(scenario) {
-      rep_obj <- rv$RepOut_list[[scenario]]
-      fishery_map <- rv$FISHERY_MAPS[[scenario]]
-      if (is.null(rep_obj)) return(NULL)
-
-      obs <- tryCatch(as.data.frame(cpue_obs(rep_obj)), error = function(e) NULL)
-      fit <- tryCatch(as.data.frame(cpue_pred(rep_obj)), error = function(e) NULL)
-      if (is.null(obs) || is.null(fit) || nrow(obs) == 0 || nrow(fit) == 0) return(NULL)
-
-      names(obs)[names(obs) == "data"] <- "obs"
-      names(fit)[names(fit) == "data"] <- "fit"
-
-      cpue <- merge(obs, fit)
-      cpue <- type.convert(cpue, as.is = TRUE)
+      cpue <- cpue_prepped_outputs()[[scenario]]
+      if (is.null(cpue)) return(NULL)
       cpue <- cpue[cpue$unit %in% as.numeric(fisheries), , drop = FALSE]
       if (nrow(cpue) == 0) return(NULL)
-
-      cpue$Scenario <- scenario
-      cpue$fishery_name <- sapply(
-        as.character(cpue$unit),
-        function(x) get_fishery_name(x, fishery_map)
-      )
-
       cpue
     })
   }
@@ -262,16 +289,6 @@ mod_cpue_server <- function(input, output, session, rv) {
             theme_void()
         )
       }
-
-      cpue_all <- cpue_all %>%
-        mutate(
-          year_season = year + (season - 1) / 4,
-          obs_log = obs,
-          fit_log = fit,
-          obs = exp(obs_log),
-          fit = exp(fit_log),
-          residual = obs - fit
-        )
 
       fishery_levels <- ordered_fishery_label_levels(cpue_all$unit, cpue_all$fishery_name)
       if (length(fishery_levels) > 0) {

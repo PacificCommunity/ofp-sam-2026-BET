@@ -198,7 +198,20 @@ mod_lf_server <- function(input, output, session, rv) {
         df <- obj@lenfits
         if (is.null(df) || nrow(df) == 0) return(NULL)
         df <- df %>%
-          mutate(fishery = suppressWarnings(as.numeric(as.character(fishery))))
+          mutate(
+            fishery = suppressWarnings(as.numeric(as.character(fishery))),
+            year = suppressWarnings(as.numeric(as.character(year))),
+            length = suppressWarnings(as.numeric(as.character(length))),
+            obs_count = if ("sample_size" %in% names(df)) obs * sample_size else obs,
+            pred_count = if ("sample_size" %in% names(df)) pred * sample_size else pred
+          ) %>%
+          filter(is.finite(fishery), is.finite(year), is.finite(length)) %>%
+          group_by(fishery, year, length) %>%
+          summarise(
+            obs = sum(obs_count, na.rm = TRUE),
+            pred = sum(pred_count, na.rm = TRUE),
+            .groups = "drop"
+          )
         fish_ids <- sort(unique(df$fishery))
         fish_ids <- fish_ids[is.finite(fish_ids)]
         fish_lookup <- data.frame(
@@ -215,7 +228,13 @@ mod_lf_server <- function(input, output, session, rv) {
           mutate(Scenario = sc)
       }), model_names)
     })
-    lf_prepped_outputs <- bindCache(lf_prepped_outputs, rv$data_loaded, input$model_dir)
+    lf_prepped_outputs <- bindCache(
+      lf_prepped_outputs,
+      rv$data_loaded,
+      input$model_dir,
+      sort(names(rv$LengOut_list)),
+      vapply(rv$LengOut_list, function(x) if (is.null(x)) 0L else nrow(x@lenfits), integer(1))
+    )
 
     observe({
       req(rv$data_loaded)
@@ -534,21 +553,8 @@ mod_lf_server <- function(input, output, session, rv) {
         return(p)
       }
 
-      # If sample_size exists, convert composition to sample-count scale.
-      if ("sample_size" %in% names(combined_data)) {
-        combined_data <- combined_data %>%
-          mutate(
-            obs = obs * sample_size,
-            pred = pred * sample_size
-          )
-      }
-    
-      # Aggregate by scenario/fishery/year/length
+      # Already pre-aggregated to sample-count scale in lf_prepped_outputs().
       plot_data <- combined_data %>%
-        group_by(Scenario, fishery, fishery_name_lookup, year, length) %>%
-        summarise(obs = sum(obs, na.rm = TRUE), 
-                  pred = sum(pred, na.rm = TRUE), 
-                  .groups = "drop") %>%
         filter(obs > 0 | pred > 0)
     
       # Dynamic bar width close to bin spacing; use a subtle stroke for separation.

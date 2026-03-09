@@ -120,39 +120,6 @@ server <- function(input, output, session) {
   mod_population_biology_server(input, output, session, rv)
   server_nav(input, output, session, rv)
 
-  preload_outputs <- c(
-    "summary_table",
-    "model_info_boxes",
-    "bounds_overview",
-    "bounds_type_summary",
-    "bounds_detail",
-    "cpue_plot",
-    "lf_plot",
-    "lf_plot_box",
-    "wf_plot",
-    "wf_plot_box",
-    "harvest_plot_output",
-    "harvest_weight_table",
-    "harvest_weighting_note",
-    "harvest_method_table",
-    "harvest_reference_table",
-    "harvest_reference_note",
-    "harvest_recent_years_ui",
-    "harvest_recent_diag_model_ui",
-    "harvest_recent_summary_options_ui",
-    "harvest_reference_model_ui",
-    "tagging_plot_output",
-    "fishery_process_plot_output",
-    "population_biology_plot_output",
-    "fishery_map_warning",
-    "tag_rep_map_warning",
-    "fishery_names_table",
-    "tag_rep_map_table"
-  )
-  invisible(lapply(preload_outputs, function(id) {
-    outputOptions(output, id, suspendWhenHidden = FALSE)
-  }))
-
   # Keep per-tab model pickers aligned with the global "Filter Models" selection.
   observeEvent(list(rv$data_loaded, input$scenarios), {
     req(rv$data_loaded)
@@ -194,29 +161,15 @@ server <- function(input, output, session) {
   observeEvent(
     list(
       rv$data_loaded,
-      input$scenarios,
-      input$cpue_scenarios,
-      input$lik_scenarios,
-      input$harvest_scenarios,
-      input$tag_scenarios,
-      input$fishery_process_scenarios,
-      input$population_biology_scenarios,
-      input$lf_model,
-      input$wf_model
+      input$scenarios
     ),
     {
       req(rv$data_loaded)
       if (!isTRUE(rv$initial_render_pending)) return()
 
-      ready <- length(input$scenarios) > 0 &&
-        length(input$cpue_scenarios) > 0 &&
-        length(input$lik_scenarios) > 0 &&
-        length(input$harvest_scenarios) > 0 &&
-        length(input$tag_scenarios) > 0 &&
-        length(input$fishery_process_scenarios) > 0 &&
-        length(input$population_biology_scenarios) > 0 &&
-        !is.null(input$lf_model) && nzchar(input$lf_model) &&
-        !is.null(input$wf_model) && nzchar(input$wf_model)
+      # Only require that global scenarios are set; hidden tabs stay suspended
+      # and render when first opened.
+      ready <- length(input$scenarios) > 0
 
       if (!ready) return()
 

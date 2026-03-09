@@ -55,7 +55,7 @@ ui <- dashboardPage(
                   )),
       div(
         style = "padding: 6px 15px 0 15px;",
-        checkboxInput("live_update_plots", "Live update plots", value = TRUE),
+        checkboxInput("live_update_plots", "Live update plots", value = FALSE),
         tags$small("When enabled, plots update immediately as selections change.",
                    style = "display:block; margin-top:-6px; color:#666;")
       )
