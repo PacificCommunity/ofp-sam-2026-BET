@@ -45,7 +45,7 @@
   load_launcher_job_log <- function() {
     required_cols <- c(
       "run_at", "output_dir", "summary", "run_description", "config_file",
-      "job_types", "model_names", "launch_mode", "status", "branch",
+      "job_types", "model_names", "total_jobs", "launch_mode", "status", "branch",
       "batch_names", "config_details", "remote_dirs"
     )
 
@@ -59,6 +59,7 @@
         config_file = character(),
         job_types = character(),
         model_names = character(),
+      total_jobs = integer(),
       launch_mode = character(),
       status = character(),
       branch = character(),
@@ -78,6 +79,7 @@
         config_file = character(),
         job_types = character(),
         model_names = character(),
+        total_jobs = integer(),
         launch_mode = character(),
         status = character(),
         branch = character(),

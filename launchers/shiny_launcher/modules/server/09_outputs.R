@@ -64,7 +64,7 @@
     }
 
     show_cols <- intersect(
-      c("run_at", "output_dir", "summary", "run_description", "config_file", "job_types", "model_names", "launch_mode", "status", "branch"),
+      c("run_at", "output_dir", "summary", "run_description", "config_file", "job_types", "model_names", "total_jobs", "launch_mode", "status", "branch"),
       names(log_df)
     )
     log_df <- log_df[, show_cols, drop = FALSE]
@@ -78,6 +78,7 @@
       "Config File",
       "Job Types",
       "Models",
+      "Total Jobs",
       "Mode",
       "Status",
       "Branch"

@@ -917,6 +917,7 @@
         },
         job_types = as.character(job_record$job_type),
         model_names = as.character(job_record$model_names),
+        total_jobs = as.integer(total_jobs),
         launch_mode = as.character(job_record$launch_mode),
         status = as.character(job_record$status),
         branch = as.character(job_record$branch),
