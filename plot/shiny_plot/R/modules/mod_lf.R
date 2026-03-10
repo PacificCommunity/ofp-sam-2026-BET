@@ -108,6 +108,12 @@ mod_lf_ui <- function() {
               ),
               selected = "hist"
             ),
+            checkboxInput("lf_show_unc_band", "Show uncertainty band (sampling)", value = TRUE),
+            sliderInput("lf_unc_level", "Band level (%)", min = 50, max = 99, value = 95, step = 1),
+            tags$small(
+              "Multinomial approximation only (not likelihood-based CI): SE = sqrt(N*p*(1-p)), N=sum(obs), p=pred/sum(pred) within each panel; band = pred ± z*SE.",
+              style = "display:block; margin-top:-8px; margin-bottom:8px; color:#666;"
+            ),
             selectInput(
               "lf_plot_scale",
               "Plot size:",
@@ -179,6 +185,8 @@ mod_lf_server <- function(input, output, session, rv) {
         fisheries_all = input$lf_fisheries_all,
         scenarios = input$lf_scenarios,
         years = input$lf_years,
+        show_unc_band = isTRUE(input$lf_show_unc_band),
+        unc_level = if (is.null(input$lf_unc_level)) 95 else suppressWarnings(as.numeric(input$lf_unc_level)),
         plot_scale = if (is.null(input$lf_plot_scale)) "1.00" else input$lf_plot_scale,
         facet_ncol = input$lf_facet_ncol,
         plot_style = if (is.null(input$lf_plot_style)) "hist" else input$lf_plot_style
@@ -249,7 +257,8 @@ mod_lf_server <- function(input, output, session, rv) {
 
     observeEvent(list(input$live_update_plots, input$lf_scenarios, input$lf_model, input$lf_years,
                       input$lf_view_mode, input$lf_fishery, input$lf_fisheries_all,
-                      input$lf_plot_style, input$lf_plot_scale, input$lf_facet_ncol), {
+                      input$lf_plot_style, input$lf_show_unc_band, input$lf_unc_level,
+                      input$lf_plot_scale, input$lf_facet_ncol), {
       req(rv$data_loaded)
       if (!isTRUE(input$live_update_plots)) return()
 
@@ -629,6 +638,22 @@ mod_lf_server <- function(input, output, session, rv) {
       observed_border <- "#173F39"
       bubble_expand_all <- ggplot2::expansion(mult = c(0.02, 0.02))
       bubble_expand_year <- ggplot2::expansion(mult = c(0.08, 0.08))
+      band_fill <- "#3a3a3a"
+      band_alpha <- 0.28
+      show_unc_band <- identical(plot_style, "hist") && isTRUE(filters$show_unc_band)
+      unc_level <- filters$unc_level
+      if (!is.finite(unc_level)) unc_level <- 95
+      unc_level <- max(min(unc_level, 99), 50)
+      z_val <- suppressWarnings(qnorm(0.5 + unc_level / 200))
+      if (!is.finite(z_val)) z_val <- 1.96
+      band_caption <- if (show_unc_band) {
+        paste0(
+          "Uncertainty band (multinomial sampling approximation, not likelihood-based CI): SE = sqrt(N*p*(1-p)), ",
+          "N=sum(obs), p=pred/sum(pred) within panel; level=", round(unc_level), "%."
+        )
+      } else {
+        NULL
+      }
 
       if (identical(plot_style, "bubble")) {
         if (identical(view_mode, "all_fisheries")) {
@@ -815,6 +840,30 @@ mod_lf_server <- function(input, output, session, rv) {
           group_by(Scenario, fishery_panel, length) %>%
           summarise(pred = sum(pred, na.rm = TRUE), .groups = "drop")
 
+        all_year_band <- if (show_unc_band) {
+          obs_totals <- all_year_obs %>%
+            group_by(fishery_panel) %>%
+            summarise(obs_total = sum(obs, na.rm = TRUE), .groups = "drop")
+
+          all_year_pred %>%
+            group_by(Scenario, fishery_panel) %>%
+            mutate(
+              pred_total = sum(pred, na.rm = TRUE),
+              p = if_else(pred_total > 0, pred / pred_total, 0)
+            ) %>%
+            ungroup() %>%
+            left_join(obs_totals, by = "fishery_panel") %>%
+            mutate(
+              obs_total = if_else(is.finite(obs_total), obs_total, pred_total),
+              se = sqrt(pmax(obs_total * p * (1 - p), 0)),
+              band_low = pmax(pred - z_val * se, 0),
+              band_high = pred + z_val * se
+            ) %>%
+            filter(is.finite(band_low), is.finite(band_high))
+        } else {
+          NULL
+        }
+
         p <- ggplot() +
           geom_col(
             data = all_year_obs,
@@ -825,6 +874,22 @@ mod_lf_server <- function(input, output, session, rv) {
             linewidth = 0.12,
             alpha = 0.95
           ) +
+          {
+            if (show_unc_band && !is.null(all_year_band) && nrow(all_year_band) > 0) {
+              geom_ribbon(
+                data = all_year_band,
+                aes(
+                  x = length,
+                  ymin = band_low,
+                  ymax = band_high,
+                  group = interaction(Scenario, fishery_panel)
+                ),
+                inherit.aes = FALSE,
+                fill = band_fill,
+                alpha = band_alpha
+              )
+            }
+          } +
           geom_line(
             data = all_year_pred,
             aes(x = length, y = pred, color = Scenario),
@@ -836,7 +901,8 @@ mod_lf_server <- function(input, output, session, rv) {
           labs(
             title = "All selected fisheries - all selected years combined",
             subtitle = paste0("Years: ", min(filters$years), " to ", max(filters$years)),
-            x = "Length (cm)", y = "Sample count"
+            x = "Length (cm)", y = "Sample count",
+            caption = band_caption
           ) +
           theme_bw(base_size = 12.5) +
           theme(
@@ -849,6 +915,30 @@ mod_lf_server <- function(input, output, session, rv) {
           )
       } else if (length(unique(plot_data$Scenario)) <= 1) {
         single_model_label <- unique(as.character(plot_data$Scenario))[1]
+        year_band <- if (show_unc_band) {
+          obs_totals <- obs_data %>%
+            group_by(year) %>%
+            summarise(obs_total = sum(obs, na.rm = TRUE), .groups = "drop")
+
+          plot_data %>%
+            group_by(Scenario, year) %>%
+            mutate(
+              pred_total = sum(pred, na.rm = TRUE),
+              p = if_else(pred_total > 0, pred / pred_total, 0)
+            ) %>%
+            ungroup() %>%
+            left_join(obs_totals, by = "year") %>%
+            mutate(
+              obs_total = if_else(is.finite(obs_total), obs_total, pred_total),
+              se = sqrt(pmax(obs_total * p * (1 - p), 0)),
+              band_low = pmax(pred - z_val * se, 0),
+              band_high = pred + z_val * se
+            ) %>%
+            filter(is.finite(band_low), is.finite(band_high))
+        } else {
+          NULL
+        }
+
         p <- ggplot() +
           geom_col(
             data = obs_data,
@@ -859,6 +949,22 @@ mod_lf_server <- function(input, output, session, rv) {
             linewidth = 0.12,
             alpha = 0.95
           ) +
+          {
+            if (show_unc_band && !is.null(year_band) && nrow(year_band) > 0) {
+              geom_ribbon(
+                data = year_band,
+                aes(
+                  x = length,
+                  ymin = band_low,
+                  ymax = band_high,
+                  group = year
+                ),
+                inherit.aes = FALSE,
+                fill = band_fill,
+                alpha = band_alpha
+              )
+            }
+          } +
           geom_line(
             data = plot_data,
             aes(x = length, y = pred, color = single_model_label),
@@ -869,7 +975,8 @@ mod_lf_server <- function(input, output, session, rv) {
           scale_color_manual(name = "Model", values = setNames("#E31A1C", single_model_label)) +
           labs(
             title = paste(fishery_name, "-", single_model_label),
-            x = "Length (cm)", y = "Sample count"
+            x = "Length (cm)", y = "Sample count",
+            caption = band_caption
           ) +
           theme_bw(base_size = 12) +
           theme(
@@ -882,6 +989,30 @@ mod_lf_server <- function(input, output, session, rv) {
             panel.spacing = unit(0.3, "lines")
           )
       } else {
+        year_band <- if (show_unc_band) {
+          obs_totals <- obs_data %>%
+            group_by(year) %>%
+            summarise(obs_total = sum(obs, na.rm = TRUE), .groups = "drop")
+
+          plot_data %>%
+            group_by(Scenario, year) %>%
+            mutate(
+              pred_total = sum(pred, na.rm = TRUE),
+              p = if_else(pred_total > 0, pred / pred_total, 0)
+            ) %>%
+            ungroup() %>%
+            left_join(obs_totals, by = "year") %>%
+            mutate(
+              obs_total = if_else(is.finite(obs_total), obs_total, pred_total),
+              se = sqrt(pmax(obs_total * p * (1 - p), 0)),
+              band_low = pmax(pred - z_val * se, 0),
+              band_high = pred + z_val * se
+            ) %>%
+            filter(is.finite(band_low), is.finite(band_high))
+        } else {
+          NULL
+        }
+
         p <- ggplot() +
           geom_col(data = obs_data,
                    aes(x = length, y = obs, fill = "Observed"),
@@ -890,6 +1021,22 @@ mod_lf_server <- function(input, output, session, rv) {
                    colour = observed_border,
                    linewidth = 0.12,
                    alpha = 0.95) +
+          {
+            if (show_unc_band && !is.null(year_band) && nrow(year_band) > 0) {
+              geom_ribbon(
+                data = year_band,
+                aes(
+                  x = length,
+                  ymin = band_low,
+                  ymax = band_high,
+                  group = interaction(Scenario, year)
+                ),
+                inherit.aes = FALSE,
+                fill = band_fill,
+                alpha = band_alpha
+              )
+            }
+          } +
           geom_line(data = plot_data,
                     aes(x = length, y = pred, color = Scenario),
                     linewidth = 1.2) +
@@ -898,7 +1045,8 @@ mod_lf_server <- function(input, output, session, rv) {
           scale_color_viridis_d(name = "Model") +
           labs(title = paste(fishery_name, "- Base:", filters$model,
                              paste0("(", n_years, " years)")),
-               x = "Length (cm)", y = "Sample count") +
+               x = "Length (cm)", y = "Sample count",
+               caption = band_caption) +
           theme_bw(base_size = 12) +
           theme(
             legend.position = "top",

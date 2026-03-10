@@ -333,8 +333,36 @@
     if (is.null(env) || !is.list(env) || length(env) == 0) {
       env_lines <- "  <job env not captured>"
     } else {
-      env_names <- sort(names(env))
-      env_names <- env_names[!is.na(env_names) & nzchar(env_names)]
+      env_names_all <- names(env)
+      env_names_all <- env_names_all[!is.na(env_names_all) & nzchar(env_names_all)]
+
+      common_fields <- c(
+        "description",
+        "config_summary",
+        "base_dir",
+        "model_dir",
+        "program_path",
+        "mfcl_commands",
+        "min_year",
+        "n_mixing_periods",
+        "DOCKER_IMAGE"
+      )
+    type_fields <- switch(
+      job_type,
+      model = c("model_hessian"),
+      retro = c("retro_peel", "retro_peels", "retro_hessian"),
+      jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian"),
+      hessian = c("hessian_part", "nsplit", "model_hessian"),
+      prof = c("scaler", "scalers", "prof_hessian"),
+      character(0)
+      )
+
+      preferred_order <- unique(c(common_fields, type_fields))
+      env_names <- intersect(preferred_order, env_names_all)
+      if (length(env_names) == 0) {
+        env_names <- sort(env_names_all)
+      }
+
       env_lines <- vapply(env_names, function(nm) {
         paste0("  ", nm, " : ", collapse_model_field(env[[nm]]))
       }, character(1))
@@ -344,6 +372,91 @@
       paste0("  batch_name : ", batch_name),
       env_lines
     ), collapse = "\n")
+  }
+
+  build_launched_config_details <- function(job_results) {
+    if (length(job_results) == 0) return("No launched jobs.")
+
+    common_fields <- c(
+      "description",
+      "config_summary",
+      "base_dir",
+      "model_dir",
+      "program_path",
+      "mfcl_commands",
+      "min_year",
+      "n_mixing_periods",
+      "DOCKER_IMAGE"
+    )
+    type_fields_for <- function(job_type) {
+      switch(
+        job_type,
+        model = c("model_hessian"),
+        retro = c("retro_peel", "retro_peels", "retro_hessian"),
+        jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian"),
+        hessian = c("hessian_part", "nsplit", "model_hessian"),
+        prof = c("scaler", "scalers", "prof_hessian"),
+        character(0)
+      )
+    }
+    format_env_lines <- function(env, fields) {
+      if (is.null(env) || !is.list(env) || length(env) == 0) return(character(0))
+      env_names <- names(env)
+      env_names <- env_names[!is.na(env_names) & nzchar(env_names)]
+      keep <- intersect(fields, env_names)
+      vapply(keep, function(nm) {
+        paste0("  ", nm, " : ", collapse_model_field(env[[nm]]))
+      }, character(1))
+    }
+
+    valid <- Filter(function(x) !is.null(x) && is.list(x), job_results)
+    if (length(valid) == 0) return("No launched jobs.")
+
+    model_keys <- vapply(valid, function(x) {
+      if (!is.null(x$model_name) && nzchar(as.character(x$model_name))) as.character(x$model_name) else "NA"
+    }, character(1))
+    grouped <- split(valid, model_keys)
+
+    sections <- lapply(names(grouped), function(model_name) {
+      jobs <- grouped[[model_name]]
+      first_env <- NULL
+      for (j in jobs) {
+        if (!is.null(j$job_env) && is.list(j$job_env) && length(j$job_env) > 0) {
+          first_env <- j$job_env
+          break
+        }
+      }
+      common_lines <- format_env_lines(first_env, common_fields)
+      if (length(common_lines) == 0) {
+        common_lines <- "  <common config not captured>"
+      }
+
+      job_blocks <- vapply(jobs, function(j) {
+        jt <- if (!is.null(j$job_type) && nzchar(as.character(j$job_type))) as.character(j$job_type) else "NA"
+        bn <- if (!is.null(j$batch_name) && nzchar(as.character(j$batch_name))) as.character(j$batch_name) else "NA"
+        type_lines <- format_env_lines(j$job_env, type_fields_for(jt))
+        if (length(type_lines) == 0) {
+          type_lines <- "  <no job-type specific config>"
+        }
+        paste(c(
+          paste0(model_name, " [", jt, "]"),
+          paste0("  batch_name : ", bn),
+          type_lines
+        ), collapse = "\n")
+      }, character(1))
+
+      paste(
+        c(
+          paste0(model_name, " [common]"),
+          common_lines,
+          "",
+          paste(job_blocks, collapse = "\n\n----------------------------------------\n\n")
+        ),
+        collapse = "\n"
+      )
+    })
+
+    paste(sections, collapse = "\n\n========================================\n\n")
   }
 
   selected_models_from_checkboxes <- function() {
@@ -530,7 +643,7 @@
     tryCatch({
       batch_names <- c()
       remote_dirs <- c()
-      launched_config_blocks <- c()
+      launched_job_results <- list()
       current_job <- 0  # Track current job number
       progress_details <- c()  # Store progress messages
       progress_every_n <- 5
@@ -555,7 +668,7 @@
         if (is.null(result)) return(invisible(NULL))
         batch_names <<- c(batch_names, as.character(result$batch_name))
         remote_dirs <<- c(remote_dirs, as.character(result$remote_dir))
-        launched_config_blocks <<- c(launched_config_blocks, build_single_job_config_block(result))
+        launched_job_results[[length(launched_job_results) + 1]] <<- result
         invisible(NULL)
       }
       
@@ -922,8 +1035,8 @@
         status = as.character(job_record$status),
         branch = as.character(job_record$branch),
         batch_names = as.character(job_record$batch_names),
-        config_details = if (length(launched_config_blocks) > 0) {
-          paste(launched_config_blocks, collapse = "\n\n----------------------------------------\n\n")
+        config_details = if (length(launched_job_results) > 0) {
+          build_launched_config_details(launched_job_results)
         } else {
           build_model_config_details(selected_models)
         },
