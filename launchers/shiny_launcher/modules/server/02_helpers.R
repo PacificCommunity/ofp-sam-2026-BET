@@ -43,6 +43,12 @@
   }
 
   load_launcher_job_log <- function() {
+    required_cols <- c(
+      "run_at", "output_dir", "summary", "run_description", "config_file",
+      "job_types", "model_names", "launch_mode", "status", "branch",
+      "batch_names", "config_details", "remote_dirs"
+    )
+
     log_file <- get_launcher_job_log_file()
     if (is.null(log_file) || !file.exists(log_file)) {
       return(data.frame(
@@ -53,13 +59,14 @@
         config_file = character(),
         job_types = character(),
         model_names = character(),
-        launch_mode = character(),
-        status = character(),
-        branch = character(),
-        batch_names = character(),
-        remote_dirs = character(),
-        stringsAsFactors = FALSE
-      ))
+      launch_mode = character(),
+      status = character(),
+      branch = character(),
+      batch_names = character(),
+      config_details = character(),
+      remote_dirs = character(),
+      stringsAsFactors = FALSE
+    ))
     }
     out <- tryCatch(readRDS(log_file), error = function(e) NULL)
     if (!is.data.frame(out)) {
@@ -75,10 +82,15 @@
         status = character(),
         branch = character(),
         batch_names = character(),
+        config_details = character(),
         remote_dirs = character(),
         stringsAsFactors = FALSE
       ))
     }
+    for (cn in required_cols) {
+      if (!cn %in% names(out)) out[[cn]] <- NA_character_
+    }
+    out <- out[, required_cols, drop = FALSE]
     out
   }
 

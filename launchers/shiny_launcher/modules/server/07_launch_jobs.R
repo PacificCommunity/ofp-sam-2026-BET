@@ -251,7 +251,10 @@
       remote_dir = if (!is.null(job_env$model_dir)) as.character(job_env$model_dir) else "",
       job_id = batch_name,
       mode = "local",
-      log_file = log_file
+      log_file = log_file,
+      model_name = spec$model_name,
+      job_type = spec$job_type,
+      job_env = job_env
     )
   }
 
@@ -292,6 +295,55 @@
     if (is.null(x) || !nzchar(trimws(as.character(x)))) return(numeric(0))
     vals <- suppressWarnings(as.numeric(strsplit(as.character(x), "\\s+")[[1]]))
     vals[is.finite(vals)]
+  }
+
+  collapse_model_field <- function(x) {
+    if (is.null(x) || length(x) == 0) return("NA")
+    if (is.list(x)) return(paste(vapply(x, collapse_model_field, character(1)), collapse = " | "))
+    vals <- as.character(x)
+    vals <- vals[!is.na(vals)]
+    if (length(vals) == 0) "NA" else paste(vals, collapse = " ")
+  }
+
+  build_model_config_details <- function(model_names) {
+    if (length(model_names) == 0) return("No selected models.")
+    sections <- lapply(model_names, function(model_name) {
+      model_env <- rv$models[[model_name]]
+      if (is.null(model_env) || !is.list(model_env)) {
+        return(paste0(model_name, "\n  <model config not found>"))
+      }
+      fields <- names(model_env)
+      if (is.null(fields) || length(fields) == 0) {
+        return(paste0(model_name, "\n  <empty model config>"))
+      }
+      field_lines <- vapply(fields, function(nm) {
+        paste0("  ", nm, " : ", collapse_model_field(model_env[[nm]]))
+      }, character(1))
+      paste(c(model_name, field_lines), collapse = "\n")
+    })
+    paste(sections, collapse = "\n\n")
+  }
+
+  build_single_job_config_block <- function(job_result) {
+    if (is.null(job_result)) return("NA")
+    model_name <- if (!is.null(job_result$model_name) && nzchar(as.character(job_result$model_name))) as.character(job_result$model_name) else "NA"
+    job_type <- if (!is.null(job_result$job_type) && nzchar(as.character(job_result$job_type))) as.character(job_result$job_type) else "NA"
+    batch_name <- if (!is.null(job_result$batch_name) && nzchar(as.character(job_result$batch_name))) as.character(job_result$batch_name) else "NA"
+    env <- job_result$job_env
+    if (is.null(env) || !is.list(env) || length(env) == 0) {
+      env_lines <- "  <job env not captured>"
+    } else {
+      env_names <- sort(names(env))
+      env_names <- env_names[!is.na(env_names) & nzchar(env_names)]
+      env_lines <- vapply(env_names, function(nm) {
+        paste0("  ", nm, " : ", collapse_model_field(env[[nm]]))
+      }, character(1))
+    }
+    paste(c(
+      paste0(model_name, " [", job_type, "]"),
+      paste0("  batch_name : ", batch_name),
+      env_lines
+    ), collapse = "\n")
   }
 
   selected_models_from_checkboxes <- function() {
@@ -478,6 +530,7 @@
     tryCatch({
       batch_names <- c()
       remote_dirs <- c()
+      launched_config_blocks <- c()
       current_job <- 0  # Track current job number
       progress_details <- c()  # Store progress messages
       progress_every_n <- 5
@@ -496,6 +549,14 @@
             )
           )
         }
+      }
+
+      collect_job_result <- function(result) {
+        if (is.null(result)) return(invisible(NULL))
+        batch_names <<- c(batch_names, as.character(result$batch_name))
+        remote_dirs <<- c(remote_dirs, as.character(result$remote_dir))
+        launched_config_blocks <<- c(launched_config_blocks, build_single_job_config_block(result))
+        invisible(NULL)
       }
       
       did_parallel <- FALSE
@@ -597,9 +658,11 @@
           
           if (!is.null(results)) {
             ok_mask <- vapply(results, function(x) is.null(x$error), logical(1))
-            batch_names <- vapply(results[ok_mask], function(x) x$batch_name, character(1))
-            remote_dirs <- vapply(results[ok_mask], function(x) x$remote_dir, character(1))
-            current_job <- sum(ok_mask)
+            results_ok <- results[ok_mask]
+            if (length(results_ok) > 0) {
+              for (res in results_ok) collect_job_result(res)
+            }
+            current_job <- length(results_ok)
             did_parallel <- TRUE
             
             if (!all(ok_mask)) {
@@ -647,8 +710,7 @@
                 )
                 
                 result <- launch_single_job(model_name, model_env, job_type = job_type, seed = seed, exclude_slots = condor_exclude_slots)
-                batch_names <- c(batch_names, result$batch_name)
-                remote_dirs <- c(remote_dirs, result$remote_dir)
+                collect_job_result(result)
                 
                 progress_details[length(progress_details)] <- paste0(
                   progress_details[length(progress_details)], " ✓"
@@ -687,8 +749,7 @@
                 )
                 
                 result <- launch_single_job(model_name, model_env, job_type = job_type, part = part, exclude_slots = condor_exclude_slots)
-                batch_names <- c(batch_names, result$batch_name)
-                remote_dirs <- c(remote_dirs, result$remote_dir)
+                collect_job_result(result)
                 
                 progress_details[length(progress_details)] <- paste0(
                   progress_details[length(progress_details)], " ✓"
@@ -726,8 +787,7 @@
                 )
                 
                 result <- launch_single_job(model_name, model_env, job_type = job_type, peel = peel, exclude_slots = condor_exclude_slots)
-                batch_names <- c(batch_names, result$batch_name)
-                remote_dirs <- c(remote_dirs, result$remote_dir)
+                collect_job_result(result)
                 
                 progress_details[length(progress_details)] <- paste0(
                   progress_details[length(progress_details)], " ✓"
@@ -765,8 +825,7 @@
                 )
                 
                 result <- launch_single_job(model_name, model_env, job_type = job_type, scaler = sc, exclude_slots = condor_exclude_slots)
-                batch_names <- c(batch_names, result$batch_name)
-                remote_dirs <- c(remote_dirs, result$remote_dir)
+                collect_job_result(result)
                 
                 progress_details[length(progress_details)] <- paste0(
                   progress_details[length(progress_details)], " ✓"
@@ -802,8 +861,7 @@
               )
               
               result <- launch_single_job(model_name, model_env, job_type = job_type, exclude_slots = condor_exclude_slots)
-              batch_names <- c(batch_names, result$batch_name)
-              remote_dirs <- c(remote_dirs, result$remote_dir)
+              collect_job_result(result)
               
               progress_details[length(progress_details)] <- paste0(
                 progress_details[length(progress_details)], " ✓"
@@ -863,6 +921,11 @@
         status = as.character(job_record$status),
         branch = as.character(job_record$branch),
         batch_names = as.character(job_record$batch_names),
+        config_details = if (length(launched_config_blocks) > 0) {
+          paste(launched_config_blocks, collapse = "\n\n----------------------------------------\n\n")
+        } else {
+          build_model_config_details(selected_models)
+        },
         remote_dirs = as.character(job_record$remote_dirs),
         stringsAsFactors = FALSE
       )
@@ -1079,7 +1142,14 @@
       condor_environment = as.list(job_env, all.names = TRUE)
     )
     
-    return(list(batch_name = batch_name, remote_dir = remote_dir, job_id = job_id))
+    return(list(
+      batch_name = batch_name,
+      remote_dir = remote_dir,
+      job_id = job_id,
+      model_name = spec$model_name,
+      job_type = spec$job_type,
+      job_env = as.list(job_env, all.names = TRUE)
+    ))
   }
   
   launch_single_job <- function(model_name, model_env, job_type, seed = NULL, part = NULL, peel = NULL, scaler = NULL, log = TRUE, exclude_slots = NULL) {
@@ -1153,6 +1223,13 @@
       condor_environment = as.list(job_env, all.names = TRUE)
     )
     
-    return(list(batch_name = batch_name, remote_dir = remote_dir, job_id = job_id))
+    return(list(
+      batch_name = batch_name,
+      remote_dir = remote_dir,
+      job_id = job_id,
+      model_name = model_name,
+      job_type = job_type,
+      job_env = as.list(job_env, all.names = TRUE)
+    ))
   }
   
