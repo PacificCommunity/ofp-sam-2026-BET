@@ -44,6 +44,14 @@ dir.create(peel_dir, recursive = TRUE, showWarnings = FALSE)
 files_to_copy <- list.files(base_dir_abs, full.names = TRUE)
 file.copy(files_to_copy, to = peel_dir, overwrite = TRUE, recursive = TRUE)
 
+# Retro runs now use doitall.sh from peeled inputs; copied reference .par files
+# can conflict with downstream "latest .par" lookups, so remove them up front.
+copied_par_files <- list.files(peel_dir, pattern = "\\.par$", full.names = TRUE)
+if (length(copied_par_files) > 0) {
+  unlink(copied_par_files, force = TRUE)
+  cat("Removed copied .par files before retro run:", length(copied_par_files), "\n")
+}
+
 ####################################
 ## Generate retrospective inputs  ##
 ####################################
@@ -138,6 +146,13 @@ run_commands(commands = mfcl_commands,
              log_file = file.path(peel_dir, "mfcl_log.txt"))
 
 final_retro_par <- mp_final_par(peel_dir)
+final_retro_par_obj <- if (!is.null(final_retro_par) && file.exists(final_retro_par)) {
+  tryCatch(read.MFCLPar(final_retro_par), error = function(e) NULL)
+} else {
+  NULL
+}
+retro_obj_fun <- if (!is.null(final_retro_par_obj)) suppressWarnings(as.numeric(final_retro_par_obj@obj_fun)) else NA_real_
+retro_max_grad <- if (!is.null(final_retro_par_obj)) suppressWarnings(as.numeric(final_retro_par_obj@max_grad)) else NA_real_
 hessian_summary <- mp_run_post_hessian(
   work_dir = peel_dir,
   program_path_abs = program_path_abs,
@@ -160,6 +175,9 @@ info_list <- list(
   program_path  = program_path,
   model_dir     = model_dir,
   peel_dir      = peel_dir,
+  output_par    = if (!is.null(final_retro_par)) basename(final_retro_par) else NA_character_,
+  obj_fun       = retro_obj_fun,
+  max_grad      = retro_max_grad,
   hessian       = hessian_summary
 )
 
