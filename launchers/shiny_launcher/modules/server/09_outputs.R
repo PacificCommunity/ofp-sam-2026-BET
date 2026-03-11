@@ -277,6 +277,7 @@
 
     DT::datatable(
       log_df,
+      selection = "none",
       escape = FALSE,
       options = list(
         pageLength = 15,
