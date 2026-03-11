@@ -42,6 +42,26 @@
     file.path(resolve_repo_path(".models_ran"), "launcher_job_log.rds")
   }
 
+  empty_launcher_job_log <- function() {
+    data.frame(
+      run_at = character(),
+      output_dir = character(),
+      summary = character(),
+      run_description = character(),
+      config_file = character(),
+      job_types = character(),
+      model_names = character(),
+      total_jobs = integer(),
+      launch_mode = character(),
+      status = character(),
+      branch = character(),
+      batch_names = character(),
+      config_details = character(),
+      remote_dirs = character(),
+      stringsAsFactors = FALSE
+    )
+  }
+
   load_launcher_job_log <- function() {
     required_cols <- c(
       "run_at", "output_dir", "summary", "run_description", "config_file",
@@ -51,43 +71,11 @@
 
     log_file <- get_launcher_job_log_file()
     if (is.null(log_file) || !file.exists(log_file)) {
-      return(data.frame(
-        run_at = character(),
-        output_dir = character(),
-        summary = character(),
-        run_description = character(),
-        config_file = character(),
-        job_types = character(),
-        model_names = character(),
-      total_jobs = integer(),
-      launch_mode = character(),
-      status = character(),
-      branch = character(),
-      batch_names = character(),
-      config_details = character(),
-      remote_dirs = character(),
-      stringsAsFactors = FALSE
-    ))
+      return(empty_launcher_job_log())
     }
     out <- tryCatch(readRDS(log_file), error = function(e) NULL)
     if (!is.data.frame(out)) {
-      return(data.frame(
-        run_at = character(),
-        output_dir = character(),
-        summary = character(),
-        run_description = character(),
-        config_file = character(),
-        job_types = character(),
-        model_names = character(),
-        total_jobs = integer(),
-        launch_mode = character(),
-        status = character(),
-        branch = character(),
-        batch_names = character(),
-        config_details = character(),
-        remote_dirs = character(),
-        stringsAsFactors = FALSE
-      ))
+      return(empty_launcher_job_log())
     }
     for (cn in required_cols) {
       if (!cn %in% names(out)) out[[cn]] <- NA_character_
@@ -105,6 +93,38 @@
     history <- rbind(history, job_record)
     saveRDS(history, log_file)
     invisible(TRUE)
+  }
+
+  clear_launcher_job_log <- function() {
+    log_file <- get_launcher_job_log_file()
+    if (is.null(log_file)) return(invisible(FALSE))
+    log_dir <- dirname(log_file)
+    if (!dir.exists(log_dir)) dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+    saveRDS(empty_launcher_job_log(), log_file)
+    invisible(TRUE)
+  }
+
+  delete_launcher_job_log_rows <- function(row_ids) {
+    if (is.null(row_ids) || length(row_ids) == 0) return(invisible(0L))
+    log_file <- get_launcher_job_log_file()
+    if (is.null(log_file) || !file.exists(log_file)) return(invisible(0L))
+
+    history <- load_launcher_job_log()
+    if (nrow(history) == 0) return(invisible(0L))
+
+    idx <- suppressWarnings(as.integer(row_ids))
+    idx <- unique(idx[is.finite(idx)])
+    idx <- idx[idx >= 1 & idx <= nrow(history)]
+    if (length(idx) == 0) return(invisible(0L))
+
+    keep <- setdiff(seq_len(nrow(history)), idx)
+    out <- if (length(keep) == 0) {
+      empty_launcher_job_log()
+    } else {
+      history[keep, , drop = FALSE]
+    }
+    saveRDS(out, log_file)
+    invisible(length(idx))
   }
   
   # ========== LOAD MODELS FUNCTION ==========
