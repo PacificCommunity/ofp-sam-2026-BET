@@ -43,6 +43,89 @@ mod_bounds_server <- function(input, output, session, rv) {
       var_name <- sub("\\[.*$", "", var_name)
       ifelse(nzchar(var_name), var_name, "Unknown")
     }
+
+    parse_prefix <- function(var_name) {
+      v <- tolower(trimws(as.character(var_name)))
+      p <- sub("\\(.*$", "", v)
+      p <- sub(":.*$", "", p)
+      trimws(p)
+    }
+
+    lookup_param_reference <- function(var_name) {
+      prefix <- parse_prefix(var_name)
+
+      if (prefix %in% c("bs_selcoff_gp", "bs_selcoff", "selcoff", "ageselcoff", "sel_dev_coffs")) {
+        return(list(
+          Description = "Selectivity coefficient/deviate parameter used for fishery selectivity-at-age (including time-block/season/grouped selectivity variants).",
+          Source = "MFCL User's Guide §3.4.2; src/variable.hpp and src/newmau5a.cpp"
+        ))
+      }
+      if (prefix %in% c("diff_coffs", "diff_coffs2", "diff_coffs3", "xdiff_coffs", "zdiff_coffs")) {
+        return(list(
+          Description = "Movement diffusion coefficient parameter (including age-dependent/orthogonal-polynomial parameterizations).",
+          Source = "MFCL User's Guide §4.5.12; src/variable.hpp and src/newmau5a.cpp"
+        ))
+      }
+      if (prefix %in% c("region_rec_diffs", "region_rec_diff_coffs")) {
+        return(list(
+          Description = "Regional recruitment-deviation coefficients controlling time-varying recruitment distribution among regions.",
+          Source = "MFCL User's Guide §3.2.1; src/newmau5a.cpp and src/variable.hpp"
+        ))
+      }
+      if (prefix %in% c("tag_fish_rep", "rep_dev_coffs")) {
+        return(list(
+          Description = "Tag reporting-rate parameter or its deviation term for tagging likelihood formulations.",
+          Source = "MFCL User's Guide §4.5.10; src/newmau5a.cpp"
+        ))
+      }
+      if (prefix %in% c("recr")) {
+        return(list(
+          Description = "Recruitment time-series parameter in the core population dynamics model.",
+          Source = "MFCL User's Guide §3.2; src/newmau5a.cpp"
+        ))
+      }
+      if (prefix %in% c("region_pars")) {
+        return(list(
+          Description = "Region-level recruitment distribution parameters.",
+          Source = "MFCL User's Guide §3.2.1; src/newmau5a.cpp and src/newmult.cpp"
+        ))
+      }
+      if (prefix %in% c("vb_coff")) {
+        return(list(
+          Description = "Von Bertalanffy growth coefficients used in age-length conversions and size-based components.",
+          Source = "MFCL User's Guide growth parameterization; src/newmaux5.cpp and src/lbselclc.cpp"
+        ))
+      }
+      if (prefix %in% c("var_coff")) {
+        return(list(
+          Description = "Size-at-age variability coefficients used in length/weight distribution and selectivity-at-length calculations.",
+          Source = "MFCL User's Guide growth/variance settings; src/newmaux5.cpp and src/onevar.cpp"
+        ))
+      }
+      if (prefix %in% c("age_pars")) {
+        return(list(
+          Description = "Age-structured biological parameter block (growth/mortality related rows depending on flags).",
+          Source = "MFCL User's Guide biology section; src/newmaux5.cpp"
+        ))
+      }
+      if (prefix %in% c("sv")) {
+        return(list(
+          Description = "Structural/process scalar parameter (index-specific role in growth/recruitment/penalties).",
+          Source = "MFCL User's Guide sv notes; src/newmaux5.cpp and src/callpen.cpp"
+        ))
+      }
+      if (prefix %in% c("totpop", "totpop_coff")) {
+        return(list(
+          Description = "Population scaling parameter for initial total population/recruitment scale.",
+          Source = "MFCL User's Guide initial population/recruitment; src/newmau5a.cpp (totpop)"
+        ))
+      }
+
+      list(
+        Description = paste0("Estimated MFCL parameter group from indepvar.rpt (group='", prefix, "')."),
+        Source = "MFCL indepvar.rpt design + source code parameter vector"
+      )
+    }
   
     # Reactive: process bound hits data
     bounds_data <- reactive({
@@ -68,6 +151,11 @@ mod_bounds_server <- function(input, output, session, rv) {
       
         # Filter to only parameters that hit bounds
         bound_hits <- df %>% filter(Hit_Bound)
+        if (nrow(bound_hits) > 0) {
+          ref_info <- lapply(bound_hits$Var_name, lookup_param_reference)
+          bound_hits$Description <- vapply(ref_info, function(x) x$Description, character(1))
+          bound_hits$Source <- vapply(ref_info, function(x) x$Source, character(1))
+        }
         list(total_params = nrow(df), bound_hits = bound_hits)
       })
       names(results) <- input$scenarios
@@ -112,7 +200,13 @@ mod_bounds_server <- function(input, output, session, rv) {
       }
 
       summary_tbl <- bounds %>%
-        count(Var_Type, Hit_Type, name = "Count") %>%
+        group_by(Var_Type, Hit_Type) %>%
+        summarise(
+          Count = dplyr::n(),
+          Description = dplyr::first(Description),
+          Source = dplyr::first(Source),
+          .groups = "drop"
+        ) %>%
         arrange(Var_Type, match(Hit_Type, c("Lower", "Upper")))
 
       datatable(
@@ -147,7 +241,7 @@ mod_bounds_server <- function(input, output, session, rv) {
       } else {
         # Display detailed bound hits
         bounds %>%
-          select(Index, Var_Type, Var_name, Estimate, Hit_Type, L_bound, U_bound) %>%
+          select(Index, Var_Type, Var_name, Estimate, Hit_Type, L_bound, U_bound, Description, Source) %>%
           datatable(options = list(pageLength = 20, scrollX = TRUE), 
                     rownames = FALSE) %>%
           formatStyle(

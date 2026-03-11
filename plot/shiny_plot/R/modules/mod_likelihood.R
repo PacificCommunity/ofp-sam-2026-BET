@@ -142,24 +142,38 @@ mod_likelihood_ui <- function() {
               selected = "input"
             ),
             selectInput(
-              "lik_jitter_param_scope",
-              "Jitter Param Coverage:",
+              "lik_jitter_param_display",
+              "Jitter Param Display:",
               choices = c(
-                "Top ~20 parameters" = "top",
-                "All parameters window" = "all"
+                "Family summary (recommended for many parameters)" = "family",
+                "Parameter detail" = "detail"
               ),
-              selected = "top"
+              selected = "family"
             ),
             conditionalPanel(
-              condition = "input.lik_jitter_param_scope == 'all'",
-              sliderInput(
-                "lik_jitter_param_window",
-                "Parameter percentile window:",
-                min = 1,
-                max = 100,
-                value = c(1, 100),
-                step = 1,
-                round = TRUE
+              condition = "input.lik_jitter_param_display == 'detail'",
+              tagList(
+                selectInput(
+                  "lik_jitter_param_scope",
+                  "Jitter Param Coverage:",
+                  choices = c(
+                    "Top ~20 parameters" = "top",
+                    "All parameters window" = "all"
+                  ),
+                  selected = "top"
+                ),
+                conditionalPanel(
+                  condition = "input.lik_jitter_param_scope == 'all'",
+                  sliderInput(
+                    "lik_jitter_param_window",
+                    "Parameter percentile window:",
+                    min = 1,
+                    max = 100,
+                    value = c(1, 100),
+                    step = 1,
+                    round = TRUE
+                  )
+                )
               )
             ),
                   conditionalPanel(
@@ -193,21 +207,29 @@ mod_likelihood_ui <- function() {
                   "Bound position (0-1)" = "bound_position",
                   "Parameter value" = "value",
                   "Change from original" = "delta",
-                  "% change from original" = "pct_change"
+                  "% change from original" = "pct_change",
+                  "Baseline - fitted" = "baseline_minus",
+                  "Relative difference (%) (Baseline - fitted)/Baseline" = "rel_baseline_minus"
                 ),
                 selected = "bound_position"
               )
             ),
             conditionalPanel(
-              condition = "input.lik_jitter_param_view == 'final' && ['delta', 'pct_change'].includes(input.lik_jitter_param_metric)",
-              selectInput(
-                "lik_jitter_param_range",
-                "Jitter Param Range:",
-                choices = c(
-                  "Focused range" = "focused",
-                  "Full range" = "full"
+              condition = "input.lik_jitter_param_view == 'final' && ['delta', 'pct_change', 'baseline_minus', 'rel_baseline_minus'].includes(input.lik_jitter_param_metric)",
+              tagList(
+                sliderInput(
+                  "lik_jitter_param_range_pct",
+                  "Jitter Param Range (abs percentile):",
+                  min = 50,
+                  max = 100,
+                  value = 95,
+                  step = 1,
+                  round = TRUE
                 ),
-                selected = "focused"
+                tags$small(
+                  "100 keeps full range. Lower values reduce extreme outlier influence on y-axis limits.",
+                  style = "display:block; margin-top:-6px; color:#666;"
+                )
               )
             )
           )
@@ -411,6 +433,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       jitter_grad_reference = if (is.null(input$lik_jitter_grad_reference)) 0.001 else suppressWarnings(as.numeric(input$lik_jitter_grad_reference)),
       jitter_converged_only_diagnostics = isTRUE(input$lik_jitter_converged_only_diagnostics),
       jitter_param_view = if (is.null(input$lik_jitter_param_view)) "input" else input$lik_jitter_param_view,
+      jitter_param_display = if (is.null(input$lik_jitter_param_display)) "family" else input$lik_jitter_param_display,
       jitter_param_scope = if (is.null(input$lik_jitter_param_scope)) "top" else input$lik_jitter_param_scope,
       jitter_param_window = if (is.null(input$lik_jitter_param_window)) c(1L, 100L) else pmax(1L, pmin(100L, as.integer(input$lik_jitter_param_window))),
       jitter_converged_only = isTRUE(input$lik_jitter_converged_only),
@@ -418,7 +441,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       jitter_derived_view = if (is.null(input$lik_jitter_derived_view)) "summary" else input$lik_jitter_derived_view,
       jitter_param_input_scale = if (is.null(input$lik_jitter_param_input_scale)) "bound_position" else input$lik_jitter_param_input_scale,
       jitter_param_metric = if (is.null(input$lik_jitter_param_metric)) "pct_change" else input$lik_jitter_param_metric,
-      jitter_param_range = if (is.null(input$lik_jitter_param_range)) "focused" else input$lik_jitter_param_range
+      jitter_param_range_pct = if (is.null(input$lik_jitter_param_range_pct)) 95 else pmax(50, pmin(100, suppressWarnings(as.integer(input$lik_jitter_param_range_pct))))
     )
   })
   lik_filters_applied <- reactiveVal(NULL)
@@ -437,6 +460,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       jitter_grad_reference = filters$jitter_grad_reference,
       jitter_converged_only_diagnostics = filters$jitter_converged_only_diagnostics,
       jitter_param_view = filters$jitter_param_view,
+      jitter_param_display = filters$jitter_param_display,
       jitter_param_scope = filters$jitter_param_scope,
       jitter_param_window = filters$jitter_param_window,
       jitter_converged_only = filters$jitter_converged_only,
@@ -444,7 +468,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       jitter_derived_view = filters$jitter_derived_view,
       jitter_param_input_scale = filters$jitter_param_input_scale,
       jitter_param_metric = filters$jitter_param_metric,
-      jitter_param_range = filters$jitter_param_range
+      jitter_param_range_pct = filters$jitter_param_range_pct
     )
   })
   lik_profile_output_filters <- reactive({
@@ -471,13 +495,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     if (identical(filters$profile_type, "jitter_params")) {
       key$jitter_param_view <- filters$jitter_param_view
+      key$jitter_param_display <- filters$jitter_param_display
       key$jitter_param_scope <- filters$jitter_param_scope
       key$jitter_param_window <- filters$jitter_param_window
       key$jitter_converged_only <- isTRUE(filters$jitter_converged_only)
       key$jitter_converged_max_grad <- if (is.finite(filters$jitter_converged_max_grad)) filters$jitter_converged_max_grad else 0.01
       key$jitter_param_input_scale <- filters$jitter_param_input_scale
       key$jitter_param_metric <- filters$jitter_param_metric
-      key$jitter_param_range <- filters$jitter_param_range
+      key$jitter_param_range_pct <- filters$jitter_param_range_pct
       return(key)
     }
 
@@ -514,13 +539,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     if (identical(filters$profile_type, "jitter_params")) {
       key$jitter_param_view <- filters$jitter_param_view
+      key$jitter_param_display <- filters$jitter_param_display
       key$jitter_param_scope <- filters$jitter_param_scope
       key$jitter_param_window <- filters$jitter_param_window
       key$jitter_converged_only <- isTRUE(filters$jitter_converged_only)
       key$jitter_converged_max_grad <- if (is.finite(filters$jitter_converged_max_grad)) filters$jitter_converged_max_grad else 0.01
       key$jitter_param_input_scale <- filters$jitter_param_input_scale
       key$jitter_param_metric <- filters$jitter_param_metric
-      key$jitter_param_range <- filters$jitter_param_range
+      key$jitter_param_range_pct <- filters$jitter_param_range_pct
       return(key)
     }
 
@@ -792,6 +818,555 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     period_core
   }
+
+  extract_param_family <- function(var_name) {
+    v <- tolower(trimws(as.character(var_name)))
+    prefix <- sub("\\(.*$", "", v)
+    prefix <- sub(":.*$", "", prefix)
+    prefix <- trimws(prefix)
+
+    if (prefix %in% c("bs_selcoff_gp", "selcoff", "ageselcoff", "sel_dev_coffs")) return("Selectivity parameters")
+    if (prefix %in% c("diff_coffs", "diff_coffs2", "diff_coffs3", "xdiff_coffs", "zdiff_coffs", "region_rec_diff_coffs")) return("Movement parameters")
+    if (prefix %in% c("effort_dev_coffs", "grouped_catchability_coffs", "catch_dev_coffs", "q0", "q0_miss", "fm_level_devs")) return("Catchability / effort-deviation parameters")
+    if (prefix %in% c("recr", "totpop", "totpop_coff", "region_pars", "region_rec_diffs", "region_rec_diff_coffs", "rec_init_diff")) return("Recruitment")
+    if (prefix %in% c("tag_fish_rep", "rep_dev_coffs")) return("Tagging")
+    if (prefix %in% c("vb_coff", "var_coff")) return("Growth / size-distribution parameters")
+    if (prefix %in% c("sv")) return("Structural / process parameters")
+
+    if (grepl("^age_pars", v)) return("Age parameters")
+    if (grepl("^fish_pars", v)) return("Fishery parameters")
+    if (grepl("^region_pars", v)) return("Region parameters")
+    if (grepl("^species_pars", v)) return("Species parameters")
+    if (grepl("^bs_selcoff_gp|^selcoff|selectiv", v)) return("Selectivity parameters")
+    if (grepl("^diff_coffs|movement", v)) return("Movement parameters")
+    if (grepl("^effort_dev|^q_dev|catchability", v)) return("Catchability / effort-deviation parameters")
+    if (grepl("^recr|^rec", v)) return("Recruitment")
+    if (grepl("^q|catchability", v)) return("Catchability")
+    if (grepl("^af\\d+|^age_flags\\(", v)) return("Age flags / AF controls")
+    "Other / mixed"
+  }
+
+  parse_param_index <- function(var_name, family_prefix) {
+    pat <- paste0("^", family_prefix, "\\((\\d+)")
+    m <- regexec(pat, tolower(trimws(as.character(var_name))))
+    g <- regmatches(tolower(trimws(as.character(var_name))), m)[[1]]
+    if (length(g) < 2) return(NA_integer_)
+    suppressWarnings(as.integer(g[[2]]))
+  }
+
+  parse_prefix <- function(var_name) {
+    v <- tolower(trimws(as.character(var_name)))
+    p <- sub("\\(.*$", "", v)
+    p <- sub(":.*$", "", p)
+    trimws(p)
+  }
+
+  parse_indices_from_names <- function(var_names, prefix) {
+    if (is.null(var_names) || length(var_names) == 0) return(integer(0))
+    pat <- paste0("^", prefix, ".*?\\((\\d+)")
+    idx <- vapply(var_names, function(x) {
+      m <- regexec(pat, tolower(as.character(x)))
+      g <- regmatches(tolower(as.character(x)), m)[[1]]
+      if (length(g) < 2) return(NA_integer_)
+      suppressWarnings(as.integer(g[[2]]))
+    }, integer(1))
+    idx <- idx[is.finite(idx)]
+    sort(unique(as.integer(idx)))
+  }
+
+  lookup_param_reference <- function(var_name, var_names = NULL) {
+    v <- tolower(trimws(as.character(var_name)))
+    prefix <- parse_prefix(v)
+
+    if (grepl("af172|age_flags\\(172\\)", v)) {
+      return(list(
+        Description = "Profile biomass type selector used by this app (adult biomass vs total biomass context).",
+        Source = "MFCL User's Guide profile flag context + shiny_plot profile logic"
+      ))
+    }
+    if (grepl("af173|age_flags\\(173\\)", v)) {
+      return(list(
+        Description = "Profile period window control: older bound of backward-looking period index.",
+        Source = "MFCL User's Guide profile period flags + shiny_plot period labeling"
+      ))
+    }
+    if (grepl("af174|age_flags\\(174\\)", v)) {
+      return(list(
+        Description = "Profile period window control: recent bound of backward-looking period index.",
+        Source = "MFCL User's Guide profile period flags + shiny_plot period labeling"
+      ))
+    }
+
+    if (prefix %in% c("bs_selcoff_gp", "bs_selcoff", "selcoff", "ageselcoff", "sel_dev_coffs")) {
+      return(list(
+        Description = "Selectivity coefficient/deviate parameter used for fishery selectivity-at-age (including time-block/season/grouped selectivity variants).",
+        Source = "MFCL User's Guide §3.4.2 (selectivity, time-variant selectivity); src/variable.hpp (selcoff, bs_selcoff), src/newmau5a.cpp (bs_selcoff_gp)"
+      ))
+    }
+
+    if (prefix %in% c("diff_coffs", "diff_coffs2", "diff_coffs3", "xdiff_coffs", "zdiff_coffs", "region_rec_diff_coffs")) {
+      return(list(
+        Description = "Movement diffusion coefficient parameter (including alternative age-dependent and orthogonal-polynomial/robust parameterizations).",
+        Source = "MFCL User's Guide §4.5.12 movement + movement notes; src/variable.hpp (diff_coffs*) and src/newmau5a.cpp (diff_coffs, diff_coffs2, diff_coffs3)"
+      ))
+    }
+
+    if (prefix %in% c("effort_dev_coffs", "grouped_catchability_coffs", "catch_dev_coffs", "q0", "q0_miss", "fm_level_devs")) {
+      return(list(
+        Description = "Catchability/effort-deviation parameter (baseline q, grouped catchability, catchability deviations, or effective-effort deviate term).",
+        Source = "MFCL User's Guide §3.4.1 and §3.4.3; src/variable.hpp (effort_dev_coffs, grouped_catchability_coffs) and src/newmau5a.cpp"
+      ))
+    }
+
+    if (prefix %in% c("tag_fish_rep", "rep_dev_coffs")) {
+      return(list(
+        Description = "Tag reporting-rate parameter or its deviation term for tagging likelihood formulations.",
+        Source = "MFCL User's Guide §4.5.10 tagging; src/newmau5a.cpp (tag_fish_rep, rep_dev_coffs)"
+      ))
+    }
+
+    if (prefix %in% c("recr", "totpop", "totpop_coff", "rec_init_diff")) {
+      return(list(
+        Description = "Recruitment/initial-population scaling parameter in the core population dynamics equations.",
+        Source = "MFCL User's Guide §3.1-§3.2 recruitment and initial population; src/newmau5a.cpp"
+      ))
+    }
+
+    if (prefix %in% c("region_rec_diffs", "region_rec_diff_coffs")) {
+      return(list(
+        Description = "Regional recruitment-deviation coefficients controlling time-varying recruitment distribution among regions.",
+        Source = "MFCL User's Guide §3.2.1 regional recruitment variation; src/newmau5a.cpp (region_rec_diffs) and src/variable.hpp (region_rec_diff_coffs)"
+      ))
+    }
+
+    if (prefix %in% c("region_pars")) {
+      idx <- parse_indices_from_names(var_names, "region_pars")
+      if (length(idx) == 1 && idx[[1]] == 1L) {
+        return(list(
+          Description = "Region-level recruitment distribution proportions (region_pars row 1).",
+          Source = "MFCL User's Guide section 'region parameters' and recruitment distribution; src/newmau5a.cpp region_pars(1)"
+        ))
+      }
+      return(list(
+        Description = "Region-level recruitment distribution parameters (including priors/constraints on regional recruitment proportions).",
+        Source = "MFCL User's Guide §3.2.1 and region flag appendix; src/newmau5a.cpp region_pars(1), src/newmult.cpp region_pars checks"
+      ))
+    }
+
+    if (prefix %in% c("age_pars")) {
+      idx <- parse_indices_from_names(var_names, "age_pars")
+      if (length(idx) == 1 && idx[[1]] == 5L) {
+        return(list(
+          Description = "age_pars(5): natural-mortality-at-age functional-form parameters (including Lorenzen option depending on age flag settings).",
+          Source = "MFCL User's Guide age_pars row definitions and Lorenzen notes; src/newmaux5.cpp age_pars(5)"
+        ))
+      }
+      return(list(
+        Description = "Age-structured biological parameter block (growth, mortality, recruitment-shape related rows by model flag settings).",
+        Source = "MFCL User's Guide biology/recruitment sections; src/newmaux5.cpp age_pars(1..5)"
+      ))
+    }
+
+    if (prefix %in% c("vb_coff")) {
+      return(list(
+        Description = "Von Bertalanffy growth coefficients used in age-length conversions and size-based likelihood components.",
+        Source = "MFCL User's Guide growth parameterization; src/newmaux5.cpp vb_coff(1..4), src/lbselclc.cpp"
+      ))
+    }
+
+    if (prefix %in% c("var_coff")) {
+      return(list(
+        Description = "Size-at-age variability coefficients used in length/weight distribution and selectivity-at-length calculations.",
+        Source = "MFCL User's Guide growth/variance settings; src/newmaux5.cpp var_coff(1..2), src/onevar.cpp"
+      ))
+    }
+
+    if (prefix %in% c("sv")) {
+      idx <- parse_indices_from_names(var_names, "sv")
+      if (length(idx) == 1 && idx[[1]] == 21L) {
+        return(list(
+          Description = "Beverton-Holt stock-recruitment beta scaling parameter (density dependence strength). In code: beta = B0 * (sv(21)+0.001).",
+          Source = "MFCL source: vrbioclc.cpp, tx.cpp, do_all_for_empirical_autocorrelated_bh.cpp (sv(21))"
+        ))
+      }
+      if (length(idx) == 1 && idx[[1]] == 29L) {
+        return(list(
+          Description = "Beverton-Holt stock-recruitment steepness (h) parameter.",
+          Source = "MFCL source/manual: vrbioclc.cpp (sv(29)=steepness), MULTIFAN-CL-Users-Guide sv(29)"
+        ))
+      }
+      if (all(c(21L, 29L) %in% idx)) {
+        return(list(
+          Description = "Core Beverton-Holt SRR parameter set: sv(21)=beta scaling (density dependence strength), sv(29)=steepness (h).",
+          Source = "MFCL source: vrbioclc.cpp, tx.cpp; manual sv(29)"
+        ))
+      }
+      idx_label <- if (length(idx) == 0) {
+        "unknown"
+      } else if (length(idx) <= 8) {
+        paste(idx, collapse = ", ")
+      } else {
+        paste0(paste(head(idx, 8), collapse = ", "), ", ...")
+      }
+      return(list(
+        Description = paste0(
+          "MFCL structural/process scalar vector parameter (index-specific meaning). ",
+          "Observed sv indices in this model: ", idx_label,
+          "."
+        ),
+        Source = "MFCL User's Guide seasonal growth parameters sv(1,30); src/newmaux5.cpp sv(...) assignments + src/callpen.cpp penalties"
+      ))
+    }
+
+    if (grepl("^fish_pars\\(", v)) {
+      idx <- parse_param_index(v, "fish_pars")
+      if (isTRUE(idx %in% c(1L, 2L))) {
+        return(list(
+          Description = "Catchability-related fishery coefficients (fishery-level q structure components activated via fish_flags).",
+          Source = "MFCL User's Guide §3.4.1 catchability; src/newmau5a.cpp fish_pars(1:2)"
+        ))
+      }
+      if (isTRUE(idx == 3L)) {
+        return(list(
+          Description = "Tag reporting-rate parameter (or tag-fish-group reporting-rate term when release-group reporting rates are enabled).",
+          Source = "MFCL User's Guide §4.5.10 tagging flags; src/newmau5a.cpp fish_pars(3), tag_fish_rep"
+        ))
+      }
+      if (isTRUE(idx == 4L)) {
+        return(list(
+          Description = "Tag-likelihood shape/dispersion-type coefficient used in selected tagging likelihood formulations.",
+          Source = "MFCL User's Guide §4.5.10 tagging likelihood options; src/newmau5a.cpp fish_pars(4)"
+        ))
+      }
+      if (isTRUE(idx %in% c(5L, 6L))) {
+        return(list(
+          Description = "Additional fishery likelihood coefficients used with tagging/catch-conditioned likelihood settings.",
+          Source = "MFCL User's Guide tagging/catch-conditioned options; src/newmau5a.cpp fish_pars(5:6)"
+        ))
+      }
+      if (isTRUE(idx %in% c(9L, 10L, 11L))) {
+        return(list(
+          Description = "Fishery selectivity function coefficients (logistic/double-normal/cubic-spline forms depending on fish_flags).",
+          Source = "MFCL User's Guide §3.4.2 selectivity; src/newmau5a.cpp fish_pars(9:11) and selectivity routines"
+        ))
+      }
+      if (isTRUE(idx == 7L)) {
+        return(list(
+          Description = "Catchability effort-effect parameter (effort-dependent catchability hypothesis).",
+          Source = "MFCL User's Guide §3.4.1 catchability; src/newmau5a.cpp fish_pars(7)"
+        ))
+      }
+      if (isTRUE(idx == 8L)) {
+        return(list(
+          Description = "Catchability abundance-effect parameter (biomass-dependent catchability / hyper-stability-hyper-depletion term).",
+          Source = "MFCL User's Guide §3.4.1 catchability; src/newmau5a.cpp fish_pars(8)"
+        ))
+      }
+      if (isTRUE(idx %in% c(14L, 15L))) {
+        return(list(
+          Description = "Self-scaling multinomial log-variance level parameter for length (14) or weight (15) compositions.",
+          Source = "MFCL User's Guide composition likelihood options; src/newmau5a.cpp comments: logvN length/weight for self-scaling multinomial"
+        ))
+      }
+      if (isTRUE(idx %in% c(16L, 17L))) {
+        return(list(
+          Description = "Self-scaling multinomial rho parameter for length (16) or weight (17) compositions.",
+          Source = "MFCL User's Guide composition likelihood options; src/newmau5a.cpp comments: rho length/weight for self-scaling multinomial"
+        ))
+      }
+      if (isTRUE(idx %in% c(18L, 19L))) {
+        return(list(
+          Description = "Self-scaling multinomial log-variance parameter for length (18) or weight (19) compositions.",
+          Source = "MFCL User's Guide composition likelihood options; src/newmau5a.cpp comments: log var length/weight for self-scaling multinomial"
+        ))
+      }
+      if (isTRUE(idx %in% c(20L, 21L))) {
+        return(list(
+          Description = "Sample-size covariate coefficient for length (20) or weight (21) composition likelihood.",
+          Source = "MFCL User's Guide composition likelihood options; src/newmau5a.cpp fish_pars(20:21)"
+        ))
+      }
+      if (isTRUE(idx %in% c(22L, 23L))) {
+        return(list(
+          Description = "Length Dirichlet-multinomial variance multiplier/covariate coefficients.",
+          Source = "MFCL User's Guide Dirichlet-multinomial options; src/newmau5a.cpp comments: fish_pars(22:23)"
+        ))
+      }
+      if (isTRUE(idx %in% c(24L, 25L))) {
+        return(list(
+          Description = "Weight Dirichlet-multinomial variance multiplier/covariate coefficients.",
+          Source = "MFCL User's Guide Dirichlet-multinomial options; src/newmau5a.cpp comments: fish_pars(24:25)"
+        ))
+      }
+      if (isTRUE(idx %in% c(26L, 27L))) {
+        return(list(
+          Description = "Random-effects heterogeneity variance-multiplier coefficient for length (26) or weight (27) compositions.",
+          Source = "MFCL source composition parameterization; src/newmau5a.cpp comments: RE length/weight heterogeneity"
+        ))
+      }
+      if (isTRUE(idx == 30L)) {
+        return(list(
+          Description = "Tag likelihood auxiliary parameter (gamma/censored-gamma related option).",
+          Source = "MFCL User's Guide §4.5.10 tagging likelihood variants; src/newmau5a.cpp fish_pars(30)"
+        ))
+      }
+      if (isTRUE(idx %in% c(31L, 32L, 33L))) {
+        return(list(
+          Description = "Auxiliary fishery likelihood coefficient controlled by advanced fish_flags (used in selected composition/catchability likelihood extensions).",
+          Source = "MFCL source code option blocks; src/newmau5a.cpp fish_pars(31:33)"
+        ))
+      }
+      if (isTRUE(idx %in% c(31L, 32L))) {
+        return(list(
+          Description = "Catch-conditioned variance / overdispersion-related fishery parameters.",
+          Source = "MFCL User's Guide catch-conditioned section; src references to fish_pars(31,32)"
+        ))
+      }
+      if (isTRUE(idx %in% c(3L, 4L, 5L, 6L, 30L))) {
+        return(list(
+          Description = "Tagging/reporting and recapture-related fishery parameters used in tag-likelihood components.",
+          Source = "MFCL source tagging routines (e.g., ptagfit.cpp, threaded_tag3.cpp)"
+        ))
+      }
+      return(list(
+        Description = "Fishery-level estimated parameter (catchability/selectivity/variance/tagging component depending on fish_flags and likelihood setup).",
+        Source = "MFCL User's Guide Ch. 4 fishery parameterization + source code"
+      ))
+    }
+
+    if (grepl("^bs_selcoff_gp", v)) {
+      return(list(
+        Description = "Grouped/block selectivity coefficient used by time-varying selectivity parameterization (e.g., block/season/group-specific selectivity terms).",
+        Source = "MFCL User's Guide time-variant selectivity sections; source selectivity coefficient structures"
+      ))
+    }
+
+    if (grepl("^diff_coffs\\(", v) || grepl("^diff_coffs[23]?\\(", v)) {
+      return(list(
+        Description = "Movement diffusion coefficient parameter (orthogonal-polynomial/alternative movement parameterization term).",
+        Source = "MFCL User's Guide movement parameterization; source references to diff_coffs/diff_coffs2/diff_coffs3"
+      ))
+    }
+
+    if (grepl("^effort_dev_coffs\\(", v) || grepl("^grouped_catchability_coffs\\(", v)) {
+      return(list(
+        Description = "Effort-deviation / implicit catchability coefficient controlling time-varying fishery catchability dynamics.",
+        Source = "MFCL User's Guide catchability deviations; source catchability routines"
+      ))
+    }
+
+    if (grepl("^selcoff|selectiv", v)) {
+      return(list(
+        Description = "Selectivity coefficient parameter (age- or length-based selectivity function term depending on fishery settings).",
+        Source = "MFCL User's Guide selectivity parameterization; source selectivity routines"
+      ))
+    }
+
+    if (grepl("^age_pars\\(", v)) {
+      idx <- parse_param_index(v, "age_pars")
+      if (isTRUE(idx %in% c(1L, 2L))) {
+        return(list(
+          Description = "Recruitment-related age parameter row (including recruitment mean/deviate structures depending on chosen recruitment parameterization).",
+          Source = "MFCL User's Guide recruitment parameterization sections"
+        ))
+      }
+      if (isTRUE(idx == 5L)) {
+        return(list(
+          Description = "Lorenzen natural-mortality function parameters (size/age-dependent M relationship).",
+          Source = "MFCL User's Guide Lorenzen mortality section; src/newmau5a.cpp + natmort routines"
+        ))
+      }
+      return(list(
+        Description = "Age-structured biological parameter row (growth, mortality, maturity, or related age process; exact role depends on active flags).",
+        Source = "MFCL User's Guide Ch. 4 biology parameterization + source code"
+      ))
+    }
+
+    if (grepl("^region_pars\\(", v)) {
+      idx <- parse_param_index(v, "region_pars")
+      if (isTRUE(idx == 1L)) {
+        return(list(
+          Description = "Regional recruitment composition/proportion-related parameter (used with region-level recruitment structures and priors).",
+          Source = "MFCL User's Guide region parameterization (region_pars)"
+        ))
+      }
+      return(list(
+        Description = "Region-level parameter (typically regional recruitment/movement structure component).",
+        Source = "MFCL User's Guide region and movement parameterization"
+      ))
+    }
+
+    if (grepl("^species_pars\\(", v)) {
+      idx <- parse_param_index(v, "species_pars")
+      if (isTRUE(idx == 2L)) {
+        return(list(
+          Description = "Recruitment autocorrelation-related species parameter (rho) when AR structure is estimated.",
+          Source = "MFCL User's Guide recruitment autocorrelation section"
+        ))
+      }
+      return(list(
+        Description = "Species-level dynamic parameter (stock-recruitment / species process setting depending on model mode).",
+        Source = "MFCL User's Guide species parameterization"
+      ))
+    }
+
+    if (grepl("^recr|^rec", v)) {
+      return(list(
+        Description = "Recruitment parameter (mean/deviate or orthogonal-polynomial recruitment form depending on flags).",
+        Source = "MFCL User's Guide recruitment parameterization"
+      ))
+    }
+
+    if (grepl("^q|catchability", v)) {
+      return(list(
+        Description = "Catchability parameter (average level, temporal deviation, or regression component).",
+        Source = "MFCL User's Guide catchability section"
+      ))
+    }
+
+    if (grepl("^age_flags\\(", v)) {
+      return(list(
+        Description = "Age-level control flag index (switch/weight controlling biology, penalties, or process options depending on index).",
+        Source = "MFCL User's Guide flag settings + source flag logic"
+      ))
+    }
+
+    if (grepl("^parest_flags\\(", v)) {
+      return(list(
+        Description = "Parameter-estimation control flag index (minimizer/report/penalty/feature activation controls depending on index).",
+        Source = "MFCL User's Guide flag settings + source flag logic"
+      ))
+    }
+
+    if (grepl("^fish_flags\\(", v)) {
+      return(list(
+        Description = "Fishery control flag index (catchability/selectivity/grouping/time-variation settings depending on index).",
+        Source = "MFCL User's Guide Appendix B fish flags + source flag logic"
+      ))
+    }
+
+    if (grepl("^region_flags\\(", v)) {
+      return(list(
+        Description = "Regional control flag index (regional process/penalty settings depending on index).",
+        Source = "MFCL User's Guide Appendix B region flags + source flag logic"
+      ))
+    }
+
+    list(
+      Description = paste0(
+        "Estimated MFCL parameter from indepvar.rpt (group='", prefix,
+        "'). This parameter group is active in the objective-function parameter vector for the selected model."
+      ),
+      Source = "MFCL indepvar.rpt design + source code parameter vector"
+    )
+  }
+
+  param_guide_table_reactive <- reactive({
+    req(rv$data_loaded)
+    filters <- lik_data_filters()
+    scenarios <- if (!is.null(filters) && length(filters$scenarios) > 0) filters$scenarios else input$lik_scenarios
+    if (is.null(scenarios) || length(scenarios) == 0) return(NULL)
+
+    rows <- lapply(scenarios, function(sc) {
+      indep <- rv$IndepOut_list[[sc]]
+      df <- parse_indepvar(indep)
+      if (is.null(df) || nrow(df) == 0) return(NULL)
+      df$scenario <- sc
+      df
+    })
+    rows <- Filter(Negate(is.null), rows)
+    if (length(rows) == 0) return(NULL)
+
+    all_params <- bind_rows(rows)
+    if (nrow(all_params) == 0) return(NULL)
+    all_params$Param_Group <- vapply(all_params$Var_name, parse_prefix, character(1))
+
+    summary_tbl <- all_params %>%
+      group_by(Param_Group) %>%
+      summarise(
+        Family = extract_param_family(first(Param_Group)),
+        Models = n_distinct(scenario),
+        Entries = dplyr::n(),
+        Bound_Hits = sum(Hit_Bound %in% TRUE, na.rm = TRUE),
+        Var_Names = list(sort(unique(Var_name))),
+        Example_Names = paste(utils::head(sort(unique(Var_name)), 3), collapse = ", "),
+        .groups = "drop"
+      ) %>%
+      arrange(desc(Bound_Hits), desc(Entries), Param_Group)
+
+    ref_info <- mapply(
+      FUN = function(group_name, name_list) lookup_param_reference(group_name, name_list),
+      group_name = summary_tbl$Param_Group,
+      name_list = summary_tbl$Var_Names,
+      SIMPLIFY = FALSE
+    )
+    summary_tbl$Description <- vapply(ref_info, function(x) x$Description, character(1))
+    summary_tbl$Source <- vapply(ref_info, function(x) x$Source, character(1))
+    summary_tbl$Var_Names <- NULL
+
+    summary_tbl %>%
+      rename(
+        `Parameter Group` = Param_Group,
+        `Bound Hits` = Bound_Hits,
+        `Example Names` = Example_Names
+      )
+  })
+
+  build_family_catalog <- function(prefix, idx_range, family_label) {
+    data.frame(
+      Parameter = paste0(prefix, "(", idx_range, ")"),
+      Family = family_label,
+      stringsAsFactors = FALSE
+    )
+  }
+
+  master_param_catalog <- local({
+    tbl <- bind_rows(
+      build_family_catalog("age_pars", 1:220, "Age parameters"),
+      build_family_catalog("fish_pars", 1:80, "Fishery parameters"),
+      build_family_catalog("region_pars", 1:80, "Region parameters"),
+      build_family_catalog("species_pars", 1:80, "Species parameters"),
+      build_family_catalog("age_flags", 1:220, "Age flags"),
+      build_family_catalog("fish_flags", 1:120, "Fish flags"),
+      build_family_catalog("region_flags", 1:80, "Region flags"),
+      build_family_catalog("parest_flags", 1:400, "Parest flags")
+    )
+    ref_info <- lapply(tbl$Parameter, lookup_param_reference)
+    tbl$Description <- vapply(ref_info, function(x) x$Description, character(1))
+    tbl$Source <- vapply(ref_info, function(x) x$Source, character(1))
+    tbl
+  })
+
+  master_param_catalog_reactive <- reactive({
+    model_tbl <- param_guide_table_reactive()
+    out <- master_param_catalog
+    out$Param_Group <- vapply(out$Parameter, parse_prefix, character(1))
+
+    if (is.null(model_tbl) || nrow(model_tbl) == 0) {
+      out$`In Selected indepvar` <- "No"
+      out$`Selected Entries` <- 0L
+      out$`Selected Bound Hits` <- 0L
+      out$Param_Group <- NULL
+      return(out)
+    }
+
+    model_map <- model_tbl %>%
+      select(`Parameter Group`, Entries, `Bound Hits`) %>%
+      distinct(`Parameter Group`, .keep_all = TRUE)
+
+    out <- out %>%
+      left_join(model_map, by = c("Param_Group" = "Parameter Group"))
+
+    out$Entries[is.na(out$Entries)] <- 0L
+    out$`Bound Hits`[is.na(out$`Bound Hits`)] <- 0L
+    out$`In Selected indepvar` <- ifelse(out$Entries > 0, "Yes", "No")
+    out$`Selected Entries` <- as.integer(out$Entries)
+    out$`Selected Bound Hits` <- as.integer(out$`Bound Hits`)
+    out$Entries <- NULL
+    out$`Bound Hits` <- NULL
+    out$Param_Group <- NULL
+    out
+  })
 
   # Load profile outputs for a scenario
   load_profile_outputs <- function(model_dir, scenario) {
@@ -3291,6 +3866,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     if (identical(plot_kind, "jitter_params")) {
       param_view <- if (is.null(filters$jitter_param_view)) "input" else filters$jitter_param_view
+      param_display <- if (is.null(filters$jitter_param_display)) "family" else filters$jitter_param_display
       param_scope <- if (is.null(filters$jitter_param_scope)) "top" else filters$jitter_param_scope
       param_window <- if (is.null(filters$jitter_param_window)) c(1L, 100L) else as.integer(filters$jitter_param_window)
       converged_only <- isTRUE(filters$jitter_converged_only) && identical(param_view, "final")
@@ -3298,10 +3874,221 @@ mod_likelihood_server <- function(input, output, session, rv) {
       metric <- if (identical(param_view, "input")) {
         if (is.null(filters$jitter_param_input_scale)) "bound_position" else filters$jitter_param_input_scale
       } else if (is.null(filters$jitter_param_metric)) "pct_change" else filters$jitter_param_metric
-      range_mode <- if (identical(param_view, "input")) "full" else if (is.null(filters$jitter_param_range)) "focused" else filters$jitter_param_range
+      range_pct <- if (identical(param_view, "input")) 100 else if (is.null(filters$jitter_param_range_pct)) 95 else pmax(50, pmin(100, suppressWarnings(as.integer(filters$jitter_param_range_pct))))
       jitter_counts <- format_jitter_convergence_counts(
         build_jitter_seed_status_tables(filters$scenarios, cutoff = converged_max_grad)$summary
       )
+
+      jitter_interior_clip <- function(x, lower, upper, eps = 1e-12) {
+        x <- suppressWarnings(as.numeric(x))
+        lower <- suppressWarnings(as.numeric(lower))
+        upper <- suppressWarnings(as.numeric(upper))
+        out <- x
+        ok <- is.finite(x) & is.finite(lower) & is.finite(upper) & (upper > lower)
+        if (any(ok)) {
+          span <- upper[ok] - lower[ok]
+          margin <- pmax(abs(span) * 5e-2, eps)
+          lo <- lower[ok] + margin
+          hi <- upper[ok] - margin
+          out[ok] <- pmin(hi, pmax(lo, x[ok]))
+        }
+        out
+      }
+
+      if (identical(param_display, "family")) {
+        signed_max_abs <- function(x) {
+          x <- as.numeric(x)
+          x <- x[is.finite(x)]
+          if (length(x) == 0) return(NA_real_)
+          x[[which.max(abs(x))]]
+        }
+
+        family_plot_df <- data %>%
+          mutate(
+            family = ifelse(is.na(family) | !nzchar(family), "unclassified", family),
+            plot_value = case_when(
+              metric == "bound_position" & is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) ~
+                (after - L_bound) / (U_bound - L_bound),
+              metric == "value" ~ after,
+              metric == "delta" ~ delta,
+              metric == "baseline_minus" ~ (before - after),
+              metric == "rel_baseline_minus" ~ dplyr::case_when(
+                is.finite(before) & before != 0 ~ 100 * (before - after) / before,
+                TRUE ~ NA_real_
+              ),
+              TRUE ~ dplyr::case_when(
+                is.finite(pct_change) ~ pct_change,
+                is.finite(before) & is.finite(after) & before != 0 ~
+                  100 * (after - before) / before,
+                TRUE ~ NA_real_
+              )
+            ),
+            original_value = case_when(
+              metric == "bound_position" & is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) &
+                is.finite(before) ~ {
+                  ref_before <- if (identical(param_view, "input")) {
+                    jitter_interior_clip(before, L_bound, U_bound)
+                  } else {
+                    before
+                  }
+                  (ref_before - L_bound) / (U_bound - L_bound)
+                },
+              metric == "value" ~ before,
+              TRUE ~ 0
+            )
+          ) %>%
+          filter(is.finite(plot_value), !is.na(seed), nzchar(as.character(seed)))
+
+        if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus")) {
+          family_seed_df <- family_plot_df %>%
+            group_by(scenario, family, seed) %>%
+            summarise(plot_value = signed_max_abs(plot_value), .groups = "drop") %>%
+            filter(is.finite(plot_value))
+        } else {
+          family_seed_df <- family_plot_df %>%
+            group_by(scenario, family, seed) %>%
+            summarise(plot_value = median(plot_value, na.rm = TRUE), .groups = "drop") %>%
+            filter(is.finite(plot_value))
+        }
+
+        if (nrow(family_seed_df) == 0) {
+          return(
+            ggplot() +
+              annotate(
+                "text",
+                x = 0.5,
+                y = 0.5,
+                label = "No finite family summary values available for the selected settings.",
+                size = 6,
+                color = "#999"
+              ) +
+              theme_void()
+          )
+        }
+
+        if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus")) {
+          original_family_df <- family_plot_df %>%
+            group_by(scenario, family) %>%
+            summarise(original_value = signed_max_abs(original_value), .groups = "drop")
+        } else {
+          original_family_df <- family_plot_df %>%
+            group_by(scenario, family) %>%
+            summarise(original_value = median(original_value, na.rm = TRUE), .groups = "drop")
+        }
+
+        plot_limit <- NULL
+        if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus") && range_pct < 100) {
+          finite_vals <- family_seed_df$plot_value[is.finite(family_seed_df$plot_value)]
+          if (length(finite_vals) > 0) {
+            robust_limit <- suppressWarnings(as.numeric(stats::quantile(abs(finite_vals), probs = range_pct / 100, na.rm = TRUE)))
+            if (is.finite(robust_limit) && robust_limit > 0) {
+              plot_limit <- c(-1.1 * robust_limit, 1.1 * robust_limit)
+              if (metric %in% c("pct_change", "rel_baseline_minus")) {
+                plot_limit <- c(max(plot_limit[1], -100), min(plot_limit[2], 100))
+              }
+            }
+          }
+        }
+
+        y_label <- case_when(
+          metric == "bound_position" ~ "Position within indepvar bounds",
+          metric == "value" && identical(param_view, "input") ~ "Jittered input parameter value",
+          metric == "value" ~ "Parameter value",
+          metric == "delta" ~ "Change from original",
+          metric == "baseline_minus" ~ "Baseline - fitted",
+          metric == "rel_baseline_minus" ~ "Relative difference (%)",
+          TRUE ~ "% change from original"
+        )
+
+        plot_title <- case_when(
+          metric == "bound_position" ~ "Jitter Parameter Family Summary (Bound Position)",
+          metric == "value" && identical(param_view, "final") ~ "Final Fitted Parameter Family Summary",
+          metric == "delta" && identical(param_view, "final") ~ "Final Fitted Parameter Family Change Summary",
+          metric == "baseline_minus" && identical(param_view, "final") ~ "Final Fitted Parameter Family Summary (Baseline - fitted)",
+          metric == "rel_baseline_minus" && identical(param_view, "final") ~ "Final Fitted Parameter Family Summary (Relative difference %)",
+          metric == "pct_change" && identical(param_view, "final") ~ "Final Fitted Parameter Family % Change Summary",
+          metric == "value" ~ "Jittered Input Parameter Family Summary",
+          metric == "delta" ~ "Jittered Input Parameter Family Change Summary",
+          metric == "baseline_minus" ~ "Jittered Input Parameter Family Summary (Baseline - fitted)",
+          metric == "rel_baseline_minus" ~ "Jittered Input Parameter Family Summary (Relative difference %)",
+          TRUE ~ "Jittered Input Parameter Family % Change Summary"
+        )
+
+        agg_label <- if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus")) {
+          "max |change| parameter by seed (signed)"
+        } else {
+          "median by seed"
+        }
+        plot_subtitle <- if (identical(param_view, "final") && converged_only) {
+          paste0("Family-level summary across parameters (", agg_label, "), converged runs only (max_grad <= ", format(converged_max_grad, trim = TRUE), ").")
+        } else if (identical(param_view, "final")) {
+          paste0("Family-level summary across parameters (", agg_label, ") from completed final runs.")
+        } else {
+          paste0("Family-level summary across parameters (", agg_label, ") from jittered input parameters.")
+        }
+        if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus")) {
+          plot_subtitle <- paste0(
+            plot_subtitle,
+            if (range_pct < 100) paste0(" Showing ", range_pct, "th percentile focused range.") else " Showing full range."
+          )
+        }
+        if (!is.null(jitter_counts)) {
+          plot_subtitle <- paste0(plot_subtitle, " Converged/total: ", jitter_counts, ".")
+        }
+        if (identical(param_view, "input") && identical(metric, "bound_position")) {
+          plot_subtitle <- paste0(plot_subtitle, " Red diamond = jitter reference (baseline after interior-bound adjustment).")
+        } else {
+          plot_subtitle <- paste0(plot_subtitle, " Red diamond = baseline/original.")
+        }
+
+        p <- ggplot(family_seed_df, aes(x = family, y = plot_value)) +
+          geom_boxplot(
+            fill = "#9ecae1",
+            color = "#2b6c8a",
+            outlier.shape = NA,
+            na.rm = TRUE
+          ) +
+          geom_point(
+            aes(group = seed),
+            position = position_jitter(width = 0.18, height = 0),
+            alpha = 0.22,
+            size = 1.0,
+            color = "#1f4e79",
+            na.rm = TRUE
+          ) +
+          {
+            if (nrow(original_family_df) > 0) geom_point(
+              data = original_family_df,
+              aes(x = family, y = original_value),
+              inherit.aes = FALSE,
+              color = "#d62728",
+              fill = "#d62728",
+              shape = 23,
+              size = 2.8,
+              stroke = 0.4,
+              na.rm = TRUE
+            )
+          } +
+          facet_wrap(~ scenario, scales = "free", ncol = facet_ncol) +
+          labs(
+            x = NULL,
+            y = y_label,
+            title = plot_title,
+            subtitle = plot_subtitle
+          ) +
+          theme_bw(base_size = 11) +
+          theme(
+            strip.text = element_text(face = "bold"),
+            strip.background = element_rect(fill = "#d9edf7"),
+            axis.text.x = element_text(size = 8),
+            axis.text.y = element_text(size = 9, face = "bold", colour = "#222222"),
+            axis.title.y = element_text(margin = margin(r = 10)),
+            plot.margin = margin(5.5, 10, 5.5, 14),
+            panel.grid.minor = element_blank()
+          )
+
+        return(p + coord_flip(ylim = plot_limit))
+      }
 
       ranked_params_all <- data %>%
         distinct(scenario, param_key, Index, Var_name, family, median_abs_pct_change, mean_abs_pct_change) %>%
@@ -3395,6 +4182,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
               (after - L_bound) / (U_bound - L_bound),
             metric == "value" ~ after,
             metric == "delta" ~ delta,
+            metric == "baseline_minus" ~ (before - after),
+            metric == "rel_baseline_minus" ~ dplyr::case_when(
+              is.finite(before) & before != 0 ~ 100 * (before - after) / before,
+              TRUE ~ NA_real_
+            ),
             TRUE ~ dplyr::case_when(
               is.finite(pct_change) ~ pct_change,
               is.finite(before) & is.finite(after) & before != 0 ~
@@ -3404,8 +4196,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
           ),
           original_value = case_when(
             metric == "bound_position" & is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) &
-              is.finite(before) ~ (before - L_bound) / (U_bound - L_bound),
-            metric == "value" && identical(param_view, "final") ~ before,
+              is.finite(before) ~ {
+                ref_before <- if (identical(param_view, "input")) {
+                  jitter_interior_clip(before, L_bound, U_bound)
+                } else {
+                  before
+                }
+                (ref_before - L_bound) / (U_bound - L_bound)
+              },
+            metric == "value" ~ before,
             TRUE ~ 0
           )
         )
@@ -3439,18 +4238,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
       original_df <- plot_df_all %>%
         group_by(scenario, param_key, param_label) %>%
         summarise(original_value = first(original_value), .groups = "drop")
-      if (identical(param_view, "input")) {
-        original_df <- original_df[0, , drop = FALSE]
-      }
 
       plot_limit <- NULL
-      if (metric %in% c("delta", "pct_change") && identical(range_mode, "focused")) {
+      if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus") && range_pct < 100) {
         finite_vals <- plot_df$plot_value[is.finite(plot_df$plot_value)]
         if (length(finite_vals) > 0) {
-          robust_limit <- suppressWarnings(as.numeric(stats::quantile(abs(finite_vals), probs = 0.95, na.rm = TRUE)))
+          robust_limit <- suppressWarnings(as.numeric(stats::quantile(abs(finite_vals), probs = range_pct / 100, na.rm = TRUE)))
           if (is.finite(robust_limit) && robust_limit > 0) {
             plot_limit <- c(-1.1 * robust_limit, 1.1 * robust_limit)
-            if (identical(metric, "pct_change")) {
+            if (metric %in% c("pct_change", "rel_baseline_minus")) {
               plot_limit <- c(max(plot_limit[1], -100), min(plot_limit[2], 100))
             }
           }
@@ -3496,6 +4292,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
         metric == "value" && identical(param_view, "input") ~ "Jittered input parameter value",
         metric == "value" ~ "Parameter value",
         metric == "delta" ~ "Change from original",
+        metric == "baseline_minus" ~ "Baseline - fitted",
+        metric == "rel_baseline_minus" ~ "Relative difference (%)",
         TRUE ~ "% change from original"
       )
 
@@ -3504,9 +4302,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
         metric == "bound_position" && identical(param_view, "final") ~ "Final Fitted Parameter Bound Positions",
         metric == "value" && identical(param_view, "final") ~ "Final Fitted Parameter Distributions",
         metric == "delta" && identical(param_view, "final") ~ "Final Fitted Parameter Changes",
+        metric == "baseline_minus" && identical(param_view, "final") ~ "Final Fitted Parameters (Baseline - fitted)",
+        metric == "rel_baseline_minus" && identical(param_view, "final") ~ "Final Fitted Parameters Relative Difference (%)",
         metric == "pct_change" && identical(param_view, "final") ~ "Final Fitted Parameter % Changes",
         metric == "value" ~ "Jittered Input Parameter Distributions",
         metric == "delta" ~ "Jittered Input Parameter Changes",
+        metric == "baseline_minus" ~ "Jittered Input Parameters (Baseline - fitted)",
+        metric == "rel_baseline_minus" ~ "Jittered Input Parameters Relative Difference (%)",
         TRUE ~ "Jittered Input Parameter % Changes"
       )
 
@@ -3516,12 +4318,18 @@ mod_likelihood_server <- function(input, output, session, rv) {
         metric == "bound_position" ~ "About 20 parameters per scenario from jittered input pars, shown as position within indepvar bounds.",
         metric == "value" && identical(param_view, "final") && converged_only ~ paste0("About 20 parameters per scenario from converged final runs (max_grad <= ", format(converged_max_grad, trim = TRUE), "). Red diamond = original value"),
         metric == "delta" && identical(param_view, "final") && converged_only ~ paste0("About 20 parameters per scenario from converged final runs (max_grad <= ", format(converged_max_grad, trim = TRUE), "). Red diamond = no change"),
+        metric == "baseline_minus" && identical(param_view, "final") && converged_only ~ paste0("About 20 parameters per scenario from converged final runs (max_grad <= ", format(converged_max_grad, trim = TRUE), "). Red diamond = no difference"),
+        metric == "rel_baseline_minus" && identical(param_view, "final") && converged_only ~ paste0("About 20 parameters per scenario from converged final runs (max_grad <= ", format(converged_max_grad, trim = TRUE), "). Red diamond = 0% difference"),
         metric == "pct_change" && identical(param_view, "final") && converged_only ~ paste0("About 20 parameters per scenario from converged final runs (max_grad <= ", format(converged_max_grad, trim = TRUE), "). Red diamond = 0% change"),
         metric == "value" && identical(param_view, "final") ~ "About 20 parameters per scenario from completed final runs. Red diamond = original value",
         metric == "delta" && identical(param_view, "final") ~ "About 20 parameters per scenario from completed final runs. Red diamond = no change",
+        metric == "baseline_minus" && identical(param_view, "final") ~ "About 20 parameters per scenario from completed final runs. Red diamond = no difference",
+        metric == "rel_baseline_minus" && identical(param_view, "final") ~ "About 20 parameters per scenario from completed final runs. Red diamond = 0% difference",
         metric == "pct_change" && identical(param_view, "final") ~ "About 20 parameters per scenario from completed final runs. Red diamond = 0% change",
         metric == "value" ~ "About 20 parameters per scenario from jittered input pars.",
         metric == "delta" ~ "About 20 parameters per scenario from jittered input pars.",
+        metric == "baseline_minus" ~ "About 20 parameters per scenario from jittered input pars.",
+        metric == "rel_baseline_minus" ~ "About 20 parameters per scenario from jittered input pars.",
         TRUE ~ "About 20 parameters per scenario from jittered input pars."
       )
 
@@ -3537,15 +4345,20 @@ mod_likelihood_server <- function(input, output, session, rv) {
         }
       }
 
-      if (metric %in% c("delta", "pct_change")) {
-        plot_subtitle <- paste0(
-          plot_subtitle,
-          if (identical(range_mode, "focused")) " Showing focused range." else " Showing full range."
-        )
-      }
-      if (!is.null(jitter_counts)) {
-        plot_subtitle <- paste0(plot_subtitle, " Converged/total: ", jitter_counts, ".")
-      }
+        if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus")) {
+          plot_subtitle <- paste0(
+            plot_subtitle,
+            if (range_pct < 100) paste0(" Showing ", range_pct, "th percentile focused range.") else " Showing full range."
+          )
+        }
+        if (!is.null(jitter_counts)) {
+          plot_subtitle <- paste0(plot_subtitle, " Converged/total: ", jitter_counts, ".")
+        }
+        if (identical(param_view, "input") && identical(metric, "bound_position")) {
+          plot_subtitle <- paste0(plot_subtitle, " Red diamond = jitter reference (baseline after interior-bound adjustment).")
+        } else {
+          plot_subtitle <- paste0(plot_subtitle, " Red diamond = baseline/original.")
+        }
 
       if (identical(param_scope, "all")) {
         p <- ggplot(summary_df, aes(x = param_key, y = q50)) +
@@ -4023,10 +4836,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
   observeEvent(list(input$live_update_plots, input$lik_main_tab, input$lik_scenarios, input$lik_profile_type, input$lik_jitter_type,
                     input$lik_groups, input$lik_regions, input$lik_split_by_region, input$lik_facet_ncol,
                     input$lik_jitter_grad_reference, input$lik_jitter_converged_only_diagnostics,
-                    input$lik_jitter_param_view, input$lik_jitter_param_scope, input$lik_jitter_param_window,
+                    input$lik_jitter_param_view, input$lik_jitter_param_display, input$lik_jitter_param_scope, input$lik_jitter_param_window,
                     input$lik_jitter_converged_only, input$lik_jitter_converged_max_grad,
                     input$lik_jitter_derived_view, input$lik_jitter_param_input_scale,
-                    input$lik_jitter_param_metric, input$lik_jitter_param_range), {
+                    input$lik_jitter_param_metric, input$lik_jitter_param_range_pct), {
     req(rv$data_loaded)
     if (!isTRUE(input$live_update_plots)) return()
     if (length(input$lik_scenarios) == 0) return()
@@ -4110,6 +4923,46 @@ mod_likelihood_server <- function(input, output, session, rv) {
       tags$div(style = "font-weight: bold; margin-bottom: 6px;", "Seed details"),
       uiOutput("jitter_seed_model_ui"),
       DTOutput("jitter_seed_table")
+    )
+  })
+
+  output$param_guide_ui <- renderUI({
+    if (!identical(input$lik_main_tab, "param_guide")) return(NULL)
+    tbl <- param_guide_table_reactive()
+
+    tagList(
+      box(
+        title = "MFCL Master Parameter Catalog",
+        width = 12,
+        solidHeader = TRUE,
+        status = "warning",
+        collapsible = TRUE,
+        collapsed = TRUE,
+        div(
+          style = "margin-bottom: 10px; padding: 10px 12px; background: #fff8e1; border: 1px solid #f0d98c; border-left: 4px solid #f39c12; border-radius: 4px;",
+          tags$div("Comprehensive family/index catalog from MFCL parameter structures (age/fish/region/species pars + core flags).", style = "font-weight: bold; margin-bottom: 4px;"),
+          tags$div("Includes whether each parameter appears in selected models' indepvar.rpt.", style = "font-size: 12px; color: #333;")
+        ),
+        DTOutput("param_guide_master_table")
+      ),
+      box(
+        title = "Selected Models: indepvar.rpt Parameters",
+        width = 12,
+        solidHeader = TRUE,
+        status = "warning",
+        collapsible = TRUE,
+        collapsed = FALSE,
+        div(
+          style = "margin-bottom: 10px; padding: 10px 12px; background: #fff8e1; border: 1px solid #f0d98c; border-left: 4px solid #f39c12; border-radius: 4px;",
+          tags$div("Descriptions are derived from MFCL source/manual rules and then matched to parameters that appear in indepvar.rpt.", style = "font-weight: bold; margin-bottom: 4px;"),
+          tags$div("Source reference: PacificCommunity/multifan-cl source + MULTIFAN-CL-Users-Guide.pdf.", style = "font-size: 12px; color: #333;")
+        ),
+        if (is.null(tbl) || nrow(tbl) == 0) {
+          tags$div(style = "color:#777;", "No indepvar.rpt parameter rows found for the selected models.")
+        } else {
+          DTOutput("param_guide_table")
+        }
+      )
     )
   })
 
@@ -4333,6 +5186,30 @@ mod_likelihood_server <- function(input, output, session, rv) {
       } else {
         model_choices[[1]]
       }
+    )
+  })
+
+  output$param_guide_table <- renderDT({
+    if (!identical(input$lik_main_tab, "param_guide")) return(NULL)
+    tbl <- param_guide_table_reactive()
+    if (is.null(tbl) || nrow(tbl) == 0) return(NULL)
+
+    datatable(
+      tbl,
+      options = list(pageLength = 15, scrollX = TRUE),
+      rownames = FALSE
+    )
+  })
+
+  output$param_guide_master_table <- renderDT({
+    if (!identical(input$lik_main_tab, "param_guide")) return(NULL)
+    tbl <- master_param_catalog_reactive()
+    if (is.null(tbl) || nrow(tbl) == 0) return(NULL)
+
+    datatable(
+      tbl,
+      options = list(pageLength = 20, scrollX = TRUE),
+      rownames = FALSE
     )
   })
 
