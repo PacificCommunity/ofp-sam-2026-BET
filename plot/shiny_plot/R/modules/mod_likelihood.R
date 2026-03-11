@@ -3933,7 +3933,18 @@ mod_likelihood_server <- function(input, output, session, rv) {
                   }
                   (ref_before - L_bound) / (U_bound - L_bound)
                 },
-              metric == "value" ~ before,
+              metric == "value" ~ {
+                if (identical(param_view, "input")) {
+                  dplyr::if_else(
+                    is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) &
+                      is.finite(before) & (before <= L_bound | before >= U_bound),
+                    jitter_interior_clip(before, L_bound, U_bound),
+                    before
+                  )
+                } else {
+                  before
+                }
+              },
               TRUE ~ 0
             )
           ) %>%
@@ -4035,8 +4046,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
         if (!is.null(jitter_counts)) {
           plot_subtitle <- paste0(plot_subtitle, " Converged/total: ", jitter_counts, ".")
         }
-        if (identical(param_view, "input") && identical(metric, "bound_position")) {
-          plot_subtitle <- paste0(plot_subtitle, " Red diamond = jitter reference (baseline after interior-bound adjustment).")
+        if (identical(param_view, "input") && metric %in% c("bound_position", "value")) {
+          plot_subtitle <- paste0(plot_subtitle, " Red diamond = jitter reference (baseline after interior-bound adjustment when baseline hits bounds).")
         } else {
           plot_subtitle <- paste0(plot_subtitle, " Red diamond = baseline/original.")
         }
@@ -4204,7 +4215,18 @@ mod_likelihood_server <- function(input, output, session, rv) {
                 }
                 (ref_before - L_bound) / (U_bound - L_bound)
               },
-            metric == "value" ~ before,
+            metric == "value" ~ {
+              if (identical(param_view, "input")) {
+                dplyr::if_else(
+                  is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) &
+                    is.finite(before) & (before <= L_bound | before >= U_bound),
+                  jitter_interior_clip(before, L_bound, U_bound),
+                  before
+                )
+              } else {
+                before
+              }
+            },
             TRUE ~ 0
           )
         )
@@ -4354,11 +4376,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
         if (!is.null(jitter_counts)) {
           plot_subtitle <- paste0(plot_subtitle, " Converged/total: ", jitter_counts, ".")
         }
-        if (identical(param_view, "input") && identical(metric, "bound_position")) {
-          plot_subtitle <- paste0(plot_subtitle, " Red diamond = jitter reference (baseline after interior-bound adjustment).")
-        } else {
-          plot_subtitle <- paste0(plot_subtitle, " Red diamond = baseline/original.")
-        }
+      if (identical(param_view, "input") && metric %in% c("bound_position", "value")) {
+        plot_subtitle <- paste0(plot_subtitle, " Red diamond = jitter reference (baseline after interior-bound adjustment when baseline hits bounds).")
+      } else {
+        plot_subtitle <- paste0(plot_subtitle, " Red diamond = baseline/original.")
+      }
 
       if (identical(param_scope, "all")) {
         p <- ggplot(summary_df, aes(x = param_key, y = q50)) +

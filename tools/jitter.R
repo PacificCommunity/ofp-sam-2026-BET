@@ -892,10 +892,14 @@ apply_indepvar_cv_jitter <- function(par, indepvar_map, jitter_cv, eps = 1e-12) 
     rel_flat <- as.vector(aperm(rel_rec(par), c(4, 2, 1, 3, 5, 6)))
     for (i in recr_rows) {
       pos <- mapping$key1[i]
-      rel_flat[pos] <- jitter_sample_multiplicative_cv(
-        rel_flat[pos], jitter_cv,
-        lower = exp(mapping$L_bound[i]), upper = exp(mapping$U_bound[i]), eps = eps
+      # Recruitment labels are tracked on log(rel_rec) scale in indepvar mapping.
+      # Jitter on that same bounded scale so proposals are centered on the reference label.
+      log_rel <- log(rel_flat[pos])
+      log_rel_j <- jitter_sample_bounded_cv(
+        log_rel, jitter_cv,
+        lower = mapping$L_bound[i], upper = mapping$U_bound[i], eps = eps
       )
+      rel_flat[pos] <- exp(log_rel_j)
     }
     current_rel <- rel_rec(par)
     current_rel[] <- aperm(
@@ -950,9 +954,9 @@ apply_indepvar_cv_jitter <- function(par, indepvar_map, jitter_cv, eps = 1e-12) 
   sv_rows <- which(mapping$family == "sv")
   for (i in sv_rows) {
     idx <- mapping$key1[i]
-    season_growth_pars(par)[idx] <- jitter_sample_multiplicative_cv(
+    season_growth_pars(par)[idx] <- jitter_sample_bounded_cv(
       season_growth_pars(par)[idx], jitter_cv,
-      lower = max(eps, mapping$L_bound[i]), upper = mapping$U_bound[i], eps = eps
+      lower = mapping$L_bound[i], upper = mapping$U_bound[i], eps = eps
     )
   }
 
@@ -962,9 +966,9 @@ apply_indepvar_cv_jitter <- function(par, indepvar_map, jitter_cv, eps = 1e-12) 
     for (i in age_rows) {
       row_id <- mapping$key1[i]
       col_id <- mapping$key2[i]
-      age_mat[row_id, col_id] <- jitter_sample_multiplicative_cv(
+      age_mat[row_id, col_id] <- jitter_sample_bounded_cv(
         age_mat[row_id, col_id], jitter_cv,
-        lower = max(eps, mapping$L_bound[i]), upper = mapping$U_bound[i], eps = eps
+        lower = mapping$L_bound[i], upper = mapping$U_bound[i], eps = eps
       )
     }
     par <- set_age_pars_matrix(par, age_mat)
