@@ -351,7 +351,7 @@
       job_type,
       model = c("model_hessian"),
       retro = c("retro_peel", "retro_peels", "retro_hessian"),
-      jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian"),
+      jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian", "jitter_base_source"),
       hessian = c("hessian_part", "nsplit", "model_hessian"),
       prof = c("scaler", "scalers", "prof_hessian"),
       character(0)
@@ -393,7 +393,7 @@
         job_type,
         model = c("model_hessian"),
         retro = c("retro_peel", "retro_peels", "retro_hessian"),
-        jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian"),
+        jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian", "jitter_base_source"),
         hessian = c("hessian_part", "nsplit", "model_hessian"),
         prof = c("scaler", "scalers", "prof_hessian"),
         character(0)

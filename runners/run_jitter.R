@@ -30,6 +30,12 @@ jitter_cv <- suppressWarnings(as.numeric(
 jitter_hessian <- tolower(Sys.getenv("jitter_hessian", "0")) %in% c("1", "true", "yes", "y")
 jitter_smoke_only <- tolower(Sys.getenv("jitter_smoke_only", "0")) %in% c("1", "true", "yes", "y")
 jitter_smoke_hessian <- tolower(Sys.getenv("jitter_smoke_hessian", "0")) %in% c("1", "true", "yes", "y")
+jitter_base_source_raw <- Sys.getenv("jitter_base_source", "makepar_00")
+jitter_base_source <- if (jitter_base_source_raw %in% c("makepar_00", "copied_par")) {
+  jitter_base_source_raw
+} else {
+  "makepar_00"
+}
 n_mixing_periods <- 2L
 
 ## Create jitter-specific directory inside jitter folder
@@ -46,6 +52,7 @@ cat("Seed directory:", seed_dir_abs, "\n")
 cat("Jitter seed:", jitter_seed, "\n")
 cat("Jitter CV:", jitter_cv, "\n")
 cat("Jitter Hessian:", jitter_hessian, "\n")
+cat("Jitter Base Source:", jitter_base_source, "\n")
 cat("Jitter smoke-only:", jitter_smoke_only, "\n")
 cat("Jitter smoke hessian:", jitter_smoke_hessian, "\n")
 cat("Mixing periods (fixed for jitter pre-makepar patch):", n_mixing_periods, "\n")
@@ -191,6 +198,7 @@ if (isTRUE(jitter_smoke_only)) {
   info_list <- list(
     jitter_seed = jitter_seed,
     jitter_cv = jitter_cv,
+    jitter_base_source = jitter_base_source,
     smoke_only = TRUE,
     frq_file = frq_file,
     program_path = program_path,
@@ -367,6 +375,7 @@ if (!is.null(base_par_obj) && !is.null(output_par_obj)) {
 info_list <- list(
   jitter_seed   = jitter_seed,
   jitter_cv = jitter_cv,
+  jitter_base_source = jitter_base_source,
   frq_file      = frq_file,
   program_path  = program_path,
   model_dir     = model_dir,

@@ -271,6 +271,22 @@
         column(6,
                div(class = "param-label", "Jitter Hessian (0/1):"),
                textInput("edit_jitter_hessian", NULL, value = if (!is.null(model$jitter_hessian)) model$jitter_hessian else "0")
+        ),
+        column(6,
+               div(class = "param-label", "Jitter Base Source:"),
+               selectInput(
+                 "edit_jitter_base_source",
+                 NULL,
+                 choices = c(
+                   "makepar_00 (default)" = "makepar_00",
+                   "copied_par" = "copied_par"
+                 ),
+                 selected = if (!is.null(model$jitter_base_source) && model$jitter_base_source %in% c("makepar_00", "copied_par")) {
+                   model$jitter_base_source
+                 } else {
+                   "makepar_00"
+                 }
+               )
         )
       ),
       fluidRow(
@@ -353,6 +369,7 @@
     rv$models[[model_name]]$base_dir <- input$edit_base_dir
     rv$models[[model_name]]$jitter_seeds <- input$edit_jitter_seeds
     rv$models[[model_name]]$jitter_cv <- input$edit_jitter_cv
+    rv$models[[model_name]]$jitter_base_source <- input$edit_jitter_base_source
     rv$models[[model_name]]$jitter_hessian <- input$edit_jitter_hessian
     rv$models[[model_name]]$model_hessian <- input$edit_model_hessian
     rv$models[[model_name]]$prof_hessian <- input$edit_prof_hessian

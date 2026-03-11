@@ -31,6 +31,7 @@
         jitter_seeds = "1 2 3", 
         jitter_cv = "0.2",
         jitter_hessian = "0",
+        jitter_base_source = "makepar_00",
         model_hessian = "0",
         prof_hessian = "0",
         retro_hessian = "0",
