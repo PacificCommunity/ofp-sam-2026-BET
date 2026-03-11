@@ -200,6 +200,11 @@ server_data_load <- function(input, output, session, rv) {
                           if (!is.null(dq) && is.data.frame(dq)) {
                             needs_refresh <- !all(c("recruitment", "fishing_mortality") %in% names(dq))
                           }
+                          if (!isTRUE(needs_refresh)) {
+                            ac <- existing$age_curves
+                            needs_refresh <- is.null(ac) || !is.data.frame(ac) || nrow(ac) == 0 ||
+                              !all(c("age", "natural_mortality", "growth") %in% names(ac))
+                          }
                         }
                         if (!is.null(existing) && !isTRUE(needs_refresh)) {
                           return(existing)

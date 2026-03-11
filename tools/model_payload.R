@@ -553,6 +553,35 @@ mp_extract_jitter_derived_quantities <- function(seed_dir, seed = NA_integer_) {
   )
 }
 
+mp_extract_jitter_age_curves <- function(seed_dir, seed = NA_integer_) {
+  rep_file <- mp_final_rep(seed_dir)
+  if (is.null(rep_file) || !file.exists(rep_file)) {
+    return(NULL)
+  }
+
+  rep_obj <- mp_safe(read.MFCLRep(rep_file))
+  if (is.null(rep_obj)) {
+    return(NULL)
+  }
+
+  m_vals <- mp_safe(suppressWarnings(as.numeric(m_at_age(rep_obj))))
+  laa_vals <- mp_safe(suppressWarnings(as.numeric(c(aperm(mean_laa(rep_obj), c(4, 1, 2, 3, 5, 6))))))
+  if ((is.null(m_vals) || length(m_vals) == 0) && (is.null(laa_vals) || length(laa_vals) == 0)) {
+    return(NULL)
+  }
+
+  n_age <- max(length(m_vals), length(laa_vals))
+  seed_val <- ifelse(is.na(seed), suppressWarnings(as.integer(sub(".*?(\\d+)$", "\\1", basename(seed_dir)))), seed)
+
+  data.frame(
+    seed = rep(seed_val, n_age),
+    age = seq_len(n_age),
+    natural_mortality = if (!is.null(m_vals) && length(m_vals) > 0) m_vals[seq_len(n_age)] else rep(NA_real_, n_age),
+    growth = if (!is.null(laa_vals) && length(laa_vals) > 0) laa_vals[seq_len(n_age)] else rep(NA_real_, n_age),
+    stringsAsFactors = FALSE
+  )
+}
+
 mp_build_jitter_payload <- function(seed_dir, seed = NA_integer_) {
   info_file <- file.path(seed_dir, "jitter_info.rds")
   info_out <- if (file.exists(info_file)) mp_safe(readRDS(info_file)) else NULL
@@ -580,6 +609,7 @@ mp_build_jitter_payload <- function(seed_dir, seed = NA_integer_) {
   parameter_changes <- mp_read_jitter_parameter_changes(seed_dir, seed, field_name = "parameter_changes")
   fitted_parameter_changes <- mp_read_jitter_parameter_changes(seed_dir, seed, field_name = "fitted_parameter_changes")
   derived_quantities <- mp_extract_jitter_derived_quantities(seed_dir, seed_val)
+  age_curves <- mp_extract_jitter_age_curves(seed_dir, seed_val)
   exit_status <- suppressWarnings(as.integer(mp_safe(mfcl_run$exit_status)))
   run_checks <- mp_detect_jitter_run_state(
     seed_dir = seed_dir,
@@ -640,6 +670,7 @@ mp_build_jitter_payload <- function(seed_dir, seed = NA_integer_) {
     parameter_changes = parameter_changes,
     fitted_parameter_changes = fitted_parameter_changes,
     derived_quantities = derived_quantities,
+    age_curves = age_curves,
     hessian_ok = hessian_ok,
     hessian_info = list(
       requested = if (!is.null(hessian_obj$requested)) isTRUE(as.logical(hessian_obj$requested[[1]])) else FALSE,

@@ -282,10 +282,7 @@ mod_likelihood_ui <- function() {
           icon = icon("download")
         ),
 
-        helpText(
-          "Requires prof/scaler_* outputs (test_plot_output) in each scenario.",
-          style = "margin-top: 10px; font-size: 11px; color: #666;"
-        )
+        
       ),
 
       box(
@@ -2238,6 +2235,59 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
   build_jitter_derived_data <- function(scenarios, rep_out_list, jitter_pars_list, converged_only = FALSE,
                                         converged_max_grad = 0.01) {
+    extract_rep_age_curves <- function(rep_obj) {
+      if (is.null(rep_obj)) return(NULL)
+      m_vals <- tryCatch(suppressWarnings(as.numeric(m_at_age(rep_obj))), error = function(e) numeric(0))
+      laa_vals <- tryCatch(suppressWarnings(as.numeric(c(aperm(mean_laa(rep_obj), c(4, 1, 2, 3, 5, 6))))), error = function(e) numeric(0))
+      if (length(m_vals) == 0 && length(laa_vals) == 0) return(NULL)
+      n_age <- max(length(m_vals), length(laa_vals))
+      data.frame(
+        age = seq_len(n_age),
+        natural_mortality = if (length(m_vals) > 0) m_vals[seq_len(n_age)] else rep(NA_real_, n_age),
+        growth = if (length(laa_vals) > 0) laa_vals[seq_len(n_age)] else rep(NA_real_, n_age),
+        stringsAsFactors = FALSE
+      )
+    }
+
+    extract_jitter_age_curves <- function(jit, age_cache) {
+      # Prefer payload-embedded age curves so jitter_result.rds-only folders render correctly.
+      if (is.list(jit) && !is.null(jit$age_curves) && is.data.frame(jit$age_curves) && nrow(jit$age_curves) > 0) {
+        ac <- jit$age_curves
+        if (!"age" %in% names(ac) && "year" %in% names(ac)) ac$age <- ac$year
+        if (!"natural_mortality" %in% names(ac)) ac$natural_mortality <- NA_real_
+        if (!"growth" %in% names(ac)) ac$growth <- NA_real_
+        return(ac %>%
+                 transmute(
+                   age = suppressWarnings(as.numeric(age)),
+                   natural_mortality = suppressWarnings(as.numeric(natural_mortality)),
+                   growth = suppressWarnings(as.numeric(growth))
+                 ) %>%
+                 filter(is.finite(age)))
+      }
+
+      seed_dir <- if (is.list(jit) && !is.null(jit$seed_dir)) as.character(jit$seed_dir[[1]]) else ""
+      if (!nzchar(seed_dir)) return(NULL)
+      if (exists(seed_dir, envir = age_cache, inherits = FALSE)) {
+        return(get(seed_dir, envir = age_cache, inherits = FALSE))
+      }
+
+      rep_path <- tryCatch(finalRep(seed_dir), error = function(e) NULL)
+      if (is.null(rep_path) || !file.exists(rep_path)) {
+        rep_path <- tryCatch({
+          cands <- list.files(seed_dir, pattern = "\\.rep$", full.names = TRUE)
+          if (length(cands) > 0) cands[[1]] else NULL
+        }, error = function(e) NULL)
+      }
+      rep_obj <- if (!is.null(rep_path) && file.exists(rep_path)) {
+        tryCatch(read.MFCLRep(rep_path), error = function(e) NULL)
+      } else {
+        NULL
+      }
+      out <- extract_rep_age_curves(rep_obj)
+      assign(seed_dir, out, envir = age_cache)
+      out
+    }
+
     get_jitter_derived_rows <- function(sc) {
       cache_key <- paste(
         "v2",
@@ -2264,6 +2314,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       }
 
       rows <- list()
+      age_rows <- list()
+      age_cache <- new.env(parent = emptyenv())
 
       for (i in seq_along(jit_list)) {
         jit <- jit_list[[i]]
@@ -2292,10 +2344,33 @@ mod_likelihood_server <- function(input, output, session, rv) {
           )
 
         rows[[length(rows) + 1]] <- seed_df
+
+        age_curve <- extract_jitter_age_curves(jit, age_cache = age_cache)
+        if (!is.null(age_curve) && nrow(age_curve) > 0) {
+          age_rows[[length(age_rows) + 1]] <- age_curve %>%
+            transmute(
+              scenario = sc,
+              seed = as.character(seeds[[i]]),
+              year = suppressWarnings(as.numeric(age)),
+              natural_mortality = suppressWarnings(as.numeric(natural_mortality)),
+              growth = suppressWarnings(as.numeric(growth))
+            )
+        }
       }
 
       value_rows <- bind_rows(rows)
-      if (nrow(value_rows) == 0) {
+      value_age_rows <- bind_rows(age_rows)
+      if (is.null(value_age_rows) || nrow(value_age_rows) == 0) {
+        value_age_rows <- data.frame(
+          scenario = character(0),
+          seed = character(0),
+          year = numeric(0),
+          natural_mortality = numeric(0),
+          growth = numeric(0),
+          stringsAsFactors = FALSE
+        )
+      }
+      if (nrow(value_rows) == 0 && nrow(value_age_rows) == 0) {
         jitter_data_cache$derived[[cache_key]] <- data.frame()
         return(jitter_data_cache$derived[[cache_key]])
       }
@@ -2310,6 +2385,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       } else {
         rep(NA_real_, nrow(ref_metrics))
       }
+      ref_age_curves <- extract_rep_age_curves(rep_out_list[[sc]])
 
       ref_rows <- bind_rows(
         data.frame(
@@ -2339,6 +2415,20 @@ mod_likelihood_server <- function(input, output, session, rv) {
           reference_value = ref_fishing_mortality,
           year = suppressWarnings(as.numeric(ref_metrics$year)),
           stringsAsFactors = FALSE
+        ),
+        data.frame(
+          scenario = sc,
+          metric = "Natural Mortality at Age",
+          reference_value = if (!is.null(ref_age_curves)) suppressWarnings(as.numeric(ref_age_curves$natural_mortality)) else numeric(0),
+          year = if (!is.null(ref_age_curves)) suppressWarnings(as.numeric(ref_age_curves$age)) else numeric(0),
+          stringsAsFactors = FALSE
+        ),
+        data.frame(
+          scenario = sc,
+          metric = "Growth Curve",
+          reference_value = if (!is.null(ref_age_curves)) suppressWarnings(as.numeric(ref_age_curves$growth)) else numeric(0),
+          year = if (!is.null(ref_age_curves)) suppressWarnings(as.numeric(ref_age_curves$age)) else numeric(0),
+          stringsAsFactors = FALSE
         )
       )
       if (is.null(ref_rows) || nrow(ref_rows) == 0) {
@@ -2354,7 +2444,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
         value_rows %>%
           transmute(scenario, seed, year, metric = "Recruitment", value = recruitment),
         value_rows %>%
-          transmute(scenario, seed, year, metric = "Fishing Mortality", value = fishing_mortality)
+          transmute(scenario, seed, year, metric = "Fishing Mortality", value = fishing_mortality),
+        value_age_rows %>%
+          transmute(scenario, seed, year, metric = "Natural Mortality at Age", value = natural_mortality),
+        value_age_rows %>%
+          transmute(scenario, seed, year, metric = "Growth Curve", value = growth)
       ) %>%
         filter(is.finite(value))
 
@@ -3576,6 +3670,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         )
 
       make_jitter_derived_plot <- function(metric_name, y_lab, add_dep_lines = FALSE, ylim_zero = FALSE) {
+        x_lab <- if (metric_name %in% c("Natural Mortality at Age", "Growth Curve")) "Age class" else "Year"
         metric_ref <- ref_df %>%
           filter(metric == metric_name) %>%
           mutate(scenario = factor(as.character(scenario), levels = scenario_levels))
@@ -3608,7 +3703,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
             ) +
             facet_wrap(~ scenario, ncol = facet_ncol, scales = "free_y") +
             scale_color_viridis_d(option = "D", guide = "none") +
-            labs(x = "Year", y = y_lab) +
+            labs(x = x_lab, y = y_lab) +
             theme_bw(base_size = 11) +
             theme(
               strip.text = element_text(face = "bold"),
@@ -3642,7 +3737,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
               na.rm = TRUE
             ) +
             facet_wrap(~ scenario, ncol = facet_ncol, scales = "free_y") +
-            labs(x = "Year", y = y_lab) +
+            labs(x = x_lab, y = y_lab) +
             theme_bw(base_size = 11) +
             theme(
               strip.text = element_text(face = "bold"),
@@ -3666,10 +3761,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
       rec_plot <- make_jitter_derived_plot("Recruitment", "Recruitment (Millions)", ylim_zero = TRUE)
       sp_plot <- make_jitter_derived_plot("Spawning Potential (1e3 MT)", bquote("Spawning Potential (" * 10^3 * " MT)"), ylim_zero = TRUE)
       fm_plot <- make_jitter_derived_plot("Fishing Mortality", "Annual Instantaneous F", ylim_zero = TRUE)
+      nm_plot <- make_jitter_derived_plot("Natural Mortality at Age", "Natural Mortality (M)", ylim_zero = TRUE)
+      gr_plot <- make_jitter_derived_plot("Growth Curve", "Length (cm)", ylim_zero = TRUE)
 
+      metric_grid_ncol <- min(max(facet_ncol, 1), 6)
       combined_plot <- cowplot::plot_grid(
-        dep_plot, rec_plot, sp_plot, fm_plot,
-        ncol = 2,
+        dep_plot, rec_plot, sp_plot, fm_plot, nm_plot, gr_plot,
+        ncol = metric_grid_ncol,
         align = "hv"
       )
 
@@ -3869,9 +3967,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
       sp_plot <- make_retro_plot("spawning_potential", bquote("Spawning Potential (" * 10^3 * " MT)"), sp_anno, ylim_zero = TRUE)
       fm_plot <- make_retro_plot("fishing_mortality", "Annual Instantaneous F", fm_anno, ylim_zero = TRUE)
 
+      metric_grid_ncol <- min(max(facet_ncol, 1), 4)
       combined_plot <- cowplot::plot_grid(
         dep_plot, rec_plot, sp_plot, fm_plot,
-        ncol = 2,
+        ncol = metric_grid_ncol,
         align = "hv"
       )
 
