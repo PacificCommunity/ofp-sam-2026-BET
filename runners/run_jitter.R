@@ -120,22 +120,89 @@ if (!identical(makepar_status, 0L) || !file.exists(base_00_par)) {
 
 cat("Initial 00.par created from", ini_file, "\n")
 
-## Apply jitter into the ini-generated 00.par for doitall phase1+
-jittered_par_name <- "00.par"
+doitall_path <- file.path(seed_dir_abs, "doitall.sh")
+if (!file.exists(doitall_path)) {
+  base_doitall_path <- file.path(base_dir_abs, "doitall.sh")
+  if (file.exists(base_doitall_path)) {
+    file.copy(base_doitall_path, doitall_path, overwrite = TRUE)
+    cat("Restored missing doitall.sh from base inputs\n")
+  }
+}
+if (!file.exists(doitall_path)) {
+  stop("Jitter workflow requires doitall.sh: ", doitall_path)
+}
+
+## Build phase-1 baseline par, apply jitter there, then run phase2+
+jittered_par_name <- "01.par"
 indepvar_in_seed <- file.path(seed_dir_abs, "indepvar.rpt")
 
 if (!file.exists(indepvar_in_seed)) {
   stop("Missing indepvar.rpt required for jitter run: ", indepvar_in_seed)
 }
 
-reference_par <- read.MFCLPar(reference_par_file)
-base_par_label <- basename(reference_par_file)
+doitall_lines_for_phase1 <- readLines(doitall_path, warn = FALSE)
+phase1_cmd_idx <- grep("\\$program_path\\s+.*00\\.par\\s+01\\.par\\s+-file\\s+-\\s+<<PHASE1", doitall_lines_for_phase1)
+if (length(phase1_cmd_idx) == 0) {
+  stop("Could not locate PHASE1 command in doitall.sh")
+}
+phase1_cmd_idx <- phase1_cmd_idx[[1]]
+phase1_end_rel <- grep("^PHASE1\\s*$", doitall_lines_for_phase1[(phase1_cmd_idx + 1):length(doitall_lines_for_phase1)])
+if (length(phase1_end_rel) == 0) {
+  stop("Could not locate PHASE1 terminator in doitall.sh")
+}
+phase1_end_idx <- phase1_cmd_idx + phase1_end_rel[[1]]
+phase1_only_path <- file.path(seed_dir_abs, "doitall_phase1_only.sh")
+writeLines(doitall_lines_for_phase1[1:phase1_end_idx], con = phase1_only_path)
+Sys.chmod(phase1_only_path, mode = "0755")
+
+cat("Running phase0+phase1 to build jitter baseline par\n")
+run_commands(
+  commands = "sh ./doitall_phase1_only.sh",
+  work_dirs = seed_dir_abs,
+  save_log = TRUE,
+  parallel = FALSE,
+  verbose = TRUE,
+  log_file = file.path(seed_dir_abs, "phase1_log.txt")
+)
+
+phase1_candidates <- list.files(seed_dir_abs, pattern = "^01\\.par[0-9]+$", full.names = TRUE)
+phase1_candidates <- unique(phase1_candidates[file.exists(phase1_candidates)])
+if (length(phase1_candidates) == 0) {
+  stop("No phase1 baseline par found (expected pattern: 01.par<step>, e.g., 01.par15)")
+}
+
+phase1_step_num <- function(path) {
+  nm <- basename(path)
+  m <- regexec("^01\\.par([0-9]+)$", nm, perl = TRUE)
+  mm <- regmatches(nm, m)[[1]]
+  if (length(mm) >= 2) return(as.integer(mm[2]))
+  NA_integer_
+}
+
+steps <- vapply(phase1_candidates, phase1_step_num, integer(1))
+if (any(is.finite(steps))) {
+  idx <- which(steps == max(steps[is.finite(steps)], na.rm = TRUE))
+  if (length(idx) > 1) {
+    info <- file.info(phase1_candidates[idx])
+    idx <- idx[which.max(info$mtime)]
+  } else {
+    idx <- idx[[1]]
+  }
+  phase1_base_par <- phase1_candidates[idx]
+} else {
+  phase1_info <- file.info(phase1_candidates)
+  phase1_base_par <- rownames(phase1_info)[which.max(phase1_info$mtime)]
+}
+cat("Phase1 baseline par for jitter:", basename(phase1_base_par), "\n")
+
+reference_par <- read.MFCLPar(phase1_base_par)
+base_par_label <- basename(phase1_base_par)
 cleanup_reference_par_files <- copied_reference_par_files[normalizePath(copied_reference_par_files, winslash = "/", mustWork = FALSE) != normalizePath(base_00_par, winslash = "/", mustWork = FALSE)]
 if (length(cleanup_reference_par_files) > 0) {
   unlink(cleanup_reference_par_files, force = TRUE)
 }
 cat("Removed copied reference par files after indepvar mapping load (kept 00.par)\n")
-base_00_par_obj <- read.MFCLPar(base_00_par)
+base_00_par_obj <- read.MFCLPar(phase1_base_par)
 indepvar_map <- build_indepvar_mapping(reference_par, indepvar_file = indepvar_in_seed, tol = 1e-14)
 if (is.null(indepvar_map) || !all(indepvar_map$mapping$mapped)) {
   stop("Exact indepvar mapping could not be resolved for all parameters in reference par.")
@@ -147,7 +214,7 @@ if (any(!is.finite(indepvar_map$mapping$L_bound)) || any(!is.finite(indepvar_map
 if (!is.null(jitter_seed)) set.seed(jitter_seed)
 jittered_00_par_obj <- apply_indepvar_cv_jitter(base_00_par_obj, indepvar_map, jitter_cv = jitter_cv)
 if (is.null(jittered_00_par_obj)) {
-  stop("CV jitter application failed on initial 00.par.")
+  stop("CV jitter application failed on phase1 baseline par.")
 }
 FLR4MFCL::write(jittered_00_par_obj, file = file.path(seed_dir_abs, jittered_par_name))
 
@@ -160,7 +227,7 @@ jitter_run <- list(
   )
 )
 
-cat("Jittered 00.par written for doitall workflow\n")
+cat("Jittered 01.par written for phase2+ workflow\n")
 
 if (isTRUE(jitter_smoke_only)) {
   hessian_summary_smoke <- list(
@@ -185,7 +252,7 @@ if (isTRUE(jitter_smoke_only)) {
       program_path_abs = program_path_abs,
       program_path = program_path,
       frq_file = frq_file,
-      input_par = basename(base_00_par),
+      input_par = jittered_par_name,
       project_root = project_root,
       requested = TRUE
     )
@@ -207,6 +274,7 @@ if (isTRUE(jitter_smoke_only)) {
     seed_dir_abs = seed_dir_abs,
     input_par = base_par_label,
     input_00_par = basename(base_00_par),
+    phase1_base_par = basename(phase1_base_par),
     input_ini = ini_file,
     jittered_par = jittered_par_name,
     parameter_changes = jitter_run$comparison,
@@ -247,32 +315,25 @@ if (isTRUE(jitter_smoke_only)) {
 ## run MFCL ##
 ##############
 
-doitall_path <- file.path(seed_dir_abs, "doitall.sh")
-if (!file.exists(doitall_path)) {
-  base_doitall_path <- file.path(base_dir_abs, "doitall.sh")
-  if (file.exists(base_doitall_path)) {
-    file.copy(base_doitall_path, doitall_path, overwrite = TRUE)
-    cat("Restored missing doitall.sh from base inputs\n")
-  }
-}
-if (!file.exists(doitall_path)) {
-  stop("Jitter workflow requires doitall.sh: ", doitall_path)
-}
-
 doitall_jitter_path <- file.path(seed_dir_abs, "doitall_jitter.sh")
 doitall_lines <- readLines(doitall_path, warn = FALSE)
 makepar_idx <- grep("-makepar", doitall_lines, fixed = TRUE)
 if (length(makepar_idx) == 0) {
   stop("Could not locate phase0 -makepar command in doitall.sh")
 }
-doitall_lines[makepar_idx[1]] <- "echo 'Skipping phase 0 makepar; using jittered 00.par'"
+doitall_lines[makepar_idx[1]] <- "echo 'Skipping phase 0 makepar; using jittered phase1 baseline par'"
+phase1_cmd_idx_resume <- grep("\\$program_path\\s+.*00\\.par\\s+01\\.par\\s+-file\\s+-\\s+<<PHASE1", doitall_lines)
+if (length(phase1_cmd_idx_resume) == 0) {
+  stop("Could not locate PHASE1 command in doitall.sh for resume script")
+}
+doitall_lines[phase1_cmd_idx_resume[[1]]] <- "cat >/dev/null <<PHASE1"
 legacy_output_par <- paste0("jittered_out_", jitter_seed, ".par")
 legacy_output_rep <- paste0("plot-", legacy_output_par, ".rep")
 doitall_lines <- c(
   doitall_lines,
   "",
   "# Preserve legacy jitter output names for downstream tooling",
-  "final_par=$(ls -1 *.par 2>/dev/null | grep -E '^[0-9]+\\.par$' | sort -V | tail -n 1)",
+  "final_par=$(ls -1 2>/dev/null | grep -E '^[0-9]+((\\.[0-9]+)?(\\.par|par)|\\.par[0-9]+|par[0-9]+)$' | sort -V | tail -n 1)",
   "if [ -n \"$final_par\" ] && [ -f \"$final_par\" ]; then",
   sprintf("  cp -f \"$final_par\" %s", shQuote(legacy_output_par)),
   "  final_rep=\"plot-${final_par}.rep\"",

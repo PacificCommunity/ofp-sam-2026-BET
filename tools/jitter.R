@@ -43,9 +43,9 @@ jitter_interior_bounds <- function(lower = -Inf, upper = Inf, eps = 1e-12) {
 
   if (is.finite(lo) && is.finite(hi)) {
     span <- hi - lo
-    # Keep jitter away from hard bounds using a meaningful interior margin.
-    # 5% per side avoids boundary hits without collapsing the feasible window.
-    margin <- max(abs(span) * 5e-2, eps)
+    # Keep jitter away from hard bounds with a modest interior margin.
+    # 2% per side is less aggressive than 5% and avoids large forced shifts.
+    margin <- max(abs(span) * 2e-2, eps)
     lo <- lo + margin
     hi <- hi - margin
   } else if (is.finite(lo)) {
@@ -115,17 +115,12 @@ jitter_sample_bounded_cv <- function(current_val,
     return(jitter_clip(current_val, lower = lower, upper = upper, eps = eps))
   }
 
-  # For values already on/near a boundary, move the latent center slightly inside
-  # using a CV-scaled offset rather than pinning everything to the same floor.
-  offset_p <- max(min(jitter_cv^2, 0.1), 1e-4)
-  p0 <- (current_val - lo) / span
-  if (!is.finite(p0) || p0 <= 0) {
-    p0 <- offset_p
-  } else if (p0 >= 1) {
-    p0 <- 1 - offset_p
-  } else {
-    p0 <- min(max(p0, 1e-6), 1 - 1e-6)
-  }
+  # Keep jitter centered near the clipped baseline value so boundary cases
+  # stay close to the reference point rather than being pushed deep inward.
+  clipped_current <- jitter_clip(current_val, lower = lower, upper = upper, eps = eps)
+  p0 <- (clipped_current - lo) / span
+  if (!is.finite(p0)) p0 <- 0.5
+  p0 <- min(max(p0, 1e-6), 1 - 1e-6)
 
   sigma <- jitter_sigma_from_cv(jitter_cv)
   mu <- qlogis(p0)
@@ -341,12 +336,18 @@ sample_dirichlet_bounded_cv <- function(current_vals,
   lower <- pmax(lower, 0)
   upper <- pmax(upper, lower)
 
-  interiors <- lapply(seq_len(n), function(i) {
-    jitter_interior_bounds(lower = lower[i], upper = upper[i], eps = eps)
-  })
-  lower_i <- vapply(interiors, `[[`, numeric(1), "lower")
-  upper_i <- vapply(interiors, `[[`, numeric(1), "upper")
+  # For simplex parameters (e.g., region_pars), an aggressive interior trim can
+  # make feasible space effectively empty when components are small. Use only a
+  # tiny numerical interior nudge and fall back to original bounds if needed.
+  tiny_margin <- function(x) pmax(abs(x) * 1e-10, eps)
+  lower_i <- ifelse(is.finite(lower), lower + tiny_margin(lower), lower)
+  upper_i <- ifelse(is.finite(upper), upper - tiny_margin(upper), upper)
+  upper_i <- pmax(upper_i, lower_i)
 
+  if (sum(lower_i) > total_sum + eps || sum(upper_i) < total_sum - eps) {
+    lower_i <- lower
+    upper_i <- upper
+  }
   if (sum(lower_i) > total_sum + eps || sum(upper_i) < total_sum - eps) {
     return(current_vals)
   }
@@ -360,12 +361,19 @@ sample_dirichlet_bounded_cv <- function(current_vals,
     g <- rgamma(n, shape = alpha, rate = 1)
     if (!all(is.finite(g)) || sum(g) <= eps) next
     proposal <- total_sum * g / sum(g)
-    if (all(proposal > lower_i & proposal < upper_i)) {
+    if (all(proposal >= lower_i & proposal <= upper_i)) {
       return(proposal)
     }
   }
 
-  current_vals
+  # Last fallback: construct a bounded simplex proposal directly.
+  sample_bounded_simplex(
+    current_vals = current_vals,
+    total_sum = total_sum,
+    lower = lower_i,
+    upper = upper_i,
+    eps = eps
+  )
 }
 
 resolve_indepvar_file <- function(indepvar_file = NULL, search_root = getwd()) {

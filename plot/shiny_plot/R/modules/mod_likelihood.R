@@ -179,21 +179,23 @@ mod_likelihood_ui <- function() {
                   conditionalPanel(
                     condition = "input.lik_jitter_param_view == 'input'",
                     tagList(
-                      selectInput(
-                        "lik_jitter_param_input_scale",
-                  "Input Param Scale:",
-                  choices = c(
-                    "Bound position (0-1)" = "bound_position",
-                    "Raw value" = "value"
-                  ),
-                  selected = "bound_position"
-                      ),
+	                      selectInput(
+	                        "lik_jitter_param_input_scale",
+	                  "Input Param Scale:",
+	                  choices = c(
+	                    "Bound position (0-1)" = "bound_position",
+	                    "Raw value" = "value",
+	                    "Baseline - fitted" = "baseline_minus",
+	                    "Relative difference (%) (Baseline - fitted)/Baseline" = "rel_baseline_minus"
+	                  ),
+	                  selected = "bound_position"
+	                      ),
                       tags$small(
                         "Bound position is computed as (value - L_bound) / (U_bound - L_bound). 0 = lower bound, 1 = upper bound, 0.5 = midpoint.",
                         style = "display:block; margin-top:-6px; margin-bottom:6px; color:#666;"
                       ),
                       tags$small(
-                        "Jitter uses interior bounds (lower/upper each trimmed by 5% of span), samples by CV, and resamples if a proposal hits bounds.",
+                        "Jitter uses interior bounds (lower/upper each trimmed by 2% of span), samples by CV, and resamples if a proposal hits bounds.",
                         style = "display:block; margin-top:-4px; margin-bottom:6px; color:#666;"
                       )
                     )
@@ -214,11 +216,11 @@ mod_likelihood_ui <- function() {
                 selected = "bound_position"
               )
             ),
-            conditionalPanel(
-              condition = "input.lik_jitter_param_view == 'final' && ['delta', 'pct_change', 'baseline_minus', 'rel_baseline_minus'].includes(input.lik_jitter_param_metric)",
-              tagList(
-                sliderInput(
-                  "lik_jitter_param_range_pct",
+	            conditionalPanel(
+	              condition = "(input.lik_jitter_param_view == 'final' && ['delta', 'pct_change', 'baseline_minus', 'rel_baseline_minus'].includes(input.lik_jitter_param_metric)) || (input.lik_jitter_param_view == 'input' && ['baseline_minus', 'rel_baseline_minus'].includes(input.lik_jitter_param_input_scale))",
+	              tagList(
+	                sliderInput(
+	                  "lik_jitter_param_range_pct",
                   "Jitter Param Range (abs percentile):",
                   min = 50,
                   max = 100,
@@ -3887,7 +3889,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         ok <- is.finite(x) & is.finite(lower) & is.finite(upper) & (upper > lower)
         if (any(ok)) {
           span <- upper[ok] - lower[ok]
-          margin <- pmax(abs(span) * 5e-2, eps)
+          margin <- pmax(abs(span) * 2e-2, eps)
           lo <- lower[ok] + margin
           hi <- upper[ok] - margin
           out[ok] <- pmin(hi, pmax(lo, x[ok]))
