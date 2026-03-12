@@ -197,11 +197,6 @@ cat("Phase1 baseline par for jitter:", basename(phase1_base_par), "\n")
 
 reference_par <- read.MFCLPar(phase1_base_par)
 base_par_label <- basename(phase1_base_par)
-cleanup_reference_par_files <- copied_reference_par_files[normalizePath(copied_reference_par_files, winslash = "/", mustWork = FALSE) != normalizePath(base_00_par, winslash = "/", mustWork = FALSE)]
-if (length(cleanup_reference_par_files) > 0) {
-  unlink(cleanup_reference_par_files, force = TRUE)
-}
-cat("Removed copied reference par files after indepvar mapping load (kept 00.par)\n")
 base_00_par_obj <- read.MFCLPar(phase1_base_par)
 indepvar_map <- build_indepvar_mapping(reference_par, indepvar_file = indepvar_in_seed, tol = 1e-14)
 if (is.null(indepvar_map) || !all(indepvar_map$mapping$mapped)) {
@@ -217,6 +212,18 @@ if (is.null(jittered_00_par_obj)) {
   stop("CV jitter application failed on phase1 baseline par.")
 }
 FLR4MFCL::write(jittered_00_par_obj, file = file.path(seed_dir_abs, jittered_par_name))
+keep_par_paths <- c(
+  normalizePath(base_00_par, winslash = "/", mustWork = FALSE),
+  normalizePath(file.path(seed_dir_abs, jittered_par_name), winslash = "/", mustWork = FALSE),
+  normalizePath(phase1_base_par, winslash = "/", mustWork = FALSE)
+)
+cleanup_reference_par_files <- copied_reference_par_files[
+  !(normalizePath(copied_reference_par_files, winslash = "/", mustWork = FALSE) %in% keep_par_paths)
+]
+if (length(cleanup_reference_par_files) > 0) {
+  unlink(cleanup_reference_par_files, force = TRUE)
+}
+cat("Removed copied reference par files after writing jittered 01.par (kept 00.par)\n")
 
 jitter_run <- list(
   comparison = compare_indepvar_mapped(
