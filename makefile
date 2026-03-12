@@ -41,7 +41,7 @@ prof-init-map:
 
 prof-init-map-model:
 	@if [ -z "$(MODEL)" ]; then echo "Usage: make prof-init-map-model MODEL=2023diag"; exit 1; fi
-	model_name=$(MODEL) model_dir=model/$(MODEL) Rscript tools/build_prof_init_map.R
+	model_name=$(MODEL) model_dir=model/$(MODEL) base_dir=$(BASE_DIR) prof_init_map_out=$(OUT) Rscript tools/build_prof_init_map.R
 
 run: model prof
 	

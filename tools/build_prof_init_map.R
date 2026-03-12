@@ -87,9 +87,21 @@ model_dir <- Sys.getenv("model_dir", "")
 base_dir <- Sys.getenv("base_dir", "")
 out_path <- Sys.getenv("prof_init_map_out", "")
 
-if (!nzchar(model_dir) || !nzchar(base_dir)) {
+# If model_dir is provided, config is optional.
+# If base_dir is missing in this mode, write output under model_dir.
+if (nzchar(model_dir)) {
+  if (!dir.exists(model_dir)) {
+    stop("model_dir does not exist: ", model_dir)
+  }
+  if (!nzchar(model_name)) {
+    model_name <- basename(normalizePath(model_dir, winslash = "/", mustWork = FALSE))
+  }
+  if (!nzchar(base_dir)) {
+    base_dir <- model_dir
+  }
+} else {
   resolved <- resolve_model_from_config(config_file = config_file, model_name = model_name)
-  if (!nzchar(model_dir)) model_dir <- resolved$model_dir
+  model_dir <- resolved$model_dir
   if (!nzchar(base_dir)) base_dir <- resolved$base_dir
   if (!nzchar(model_name)) model_name <- resolved$model_name
 }
