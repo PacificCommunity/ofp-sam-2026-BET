@@ -317,6 +317,30 @@
       textInput("edit_scalers", NULL, value = model$scalers, width = "100%"),
       div(class = "param-label", "Profile Reps:"),
       textInput("edit_reps", NULL, value = model$Reps, width = "100%"),
+      div(class = "param-label", "Profile Init Map RDS (relative to repo/base_dir):"),
+      textInput(
+        "edit_prof_init_map_rds",
+        NULL,
+        value = if (!is.null(model$prof_init_map_rds)) model$prof_init_map_rds else "",
+        width = "100%",
+        placeholder = "prof_init_map.rds"
+      ),
+      div(class = "param-label", "Profile Init Map (target:donor, comma):"),
+      textInput(
+        "edit_init_from_scaler_map",
+        NULL,
+        value = if (!is.null(model$init_from_scaler_map)) model$init_from_scaler_map else "",
+        width = "100%",
+        placeholder = "70:80,80:90,90:100"
+      ),
+      div(class = "param-label", "Profile Init File Map (target:file, optional):"),
+      textInput(
+        "edit_init_par_override_map",
+        NULL,
+        value = if (!is.null(model$init_par_override_map)) model$init_par_override_map else "",
+        width = "100%",
+        placeholder = "70:init_70.par,80:init_80.par"
+      ),
       shiny::hr(),
       div(class = "param-label", "Profile Biomass Options:"),
       fluidRow(
@@ -378,6 +402,9 @@
     rv$models[[model_name]]$nsplit <- as.character(input$edit_nsplit)
     rv$models[[model_name]]$scalers <- input$edit_scalers
     rv$models[[model_name]]$Reps <- input$edit_reps
+    rv$models[[model_name]]$prof_init_map_rds <- input$edit_prof_init_map_rds
+    rv$models[[model_name]]$init_from_scaler_map <- input$edit_init_from_scaler_map
+    rv$models[[model_name]]$init_par_override_map <- input$edit_init_par_override_map
     rv$models[[model_name]]$Af172 <- as.character(input$edit_af172)
     rv$models[[model_name]]$Af173 <- as.character(input$edit_af173)
     rv$models[[model_name]]$Af174 <- as.character(input$edit_af174)

@@ -39,6 +39,9 @@
         nsplit = "5", 
         scalers = "110 100 90", 
         Reps = "2 2 2 2 2 2",
+        prof_init_map_rds = "",
+        init_from_scaler_map = "",
+        init_par_override_map = "",
         Af172 = "0",
         Af173 = "0",
         Af174 = "0"

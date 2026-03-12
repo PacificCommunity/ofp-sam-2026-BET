@@ -36,6 +36,13 @@ stitch-hessian:
 stitch-hessian-all:
 	Rscript tools/collate_hessian_mfcl.R --all
 
+prof-init-map:
+	Rscript tools/build_prof_init_map.R
+
+prof-init-map-model:
+	@if [ -z "$(MODEL)" ]; then echo "Usage: make prof-init-map-model MODEL=2023diag"; exit 1; fi
+	model_name=$(MODEL) model_dir=model/$(MODEL) Rscript tools/build_prof_init_map.R
+
 run: model prof
 	
 plot:
@@ -77,6 +84,9 @@ docker-stitch-hessian:
 docker-stitch-hessian-all:
 	docker run --rm --user "$(DOCKER_USER)" -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript tools/collate_hessian_mfcl.R --all
 
+docker-prof-init-map:
+	docker run --rm --user "$(DOCKER_USER)" -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript tools/build_prof_init_map.R
+
 docker-run: docker-model docker-prof
 	
 docker-plot:
@@ -86,7 +96,7 @@ docker-report:
 	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(stitch-hessian docker-run docker-model docker-prof docker-jitter docker-hessian docker-collate-hessian docker-stitch
 
 	
-.PHONY: plot run model prof jitter jitter_smoke jitter_smoke_hessian hessian retro collate-hessian stitch-hessian stitch-hessian-all docker-run docker-model docker-prof docker-jitter docker-jitter-smoke docker-jitter-smoke-hessian docker-hessian docker-retro docker-collate-hessian docker-stitch-hessian docker-stitch-hessian-all docker-plot prepaw report docker-report
+.PHONY: plot run model prof jitter jitter_smoke jitter_smoke_hessian hessian retro collate-hessian stitch-hessian stitch-hessian-all prof-init-map prof-init-map-model docker-run docker-model docker-prof docker-jitter docker-jitter-smoke docker-jitter-smoke-hessian docker-hessian docker-retro docker-collate-hessian docker-stitch-hessian docker-stitch-hessian-all docker-prof-init-map docker-plot prepaw report docker-report
 
 
 

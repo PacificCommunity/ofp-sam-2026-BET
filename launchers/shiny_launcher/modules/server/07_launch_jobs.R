@@ -27,6 +27,41 @@
     )
   }
 
+  parse_prof_target_map <- function(txt) {
+    out <- list()
+    if (is.null(txt) || !nzchar(trimws(txt))) return(out)
+    parts <- trimws(unlist(strsplit(as.character(txt), ",")))
+    parts <- parts[nzchar(parts)]
+    for (p in parts) {
+      kv <- trimws(unlist(strsplit(p, ":", fixed = TRUE)))
+      if (length(kv) < 2) next
+      k <- suppressWarnings(as.integer(kv[1]))
+      v <- paste(kv[-1], collapse = ":")
+      if (is.finite(k) && nzchar(v)) out[[as.character(k)]] <- v
+    }
+    out
+  }
+
+  apply_prof_init_mapping <- function(job_env, scaler_value) {
+    sc <- suppressWarnings(as.integer(scaler_value))
+    if (!is.finite(sc)) return(job_env)
+
+    override_map <- parse_prof_target_map(job_env$init_par_override_map)
+    donor_map <- parse_prof_target_map(job_env$init_from_scaler_map)
+
+    ov <- override_map[[as.character(sc)]]
+    if (!is.null(ov) && nzchar(ov)) {
+      job_env$init_par_override <- ov
+      return(job_env)
+    }
+
+    dn <- donor_map[[as.character(sc)]]
+    if (!is.null(dn) && nzchar(dn)) {
+      job_env$init_from_scaler <- dn
+    }
+    job_env
+  }
+
   local_run_command <- function(spec, common_params, job_env, log_file) {
     if (isTRUE(common_params$local_use_docker)) {
       uid <- tryCatch(system2("id", "-u", stdout = TRUE), error = function(e) character(0))
@@ -183,6 +218,9 @@
       batch_suffix <- paste0("-retro", spec$peel)
     } else if (!is.null(spec$scaler)) {
       job_env$scaler <- as.character(spec$scaler)
+      if (identical(spec$job_type, "prof")) {
+        job_env <- apply_prof_init_mapping(job_env, spec$scaler)
+      }
       batch_suffix <- paste0("-sc", spec$scaler)
     }
 
@@ -353,7 +391,7 @@
       retro = c("retro_peel", "retro_peels", "retro_hessian"),
       jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian", "jitter_base_source"),
       hessian = c("hessian_part", "nsplit", "model_hessian"),
-      prof = c("scaler", "scalers", "prof_hessian"),
+      prof = c("scaler", "scalers", "prof_hessian", "prof_init_map_rds", "init_from_scaler_map", "init_par_override_map", "init_from_scaler", "init_par_override"),
       character(0)
       )
 
@@ -395,7 +433,7 @@
         retro = c("retro_peel", "retro_peels", "retro_hessian"),
         jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian", "jitter_base_source"),
         hessian = c("hessian_part", "nsplit", "model_hessian"),
-        prof = c("scaler", "scalers", "prof_hessian"),
+        prof = c("scaler", "scalers", "prof_hessian", "prof_init_map_rds", "init_from_scaler_map", "init_par_override_map", "init_from_scaler", "init_par_override"),
         character(0)
       )
     }
@@ -1208,6 +1246,10 @@
       batch_suffix <- paste0("-retro", spec$peel)
     } else if (!is.null(spec$scaler)) {
       job_env$scaler <- as.character(spec$scaler)
+      if (identical(spec$job_type, "prof")) {
+        mapped_env <- apply_prof_init_mapping(as.list(job_env, all.names = TRUE), spec$scaler)
+        job_env <- list2env(mapped_env, parent = emptyenv())
+      }
       remote_dir_suffix <- paste0(spec$model_name, "_sc", spec$scaler)
       batch_suffix <- paste0("-sc", spec$scaler)
     } else {
@@ -1301,6 +1343,9 @@
       batch_suffix <- paste0("-retro", peel)
     } else if (!is.null(scaler)) {
       job_env$scaler <- as.character(scaler)
+      if (identical(job_type, "prof")) {
+        job_env <- apply_prof_init_mapping(job_env, scaler)
+      }
       remote_dir_suffix <- paste0(model_name, "_sc", scaler)
       batch_suffix <- paste0("-sc", scaler)
     } else {

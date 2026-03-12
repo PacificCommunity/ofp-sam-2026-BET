@@ -13,6 +13,9 @@ apply_model_defaults <- function(models, defaults = list()) {
       jitter_hessian = "0",
       model_hessian = "0",
       prof_hessian = "0",
+      prof_init_map_rds = "",
+      init_from_scaler_map = "",
+      init_par_override_map = "",
       retro_hessian = "0",
       nsplit = "5"
     ),
@@ -30,6 +33,9 @@ apply_model_defaults <- function(models, defaults = list()) {
     jitter_hessian <- if (!is.null(model$jitter_hessian)) model$jitter_hessian else defaults$jitter_hessian
     model_hessian <- if (!is.null(model$model_hessian)) model$model_hessian else defaults$model_hessian
     prof_hessian <- if (!is.null(model$prof_hessian)) model$prof_hessian else defaults$prof_hessian
+    prof_init_map_rds <- if (!is.null(model$prof_init_map_rds)) model$prof_init_map_rds else defaults$prof_init_map_rds
+    init_from_scaler_map <- if (!is.null(model$init_from_scaler_map)) model$init_from_scaler_map else defaults$init_from_scaler_map
+    init_par_override_map <- if (!is.null(model$init_par_override_map)) model$init_par_override_map else defaults$init_par_override_map
     retro_hessian <- if (!is.null(model$retro_hessian)) model$retro_hessian else defaults$retro_hessian
     nsplit <- if (!is.null(model$nsplit)) model$nsplit else defaults$nsplit
 
@@ -48,6 +54,9 @@ apply_model_defaults <- function(models, defaults = list()) {
     model$jitter_hessian <- jitter_hessian
     model$model_hessian <- model_hessian
     model$prof_hessian <- prof_hessian
+    model$prof_init_map_rds <- prof_init_map_rds
+    model$init_from_scaler_map <- init_from_scaler_map
+    model$init_par_override_map <- init_par_override_map
     model$retro_hessian <- retro_hessian
     model$nsplit <- nsplit
     model
