@@ -42,6 +42,26 @@
     out
   }
 
+  parse_prof_target_scalers <- function(txt) {
+    mp <- parse_prof_target_map(txt)
+    if (length(mp) == 0) return(numeric(0))
+    keys <- suppressWarnings(as.numeric(names(mp)))
+    keys[is.finite(keys)]
+  }
+
+  resolve_prof_scalers <- function(model_env) {
+    default_scalers <- parse_numeric_tokens(model_env$scalers)
+    map_scalers <- unique(c(
+      parse_prof_target_scalers(model_env$init_from_scaler_map),
+      parse_prof_target_scalers(model_env$init_par_override_map)
+    ))
+    map_scalers <- sort(unique(map_scalers[is.finite(map_scalers)]))
+    if (length(map_scalers) > 0) {
+      return(map_scalers)
+    }
+    default_scalers
+  }
+
   apply_prof_init_mapping <- function(job_env, scaler_value) {
     sc <- suppressWarnings(as.integer(scaler_value))
     if (!is.finite(sc)) return(job_env)
@@ -522,7 +542,7 @@
         } else if (identical(job_type, "retro")) {
           total_jobs <- total_jobs + length(parse_numeric_tokens(model_env$retro_peels))
         } else if (identical(job_type, "prof")) {
-          total_jobs <- total_jobs + length(parse_numeric_tokens(model_env$scalers))
+          total_jobs <- total_jobs + length(resolve_prof_scalers(model_env))
         } else {
           total_jobs <- total_jobs + 1L
         }
@@ -604,7 +624,7 @@
             add_job_spec(model_name, job_type, peel = peel)
           }
         } else if (job_type == "prof") {
-          scalers <- parse_numeric_tokens(model_env$scalers)
+          scalers <- resolve_prof_scalers(model_env)
           total_jobs <- total_jobs + length(scalers)
           for (sc in scalers) {
             add_job_spec(model_name, job_type, scaler = sc)
@@ -952,7 +972,7 @@
               }
               if (cancel_launch()) stop("Launch cancelled")
             } else if (job_type == "prof") {
-              scalers <- parse_numeric_tokens(model_env$scalers)
+              scalers <- resolve_prof_scalers(model_env)
               for (sc in scalers) {
                 if (cancel_launch()) stop("Launch cancelled")
                 current_job <- current_job + 1

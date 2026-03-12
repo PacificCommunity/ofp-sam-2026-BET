@@ -66,6 +66,25 @@ parse_target_map <- function(txt) {
   out
 }
 
+target_scalers_from_map <- function(mp) {
+  if (length(mp) == 0) return(integer(0))
+  keys <- suppressWarnings(as.integer(names(mp)))
+  sort(unique(keys[is.finite(keys)]))
+}
+
+resolve_model_scalers <- function(model_cfg, scalers_override, init_map, init_override_map) {
+  base_scalers <- sort(unique(as.integer(round(parse_num_vec(model_cfg$scalers)))))
+  mapped_targets <- sort(unique(c(
+    target_scalers_from_map(init_map),
+    target_scalers_from_map(init_override_map)
+  )))
+  scalers <- if (length(mapped_targets) > 0) mapped_targets else base_scalers
+  if (length(scalers_override) > 0) {
+    scalers <- intersect(scalers, as.integer(round(scalers_override)))
+  }
+  sort(unique(as.integer(round(scalers[is.finite(scalers)]))))
+}
+
 scalers_override_txt <- Sys.getenv("scalers_override", "")
 scalers_override <- parse_num_vec(scalers_override_txt)
 init_map <- parse_scaler_map(Sys.getenv("init_from_scaler_map", ""))
@@ -80,11 +99,7 @@ cat("- init_par_override_map entries:", length(init_override_map), "\n")
 cat("- auto_refine_profile:", auto_refine_profile, "\n")
 
 for (model_name in names(models)) {
-  model_scalers <- parse_num_vec(models[[model_name]]$scalers)
-  if (length(scalers_override) > 0) {
-    model_scalers <- intersect(model_scalers, scalers_override)
-  }
-  model_scalers <- sort(unique(as.integer(round(model_scalers))))
+  model_scalers <- resolve_model_scalers(models[[model_name]], scalers_override, init_map, init_override_map)
   if (length(model_scalers) == 0) next
 
   for (sc in model_scalers) {
@@ -134,11 +149,7 @@ for (model_name in names(models)) {
 }
 
 for (model_name in names(models)) {
-  model_scalers <- parse_num_vec(models[[model_name]]$scalers)
-  if (length(scalers_override) > 0) {
-    model_scalers <- intersect(model_scalers, scalers_override)
-  }
-  model_scalers <- sort(unique(as.integer(round(model_scalers))))
+  model_scalers <- resolve_model_scalers(models[[model_name]], scalers_override, init_map, init_override_map)
   if (length(model_scalers) == 0) next
 
   for (sc in model_scalers) {
@@ -276,11 +287,7 @@ if (auto_refine_profile) {
 }
 
 for (model_name in names(models)) {
-  model_scalers <- parse_num_vec(models[[model_name]]$scalers)
-  if (length(scalers_override) > 0) {
-    model_scalers <- intersect(model_scalers, scalers_override)
-  }
-  model_scalers <- sort(unique(as.integer(round(model_scalers))))
+  model_scalers <- resolve_model_scalers(models[[model_name]], scalers_override, init_map, init_override_map)
   if (length(model_scalers) == 0) next
 
   for (sc in model_scalers) {
