@@ -60,6 +60,25 @@ launch_tab_ui <- function() {
                                selected = NULL),
 
             conditionalPanel(
+              condition = "input.job_types && input.job_types.indexOf('prof') !== -1",
+              tagList(
+                selectInput(
+                  "prof_launch_strategy",
+                  "Profile Launch Strategy:",
+                  choices = c(
+                    "Independent (current)" = "independent",
+                    "Sequential from anchor (two chains)" = "seq_anchor_bidir"
+                  ),
+                  selected = "independent"
+                ),
+                conditionalPanel(
+                  condition = "input.prof_launch_strategy == 'seq_anchor_bidir'",
+                  numericInput("prof_anchor_scaler", "Anchor scaler:", value = 100, min = 1, step = 1)
+                )
+              )
+            ),
+
+            conditionalPanel(
               condition = "input.launch_mode == 'condor'",
               textInput("output_dir", "Output Directory:", 
                         value = "quick/test_run")

@@ -23,6 +23,7 @@
       hessian = "runners/run_hessian.R",
       retro = "runners/run_retro.R",
       prof = "runners/run_prof.R",
+      prof_chain = "runners/run_prof_chain.R",
       stop("Unsupported local job type: ", job_type)
     )
   }
@@ -60,6 +61,19 @@
       return(map_scalers)
     }
     default_scalers
+  }
+
+  resolve_prof_anchor_and_chains <- function(scalers, anchor) {
+    scalers <- sort(unique(scalers[is.finite(scalers)]))
+    if (length(scalers) == 0) {
+      return(list(anchor = NA_real_, lower = numeric(0), upper = numeric(0)))
+    }
+    anchor <- suppressWarnings(as.numeric(anchor))
+    if (!is.finite(anchor)) anchor <- 100
+    anchor_eff <- scalers[which.min(abs(scalers - anchor))]
+    lower <- sort(scalers[scalers < anchor_eff], decreasing = TRUE)
+    upper <- sort(scalers[scalers > anchor_eff], decreasing = FALSE)
+    list(anchor = anchor_eff, lower = lower, upper = upper)
   }
 
   apply_prof_init_mapping <- function(job_env, scaler_value) {
@@ -240,6 +254,9 @@
       job_env$scaler <- as.character(spec$scaler)
       if (identical(spec$job_type, "prof")) {
         job_env <- apply_prof_init_mapping(job_env, spec$scaler)
+        if (!is.null(spec$init_from_scaler_override) && is.finite(suppressWarnings(as.numeric(spec$init_from_scaler_override)))) {
+          job_env$init_from_scaler <- as.character(spec$init_from_scaler_override)
+        }
       }
       batch_suffix <- paste0("-sc", spec$scaler)
     }
@@ -525,7 +542,7 @@
     }, logical(1))]
   }
 
-  estimate_total_jobs <- function(selected_models, selected_job_types) {
+  estimate_total_jobs <- function(selected_models, selected_job_types, prof_chain_mode = FALSE, is_local_mode = FALSE, prof_anchor_requested = 100) {
     total_jobs <- 0L
     if (length(selected_models) == 0 || length(selected_job_types) == 0) return(total_jobs)
 
@@ -542,7 +559,16 @@
         } else if (identical(job_type, "retro")) {
           total_jobs <- total_jobs + length(parse_numeric_tokens(model_env$retro_peels))
         } else if (identical(job_type, "prof")) {
-          total_jobs <- total_jobs + length(resolve_prof_scalers(model_env))
+          scalers <- resolve_prof_scalers(model_env)
+          if (isTRUE(prof_chain_mode) && !isTRUE(is_local_mode)) {
+            plan <- resolve_prof_anchor_and_chains(scalers, prof_anchor_requested)
+            down_chain <- c(plan$anchor, plan$lower)
+            up_chain <- plan$upper
+            if (length(down_chain) > 0) total_jobs <- total_jobs + 1L
+            if (length(up_chain) > 0) total_jobs <- total_jobs + 1L
+          } else {
+            total_jobs <- total_jobs + length(scalers)
+          }
         } else {
           total_jobs <- total_jobs + 1L
         }
@@ -557,7 +583,19 @@
     if (is.null(selected_job_types) || length(selected_job_types) == 0) return("0 (select job type)")
     selected_models <- selected_models_from_checkboxes()
     if (length(selected_models) == 0) return("0 (select model)")
-    as.character(estimate_total_jobs(selected_models, selected_job_types))
+    launch_mode <- if (!is.null(input$launch_mode) && nzchar(input$launch_mode)) input$launch_mode else "condor"
+    is_local_mode <- identical(launch_mode, "local_native") || identical(launch_mode, "local_docker")
+    prof_chain_mode <- identical(input$prof_launch_strategy, "seq_anchor_bidir") && "prof" %in% selected_job_types
+    prof_anchor_requested <- suppressWarnings(as.numeric(input$prof_anchor_scaler))
+    if (!is.finite(prof_anchor_requested)) prof_anchor_requested <- 100
+
+    as.character(estimate_total_jobs(
+      selected_models,
+      selected_job_types,
+      prof_chain_mode = prof_chain_mode,
+      is_local_mode = is_local_mode,
+      prof_anchor_requested = prof_anchor_requested
+    ))
   })
   
   observeEvent(input$launch_btn, {
@@ -587,18 +625,29 @@
       shinyjs::removeClass("launch_btn", "loading")
       return()
     }
+
+    launch_mode <- if (!is.null(input$launch_mode) && nzchar(input$launch_mode)) input$launch_mode else "condor"
+    is_local_mode <- launch_mode %in% c("local_native", "local_docker")
+    is_local_docker <- identical(launch_mode, "local_docker")
+    prof_chain_mode <- identical(input$prof_launch_strategy, "seq_anchor_bidir") && "prof" %in% selected_job_types
+    prof_anchor_requested <- suppressWarnings(as.numeric(input$prof_anchor_scaler))
+    if (!is.finite(prof_anchor_requested)) prof_anchor_requested <- 100
     
     # Calculate total number of jobs to be launched
     total_jobs <- 0
     job_specs <- list()
-    add_job_spec <- function(model_name, job_type, seed = NULL, part = NULL, peel = NULL, scaler = NULL) {
+  add_job_spec <- function(model_name, job_type, seed = NULL, part = NULL, peel = NULL, scaler = NULL,
+                           chain_name = NULL, chain_scalers = NULL, chain_first_init_from = NULL) {
       job_specs[[length(job_specs) + 1]] <<- list(
         model_name = model_name,
         job_type = job_type,
         seed = seed,
         part = part,
         peel = peel,
-        scaler = scaler
+        scaler = scaler,
+        chain_name = chain_name,
+        chain_scalers = chain_scalers,
+        chain_first_init_from = chain_first_init_from
       )
     }
     for (model_name in selected_models) {
@@ -625,9 +674,35 @@
           }
         } else if (job_type == "prof") {
           scalers <- resolve_prof_scalers(model_env)
-          total_jobs <- total_jobs + length(scalers)
-          for (sc in scalers) {
-            add_job_spec(model_name, job_type, scaler = sc)
+          if (isTRUE(prof_chain_mode) && !is_local_mode) {
+            plan <- resolve_prof_anchor_and_chains(scalers, prof_anchor_requested)
+            down_chain <- c(plan$anchor, plan$lower)
+            up_chain <- plan$upper
+            if (length(down_chain) > 0) {
+              total_jobs <- total_jobs + 1L
+              add_job_spec(
+                model_name = model_name,
+                job_type = "prof_chain",
+                chain_name = "down",
+                chain_scalers = paste(down_chain, collapse = " "),
+                chain_first_init_from = NULL
+              )
+            }
+            if (length(up_chain) > 0) {
+              total_jobs <- total_jobs + 1L
+              add_job_spec(
+                model_name = model_name,
+                job_type = "prof_chain",
+                chain_name = "up",
+                chain_scalers = paste(up_chain, collapse = " "),
+                chain_first_init_from = as.character(plan$anchor)
+              )
+            }
+          } else {
+            total_jobs <- total_jobs + length(scalers)
+            for (sc in scalers) {
+              add_job_spec(model_name, job_type, scaler = sc)
+            }
           }
         } else {
           total_jobs <- total_jobs + 1
@@ -641,9 +716,6 @@
     })
     names(model_env_lists) <- selected_models
 
-    launch_mode <- if (!is.null(input$launch_mode) && nzchar(input$launch_mode)) input$launch_mode else "condor"
-    is_local_mode <- launch_mode %in% c("local_native", "local_docker")
-    is_local_docker <- identical(launch_mode, "local_docker")
     action_word <- if (is_local_mode) "run" else "launch"
     completion_word <- if (is_local_mode) "completed" else "submitted"
     progress_prefix <- if (is_local_mode) "Running local" else "Launching"
@@ -731,9 +803,15 @@
       }
       
       did_parallel <- FALSE
-      if (isTRUE(input$parallel_launch) && length(job_specs) > 1) {
+      run_parallel_submit <- (
+        isTRUE(prof_chain_mode) && !is_local_mode && length(job_specs) >= 1
+      ) || (
+        isTRUE(input$parallel_launch) && length(job_specs) > 1 && !(isTRUE(prof_chain_mode) && is_local_mode)
+      )
+      if (isTRUE(run_parallel_submit)) {
         max_cores <- max(1, parallel::detectCores() - 2)
         cores <- max(1, min(as.integer(input$launch_parallel_cores), max_cores))
+        if (isTRUE(prof_chain_mode) && !is_local_mode) cores <- max(2L, cores)
         if (cores <= 1) {
           rv$launch_log <- paste0(
             rv$launch_log,
@@ -799,6 +877,7 @@
               common_params <- list(
                 repo_root = isolate(repo_root_val()),
                 local_use_docker = is_local_docker,
+                local_async = TRUE,
                 docker_image = if (!is.null(input$local_docker_image) && nzchar(input$local_docker_image)) input$local_docker_image else input$docker_image,
                 model_env_lists = model_env_lists
               )
@@ -973,40 +1052,140 @@
               if (cancel_launch()) stop("Launch cancelled")
             } else if (job_type == "prof") {
               scalers <- resolve_prof_scalers(model_env)
-              for (sc in scalers) {
+              if (isTRUE(prof_chain_mode) && is_local_mode && length(scalers) > 0) {
+                chain_plan <- resolve_prof_anchor_and_chains(scalers, prof_anchor_requested)
+                anchor_sc <- chain_plan$anchor
+
+                rv$launch_log <- paste0(
+                  rv$launch_log,
+                  sprintf(
+                    "🔗 Profile sequential strategy: anchor=%g (requested=%g), lower=%s, upper=%s\n",
+                    anchor_sc,
+                    prof_anchor_requested,
+                    if (length(chain_plan$lower) > 0) paste(chain_plan$lower, collapse = " ") else "<none>",
+                    if (length(chain_plan$upper) > 0) paste(chain_plan$upper, collapse = " ") else "<none>"
+                  )
+                )
+
+                run_prof_local_one <- function(sc, donor = NA_real_) {
+                  common_params_prof <- list(
+                    repo_root = isolate(repo_root_val()),
+                    local_use_docker = is_local_docker,
+                    local_async = FALSE,
+                    docker_image = if (!is.null(input$local_docker_image) && nzchar(input$local_docker_image)) input$local_docker_image else input$docker_image,
+                    model_env_lists = setNames(list(as.list(model_env, all.names = TRUE)), model_name)
+                  )
+                  launch_single_job_local_raw(
+                    spec = list(
+                      model_name = model_name,
+                      job_type = "prof",
+                      scaler = sc,
+                      init_from_scaler_override = if (is.finite(donor)) donor else NULL
+                    ),
+                    common_params = common_params_prof
+                  )
+                }
+
+                run_chain_local <- function(chain_scalers, start_donor) {
+                  out <- list()
+                  donor <- start_donor
+                  for (sc in chain_scalers) {
+                    res <- run_prof_local_one(sc = sc, donor = donor)
+                    res$chain <- if (sc < anchor_sc) "down" else "up"
+                    res$donor_scaler <- donor
+                    out[[length(out) + 1L]] <- res
+                    donor <- sc
+                  }
+                  out
+                }
+
+                # 1) Anchor first
                 if (cancel_launch()) stop("Launch cancelled")
                 current_job <- current_job + 1
-                
-                update_launch_notification(
-                  sprintf("%s job %d/%d: %s (scaler %g)",
-                          progress_prefix,
-                          current_job, total_jobs, model_name, sc)
-                )
-                
-                rv$launch_log <- paste0(
-                  rv$launch_log,
-                  sprintf("[%d/%d] 🔄 %s: %s (scaler %g)\n", 
-                          current_job, total_jobs, progress_prefix, model_name, sc)
-                )
-                
-                progress_details <- c(
-                  progress_details,
-                  sprintf("[%d/%d] 🔄 %s (scaler %g)", 
-                          current_job, total_jobs, model_name, sc)
-                )
-                
-                result <- launch_single_job(model_name, model_env, job_type = job_type, scaler = sc, exclude_slots = condor_exclude_slots)
-                collect_job_result(result)
-                
-                progress_details[length(progress_details)] <- paste0(
-                  progress_details[length(progress_details)], " ✓"
-                )
+                update_launch_notification(sprintf("%s job %d/%d: %s (anchor scaler %g)", progress_prefix, current_job, total_jobs, model_name, anchor_sc))
+                progress_details <- c(progress_details, sprintf("[%d/%d] 🔄 %s (anchor scaler %g)", current_job, total_jobs, model_name, anchor_sc))
+                result_anchor <- run_prof_local_one(sc = anchor_sc, donor = NA_real_)
+                collect_job_result(result_anchor)
+                progress_details[length(progress_details)] <- paste0(progress_details[length(progress_details)], " ✓")
                 maybe_send_progress_details()
-                
-                rv$launch_log <- paste0(
-                  rv$launch_log,
-                  sprintf("  ✓ %s: %s\n\n", tools::toTitleCase(completion_word), result$batch_name)
-                )
+                rv$launch_log <- paste0(rv$launch_log, sprintf("  ✓ %s: %s\n\n", tools::toTitleCase(completion_word), result_anchor$batch_name))
+
+                # 2) Lower/upper chains from anchor
+                chain_results <- list()
+                run_two_chains_parallel <- isTRUE(input$parallel_launch) &&
+                  length(chain_plan$lower) > 0 &&
+                  length(chain_plan$upper) > 0 &&
+                  .Platform$OS.type != "windows"
+
+                if (run_two_chains_parallel) {
+                  rv$launch_log <- paste0(rv$launch_log, "⚡ Running lower/upper profile chains in parallel (2 forks)\n")
+                  parts <- parallel::mclapply(
+                    list(
+                      list(scalers = chain_plan$lower, donor = anchor_sc),
+                      list(scalers = chain_plan$upper, donor = anchor_sc)
+                    ),
+                    function(ch) run_chain_local(ch$scalers, ch$donor),
+                    mc.cores = 2
+                  )
+                  chain_results <- unlist(parts, recursive = FALSE)
+                } else {
+                  chain_results <- c(
+                    run_chain_local(chain_plan$lower, anchor_sc),
+                    run_chain_local(chain_plan$upper, anchor_sc)
+                  )
+                }
+
+                for (res in chain_results) {
+                  if (cancel_launch()) stop("Launch cancelled")
+                  current_job <- current_job + 1
+                  progress_details <- c(
+                    progress_details,
+                    sprintf("[%d/%d] 🔄 %s (scaler %s, donor %s)",
+                            current_job, total_jobs, model_name,
+                            if (!is.null(res$job_env$scaler)) as.character(res$job_env$scaler) else "?",
+                            if (!is.null(res$donor_scaler) && is.finite(res$donor_scaler)) as.character(res$donor_scaler) else "<none>")
+                  )
+                  collect_job_result(res)
+                  progress_details[length(progress_details)] <- paste0(progress_details[length(progress_details)], " ✓")
+                  maybe_send_progress_details()
+                  rv$launch_log <- paste0(rv$launch_log, sprintf("  ✓ %s: %s\n\n", tools::toTitleCase(completion_word), res$batch_name))
+                }
+              } else {
+                for (sc in scalers) {
+                  if (cancel_launch()) stop("Launch cancelled")
+                  current_job <- current_job + 1
+                  
+                  update_launch_notification(
+                    sprintf("%s job %d/%d: %s (scaler %g)",
+                            progress_prefix,
+                            current_job, total_jobs, model_name, sc)
+                  )
+                  
+                  rv$launch_log <- paste0(
+                    rv$launch_log,
+                    sprintf("[%d/%d] 🔄 %s: %s (scaler %g)\n", 
+                            current_job, total_jobs, progress_prefix, model_name, sc)
+                  )
+                  
+                  progress_details <- c(
+                    progress_details,
+                    sprintf("[%d/%d] 🔄 %s (scaler %g)", 
+                            current_job, total_jobs, model_name, sc)
+                  )
+                  
+                  result <- launch_single_job(model_name, model_env, job_type = job_type, scaler = sc, exclude_slots = condor_exclude_slots)
+                  collect_job_result(result)
+                  
+                  progress_details[length(progress_details)] <- paste0(
+                    progress_details[length(progress_details)], " ✓"
+                  )
+                  maybe_send_progress_details()
+                  
+                  rv$launch_log <- paste0(
+                    rv$launch_log,
+                    sprintf("  ✓ %s: %s\n\n", tools::toTitleCase(completion_word), result$batch_name)
+                  )
+                }
               }
               if (cancel_launch()) stop("Launch cancelled")
             } else {
@@ -1049,7 +1228,15 @@
       }
       
       # Save launch records
-      launch_status <- if (cancel_launch()) "cancelled" else if (is_local_mode) "completed_local" else "launched"
+      launch_status <- if (cancel_launch()) {
+        "cancelled"
+      } else if (is_local_mode && !isTRUE(prof_chain_mode)) {
+        "launched_local_async"
+      } else if (is_local_mode) {
+        "completed_local"
+      } else {
+        "launched"
+      }
       job_record <- data.frame(
         timestamp = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
         job_type = paste(selected_job_types, collapse = ", "),
@@ -1093,6 +1280,26 @@
         status = as.character(job_record$status),
         branch = as.character(job_record$branch),
         batch_names = as.character(job_record$batch_names),
+        local_pid_files = if (length(launched_job_results) > 0) {
+          paste(
+            vapply(launched_job_results, function(x) {
+              if (!is.null(x$pid_file) && nzchar(as.character(x$pid_file))) as.character(x$pid_file) else ""
+            }, character(1)),
+            collapse = ", "
+          )
+        } else {
+          ""
+        },
+        local_log_files = if (length(launched_job_results) > 0) {
+          paste(
+            vapply(launched_job_results, function(x) {
+              if (!is.null(x$log_file) && nzchar(as.character(x$log_file))) as.character(x$log_file) else ""
+            }, character(1)),
+            collapse = ", "
+          )
+        } else {
+          ""
+        },
         config_details = if (length(launched_job_results) > 0) {
           build_launched_config_details(launched_job_results)
         } else {
@@ -1272,6 +1479,18 @@
       }
       remote_dir_suffix <- paste0(spec$model_name, "_sc", spec$scaler)
       batch_suffix <- paste0("-sc", spec$scaler)
+    } else if (identical(spec$job_type, "prof_chain")) {
+      if (!is.null(spec$chain_name) && nzchar(as.character(spec$chain_name))) {
+        job_env$chain_name <- as.character(spec$chain_name)
+      }
+      if (!is.null(spec$chain_scalers) && nzchar(as.character(spec$chain_scalers))) {
+        job_env$chain_scalers <- as.character(spec$chain_scalers)
+      }
+      if (!is.null(spec$chain_first_init_from) && nzchar(as.character(spec$chain_first_init_from))) {
+        job_env$chain_first_init_from <- as.character(spec$chain_first_init_from)
+      }
+      remote_dir_suffix <- paste0(spec$model_name, "_profchain_", if (!is.null(spec$chain_name)) as.character(spec$chain_name) else "chain")
+      batch_suffix <- paste0("-profchain", if (!is.null(spec$chain_name)) paste0("-", as.character(spec$chain_name)) else "")
     } else {
       # model job only
       remote_dir_suffix <- paste0(spec$model_name, "_model")
