@@ -33,21 +33,21 @@ models <- list(
     min_year= "1952",
     
     ## Jitter settings
-    jitter_seeds = paste0(1:50, collapse = " "),
+    jitter_seeds = paste0(1:10, collapse = " "),
     jitter_cv = "0.2",
     
     ## post-run hessian toggles
-    jitter_hessian = "1",
-    model_hessian = "1",
-    prof_hessian = "1",
-    retro_hessian = "1",
+    jitter_hessian = "0",
+    model_hessian = "0",
+    prof_hessian = "0",
+    retro_hessian = "0",
     
     ## hessian parallel settings
     nsplit="5",
     
     
-    prof_init_map_rds="90 95 100",
-    init_from_scaler_map="90:95,95:100,100:100"
+    prof_init_map_rds="",
+    init_from_scaler_map=""
     
   )
   
