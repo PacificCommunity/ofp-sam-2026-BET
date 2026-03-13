@@ -30,12 +30,8 @@ jitter_cv <- suppressWarnings(as.numeric(
 jitter_hessian <- tolower(Sys.getenv("jitter_hessian", "0")) %in% c("1", "true", "yes", "y")
 jitter_smoke_only <- tolower(Sys.getenv("jitter_smoke_only", "0")) %in% c("1", "true", "yes", "y")
 jitter_smoke_hessian <- tolower(Sys.getenv("jitter_smoke_hessian", "0")) %in% c("1", "true", "yes", "y")
-jitter_base_source_raw <- Sys.getenv("jitter_base_source", "makepar_00")
-jitter_base_source <- if (jitter_base_source_raw %in% c("makepar_00", "copied_par")) {
-  jitter_base_source_raw
-} else {
-  "makepar_00"
-}
+jitter_base_source_raw <- Sys.getenv("jitter_base_source", "")
+jitter_base_source <- if (nzchar(jitter_base_source_raw)) jitter_base_source_raw else "phase1_baseline"
 n_mixing_periods <- 2L
 
 ## Create jitter-specific directory inside jitter folder
@@ -52,7 +48,7 @@ cat("Seed directory:", seed_dir_abs, "\n")
 cat("Jitter seed:", jitter_seed, "\n")
 cat("Jitter CV:", jitter_cv, "\n")
 cat("Jitter Hessian:", jitter_hessian, "\n")
-cat("Jitter Base Source:", jitter_base_source, "\n")
+cat("Jitter Base Source (pre-resolve):", jitter_base_source, "\n")
 cat("Jitter smoke-only:", jitter_smoke_only, "\n")
 cat("Jitter smoke hessian:", jitter_smoke_hessian, "\n")
 cat("Mixing periods (fixed for jitter pre-makepar patch):", n_mixing_periods, "\n")
@@ -200,6 +196,8 @@ if (any(is.finite(steps))) {
   phase1_base_par <- rownames(phase1_info)[which.max(phase1_info$mtime)]
 }
 cat("Phase1 baseline par for jitter:", basename(phase1_base_par), "\n")
+jitter_base_source <- sprintf("phase1:%s", basename(phase1_base_par))
+cat("Jitter Base Source (resolved):", jitter_base_source, "\n")
 
 reference_par <- read.MFCLPar(phase1_base_par)
 base_par_label <- basename(phase1_base_par)
