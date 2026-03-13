@@ -6,15 +6,110 @@
 #' Regional recruitment jitters all free regions symmetrically and renormalizes
 #'
 
+jitter_center_target_coverage <- 0.999
+jitter_resample_near_bound_frac <- 0.02
+
+jitter_center_z <- function(target_coverage = jitter_center_target_coverage) {
+  alpha <- max(min(1 - target_coverage, 1 - 1e-12), 1e-12)
+  stats::qnorm(1 - alpha / 2)
+}
+
+jitter_near_bound_window <- function(lower = -Inf, upper = Inf, margin_frac = jitter_resample_near_bound_frac, eps = 1e-12) {
+  lo <- lower
+  hi <- upper
+  if (is.finite(lower) && is.finite(upper) && upper > lower) {
+    span <- upper - lower
+    margin <- max(abs(span) * margin_frac, eps)
+    lo <- lower + margin
+    hi <- upper - margin
+  } else if (is.finite(lower)) {
+    lo <- lower + max(abs(lower) * 1e-8, eps)
+  } else if (is.finite(upper)) {
+    hi <- upper - max(abs(upper) * 1e-8, eps)
+  }
+  list(lower = lo, upper = hi)
+}
+
+jitter_outside_near_bound <- function(x, lower = -Inf, upper = Inf, margin_frac = jitter_resample_near_bound_frac, eps = 1e-12) {
+  x <- suppressWarnings(as.numeric(x))
+  lower <- suppressWarnings(as.numeric(lower))
+  upper <- suppressWarnings(as.numeric(upper))
+  if (!all(is.finite(x))) return(FALSE)
+  if (!(length(lower) %in% c(1, length(x))) || !(length(upper) %in% c(1, length(x)))) return(FALSE)
+  if (length(lower) == 1L) lower <- rep(lower, length(x))
+  if (length(upper) == 1L) upper <- rep(upper, length(x))
+  keep <- rep(TRUE, length(x))
+  for (i in seq_along(x)) {
+    w <- jitter_near_bound_window(lower = lower[i], upper = upper[i], margin_frac = margin_frac, eps = eps)
+    if (is.finite(w$lower) && x[i] <= w$lower) keep[i] <- FALSE
+    if (is.finite(w$upper) && x[i] >= w$upper) keep[i] <- FALSE
+  }
+  all(keep)
+}
+
+jitter_force_scalar_change <- function(current_val,
+                                       lower = -Inf,
+                                       upper = Inf,
+                                       eps = 1e-12,
+                                       use_interior = TRUE) {
+  if (!is.finite(current_val)) {
+    return(current_val)
+  }
+
+  if (use_interior) {
+    interior <- jitter_interior_bounds(lower = lower, upper = upper, eps = eps)
+    lo <- interior$lower
+    hi <- interior$upper
+  } else {
+    lo <- lower
+    hi <- upper
+  }
+
+  if (!is.finite(lo)) lo <- current_val - max(abs(current_val), 1)
+  if (!is.finite(hi)) hi <- current_val + max(abs(current_val), 1)
+  if (!is.finite(lo) || !is.finite(hi) || lo > hi) {
+    return(current_val)
+  }
+
+  span <- hi - lo
+  if (!is.finite(span) || span <= eps) {
+    candidate <- max(lo, min(hi, current_val))
+    if (abs(candidate - current_val) > eps) return(candidate)
+    return(current_val)
+  }
+
+  cur <- max(lo, min(hi, current_val))
+  min_step <- max(span * 1e-6, eps * 100)
+
+  left_hi <- cur - min_step
+  right_lo <- cur + min_step
+  left_ok <- left_hi > lo
+  right_ok <- right_lo < hi
+
+  if (left_ok && right_ok) {
+    if (runif(1) < 0.5) return(runif(1, lo, left_hi))
+    return(runif(1, right_lo, hi))
+  }
+  if (left_ok) return(runif(1, lo, left_hi))
+  if (right_ok) return(runif(1, right_lo, hi))
+
+  # If only tiny room exists, move to the farthest boundary point.
+  cand_lo <- lo
+  cand_hi <- hi
+  if (abs(cand_lo - cur) >= abs(cand_hi - cur) && abs(cand_lo - cur) > eps) return(cand_lo)
+  if (abs(cand_hi - cur) > eps) return(cand_hi)
+  current_val
+}
+
 jitter_sample_uniform_pct <- function(current_val, bound, lower = -Inf, upper = Inf, eps = 1e-12) {
   if (!is.finite(current_val) || bound <= 0) {
     return(current_val)
   }
 
   # Exact zero has no meaningful multiplicative percent perturbation.
-  # Keep it unchanged rather than switching to absolute-delta jitter.
+  # Force an additive move within bounds instead of staying fixed.
   if (current_val == 0) {
-    return(current_val)
+    return(jitter_force_scalar_change(current_val, lower = lower, upper = upper, eps = eps, use_interior = FALSE))
   }
 
   pct_min <- -bound
@@ -31,10 +126,14 @@ jitter_sample_uniform_pct <- function(current_val, bound, lower = -Inf, upper = 
   }
 
   if (pct_min > pct_max) {
-    return(max(lower, min(upper, current_val)))
+    return(jitter_force_scalar_change(current_val, lower = lower, upper = upper, eps = eps, use_interior = FALSE))
   }
 
-  current_val * (1 + runif(1, pct_min, pct_max))
+  proposal <- current_val * (1 + runif(1, pct_min, pct_max))
+  if (abs(proposal - current_val) <= eps) {
+    return(jitter_force_scalar_change(current_val, lower = lower, upper = upper, eps = eps, use_interior = FALSE))
+  }
+  proposal
 }
 
 jitter_interior_bounds <- function(lower = -Inf, upper = Inf, eps = 1e-12) {
@@ -43,9 +142,8 @@ jitter_interior_bounds <- function(lower = -Inf, upper = Inf, eps = 1e-12) {
 
   if (is.finite(lo) && is.finite(hi)) {
     span <- hi - lo
-    # Keep jitter away from hard bounds with a modest interior margin.
-    # 2% per side is less aggressive than 5% and avoids large forced shifts.
-    margin <- max(abs(span) * 2e-2, eps)
+    # Keep proposals away from hard bounds with a 2% reject window.
+    margin <- max(abs(span) * jitter_resample_near_bound_frac, eps)
     lo <- lo + margin
     hi <- hi - margin
   } else if (is.finite(lo)) {
@@ -64,6 +162,81 @@ jitter_sigma_from_cv <- function(jitter_cv) {
   sqrt(log1p(jitter_cv^2))
 }
 
+jitter_center_multiplicative_cv <- function(current_val,
+                                            jitter_cv,
+                                            lower = -Inf,
+                                            upper = Inf,
+                                            eps = 1e-12) {
+  w <- jitter_near_bound_window(lower = lower, upper = upper, margin_frac = jitter_resample_near_bound_frac, eps = eps)
+  lo <- w$lower
+  hi <- w$upper
+  if (!is.finite(current_val) || !is.finite(lo) || !is.finite(hi) || lo >= hi || current_val <= eps) {
+    return(max(lo, min(hi, current_val)))
+  }
+  sigma <- jitter_sigma_from_cv(jitter_cv)
+  z <- jitter_center_z()
+  c_lo <- lo * exp(z * sigma)
+  c_hi <- hi * exp(-z * sigma)
+  if (is.finite(c_lo) && is.finite(c_hi) && c_lo <= c_hi) {
+    return(min(c_hi, max(c_lo, current_val)))
+  }
+  # If requested central coverage is infeasible, use geometric midpoint.
+  gm <- sqrt(max(lo, eps) * max(hi, eps))
+  min(hi, max(lo, gm))
+}
+
+jitter_center_additive_cv <- function(current_val,
+                                      jitter_cv,
+                                      scale_val = 1,
+                                      lower = -Inf,
+                                      upper = Inf,
+                                      eps = 1e-12) {
+  w <- jitter_near_bound_window(lower = lower, upper = upper, margin_frac = jitter_resample_near_bound_frac, eps = eps)
+  lo <- w$lower
+  hi <- w$upper
+  if (!is.finite(current_val) || !is.finite(lo) || !is.finite(hi) || lo >= hi) {
+    return(max(lo, min(hi, current_val)))
+  }
+  if (!is.finite(scale_val) || scale_val <= eps) {
+    scale_val <- max(abs(current_val), 1)
+  }
+  sd_val <- max(jitter_cv * scale_val, eps)
+  z <- jitter_center_z()
+  c_lo <- lo + z * sd_val
+  c_hi <- hi - z * sd_val
+  if (is.finite(c_lo) && is.finite(c_hi) && c_lo <= c_hi) {
+    return(min(c_hi, max(c_lo, current_val)))
+  }
+  (lo + hi) / 2
+}
+
+jitter_center_bounded_cv <- function(current_val,
+                                     jitter_cv,
+                                     lower = -Inf,
+                                     upper = Inf,
+                                     eps = 1e-12) {
+  interior <- jitter_interior_bounds(lower = lower, upper = upper, eps = eps)
+  lo <- interior$lower
+  hi <- interior$upper
+  if (!is.finite(current_val) || !is.finite(lo) || !is.finite(hi) || lo >= hi) {
+    return(max(lo, min(hi, current_val)))
+  }
+  span <- hi - lo
+  p_cur <- (max(lo, min(hi, current_val)) - lo) / span
+  p_cur <- min(max(p_cur, 1e-6), 1 - 1e-6)
+  sigma <- jitter_sigma_from_cv(jitter_cv)
+  z <- jitter_center_z()
+  x_cur <- qlogis(p_cur)
+  x_lo <- qlogis(1e-6) + z * sigma
+  x_hi <- qlogis(1 - 1e-6) - z * sigma
+  if (!is.finite(x_lo) || !is.finite(x_hi) || x_lo > x_hi) {
+    x_mid <- 0
+  } else {
+    x_mid <- min(x_hi, max(x_lo, x_cur))
+  }
+  lo + plogis(x_mid) * span
+}
+
 jitter_clip <- function(x, lower = -Inf, upper = Inf, eps = 1e-12) {
   interior <- jitter_interior_bounds(lower = lower, upper = upper, eps = eps)
   max(interior$lower, min(interior$upper, x))
@@ -76,23 +249,35 @@ jitter_sample_multiplicative_cv <- function(current_val,
                                             eps = 1e-12,
                                             max_tries = 200) {
   if (!is.finite(current_val) || !is.finite(jitter_cv) || jitter_cv <= 0) {
-    return(jitter_clip(current_val, lower = lower, upper = upper, eps = eps))
+    return(jitter_force_scalar_change(current_val, lower = lower, upper = upper, eps = eps, use_interior = TRUE))
   }
   if (current_val <= eps) {
-    return(jitter_clip(current_val, lower = lower, upper = upper, eps = eps))
+    return(jitter_force_scalar_change(current_val, lower = lower, upper = upper, eps = eps, use_interior = TRUE))
   }
   interior <- jitter_interior_bounds(lower = lower, upper = upper, eps = eps)
   if (!is.finite(interior$lower) || !is.finite(interior$upper) || interior$lower > interior$upper) {
-    return(jitter_clip(current_val, lower = lower, upper = upper, eps = eps))
+    return(jitter_force_scalar_change(current_val, lower = lower, upper = upper, eps = eps, use_interior = FALSE))
   }
   sigma <- jitter_sigma_from_cv(jitter_cv)
+  centered_current <- jitter_center_multiplicative_cv(
+    current_val = current_val,
+    jitter_cv = jitter_cv,
+    lower = lower,
+    upper = upper,
+    eps = eps
+  )
+  centered_current <- suppressWarnings(as.numeric(centered_current))
+  if (!is.finite(centered_current) || centered_current <= eps) {
+    centered_current <- jitter_clip(current_val, lower = lower, upper = upper, eps = eps)
+  }
   for (iter in seq_len(max_tries)) {
-    proposal <- current_val * exp(rnorm(1, mean = 0, sd = sigma))
-    if (proposal > interior$lower && proposal < interior$upper) {
+    proposal <- centered_current * exp(rnorm(1, mean = 0, sd = sigma))
+    if (proposal > interior$lower && proposal < interior$upper &&
+        jitter_outside_near_bound(proposal, lower = lower, upper = upper, margin_frac = jitter_resample_near_bound_frac, eps = eps)) {
       return(proposal)
     }
   }
-  jitter_clip(current_val, lower = lower, upper = upper, eps = eps)
+  jitter_force_scalar_change(current_val, lower = lower, upper = upper, eps = eps, use_interior = TRUE)
 }
 
 jitter_sample_bounded_cv <- function(current_val,
@@ -102,22 +287,27 @@ jitter_sample_bounded_cv <- function(current_val,
                                      eps = 1e-12,
                                      max_tries = 200) {
   if (!is.finite(current_val) || !is.finite(jitter_cv) || jitter_cv <= 0) {
-    return(jitter_clip(current_val, lower = lower, upper = upper, eps = eps))
+    return(jitter_force_scalar_change(current_val, lower = lower, upper = upper, eps = eps, use_interior = TRUE))
   }
   interior <- jitter_interior_bounds(lower = lower, upper = upper, eps = eps)
   lo <- interior$lower
   hi <- interior$upper
   if (!is.finite(lo) || !is.finite(hi) || lo > hi) {
-    return(jitter_clip(current_val, lower = lower, upper = upper, eps = eps))
+    return(jitter_force_scalar_change(current_val, lower = lower, upper = upper, eps = eps, use_interior = FALSE))
   }
   span <- hi - lo
   if (!is.finite(span) || span <= eps) {
-    return(jitter_clip(current_val, lower = lower, upper = upper, eps = eps))
+    return(jitter_force_scalar_change(current_val, lower = lower, upper = upper, eps = eps, use_interior = FALSE))
   }
 
-  # Keep jitter centered near the clipped baseline value so boundary cases
-  # stay close to the reference point rather than being pushed deep inward.
-  clipped_current <- jitter_clip(current_val, lower = lower, upper = upper, eps = eps)
+  # Keep jitter centered using CV-adaptive anchor from bounded (logit) scale.
+  clipped_current <- jitter_center_bounded_cv(
+    current_val = current_val,
+    jitter_cv = jitter_cv,
+    lower = lower,
+    upper = upper,
+    eps = eps
+  )
   p0 <- (clipped_current - lo) / span
   if (!is.finite(p0)) p0 <- 0.5
   p0 <- min(max(p0, 1e-6), 1 - 1e-6)
@@ -127,11 +317,12 @@ jitter_sample_bounded_cv <- function(current_val,
   for (iter in seq_len(max_tries)) {
     proposal_p <- plogis(rnorm(1, mean = mu, sd = sigma))
     proposal <- lo + proposal_p * span
-    if (proposal > lo && proposal < hi) {
+    if (proposal > lo && proposal < hi &&
+        jitter_outside_near_bound(proposal, lower = lower, upper = upper, margin_frac = jitter_resample_near_bound_frac, eps = eps)) {
       return(proposal)
     }
   }
-  jitter_clip(current_val, lower = lower, upper = upper, eps = eps)
+  jitter_force_scalar_change(current_val, lower = lower, upper = upper, eps = eps, use_interior = TRUE)
 }
 
 jitter_sample_additive_cv <- function(current_val,
@@ -142,22 +333,31 @@ jitter_sample_additive_cv <- function(current_val,
                                       eps = 1e-12,
                                       max_tries = 200) {
   if (!is.finite(current_val) || !is.finite(jitter_cv) || jitter_cv <= 0) {
-    return(jitter_clip(current_val, lower = lower, upper = upper, eps = eps))
+    return(jitter_force_scalar_change(current_val, lower = lower, upper = upper, eps = eps, use_interior = TRUE))
   }
   if (!is.finite(scale_val) || scale_val <= eps) {
     scale_val <- 1
   }
   interior <- jitter_interior_bounds(lower = lower, upper = upper, eps = eps)
   if (!is.finite(interior$lower) || !is.finite(interior$upper) || interior$lower > interior$upper) {
-    return(jitter_clip(current_val, lower = lower, upper = upper, eps = eps))
+    return(jitter_force_scalar_change(current_val, lower = lower, upper = upper, eps = eps, use_interior = FALSE))
   }
   for (iter in seq_len(max_tries)) {
-    proposal <- rnorm(1, mean = current_val, sd = jitter_cv * scale_val)
-    if (proposal > interior$lower && proposal < interior$upper) {
+    centered_current <- jitter_center_additive_cv(
+      current_val = current_val,
+      jitter_cv = jitter_cv,
+      scale_val = scale_val,
+      lower = lower,
+      upper = upper,
+      eps = eps
+    )
+    proposal <- rnorm(1, mean = centered_current, sd = jitter_cv * scale_val)
+    if (proposal > interior$lower && proposal < interior$upper &&
+        jitter_outside_near_bound(proposal, lower = lower, upper = upper, margin_frac = jitter_resample_near_bound_frac, eps = eps)) {
       return(proposal)
     }
   }
-  jitter_clip(current_val, lower = lower, upper = upper, eps = eps)
+  jitter_force_scalar_change(current_val, lower = lower, upper = upper, eps = eps, use_interior = TRUE)
 }
 
 jitter_sample_uniform_delta <- function(current_val,
@@ -223,7 +423,11 @@ jitter_sample_uniform_delta <- function(current_val,
     return(sample_away_from_current(current_val, lower, upper, eps = eps))
   }
 
-  current_val + runif(1, delta_min, delta_max)
+  proposal <- current_val + runif(1, delta_min, delta_max)
+  if (abs(proposal - current_val) <= eps) {
+    return(sample_away_from_current(current_val, lower, upper, eps = eps))
+  }
+  proposal
 }
 
 jitter_sample_value <- function(current_val,
@@ -310,6 +514,56 @@ sample_bounded_simplex <- function(current_vals,
   x
 }
 
+force_simplex_change <- function(current_vals,
+                                 lower,
+                                 upper,
+                                 total_sum = sum(current_vals),
+                                 eps = 1e-12) {
+  current_vals <- as.numeric(current_vals)
+  lower <- as.numeric(lower)
+  upper <- as.numeric(upper)
+  n <- length(current_vals)
+  if (n < 2 || any(!is.finite(current_vals)) || any(!is.finite(lower)) || any(!is.finite(upper))) {
+    return(current_vals)
+  }
+
+  up_cap <- pmax(upper - current_vals, 0)
+  down_cap <- pmax(current_vals - lower, 0)
+  if (sum(up_cap > eps) == 0 || sum(down_cap > eps) == 0) {
+    return(current_vals)
+  }
+
+  i <- which.max(up_cap)
+  j_candidates <- which(seq_len(n) != i)
+  if (length(j_candidates) == 0) return(current_vals)
+  j <- j_candidates[which.max(down_cap[j_candidates])]
+  if (!is.finite(j) || length(j) == 0) return(current_vals)
+
+  delta_max <- min(up_cap[i], down_cap[j])
+  if (!is.finite(delta_max) || delta_max <= eps) {
+    return(current_vals)
+  }
+
+  delta <- max(delta_max * 0.5, eps * 10)
+  out <- current_vals
+  out[i] <- out[i] + delta
+  out[j] <- out[j] - delta
+
+  # Project tiny numerical drift back to simplex sum.
+  drift <- total_sum - sum(out)
+  if (abs(drift) > eps) {
+    k <- which.max(out - lower)
+    if (length(k) == 1 && is.finite(k) && (out[k] + drift) <= upper[k] + eps && (out[k] + drift) >= lower[k] - eps) {
+      out[k] <- out[k] + drift
+    }
+  }
+
+  if (all(out >= lower - eps) && all(out <= upper + eps) && abs(sum(out) - total_sum) <= 1e-8) {
+    return(out)
+  }
+  current_vals
+}
+
 sample_dirichlet_bounded_cv <- function(current_vals,
                                         jitter_cv,
                                         lower = NULL,
@@ -352,6 +606,27 @@ sample_dirichlet_bounded_cv <- function(current_vals,
     return(current_vals)
   }
 
+  # Apply a secondary safety window: reject proposals when any component
+  # falls within 2% of bounds. This is applied to the whole simplex vector.
+  lower_near <- lower
+  upper_near <- upper
+  finite_span <- is.finite(lower) & is.finite(upper) & (upper > lower)
+  if (any(finite_span)) {
+    span_near <- upper[finite_span] - lower[finite_span]
+    margin_near <- pmax(abs(span_near) * jitter_resample_near_bound_frac, eps)
+    lower_near[finite_span] <- lower[finite_span] + margin_near
+    upper_near[finite_span] <- upper[finite_span] - margin_near
+  }
+  lower_eff <- lower_i
+  upper_eff <- upper_i
+  if (all(is.finite(lower_near)) && all(is.finite(upper_near))) {
+    feasible_near <- !(sum(lower_near) > total_sum + eps || sum(upper_near) < total_sum - eps)
+    if (isTRUE(feasible_near)) {
+      lower_eff <- pmax(lower_eff, lower_near)
+      upper_eff <- pmin(upper_eff, upper_near)
+    }
+  }
+
   probs <- pmax(current_vals / total_sum, eps)
   probs <- probs / sum(probs)
   alpha0 <- max((n - 1) / max(jitter_cv^2, eps) - 1, 1)
@@ -361,17 +636,33 @@ sample_dirichlet_bounded_cv <- function(current_vals,
     g <- rgamma(n, shape = alpha, rate = 1)
     if (!all(is.finite(g)) || sum(g) <= eps) next
     proposal <- total_sum * g / sum(g)
-    if (all(proposal >= lower_i & proposal <= upper_i)) {
+    changed_enough <- any(abs(proposal - current_vals) > (eps * 10))
+    if (all(proposal >= lower_eff & proposal <= upper_eff) && changed_enough) {
       return(proposal)
     }
   }
 
-  # Last fallback: construct a bounded simplex proposal directly.
-  sample_bounded_simplex(
+  # Fallback 1: construct a bounded simplex proposal directly.
+  for (iter in seq_len(max(50L, max_tries %/% 2L))) {
+    fallback <- sample_bounded_simplex(
+      current_vals = current_vals,
+      total_sum = total_sum,
+      lower = lower_eff,
+      upper = upper_eff,
+      eps = eps
+    )
+    if (all(fallback >= lower_eff - eps & fallback <= upper_eff + eps) &&
+        any(abs(fallback - current_vals) > (eps * 10))) {
+      return(fallback)
+    }
+  }
+
+  # Fallback 2: force a minimal valid simplex move so region_pars never stays fixed.
+  force_simplex_change(
     current_vals = current_vals,
+    lower = lower_eff,
+    upper = upper_eff,
     total_sum = total_sum,
-    lower = lower_i,
-    upper = upper_i,
     eps = eps
   )
 }

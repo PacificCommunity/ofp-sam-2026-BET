@@ -70,6 +70,12 @@ file_info <- file.info(par_files)
 reference_par_file <- rownames(file_info)[which.max(file_info$mtime)]
 cat("Reference par for indepvar mapping:", basename(reference_par_file), "\n")
 copied_reference_par_files <- par_files
+copied_reference_par_obj <- suppressWarnings(
+  tryCatch(read.MFCLPar(reference_par_file), error = function(e) NULL)
+)
+if (is.null(copied_reference_par_obj)) {
+  stop("Failed to read copied reference .par for final fitted comparison: ", reference_par_file)
+}
 
 ############################
 ## Generate jittered 00.par ##
@@ -378,7 +384,9 @@ fitted_parameter_change_overall <- NULL
 legacy_final_par_path <- file.path(seed_dir_abs, legacy_output_par)
 final_par_path <- if (file.exists(legacy_final_par_path)) legacy_final_par_path else mp_final_par(seed_dir_abs)
 output_par_name <- if (!is.null(final_par_path)) basename(final_par_path) else NA_character_
-base_par_obj <- reference_par
+# Final fitted comparison baseline must be the copied base_dir reference .par,
+# not the jitter pre-run phase1 baseline.
+base_par_obj <- copied_reference_par_obj
 output_par_obj <- if (!is.null(final_par_path) && file.exists(final_par_path)) {
   suppressWarnings(tryCatch(read.MFCLPar(final_par_path), error = function(e) NULL))
 } else {
@@ -450,6 +458,7 @@ info_list <- list(
   seed_dir      = seed_dir,
   seed_dir_abs  = seed_dir_abs,
   input_par     = base_par_label,
+  fitted_baseline_par = basename(reference_par_file),
   input_00_par  = basename(base_00_par),
   input_ini     = ini_file,
   jittered_par  = jittered_par_name,

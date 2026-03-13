@@ -614,6 +614,7 @@ mp_build_jitter_payload <- function(seed_dir, seed = NA_integer_) {
   run_checks <- mp_detect_jitter_run_state(
     seed_dir = seed_dir,
     output_par_exists = out_exists,
+    jitter_cv = suppressWarnings(as.numeric(if (!is.null(info_out$jitter_cv)) info_out$jitter_cv else NA_real_)),
     obj_fun = obj_fun,
     max_grad = max_grad,
     exit_status = exit_status

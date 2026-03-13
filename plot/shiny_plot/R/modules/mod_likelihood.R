@@ -195,7 +195,11 @@ mod_likelihood_ui <- function() {
                         style = "display:block; margin-top:-6px; margin-bottom:6px; color:#666;"
                       ),
                       tags$small(
-                        "Jitter uses interior bounds (lower/upper each trimmed by 2% of span), samples by CV, and resamples if a proposal hits bounds.",
+                        "Jitter anchor is CV-adaptive (target central coverage 99.9%), and proposals are resampled if they fall within 2% of bounds.",
+                        style = "display:block; margin-top:-4px; margin-bottom:6px; color:#666;"
+                      ),
+                      tags$small(
+                        "Bound rule: span = U-L, reject window = (<=L+0.02*span) or (>=U-0.02*span). Anchor shifts by CV to keep ~99.9% proposal mass away from reject windows.",
                         style = "display:block; margin-top:-4px; margin-bottom:6px; color:#666;"
                       )
                     )
@@ -2645,6 +2649,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           mutate(
             scenario = sc,
             seed = as.character(seeds[[i]]),
+            jitter_cv = suppressWarnings(as.numeric(if (!is.null(jit$jitter_cv)) jit$jitter_cv else NA_real_)),
             Index = suppressWarnings(as.integer(Index)),
             before = suppressWarnings(as.numeric(before)),
             after = suppressWarnings(as.numeric(after)),
@@ -3881,18 +3886,29 @@ mod_likelihood_server <- function(input, output, session, rv) {
         build_jitter_seed_status_tables(filters$scenarios, cutoff = converged_max_grad)$summary
       )
 
-      jitter_interior_clip <- function(x, lower, upper, eps = 1e-12) {
+      jitter_interior_clip <- function(x, lower, upper, jitter_cv = 0.2, eps = 1e-12) {
         x <- suppressWarnings(as.numeric(x))
         lower <- suppressWarnings(as.numeric(lower))
         upper <- suppressWarnings(as.numeric(upper))
+        jitter_cv <- suppressWarnings(as.numeric(jitter_cv))
+        jitter_cv[!is.finite(jitter_cv) | jitter_cv <= 0] <- 0.2
         out <- x
         ok <- is.finite(x) & is.finite(lower) & is.finite(upper) & (upper > lower)
         if (any(ok)) {
           span <- upper[ok] - lower[ok]
-          margin <- pmax(abs(span) * 2e-2, eps)
-          lo <- lower[ok] + margin
-          hi <- upper[ok] - margin
-          out[ok] <- pmin(hi, pmax(lo, x[ok]))
+          lo <- lower[ok] + pmax(abs(span) * 2e-2, eps)
+          hi <- upper[ok] - pmax(abs(span) * 2e-2, eps)
+          sigma <- sqrt(log1p(jitter_cv[ok]^2))
+          z <- stats::qnorm(1 - (1 - 0.999) / 2)
+          c_lo <- lo * exp(z * sigma)
+          c_hi <- hi * exp(-z * sigma)
+          x0 <- pmin(hi, pmax(lo, x[ok]))
+          center <- ifelse(
+            is.finite(c_lo) & is.finite(c_hi) & c_lo <= c_hi,
+            pmin(c_hi, pmax(c_lo, x0)),
+            sqrt(pmax(lo, eps) * pmax(hi, eps))
+          )
+          out[ok] <- pmin(hi, pmax(lo, center))
         }
         out
       }
@@ -3908,6 +3924,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
         family_plot_df <- data %>%
           mutate(
             family = ifelse(is.na(family) | !nzchar(family), "unclassified", family),
+            is_bound_hit = is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) &
+              is.finite(before) & (before <= L_bound | before >= U_bound),
+            center_value_raw = dplyr::case_when(
+              is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) & is.finite(before) ~
+                jitter_interior_clip(before, L_bound, U_bound, jitter_cv = jitter_cv),
+              TRUE ~ before
+            ),
+            is_center_adjusted = is.finite(center_value_raw) & is.finite(before) &
+              (abs(center_value_raw - before) > 0),
             plot_value = case_when(
               metric == "bound_position" & is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) ~
                 (after - L_bound) / (U_bound - L_bound),
@@ -3928,25 +3953,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
             original_value = case_when(
               metric == "bound_position" & is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) &
                 is.finite(before) ~ {
-                  ref_before <- if (identical(param_view, "input")) {
-                    jitter_interior_clip(before, L_bound, U_bound)
-                  } else {
-                    before
-                  }
-                  (ref_before - L_bound) / (U_bound - L_bound)
+                  (before - L_bound) / (U_bound - L_bound)
                 },
-              metric == "value" ~ {
-                if (identical(param_view, "input")) {
-                  dplyr::if_else(
-                    is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) &
-                      is.finite(before) & (before <= L_bound | before >= U_bound),
-                    jitter_interior_clip(before, L_bound, U_bound),
-                    before
-                  )
-                } else {
-                  before
-                }
-              },
+              metric == "value" ~ before,
+              TRUE ~ 0
+            ),
+            adjusted_center_value = case_when(
+              metric == "bound_position" & is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) &
+                is.finite(center_value_raw) ~ {
+                  (center_value_raw - L_bound) / (U_bound - L_bound)
+                },
+              metric == "value" ~ center_value_raw,
               TRUE ~ 0
             )
           ) %>%
@@ -3982,12 +3999,30 @@ mod_likelihood_server <- function(input, output, session, rv) {
         if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus")) {
           original_family_df <- family_plot_df %>%
             group_by(scenario, family) %>%
-            summarise(original_value = signed_max_abs(original_value), .groups = "drop")
+            summarise(
+              original_value = signed_max_abs(original_value),
+              adjusted_center_value = signed_max_abs(adjusted_center_value),
+              has_bound_hit = any(is_bound_hit, na.rm = TRUE),
+              has_center_adjusted = any(is_center_adjusted, na.rm = TRUE),
+              .groups = "drop"
+            )
         } else {
           original_family_df <- family_plot_df %>%
             group_by(scenario, family) %>%
-            summarise(original_value = median(original_value, na.rm = TRUE), .groups = "drop")
+            summarise(
+              original_value = median(original_value, na.rm = TRUE),
+              adjusted_center_value = median(adjusted_center_value, na.rm = TRUE),
+              has_bound_hit = any(is_bound_hit, na.rm = TRUE),
+              has_center_adjusted = any(is_center_adjusted, na.rm = TRUE),
+              .groups = "drop"
+            )
         }
+        boundhit_family_df <- original_family_df %>%
+          filter(isTRUE(has_center_adjusted) | has_center_adjusted) %>%
+          filter(is.finite(adjusted_center_value), is.finite(original_value)) %>%
+          filter(abs(adjusted_center_value - original_value) > 1e-10)
+        boundhit_family_df <- boundhit_family_df %>%
+          mutate(center_shift = adjusted_center_value - original_value)
 
         plot_limit <- NULL
         if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus") && range_pct < 100) {
@@ -4049,7 +4084,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
           plot_subtitle <- paste0(plot_subtitle, " Converged/total: ", jitter_counts, ".")
         }
         if (identical(param_view, "input") && metric %in% c("bound_position", "value")) {
-          plot_subtitle <- paste0(plot_subtitle, " Red diamond = jitter reference (baseline after interior-bound adjustment when baseline hits bounds).")
+          if (identical(metric, "bound_position")) {
+            plot_subtitle <- paste0(plot_subtitle, " Red diamond = raw baseline/original bound position.")
+          } else {
+            plot_subtitle <- paste0(plot_subtitle, " Red diamond = raw baseline/original value.")
+          }
+          plot_subtitle <- paste0(plot_subtitle, " Orange circle = adjusted jitter center (interior-clipped baseline).")
         } else {
           plot_subtitle <- paste0(plot_subtitle, " Red diamond = baseline/original.")
         }
@@ -4079,6 +4119,30 @@ mod_likelihood_server <- function(input, output, session, rv) {
               shape = 23,
               size = 2.8,
               stroke = 0.4,
+              na.rm = TRUE
+            )
+          } +
+          {
+            if (identical(param_view, "input") && metric %in% c("bound_position", "value") && nrow(boundhit_family_df) > 0) geom_segment(
+              data = boundhit_family_df,
+              aes(x = family, xend = family, y = original_value, yend = adjusted_center_value),
+              inherit.aes = FALSE,
+              color = "#ff7f0e",
+              linewidth = 0.5,
+              alpha = 0.85,
+              na.rm = TRUE
+            )
+          } +
+          {
+            if (identical(param_view, "input") && metric %in% c("bound_position", "value") && nrow(boundhit_family_df) > 0) geom_point(
+              data = boundhit_family_df,
+              aes(x = family, y = adjusted_center_value),
+              inherit.aes = FALSE,
+              color = "#ff7f0e",
+              fill = "white",
+              shape = 21,
+              size = 2.6,
+              stroke = 0.9,
               na.rm = TRUE
             )
           } +
@@ -4190,6 +4254,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
         inner_join(selected_params %>% select(scenario, param_key, plot_rank), by = c("scenario", "param_key")) %>%
         mutate(
           param_label = paste0(Var_name, "\n[", family, "]"),
+          is_bound_hit = is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) &
+            is.finite(before) & (before <= L_bound | before >= U_bound),
+          center_value_raw = dplyr::case_when(
+            is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) & is.finite(before) ~
+              jitter_interior_clip(before, L_bound, U_bound, jitter_cv = jitter_cv),
+            TRUE ~ before
+          ),
+          is_center_adjusted = is.finite(center_value_raw) & is.finite(before) &
+            (abs(center_value_raw - before) > 0),
           plot_value = case_when(
             metric == "bound_position" & is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) ~
               (after - L_bound) / (U_bound - L_bound),
@@ -4208,27 +4281,19 @@ mod_likelihood_server <- function(input, output, session, rv) {
             )
           ),
           original_value = case_when(
-            metric == "bound_position" & is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) &
-              is.finite(before) ~ {
-                ref_before <- if (identical(param_view, "input")) {
-                  jitter_interior_clip(before, L_bound, U_bound)
-                } else {
-                  before
-                }
-                (ref_before - L_bound) / (U_bound - L_bound)
+          metric == "bound_position" & is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) &
+            is.finite(before) ~ {
+                (before - L_bound) / (U_bound - L_bound)
               },
-            metric == "value" ~ {
-              if (identical(param_view, "input")) {
-                dplyr::if_else(
-                  is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) &
-                    is.finite(before) & (before <= L_bound | before >= U_bound),
-                  jitter_interior_clip(before, L_bound, U_bound),
-                  before
-                )
-              } else {
-                before
-              }
+            metric == "value" ~ before,
+            TRUE ~ 0
+          ),
+          adjusted_center_value = case_when(
+            metric == "bound_position" & is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) &
+              is.finite(center_value_raw) ~ {
+              (center_value_raw - L_bound) / (U_bound - L_bound)
             },
+            metric == "value" ~ center_value_raw,
             TRUE ~ 0
           )
         )
@@ -4261,7 +4326,19 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
       original_df <- plot_df_all %>%
         group_by(scenario, param_key, param_label) %>%
-        summarise(original_value = first(original_value), .groups = "drop")
+        summarise(
+          original_value = first(original_value),
+          adjusted_center_value = first(adjusted_center_value),
+          has_bound_hit = any(is_bound_hit, na.rm = TRUE),
+          has_center_adjusted = any(is_center_adjusted, na.rm = TRUE),
+          .groups = "drop"
+        )
+      boundhit_original_df <- original_df %>%
+        filter(isTRUE(has_center_adjusted) | has_center_adjusted) %>%
+        filter(is.finite(adjusted_center_value), is.finite(original_value)) %>%
+        filter(abs(adjusted_center_value - original_value) > 1e-10)
+      boundhit_original_df <- boundhit_original_df %>%
+        mutate(center_shift = adjusted_center_value - original_value)
 
       plot_limit <- NULL
       if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus") && range_pct < 100) {
@@ -4379,7 +4456,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
           plot_subtitle <- paste0(plot_subtitle, " Converged/total: ", jitter_counts, ".")
         }
       if (identical(param_view, "input") && metric %in% c("bound_position", "value")) {
-        plot_subtitle <- paste0(plot_subtitle, " Red diamond = jitter reference (baseline after interior-bound adjustment when baseline hits bounds).")
+        if (identical(metric, "bound_position")) {
+          plot_subtitle <- paste0(plot_subtitle, " Red diamond = raw baseline/original bound position.")
+        } else {
+          plot_subtitle <- paste0(plot_subtitle, " Red diamond = raw baseline/original value.")
+        }
+        plot_subtitle <- paste0(plot_subtitle, " Orange circle = adjusted jitter center (interior-clipped baseline).")
       } else {
         plot_subtitle <- paste0(plot_subtitle, " Red diamond = baseline/original.")
       }
@@ -4415,6 +4497,30 @@ mod_likelihood_server <- function(input, output, session, rv) {
               stroke = 0.4,
               na.rm = TRUE
             )
+          } +
+          {
+            if (identical(param_view, "input") && metric %in% c("bound_position", "value") && nrow(boundhit_original_df) > 0) geom_segment(
+              data = boundhit_original_df,
+              aes(x = param_key, xend = param_key, y = original_value, yend = adjusted_center_value),
+              inherit.aes = FALSE,
+              color = "#ff7f0e",
+              linewidth = 0.45,
+              alpha = 0.85,
+              na.rm = TRUE
+            )
+          } +
+          {
+            if (identical(param_view, "input") && metric %in% c("bound_position", "value") && nrow(boundhit_original_df) > 0) geom_point(
+              data = boundhit_original_df,
+              aes(x = param_key, y = adjusted_center_value),
+              inherit.aes = FALSE,
+              color = "#ff7f0e",
+              fill = "white",
+              shape = 21,
+              size = 2.4,
+              stroke = 0.9,
+              na.rm = TRUE
+            )
           }
       } else {
         p <- ggplot(plot_df, aes(x = param_key, y = plot_value)) +
@@ -4442,6 +4548,30 @@ mod_likelihood_server <- function(input, output, session, rv) {
               shape = 23,
               size = 2.8,
               stroke = 0.4,
+              na.rm = TRUE
+            )
+          } +
+          {
+            if (identical(param_view, "input") && metric %in% c("bound_position", "value") && nrow(boundhit_original_df) > 0) geom_segment(
+              data = boundhit_original_df,
+              aes(x = param_key, xend = param_key, y = original_value, yend = adjusted_center_value),
+              inherit.aes = FALSE,
+              color = "#ff7f0e",
+              linewidth = 0.45,
+              alpha = 0.85,
+              na.rm = TRUE
+            )
+          } +
+          {
+            if (identical(param_view, "input") && metric %in% c("bound_position", "value") && nrow(boundhit_original_df) > 0) geom_point(
+              data = boundhit_original_df,
+              aes(x = param_key, y = adjusted_center_value),
+              inherit.aes = FALSE,
+              color = "#ff7f0e",
+              fill = "white",
+              shape = 21,
+              size = 2.6,
+              stroke = 0.9,
               na.rm = TRUE
             )
           }
