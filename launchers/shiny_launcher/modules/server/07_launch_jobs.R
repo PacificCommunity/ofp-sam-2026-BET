@@ -368,7 +368,7 @@
 
   parse_numeric_tokens <- function(x) {
     if (is.null(x) || !nzchar(trimws(as.character(x)))) return(numeric(0))
-    vals <- suppressWarnings(as.numeric(strsplit(as.character(x), "\\s+")[[1]]))
+    vals <- suppressWarnings(as.numeric(strsplit(as.character(x), "[,\\s]+")[[1]]))
     vals[is.finite(vals)]
   }
 
@@ -1530,7 +1530,14 @@
         job_env$chain_name <- as.character(spec$chain_name)
       }
       if (!is.null(spec$chain_scalers) && nzchar(as.character(spec$chain_scalers))) {
+        chain_vals <- parse_numeric_tokens(spec$chain_scalers)
         job_env$chain_scalers <- as.character(spec$chain_scalers)
+        if (length(chain_vals) > 0) {
+          job_env$chain_count <- as.character(length(chain_vals))
+          for (ii in seq_along(chain_vals)) {
+            job_env[[paste0("chain_scaler_", ii)]] <- format(chain_vals[[ii]], scientific = FALSE, trim = TRUE)
+          }
+        }
       }
       if (!is.null(spec$chain_first_init_from) && nzchar(as.character(spec$chain_first_init_from))) {
         job_env$chain_first_init_from <- as.character(spec$chain_first_init_from)

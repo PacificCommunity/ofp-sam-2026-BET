@@ -6,12 +6,23 @@ parse_numeric_tokens <- function(x) {
   vals[is.finite(vals)]
 }
 
+read_indexed_chain_scalers <- function() {
+  n <- suppressWarnings(as.integer(Sys.getenv("chain_count", "")))
+  if (!is.finite(n) || n < 1) return(numeric(0))
+  out <- numeric(0)
+  for (i in seq_len(n)) {
+    v <- suppressWarnings(as.numeric(Sys.getenv(paste0("chain_scaler_", i), "")))
+    if (is.finite(v)) out <- c(out, v)
+  }
+  out
+}
+
 chain_name <- Sys.getenv("chain_name", "chain")
-chain_scalers <- parse_numeric_tokens(Sys.getenv("chain_scalers", ""))
+chain_scalers <- read_indexed_chain_scalers()
 chain_first_init_from <- suppressWarnings(as.numeric(Sys.getenv("chain_first_init_from", "")))
 
 if (length(chain_scalers) == 0) {
-  stop("No chain_scalers provided for prof chain run.")
+  stop("No indexed chain scalers provided (expecting chain_count and chain_scaler_1..N).")
 }
 
 cat("=== Profile Chain Run ===\n")
