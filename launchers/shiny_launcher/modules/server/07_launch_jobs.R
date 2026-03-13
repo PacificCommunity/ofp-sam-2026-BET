@@ -418,6 +418,8 @@
         "model_dir",
         "program_path",
         "mfcl_commands",
+        "Reps",
+        "scalers",
         "min_year",
         "n_mixing_periods",
         "DOCKER_IMAGE"
@@ -429,6 +431,7 @@
       jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian", "jitter_base_source"),
       hessian = c("hessian_part", "nsplit", "model_hessian"),
       prof = c("scaler", "scalers", "prof_hessian", "prof_init_map_rds", "init_from_scaler_map", "init_par_override_map", "init_from_scaler", "init_par_override"),
+      prof_chain = c("chain_name", "chain_scalers", "chain_first_init_from", "scalers", "prof_hessian", "prof_init_map_rds", "init_from_scaler_map", "init_par_override_map"),
       character(0)
       )
 
@@ -459,6 +462,8 @@
       "model_dir",
       "program_path",
       "mfcl_commands",
+      "Reps",
+      "scalers",
       "min_year",
       "n_mixing_periods",
       "DOCKER_IMAGE"
@@ -471,6 +476,7 @@
         jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian", "jitter_base_source"),
         hessian = c("hessian_part", "nsplit", "model_hessian"),
         prof = c("scaler", "scalers", "prof_hessian", "prof_init_map_rds", "init_from_scaler_map", "init_par_override_map", "init_from_scaler", "init_par_override"),
+        prof_chain = c("chain_name", "chain_scalers", "chain_first_init_from", "scalers", "prof_hessian", "prof_init_map_rds", "init_from_scaler_map", "init_par_override_map"),
         character(0)
       )
     }
@@ -509,9 +515,49 @@
       job_blocks <- vapply(jobs, function(j) {
         jt <- if (!is.null(j$job_type) && nzchar(as.character(j$job_type))) as.character(j$job_type) else "NA"
         bn <- if (!is.null(j$batch_name) && nzchar(as.character(j$batch_name))) as.character(j$batch_name) else "NA"
-        type_lines <- format_env_lines(j$job_env, type_fields_for(jt))
+        env_use <- j$job_env
+        if ((is.null(env_use) || !is.list(env_use) || length(env_use) == 0) &&
+            !is.null(j$spec) && is.list(j$spec) && length(j$spec) > 0) {
+          env_use <- j$spec
+        }
+        type_lines <- format_env_lines(env_use, type_fields_for(jt))
         if (length(type_lines) == 0) {
-          type_lines <- "  <no job-type specific config>"
+          if (!is.null(env_use) && is.list(env_use) && length(env_use) > 0) {
+            env_names_all <- names(env_use)
+            env_names_all <- env_names_all[!is.na(env_names_all) & nzchar(env_names_all)]
+            fallback_fields <- setdiff(env_names_all, common_fields)
+            if (length(fallback_fields) > 0) {
+              type_lines <- vapply(fallback_fields, function(nm) {
+                paste0("  ", nm, " : ", collapse_model_field(env_use[[nm]]))
+              }, character(1))
+            } else {
+              type_lines <- "  <no job-type specific config>"
+            }
+          } else {
+            type_lines <- "  <no job-type specific config>"
+          }
+        }
+        if (identical(jt, "prof_chain")) {
+          has_chain <- any(grepl("^\\s+chain_(name|scalers|first_init_from)\\s*:", type_lines))
+          if (!has_chain) {
+            chain_nm <- if (!is.null(j$spec$chain_name) && nzchar(as.character(j$spec$chain_name))) {
+              as.character(j$spec$chain_name)
+            } else if (grepl("profchain-up", bn, fixed = TRUE)) {
+              "up"
+            } else if (grepl("profchain-down", bn, fixed = TRUE)) {
+              "down"
+            } else {
+              "NA"
+            }
+            chain_sc <- if (!is.null(j$spec$chain_scalers) && nzchar(as.character(j$spec$chain_scalers))) as.character(j$spec$chain_scalers) else "NA"
+            chain_init <- if (!is.null(j$spec$chain_first_init_from) && nzchar(as.character(j$spec$chain_first_init_from))) as.character(j$spec$chain_first_init_from) else "NA"
+            type_lines <- c(
+              paste0("  chain_name : ", chain_nm),
+              paste0("  chain_scalers : ", chain_sc),
+              paste0("  chain_first_init_from : ", chain_init),
+              type_lines
+            )
+          }
         }
         paste(c(
           paste0(model_name, " [", jt, "]"),
@@ -684,7 +730,7 @@
                 model_name = model_name,
                 job_type = "prof_chain",
                 chain_name = "down",
-                chain_scalers = paste(down_chain, collapse = " "),
+                chain_scalers = paste(down_chain, collapse = ","),
                 chain_first_init_from = NULL
               )
             }
@@ -694,7 +740,7 @@
                 model_name = model_name,
                 job_type = "prof_chain",
                 chain_name = "up",
-                chain_scalers = paste(up_chain, collapse = " "),
+                chain_scalers = paste(up_chain, collapse = ","),
                 chain_first_init_from = as.character(plan$anchor)
               )
             }
@@ -870,7 +916,7 @@
                 tryCatch({
                   launch_single_job_raw(spec, common_params)
                 }, error = function(e) {
-                  list(batch_name = NA_character_, remote_dir = NA_character_, job_id = NA_character_, error = e$message)
+                  list(batch_name = NA_character_, remote_dir = NA_character_, job_id = NA_character_, error = e$message, spec = spec)
                 })
               })
             } else {
@@ -890,7 +936,7 @@
                 tryCatch({
                   launch_single_job_local_raw(spec, common_params)
                 }, error = function(e) {
-                  list(batch_name = NA_character_, remote_dir = NA_character_, job_id = NA_character_, error = e$message)
+                  list(batch_name = NA_character_, remote_dir = NA_character_, job_id = NA_character_, error = e$message, spec = spec)
                 })
               })
             }

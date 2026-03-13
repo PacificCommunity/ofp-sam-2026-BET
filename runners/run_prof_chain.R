@@ -2,7 +2,7 @@
 
 parse_numeric_tokens <- function(x) {
   if (is.null(x) || !nzchar(trimws(as.character(x)))) return(numeric(0))
-  vals <- suppressWarnings(as.numeric(strsplit(as.character(x), "\\s+")[[1]]))
+  vals <- suppressWarnings(as.numeric(strsplit(as.character(x), "[,\\s]+")[[1]]))
   vals[is.finite(vals)]
 }
 
