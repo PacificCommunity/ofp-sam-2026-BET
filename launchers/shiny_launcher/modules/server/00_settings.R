@@ -538,6 +538,8 @@
       Idle = character(),
       Total = character(),
       JobIDs = character(),
+      OutputDir = character(),
+      RunDescription = character(),
       stringsAsFactors = FALSE
     ),
     config_loaded = FALSE,

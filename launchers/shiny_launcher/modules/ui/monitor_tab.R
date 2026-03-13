@@ -37,6 +37,32 @@ monitor_tab_ui <- function() {
             
             
             shiny::hr(),
+            fluidRow(
+              column(
+                4,
+                selectInput(
+                  "monitor_output_dir_filter",
+                  "Output Directory:",
+                  choices = c("All output directories" = "__all__"),
+                  selected = "__all__"
+                )
+              ),
+              column(
+                8,
+                div(
+                  style = "padding-top: 24px;",
+                  htmlOutput("monitor_run_description"),
+                  tags$div(
+                    style = "margin-top: 4px;",
+                    htmlOutput("monitor_progress_summary")
+                  ),
+                  tags$div(
+                    style = "margin-top: 6px;",
+                    uiOutput("monitor_job_log_details")
+                  )
+                )
+              )
+            ),
             DTOutput("jobs_table")
           )
         ),
