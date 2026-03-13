@@ -1529,16 +1529,19 @@
       if (!is.null(spec$chain_name) && nzchar(as.character(spec$chain_name))) {
         job_env$chain_name <- as.character(spec$chain_name)
       }
-      if (!is.null(spec$chain_scalers) && nzchar(as.character(spec$chain_scalers))) {
-        chain_vals <- parse_numeric_tokens(spec$chain_scalers)
-        job_env$chain_scalers <- as.character(spec$chain_scalers)
-        if (length(chain_vals) > 0) {
-          job_env$chain_count <- as.character(length(chain_vals))
-          for (ii in seq_along(chain_vals)) {
-            job_env[[paste0("chain_scaler_", ii)]] <- format(chain_vals[[ii]], scientific = FALSE, trim = TRUE)
+        if (!is.null(spec$chain_scalers) && nzchar(as.character(spec$chain_scalers))) {
+          chain_vals <- parse_numeric_tokens(spec$chain_scalers)
+          job_env$chain_scalers <- as.character(spec$chain_scalers)
+          if (length(chain_vals) > 0) {
+            job_env$chain_count <- as.character(length(chain_vals))
+            job_env$CHAIN_COUNT <- as.character(length(chain_vals))
+            for (ii in seq_along(chain_vals)) {
+              v <- format(chain_vals[[ii]], scientific = FALSE, trim = TRUE)
+              job_env[[paste0("chain_scaler_", ii)]] <- v
+              job_env[[paste0("CHAIN_SCALER_", ii)]] <- v
+            }
           }
         }
-      }
       if (!is.null(spec$chain_first_init_from) && nzchar(as.character(spec$chain_first_init_from))) {
         job_env$chain_first_init_from <- as.character(spec$chain_first_init_from)
       }

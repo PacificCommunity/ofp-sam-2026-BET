@@ -7,11 +7,13 @@ parse_numeric_tokens <- function(x) {
 }
 
 read_indexed_chain_scalers <- function() {
-  n <- suppressWarnings(as.integer(Sys.getenv("chain_count", "")))
+  n <- suppressWarnings(as.integer(Sys.getenv("chain_count", Sys.getenv("CHAIN_COUNT", ""))))
   if (!is.finite(n) || n < 1) return(numeric(0))
   out <- numeric(0)
   for (i in seq_len(n)) {
-    v <- suppressWarnings(as.numeric(Sys.getenv(paste0("chain_scaler_", i), "")))
+    key_lo <- paste0("chain_scaler_", i)
+    key_up <- paste0("CHAIN_SCALER_", i)
+    v <- suppressWarnings(as.numeric(Sys.getenv(key_lo, Sys.getenv(key_up, ""))))
     if (is.finite(v)) out <- c(out, v)
   }
   out
@@ -22,7 +24,7 @@ chain_scalers <- read_indexed_chain_scalers()
 chain_first_init_from <- suppressWarnings(as.numeric(Sys.getenv("chain_first_init_from", "")))
 
 if (length(chain_scalers) == 0) {
-  stop("No indexed chain scalers provided (expecting chain_count and chain_scaler_1..N).")
+  stop("No indexed chain scalers provided (expecting chain_count/CHAIN_COUNT and chain_scaler_1..N or CHAIN_SCALER_1..N).")
 }
 
 cat("=== Profile Chain Run ===\n")
