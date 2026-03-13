@@ -63,6 +63,12 @@
     default_scalers
   }
 
+  resolve_prof_scalers_for_mode <- function(model_env, prof_chain_mode = FALSE) {
+    # In sequential-chain mode, always use explicit profile scalers.
+    if (isTRUE(prof_chain_mode)) return(parse_numeric_tokens(model_env$scalers))
+    resolve_prof_scalers(model_env)
+  }
+
   resolve_prof_anchor_and_chains <- function(scalers, anchor) {
     scalers <- sort(unique(scalers[is.finite(scalers)]))
     if (length(scalers) == 0) {
@@ -605,7 +611,7 @@
         } else if (identical(job_type, "retro")) {
           total_jobs <- total_jobs + length(parse_numeric_tokens(model_env$retro_peels))
         } else if (identical(job_type, "prof")) {
-          scalers <- resolve_prof_scalers(model_env)
+          scalers <- resolve_prof_scalers_for_mode(model_env, prof_chain_mode = prof_chain_mode)
           if (isTRUE(prof_chain_mode) && !isTRUE(is_local_mode)) {
             plan <- resolve_prof_anchor_and_chains(scalers, prof_anchor_requested)
             down_chain <- c(plan$anchor, plan$lower)
@@ -719,7 +725,7 @@
             add_job_spec(model_name, job_type, peel = peel)
           }
         } else if (job_type == "prof") {
-          scalers <- resolve_prof_scalers(model_env)
+          scalers <- resolve_prof_scalers_for_mode(model_env, prof_chain_mode = prof_chain_mode)
           if (isTRUE(prof_chain_mode) && !is_local_mode) {
             plan <- resolve_prof_anchor_and_chains(scalers, prof_anchor_requested)
             down_chain <- c(plan$anchor, plan$lower)
@@ -1097,7 +1103,7 @@
               }
               if (cancel_launch()) stop("Launch cancelled")
             } else if (job_type == "prof") {
-              scalers <- resolve_prof_scalers(model_env)
+              scalers <- resolve_prof_scalers_for_mode(model_env, prof_chain_mode = prof_chain_mode)
               if (isTRUE(prof_chain_mode) && is_local_mode && length(scalers) > 0) {
                 chain_plan <- resolve_prof_anchor_and_chains(scalers, prof_anchor_requested)
                 anchor_sc <- chain_plan$anchor
