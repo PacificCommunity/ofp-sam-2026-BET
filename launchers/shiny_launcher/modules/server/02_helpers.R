@@ -56,6 +56,8 @@
       status = character(),
       branch = character(),
       batch_names = character(),
+      local_pid_files = character(),
+      local_log_files = character(),
       config_details = character(),
       remote_dirs = character(),
       stringsAsFactors = FALSE
@@ -66,7 +68,7 @@
     required_cols <- c(
       "run_at", "output_dir", "summary", "run_description", "config_file",
       "job_types", "model_names", "total_jobs", "launch_mode", "status", "branch",
-      "batch_names", "config_details", "remote_dirs"
+      "batch_names", "local_pid_files", "local_log_files", "config_details", "remote_dirs"
     )
 
     log_file <- get_launcher_job_log_file()
@@ -78,7 +80,9 @@
       return(empty_launcher_job_log())
     }
     for (cn in required_cols) {
-      if (!cn %in% names(out)) out[[cn]] <- NA_character_
+      if (!cn %in% names(out)) {
+        out[[cn]] <- if (identical(cn, "total_jobs")) NA_integer_ else NA_character_
+      }
     }
     out <- out[, required_cols, drop = FALSE]
     out
@@ -90,6 +94,13 @@
     log_dir <- dirname(log_file)
     if (!dir.exists(log_dir)) dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
     history <- load_launcher_job_log()
+    required_cols <- names(history)
+    for (cn in required_cols) {
+      if (!cn %in% names(job_record)) {
+        job_record[[cn]] <- if (identical(cn, "total_jobs")) NA_integer_ else NA_character_
+      }
+    }
+    job_record <- job_record[, required_cols, drop = FALSE]
     history <- rbind(history, job_record)
     saveRDS(history, log_file)
     invisible(TRUE)
