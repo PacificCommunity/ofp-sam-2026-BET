@@ -136,6 +136,20 @@ resolve_init_par <- function(init_par_override, init_from_scaler, scaler_dir, pr
     }
 
     donor_dir <- file.path(prof_dir, paste0("scaler_", as.integer(round(init_from_scaler))))
+    donor_payload <- file.path(donor_dir, "profile_payload.rds")
+    if (file.exists(donor_payload)) {
+      payload_obj <- tryCatch(readRDS(donor_payload), error = function(e) NULL)
+      payload_lines <- NULL
+      if (is.list(payload_obj) && !is.null(payload_obj$par_lines)) {
+        payload_lines <- as.character(payload_obj$par_lines)
+      }
+      if (!is.null(payload_lines) && length(payload_lines) > 0) {
+        out <- file.path(scaler_dir, paste0("warm_init_from_payload_", as.integer(round(init_from_scaler)), ".par"))
+        writeLines(payload_lines, con = out, useBytes = TRUE)
+        return(list(path = out, source = "payload", donor = as.integer(round(init_from_scaler))))
+      }
+    }
+
     donor_par <- mp_final_par(donor_dir)
     if (!is.null(donor_par) && file.exists(donor_par)) {
       out <- file.path(scaler_dir, paste0("warm_init_from_scaler_", as.integer(round(init_from_scaler)), ".par"))
