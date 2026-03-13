@@ -147,16 +147,20 @@
         allowed_types <- tolower(trimws(unlist(strsplit(as.character(job_types_txt), ",", fixed = TRUE))))
         allowed_types <- unique(allowed_types[nzchar(allowed_types)])
         base_names <- basename(dirs)
+        is_prof_chain <- grepl("_profchain(_|$)", base_names)
         if (length(allowed_types) > 0) {
           keep <- rep(FALSE, length(base_names))
           if ("model" %in% allowed_types) keep <- keep | grepl("_model$", base_names)
           if ("jitter" %in% allowed_types) keep <- keep | grepl("_seed\\d+$", base_names)
           if ("hessian" %in% allowed_types) keep <- keep | grepl("_part\\d+$", base_names)
           if ("retro" %in% allowed_types) keep <- keep | grepl("_peel\\d+$", base_names)
-          if ("prof" %in% allowed_types || "profile" %in% allowed_types) keep <- keep | grepl("_sc\\d+$", base_names)
+          if ("prof" %in% allowed_types || "profile" %in% allowed_types) {
+            keep <- keep | grepl("_sc\\d+$", base_names) | is_prof_chain
+          }
           if (any(keep)) {
             dirs <- dirs[keep]
             base_names <- base_names[keep]
+            is_prof_chain <- is_prof_chain[keep]
           }
         }
 
@@ -168,11 +172,13 @@
         part_vals <- suppressWarnings(as.integer(sub(".*_part(\\d+)$", "\\1", base_names[grepl("_part\\d+$", base_names)])))
         peel_vals <- suppressWarnings(as.integer(sub(".*_peel(\\d+)$", "\\1", base_names[grepl("_peel\\d+$", base_names)])))
         sc_vals <- suppressWarnings(as.integer(sub(".*_sc(\\d+)$", "\\1", base_names[grepl("_sc\\d+$", base_names)])))
+        prof_chain_count <- sum(is_prof_chain)
         model_count <- sum(grepl("_model$", base_names))
         other_count <- sum(!(grepl("_seed\\d+$", base_names) |
                              grepl("_part\\d+$", base_names) |
                              grepl("_peel\\d+$", base_names) |
                              grepl("_sc\\d+$", base_names) |
+                             is_prof_chain |
                              grepl("_model$", base_names)))
 
         summary_lines <- c(
@@ -181,6 +187,7 @@
           summarize_numeric_group(part_vals, "part"),
           summarize_numeric_group(peel_vals, "peel"),
           summarize_numeric_group(sc_vals, "scaler"),
+          if (prof_chain_count > 0) paste0("prof_chain: ", prof_chain_count) else NULL,
           if (other_count > 0) paste0("other: ", other_count) else NULL
         )
         summary_html <- if (length(summary_lines) > 0) {
