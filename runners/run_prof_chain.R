@@ -41,7 +41,10 @@ resolve_chain_from_scalers <- function(all_scalers, chain_name, chain_anchor) {
 }
 
 chain_name <- Sys.getenv("chain_name", "chain")
-chain_scalers <- read_indexed_chain_scalers()
+chain_scalers <- parse_numeric_tokens(Sys.getenv("chain_scalers", ""))
+if (length(chain_scalers) == 0) {
+  chain_scalers <- read_indexed_chain_scalers()
+}
 chain_first_init_from <- suppressWarnings(as.numeric(Sys.getenv("chain_first_init_from", "")))
 chain_anchor <- Sys.getenv("chain_anchor", "")
 
@@ -55,6 +58,7 @@ if (length(chain_scalers) == 0) {
 
 cat("=== Profile Chain Run ===\n")
 cat("chain_name:", chain_name, "\n")
+cat("chain_scalers_raw_env:", Sys.getenv("chain_scalers", "<none>"), "\n")
 cat("chain_scalers:", paste(chain_scalers, collapse = " "), "\n")
 cat("chain_first_init_from:", ifelse(is.finite(chain_first_init_from), as.character(chain_first_init_from), "<none>"), "\n")
 cat("chain_anchor:", ifelse(nzchar(chain_anchor), chain_anchor, "<none>"), "\n")
