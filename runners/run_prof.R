@@ -299,5 +299,10 @@ saveRDS(profile_payload, file = file.path(scaler_dir, "profile_payload.rds"), co
 deleted_n <- mp_cleanup_files(scaler_dir, keep = c("profile_payload.rds", "info.rds"), recursive = TRUE)
 cat("Cleanup removed", deleted_n, "non-core files in", scaler_dir, "\n")
 
-cb_condor_keep_only_model_cleanup()
+skip_archive_cleanup <- tolower(Sys.getenv("skip_condor_archive_cleanup", "0")) %in% c("1", "true", "yes", "y")
+if (isTRUE(skip_archive_cleanup)) {
+  cat("Skipping Condor archive cleanup (skip_condor_archive_cleanup=1)\n")
+} else {
+  cb_condor_keep_only_model_cleanup()
+}
 cat("✅ Profile likelihood completed for scaler", scaler, "\n")

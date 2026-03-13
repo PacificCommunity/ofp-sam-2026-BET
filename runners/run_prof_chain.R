@@ -75,7 +75,8 @@ for (i in seq_along(chain_scalers)) {
   donor <- if (i == 1L) chain_first_init_from else prev_scaler
 
   env_kv <- c(
-    paste0("scaler=", format(sc, scientific = FALSE, trim = TRUE))
+    paste0("scaler=", format(sc, scientific = FALSE, trim = TRUE)),
+    "skip_condor_archive_cleanup=1"
   )
   if (is.finite(donor)) {
     env_kv <- c(env_kv, paste0("init_from_scaler=", format(donor, scientific = FALSE, trim = TRUE)))
@@ -97,6 +98,12 @@ for (i in seq_along(chain_scalers)) {
   }
 
   prev_scaler <- sc
+}
+
+cleanup_script <- file.path(project_root, "tools", "condor_archive_cleanup.R")
+if (file.exists(cleanup_script)) {
+  source(cleanup_script)
+  cb_condor_keep_only_model_cleanup()
 }
 
 cat("\n✅ Profile chain completed: ", chain_name, "\n", sep = "")
