@@ -50,8 +50,23 @@
     keys[is.finite(keys)]
   }
 
+  parse_first_nonempty_numeric <- function(...) {
+    items <- list(...)
+    for (it in items) {
+      vals <- parse_numeric_tokens(it)
+      if (length(vals) > 0) return(vals)
+    }
+    numeric(0)
+  }
+
   resolve_prof_scalers <- function(model_env) {
-    default_scalers <- parse_numeric_tokens(model_env$scalers)
+    default_scalers <- parse_first_nonempty_numeric(
+      model_env$scalers,
+      model_env$scaler,
+      model_env$prof_scalers,
+      model_env$profile_scalers,
+      model_env$Scalers
+    )
     map_scalers <- unique(c(
       parse_prof_target_scalers(model_env$init_from_scaler_map),
       parse_prof_target_scalers(model_env$init_par_override_map)
@@ -65,7 +80,15 @@
 
   resolve_prof_scalers_for_mode <- function(model_env, prof_chain_mode = FALSE) {
     # In sequential-chain mode, always use explicit profile scalers.
-    if (isTRUE(prof_chain_mode)) return(parse_numeric_tokens(model_env$scalers))
+    if (isTRUE(prof_chain_mode)) {
+      return(parse_first_nonempty_numeric(
+        model_env$scalers,
+        model_env$scaler,
+        model_env$prof_scalers,
+        model_env$profile_scalers,
+        model_env$Scalers
+      ))
+    }
     resolve_prof_scalers(model_env)
   }
 
@@ -373,8 +396,11 @@
   }
 
   parse_numeric_tokens <- function(x) {
-    if (is.null(x) || !nzchar(trimws(as.character(x)))) return(numeric(0))
-    vals <- suppressWarnings(as.numeric(strsplit(as.character(x), "[,\\s]+")[[1]]))
+    txt <- paste(as.character(x), collapse = " ")
+    if (is.null(x) || !nzchar(trimws(txt))) return(numeric(0))
+    m <- gregexpr("[-+]?[0-9]*\\.?[0-9]+", txt, perl = TRUE)
+    toks <- regmatches(txt, m)[[1]]
+    vals <- suppressWarnings(as.numeric(toks))
     vals[is.finite(vals)]
   }
 
@@ -437,7 +463,7 @@
       jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian", "jitter_base_source"),
       hessian = c("hessian_part", "nsplit", "model_hessian"),
       prof = c("scaler", "scalers", "prof_hessian", "prof_init_map_rds", "init_from_scaler_map", "init_par_override_map", "init_from_scaler", "init_par_override"),
-      prof_chain = c("chain_name", "chain_scalers", "chain_first_init_from", "scalers", "prof_hessian", "prof_init_map_rds", "init_from_scaler_map", "init_par_override_map"),
+      prof_chain = c("chain_name", "chain_anchor", "chain_scalers", "chain_first_init_from", "scalers", "prof_hessian", "prof_init_map_rds", "init_from_scaler_map", "init_par_override_map"),
       character(0)
       )
 
@@ -482,7 +508,7 @@
         jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian", "jitter_base_source"),
         hessian = c("hessian_part", "nsplit", "model_hessian"),
         prof = c("scaler", "scalers", "prof_hessian", "prof_init_map_rds", "init_from_scaler_map", "init_par_override_map", "init_from_scaler", "init_par_override"),
-        prof_chain = c("chain_name", "chain_scalers", "chain_first_init_from", "scalers", "prof_hessian", "prof_init_map_rds", "init_from_scaler_map", "init_par_override_map"),
+        prof_chain = c("chain_name", "chain_anchor", "chain_scalers", "chain_first_init_from", "scalers", "prof_hessian", "prof_init_map_rds", "init_from_scaler_map", "init_par_override_map"),
         character(0)
       )
     }
@@ -544,7 +570,7 @@
           }
         }
         if (identical(jt, "prof_chain")) {
-          has_chain <- any(grepl("^\\s+chain_(name|scalers|first_init_from)\\s*:", type_lines))
+          has_chain <- any(grepl("^\\s+chain_(name|anchor|scalers|first_init_from)\\s*:", type_lines))
           if (!has_chain) {
             chain_nm <- if (!is.null(j$spec$chain_name) && nzchar(as.character(j$spec$chain_name))) {
               as.character(j$spec$chain_name)
@@ -557,8 +583,10 @@
             }
             chain_sc <- if (!is.null(j$spec$chain_scalers) && nzchar(as.character(j$spec$chain_scalers))) as.character(j$spec$chain_scalers) else "NA"
             chain_init <- if (!is.null(j$spec$chain_first_init_from) && nzchar(as.character(j$spec$chain_first_init_from))) as.character(j$spec$chain_first_init_from) else "NA"
+            chain_anchor <- if (!is.null(j$spec$chain_anchor) && nzchar(as.character(j$spec$chain_anchor))) as.character(j$spec$chain_anchor) else "NA"
             type_lines <- c(
               paste0("  chain_name : ", chain_nm),
+              paste0("  chain_anchor : ", chain_anchor),
               paste0("  chain_scalers : ", chain_sc),
               paste0("  chain_first_init_from : ", chain_init),
               type_lines
@@ -614,7 +642,7 @@
           scalers <- resolve_prof_scalers_for_mode(model_env, prof_chain_mode = prof_chain_mode)
           if (isTRUE(prof_chain_mode) && !isTRUE(is_local_mode)) {
             plan <- resolve_prof_anchor_and_chains(scalers, prof_anchor_requested)
-            down_chain <- c(plan$anchor, plan$lower)
+            down_chain <- c(if (is.finite(plan$anchor)) plan$anchor else numeric(0), plan$lower)
             up_chain <- plan$upper
             if (length(down_chain) > 0) total_jobs <- total_jobs + 1L
             if (length(up_chain) > 0) total_jobs <- total_jobs + 1L
@@ -641,13 +669,40 @@
     prof_anchor_requested <- suppressWarnings(as.numeric(input$prof_anchor_scaler))
     if (!is.finite(prof_anchor_requested)) prof_anchor_requested <- 100
 
-    as.character(estimate_total_jobs(
+    est <- estimate_total_jobs(
       selected_models,
       selected_job_types,
       prof_chain_mode = prof_chain_mode,
       is_local_mode = is_local_mode,
       prof_anchor_requested = prof_anchor_requested
-    ))
+    )
+
+    if (isTRUE(prof_chain_mode) && !isTRUE(is_local_mode) && length(selected_models) == 1 && "prof" %in% selected_job_types) {
+      m <- selected_models[[1]]
+      me <- rv$models[[m]]
+      sc <- resolve_prof_scalers_for_mode(me, prof_chain_mode = TRUE)
+      plan <- resolve_prof_anchor_and_chains(sc, prof_anchor_requested)
+      down_chain <- c(if (is.finite(plan$anchor)) plan$anchor else numeric(0), plan$lower)
+      up_chain <- plan$upper
+      return(sprintf(
+        "%d [seq:%s raw=%s class=%s direct=%s parsed=%s anchor=%s req=%s down=%d up=%d]",
+        as.integer(est),
+        m,
+        paste(as.character(me$scalers), collapse = "|"),
+        paste(class(me$scalers), collapse = "/"),
+        {
+          dvals <- parse_numeric_tokens(me$scalers)
+          if (length(dvals) > 0) paste(dvals, collapse = ",") else "<none>"
+        },
+        if (length(sc) > 0) paste(sc, collapse = ",") else "<none>",
+        ifelse(is.finite(plan$anchor), format(plan$anchor, scientific = FALSE, trim = TRUE), "NA"),
+        format(prof_anchor_requested, scientific = FALSE, trim = TRUE),
+        length(down_chain),
+        length(up_chain)
+      ))
+    }
+
+    as.character(est)
   })
   
   observeEvent(input$launch_btn, {
@@ -689,7 +744,7 @@
     total_jobs <- 0
     job_specs <- list()
   add_job_spec <- function(model_name, job_type, seed = NULL, part = NULL, peel = NULL, scaler = NULL,
-                           chain_name = NULL, chain_scalers = NULL, chain_first_init_from = NULL) {
+                           chain_name = NULL, chain_scalers = NULL, chain_first_init_from = NULL, chain_anchor = NULL) {
       job_specs[[length(job_specs) + 1]] <<- list(
         model_name = model_name,
         job_type = job_type,
@@ -699,7 +754,8 @@
         scaler = scaler,
         chain_name = chain_name,
         chain_scalers = chain_scalers,
-        chain_first_init_from = chain_first_init_from
+        chain_first_init_from = chain_first_init_from,
+        chain_anchor = chain_anchor
       )
     }
     for (model_name in selected_models) {
@@ -728,7 +784,7 @@
           scalers <- resolve_prof_scalers_for_mode(model_env, prof_chain_mode = prof_chain_mode)
           if (isTRUE(prof_chain_mode) && !is_local_mode) {
             plan <- resolve_prof_anchor_and_chains(scalers, prof_anchor_requested)
-            down_chain <- c(plan$anchor, plan$lower)
+            down_chain <- c(if (is.finite(plan$anchor)) plan$anchor else numeric(0), plan$lower)
             up_chain <- plan$upper
             if (length(down_chain) > 0) {
               total_jobs <- total_jobs + 1L
@@ -737,7 +793,8 @@
                 job_type = "prof_chain",
                 chain_name = "down",
                 chain_scalers = paste(down_chain, collapse = ","),
-                chain_first_init_from = NULL
+                chain_first_init_from = NULL,
+                chain_anchor = as.character(plan$anchor)
               )
             }
             if (length(up_chain) > 0) {
@@ -747,7 +804,8 @@
                 job_type = "prof_chain",
                 chain_name = "up",
                 chain_scalers = paste(up_chain, collapse = ","),
-                chain_first_init_from = as.character(plan$anchor)
+                chain_first_init_from = as.character(plan$anchor),
+                chain_anchor = as.character(plan$anchor)
               )
             }
           } else {
@@ -1550,6 +1608,9 @@
         }
       if (!is.null(spec$chain_first_init_from) && nzchar(as.character(spec$chain_first_init_from))) {
         job_env$chain_first_init_from <- as.character(spec$chain_first_init_from)
+      }
+      if (!is.null(spec$chain_anchor) && nzchar(as.character(spec$chain_anchor))) {
+        job_env$chain_anchor <- as.character(spec$chain_anchor)
       }
       remote_dir_suffix <- paste0(spec$model_name, "_profchain_", if (!is.null(spec$chain_name)) as.character(spec$chain_name) else "chain")
       batch_suffix <- paste0("-profchain", if (!is.null(spec$chain_name)) paste0("-", as.character(spec$chain_name)) else "")

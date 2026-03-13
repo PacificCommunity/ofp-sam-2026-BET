@@ -1,8 +1,11 @@
 #!/usr/bin/env Rscript
 
 parse_numeric_tokens <- function(x) {
-  if (is.null(x) || !nzchar(trimws(as.character(x)))) return(numeric(0))
-  vals <- suppressWarnings(as.numeric(strsplit(as.character(x), "[,\\s]+")[[1]]))
+  txt <- paste(as.character(x), collapse = " ")
+  if (is.null(x) || !nzchar(trimws(txt))) return(numeric(0))
+  m <- gregexpr("[-+]?[0-9]*\\.?[0-9]+", txt, perl = TRUE)
+  toks <- regmatches(txt, m)[[1]]
+  vals <- suppressWarnings(as.numeric(toks))
   vals[is.finite(vals)]
 }
 
@@ -19,18 +22,42 @@ read_indexed_chain_scalers <- function() {
   out
 }
 
+resolve_chain_from_scalers <- function(all_scalers, chain_name, chain_anchor) {
+  all_scalers <- sort(unique(all_scalers[is.finite(all_scalers)]))
+  if (length(all_scalers) == 0) return(numeric(0))
+  anch <- suppressWarnings(as.numeric(chain_anchor))
+  if (!is.finite(anch)) anch <- 100
+  anchor_eff <- all_scalers[which.min(abs(all_scalers - anch))]
+  lower <- sort(all_scalers[all_scalers < anchor_eff], decreasing = TRUE)
+  upper <- sort(all_scalers[all_scalers > anchor_eff], decreasing = FALSE)
+  nm <- tolower(trimws(as.character(chain_name)))
+  if (identical(nm, "down")) {
+    return(c(anchor_eff, lower))
+  }
+  if (identical(nm, "up")) {
+    return(upper)
+  }
+  c(anchor_eff, lower, upper)
+}
+
 chain_name <- Sys.getenv("chain_name", "chain")
 chain_scalers <- read_indexed_chain_scalers()
 chain_first_init_from <- suppressWarnings(as.numeric(Sys.getenv("chain_first_init_from", "")))
+chain_anchor <- Sys.getenv("chain_anchor", "")
 
 if (length(chain_scalers) == 0) {
-  stop("No indexed chain scalers provided (expecting chain_count/CHAIN_COUNT and chain_scaler_1..N or CHAIN_SCALER_1..N).")
+  all_scalers <- parse_numeric_tokens(Sys.getenv("scalers", ""))
+  chain_scalers <- resolve_chain_from_scalers(all_scalers, chain_name, chain_anchor)
+  if (length(chain_scalers) == 0) {
+    stop("No chain scalers found: missing indexed chain_scaler_* and failed to rebuild from scalers/chain_anchor.")
+  }
 }
 
 cat("=== Profile Chain Run ===\n")
 cat("chain_name:", chain_name, "\n")
 cat("chain_scalers:", paste(chain_scalers, collapse = " "), "\n")
 cat("chain_first_init_from:", ifelse(is.finite(chain_first_init_from), as.character(chain_first_init_from), "<none>"), "\n")
+cat("chain_anchor:", ifelse(nzchar(chain_anchor), chain_anchor, "<none>"), "\n")
 
 project_root <- tryCatch(normalizePath(getwd(), mustWork = TRUE), error = function(e) getwd())
 run_prof_script <- file.path(project_root, "runners", "run_prof.R")
