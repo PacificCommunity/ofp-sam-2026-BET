@@ -233,6 +233,7 @@ generate_proflike_script(
   Reps = Reps,
   AgeFlags = AgeFlags,
   QuantityType = QuantityType,
+  FixedMLE = reference_quantity,
   Frq = frq_file,
   Mults = scaler,
   Initp = basename(init_par_file),
