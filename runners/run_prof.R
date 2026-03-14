@@ -234,8 +234,8 @@ if (!file.exists(reference_quantity_path)) {
     "2 172", AgeFlags["Af172"],
     "2 173", AgeFlags["Af173"],
     "2 174", AgeFlags["Af174"]
-  run_commands(commands = ref_command, work_dirs = scaler_dir, save_log = FALSE, verbose = TRUE)
   )
+  run_commands(commands = ref_command, work_dirs = scaler_dir, save_log = FALSE, verbose = TRUE)
 }
 
 initial_quantity_info <- detect_reference_quantity_file(model_dir, scaler_dir)
