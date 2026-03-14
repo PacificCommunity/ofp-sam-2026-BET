@@ -8,6 +8,7 @@
 
 jitter_center_target_coverage <- 0.999
 jitter_resample_near_bound_frac <- 0.02
+jitter_min_change_frac <- 0.05
 
 jitter_center_z <- function(target_coverage = jitter_center_target_coverage) {
   alpha <- max(min(1 - target_coverage, 1 - 1e-12), 1e-12)
@@ -45,6 +46,18 @@ jitter_outside_near_bound <- function(x, lower = -Inf, upper = Inf, margin_frac 
     if (is.finite(w$upper) && x[i] >= w$upper) keep[i] <- FALSE
   }
   all(keep)
+}
+
+jitter_min_change_threshold <- function(center, lower = -Inf, upper = Inf, min_frac = jitter_min_change_frac, eps = 1e-12) {
+  span <- if (is.finite(lower) && is.finite(upper)) upper - lower else NA_real_
+  if (is.finite(span) && span > eps) return(max(abs(span) * min_frac, eps * 10))
+  if (is.finite(center) && abs(center) > eps) return(max(abs(center) * min_frac, eps * 10))
+  eps * 10
+}
+
+jitter_changed_enough <- function(proposal, center, lower = -Inf, upper = Inf, min_frac = jitter_min_change_frac, eps = 1e-12) {
+  if (!is.finite(proposal) || !is.finite(center)) return(FALSE)
+  abs(proposal - center) >= jitter_min_change_threshold(center, lower = lower, upper = upper, min_frac = min_frac, eps = eps)
 }
 
 jitter_force_scalar_change <- function(current_val,
@@ -273,7 +286,8 @@ jitter_sample_multiplicative_cv <- function(current_val,
   for (iter in seq_len(max_tries)) {
     proposal <- centered_current * exp(rnorm(1, mean = 0, sd = sigma))
     if (proposal > interior$lower && proposal < interior$upper &&
-        jitter_outside_near_bound(proposal, lower = lower, upper = upper, margin_frac = jitter_resample_near_bound_frac, eps = eps)) {
+        jitter_outside_near_bound(proposal, lower = lower, upper = upper, margin_frac = jitter_resample_near_bound_frac, eps = eps) &&
+        jitter_changed_enough(proposal, centered_current, lower = lower, upper = upper, min_frac = jitter_min_change_frac, eps = eps)) {
       return(proposal)
     }
   }
@@ -318,7 +332,8 @@ jitter_sample_bounded_cv <- function(current_val,
     proposal_p <- plogis(rnorm(1, mean = mu, sd = sigma))
     proposal <- lo + proposal_p * span
     if (proposal > lo && proposal < hi &&
-        jitter_outside_near_bound(proposal, lower = lower, upper = upper, margin_frac = jitter_resample_near_bound_frac, eps = eps)) {
+        jitter_outside_near_bound(proposal, lower = lower, upper = upper, margin_frac = jitter_resample_near_bound_frac, eps = eps) &&
+        jitter_changed_enough(proposal, clipped_current, lower = lower, upper = upper, min_frac = jitter_min_change_frac, eps = eps)) {
       return(proposal)
     }
   }
@@ -353,7 +368,8 @@ jitter_sample_additive_cv <- function(current_val,
     )
     proposal <- rnorm(1, mean = centered_current, sd = jitter_cv * scale_val)
     if (proposal > interior$lower && proposal < interior$upper &&
-        jitter_outside_near_bound(proposal, lower = lower, upper = upper, margin_frac = jitter_resample_near_bound_frac, eps = eps)) {
+        jitter_outside_near_bound(proposal, lower = lower, upper = upper, margin_frac = jitter_resample_near_bound_frac, eps = eps) &&
+        jitter_changed_enough(proposal, centered_current, lower = lower, upper = upper, min_frac = jitter_min_change_frac, eps = eps)) {
       return(proposal)
     }
   }
@@ -632,11 +648,18 @@ sample_dirichlet_bounded_cv <- function(current_vals,
   alpha0 <- max((n - 1) / max(jitter_cv^2, eps) - 1, 1)
   alpha <- pmax(alpha0 * probs, eps)
 
+  min_delta <- function() {
+    span <- upper_eff - lower_eff
+    span <- ifelse(is.finite(span) & span > eps, span, NA_real_)
+    cand <- ifelse(is.finite(span), span * jitter_min_change_frac, abs(current_vals) * jitter_min_change_frac)
+    pmax(cand, eps * 10)
+  }
+  min_delta_vec <- min_delta()
   for (iter in seq_len(max_tries)) {
     g <- rgamma(n, shape = alpha, rate = 1)
     if (!all(is.finite(g)) || sum(g) <= eps) next
     proposal <- total_sum * g / sum(g)
-    changed_enough <- any(abs(proposal - current_vals) > (eps * 10))
+    changed_enough <- any(abs(proposal - current_vals) >= min_delta_vec, na.rm = TRUE)
     if (all(proposal >= lower_eff & proposal <= upper_eff) && changed_enough) {
       return(proposal)
     }
@@ -652,7 +675,7 @@ sample_dirichlet_bounded_cv <- function(current_vals,
       eps = eps
     )
     if (all(fallback >= lower_eff - eps & fallback <= upper_eff + eps) &&
-        any(abs(fallback - current_vals) > (eps * 10))) {
+        any(abs(fallback - current_vals) >= min_delta_vec, na.rm = TRUE)) {
       return(fallback)
     }
   }
@@ -1143,13 +1166,27 @@ apply_indepvar_cv_jitter <- function(par, indepvar_map, jitter_cv, eps = 1e-12) 
     return(NULL)
   }
 
+  jitter_scale_val <- function(current_val, lower, upper, eps = 1e-12) {
+    lo <- suppressWarnings(as.numeric(lower))
+    hi <- suppressWarnings(as.numeric(upper))
+    if (is.finite(lo) && is.finite(hi) && hi > lo) {
+      span <- hi - lo
+      return(max(span, eps))
+    }
+    if (is.finite(current_val) && abs(current_val) > eps) return(abs(current_val))
+    1
+  }
+
   diff_rows <- which(mapping$family == "diff_coffs")
   for (i in diff_rows) {
     r <- mapping$key1[i]
     c <- mapping$key2[i]
-    diff_coffs(par)[r, c] <- jitter_sample_multiplicative_cv(
-      diff_coffs(par)[r, c], jitter_cv,
-      lower = max(eps, mapping$L_bound[i]), upper = mapping$U_bound[i], eps = eps
+    cur <- diff_coffs(par)[r, c]
+    diff_coffs(par)[r, c] <- jitter_sample_additive_cv(
+      cur, jitter_cv,
+      lower = max(eps, mapping$L_bound[i]), upper = mapping$U_bound[i],
+      scale_val = jitter_scale_val(cur, mapping$L_bound[i], mapping$U_bound[i], eps = eps),
+      eps = eps
     )
   }
 
@@ -1160,9 +1197,12 @@ apply_indepvar_cv_jitter <- function(par, indepvar_map, jitter_cv, eps = 1e-12) 
       ncol = dimensions(par)["regions"]
     )
     for (i in rrd_rows) {
+      cur <- rrv_export[mapping$key2[i], mapping$key1[i]]
       rrv_export[mapping$key2[i], mapping$key1[i]] <- jitter_sample_additive_cv(
-        rrv_export[mapping$key2[i], mapping$key1[i]], jitter_cv,
-        lower = mapping$L_bound[i], upper = mapping$U_bound[i], scale_val = 1, eps = eps
+        cur, jitter_cv,
+        lower = mapping$L_bound[i], upper = mapping$U_bound[i],
+        scale_val = jitter_scale_val(cur, mapping$L_bound[i], mapping$U_bound[i], eps = eps),
+        eps = eps
       )
     }
     vec <- as.vector(rrv_export)
@@ -1179,9 +1219,12 @@ apply_indepvar_cv_jitter <- function(par, indepvar_map, jitter_cv, eps = 1e-12) 
     for (i in bs_rows) {
       fish_idx <- mapping$key4[i]
       if (!is.finite(fish_idx)) next
-      fishery_sel(par)[mapping$key2[i], 1, fish_idx, mapping$key3[i], 1, 1] <- jitter_sample_bounded_cv(
-        fishery_sel(par)[mapping$key2[i], 1, fish_idx, mapping$key3[i], 1, 1], jitter_cv,
-        lower = mapping$L_bound[i], upper = mapping$U_bound[i], eps = eps
+      cur <- fishery_sel(par)[mapping$key2[i], 1, fish_idx, mapping$key3[i], 1, 1]
+      fishery_sel(par)[mapping$key2[i], 1, fish_idx, mapping$key3[i], 1, 1] <- jitter_sample_additive_cv(
+        cur, jitter_cv,
+        lower = mapping$L_bound[i], upper = mapping$U_bound[i],
+        scale_val = jitter_scale_val(cur, mapping$L_bound[i], mapping$U_bound[i], eps = eps),
+        eps = eps
       )
     }
   }
@@ -1224,9 +1267,12 @@ apply_indepvar_cv_jitter <- function(par, indepvar_map, jitter_cv, eps = 1e-12) 
       grp_id <- mapping$key1[i]
       idx <- which(grp_mat == grp_id & flag_mat == 1, arr.ind = TRUE)
       if (nrow(idx) == 0) next
-      tag_fish_rep_rate(par)[idx] <- jitter_sample_bounded_cv(
-        tag_fish_rep_rate(par)[idx[1, 1], idx[1, 2]], jitter_cv,
-        lower = mapping$L_bound[i], upper = mapping$U_bound[i], eps = eps
+      cur <- tag_fish_rep_rate(par)[idx[1, 1], idx[1, 2]]
+      tag_fish_rep_rate(par)[idx] <- jitter_sample_additive_cv(
+        cur, jitter_cv,
+        lower = mapping$L_bound[i], upper = mapping$U_bound[i],
+        scale_val = jitter_scale_val(cur, mapping$L_bound[i], mapping$U_bound[i], eps = eps),
+        eps = eps
       )
     }
   }
@@ -1253,9 +1299,12 @@ apply_indepvar_cv_jitter <- function(par, indepvar_map, jitter_cv, eps = 1e-12) 
   sv_rows <- which(mapping$family == "sv")
   for (i in sv_rows) {
     idx <- mapping$key1[i]
-    season_growth_pars(par)[idx] <- jitter_sample_bounded_cv(
-      season_growth_pars(par)[idx], jitter_cv,
-      lower = mapping$L_bound[i], upper = mapping$U_bound[i], eps = eps
+    cur <- season_growth_pars(par)[idx]
+    season_growth_pars(par)[idx] <- jitter_sample_additive_cv(
+      cur, jitter_cv,
+      lower = mapping$L_bound[i], upper = mapping$U_bound[i],
+      scale_val = jitter_scale_val(cur, mapping$L_bound[i], mapping$U_bound[i], eps = eps),
+      eps = eps
     )
   }
 
@@ -1285,9 +1334,12 @@ apply_indepvar_cv_jitter <- function(par, indepvar_map, jitter_cv, eps = 1e-12) 
   var_rows <- which(mapping$family == "var_coff")
   for (i in var_rows) {
     idx <- mapping$key1[i]
-    growth_var_pars(par)[idx, 1] <- jitter_sample_multiplicative_cv(
-      growth_var_pars(par)[idx, 1], jitter_cv,
-      lower = max(eps, mapping$L_bound[i]), upper = mapping$U_bound[i], eps = eps
+    cur <- growth_var_pars(par)[idx, 1]
+    growth_var_pars(par)[idx, 1] <- jitter_sample_additive_cv(
+      cur, jitter_cv,
+      lower = max(eps, mapping$L_bound[i]), upper = mapping$U_bound[i],
+      scale_val = jitter_scale_val(cur, mapping$L_bound[i], mapping$U_bound[i], eps = eps),
+      eps = eps
     )
   }
 
@@ -1909,9 +1961,97 @@ inject_indepvar_values <- function(par, indepvar_map, values, eps = 1e-12) {
   par
 }
 
+jitter_adjusted_center_one <- function(before,
+                                       family,
+                                       lower,
+                                       upper,
+                                       jitter_cv = NA_real_,
+                                       eps = 1e-12) {
+  b <- suppressWarnings(as.numeric(before))
+  lo <- suppressWarnings(as.numeric(lower))
+  hi <- suppressWarnings(as.numeric(upper))
+  cv <- suppressWarnings(as.numeric(jitter_cv))
+  fam <- as.character(family)
+  if (!is.finite(cv) || cv < 0) cv <- 0
+  if (!is.finite(b)) return(NA_real_)
+
+  if (is.finite(lo) && is.finite(hi) && hi < lo) {
+    tmp <- lo
+    lo <- hi
+    hi <- tmp
+  }
+
+  # Keep plotting center consistent with the sampler's feasible interior.
+  # When cv <= 0, this acts as a pure interior clipping of `before`.
+  if (identical(fam, "totpop") || identical(fam, "vb_coff") || identical(fam, "var_coff")) {
+    lo_pos <- if (is.finite(lo)) max(lo, eps) else lo
+    return(jitter_center_multiplicative_cv(
+      current_val = b,
+      jitter_cv = cv,
+      lower = lo_pos,
+      upper = hi,
+      eps = eps
+    ))
+  }
+
+  if (identical(fam, "recr") || identical(fam, "age_pars")) {
+    return(jitter_center_bounded_cv(
+      current_val = b,
+      jitter_cv = cv,
+      lower = lo,
+      upper = hi,
+      eps = eps
+    ))
+  }
+
+  jitter_center_additive_cv(
+    current_val = b,
+    jitter_cv = cv,
+    scale_val = max(abs(b), 1),
+    lower = lo,
+    upper = hi,
+    eps = eps
+  )
+}
+
+add_jitter_center_columns <- function(labels_df,
+                                      jitter_cv = NA_real_,
+                                      eps = 1e-12) {
+  if (is.null(labels_df) || !is.data.frame(labels_df) || nrow(labels_df) == 0) {
+    return(labels_df)
+  }
+
+  req_cols <- c("before", "after", "family", "L_bound", "U_bound")
+  if (!all(req_cols %in% names(labels_df))) {
+    return(labels_df)
+  }
+
+  center_adjusted <- mapply(
+    jitter_adjusted_center_one,
+    before = labels_df$before,
+    family = labels_df$family,
+    lower = labels_df$L_bound,
+    upper = labels_df$U_bound,
+    MoreArgs = list(jitter_cv = jitter_cv, eps = eps)
+  )
+
+  labels_df$center <- labels_df$before
+  labels_df$center_adjusted <- as.numeric(center_adjusted)
+  labels_df$delta_from_center <- labels_df$after - labels_df$center
+  labels_df$delta_from_adjusted_center <- labels_df$after - labels_df$center_adjusted
+
+  lo <- suppressWarnings(as.numeric(labels_df$L_bound))
+  hi <- suppressWarnings(as.numeric(labels_df$U_bound))
+  af <- suppressWarnings(as.numeric(labels_df$after))
+  labels_df$outside_bound_after <- (is.finite(lo) & af < lo) | (is.finite(hi) & af > hi)
+
+  labels_df
+}
+
 compare_exact_jitter <- function(base_par,
                                  jittered_par,
                                  indepvar_file = NULL,
+                                 jitter_cv = NA_real_,
                                  change_tol = 1e-14,
                                  output_prefix = NULL) {
   indepvar_map <- build_indepvar_mapping(base_par, indepvar_file = indepvar_file, tol = change_tol)
@@ -1932,6 +2072,7 @@ compare_exact_jitter <- function(base_par,
     changed = abs(deltas) > change_tol,
     family = ifelse(is.na(family), "unclassified", family)
   )
+  labels_df <- add_jitter_center_columns(labels_df, jitter_cv = jitter_cv, eps = change_tol)
 
   summary_df <- aggregate(
     cbind(total = 1L, mapped = as.integer(labels_df$mapped), changed = as.integer(labels_df$changed)) ~ family,
@@ -1940,6 +2081,14 @@ compare_exact_jitter <- function(base_par,
   )
   summary_df$unchanged <- summary_df$total - summary_df$changed
   summary_df$changed_pct <- round(100 * summary_df$changed / summary_df$total, 1)
+  mean_adj <- tapply(labels_df$delta_from_adjusted_center, labels_df$family, mean, na.rm = TRUE)
+  mean_abs_adj <- tapply(abs(labels_df$delta_from_adjusted_center), labels_df$family, mean, na.rm = TRUE)
+  out_n <- tapply(labels_df$outside_bound_after, labels_df$family, function(x) sum(x, na.rm = TRUE))
+  out_pct <- tapply(labels_df$outside_bound_after, labels_df$family, function(x) 100 * mean(x, na.rm = TRUE))
+  summary_df$mean_delta_from_adjusted_center <- as.numeric(mean_adj[summary_df$family])
+  summary_df$mean_abs_delta_from_adjusted_center <- as.numeric(mean_abs_adj[summary_df$family])
+  summary_df$outside_bound_after_n <- as.integer(out_n[summary_df$family])
+  summary_df$outside_bound_after_pct <- as.numeric(out_pct[summary_df$family])
   summary_df <- summary_df[order(-summary_df$total, summary_df$family), ]
 
   if (!is.null(output_prefix) && !isFALSE(output_prefix) && !(length(output_prefix) == 1 && is.na(output_prefix))) {
@@ -1975,6 +2124,7 @@ compare_exact_jitter <- function(base_par,
 compare_indepvar_mapped <- function(base_par,
                                     jittered_par,
                                     indepvar_map,
+                                    jitter_cv = NA_real_,
                                     change_tol = 1e-14) {
   mapping <- indepvar_map$mapping
   label_values_before <- extract_indepvar_values(base_par, indepvar_map)
@@ -1989,6 +2139,7 @@ compare_indepvar_mapped <- function(base_par,
     changed = abs(deltas) > change_tol,
     family = ifelse(is.na(family), "unclassified", family)
   )
+  labels_df <- add_jitter_center_columns(labels_df, jitter_cv = jitter_cv, eps = change_tol)
 
   summary_df <- aggregate(
     cbind(total = 1L, mapped = as.integer(labels_df$mapped), changed = as.integer(labels_df$changed)) ~ family,
@@ -1997,6 +2148,14 @@ compare_indepvar_mapped <- function(base_par,
   )
   summary_df$unchanged <- summary_df$total - summary_df$changed
   summary_df$changed_pct <- round(100 * summary_df$changed / summary_df$total, 1)
+  mean_adj <- tapply(labels_df$delta_from_adjusted_center, labels_df$family, mean, na.rm = TRUE)
+  mean_abs_adj <- tapply(abs(labels_df$delta_from_adjusted_center), labels_df$family, mean, na.rm = TRUE)
+  out_n <- tapply(labels_df$outside_bound_after, labels_df$family, function(x) sum(x, na.rm = TRUE))
+  out_pct <- tapply(labels_df$outside_bound_after, labels_df$family, function(x) 100 * mean(x, na.rm = TRUE))
+  summary_df$mean_delta_from_adjusted_center <- as.numeric(mean_adj[summary_df$family])
+  summary_df$mean_abs_delta_from_adjusted_center <- as.numeric(mean_abs_adj[summary_df$family])
+  summary_df$outside_bound_after_n <- as.integer(out_n[summary_df$family])
+  summary_df$outside_bound_after_pct <- as.numeric(out_pct[summary_df$family])
   summary_df <- summary_df[order(-summary_df$total, summary_df$family), ]
 
   list(
@@ -2062,6 +2221,7 @@ run_exact_jitter <- function(model_dir,
     base_par = base_par,
     jittered_par = jittered_par,
     indepvar_file = files$indepvar_file,
+    jitter_cv = NA_real_,
     change_tol = change_tol,
     output_prefix = output_prefix
   )

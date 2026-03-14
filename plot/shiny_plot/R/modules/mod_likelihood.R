@@ -195,11 +195,11 @@ mod_likelihood_ui <- function() {
                         style = "display:block; margin-top:-6px; margin-bottom:6px; color:#666;"
                       ),
                       tags$small(
-                        "Jitter anchor is CV-adaptive (target central coverage 99.9%), and proposals are resampled if they fall within 2% of bounds.",
+                        "Jitter anchor is adjusted to keep proposals away from bounds; samples too close to bounds are resampled.",
                         style = "display:block; margin-top:-4px; margin-bottom:6px; color:#666;"
                       ),
                       tags$small(
-                        "Bound rule: span = U-L, reject window = (<=L+0.02*span) or (>=U-0.02*span). Anchor shifts by CV to keep ~99.9% proposal mass away from reject windows.",
+                        "Some families use additive jitter so samples move around the adjusted center instead of sticking near zero.",
                         style = "display:block; margin-top:-4px; margin-bottom:6px; color:#666;"
                       )
                     )
@@ -4090,6 +4090,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
             plot_subtitle <- paste0(plot_subtitle, " Red diamond = raw baseline/original value.")
           }
           plot_subtitle <- paste0(plot_subtitle, " Orange circle = adjusted jitter center (interior-clipped baseline).")
+          plot_subtitle <- paste0(plot_subtitle, " Jitter samples are drawn around the adjusted center; some families use additive jitter to avoid near-zero sticking.")
         } else {
           plot_subtitle <- paste0(plot_subtitle, " Red diamond = baseline/original.")
         }
@@ -4462,6 +4463,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           plot_subtitle <- paste0(plot_subtitle, " Red diamond = raw baseline/original value.")
         }
         plot_subtitle <- paste0(plot_subtitle, " Orange circle = adjusted jitter center (interior-clipped baseline).")
+        plot_subtitle <- paste0(plot_subtitle, " Jitter samples are drawn around the adjusted center; some families use additive jitter to avoid near-zero sticking.")
       } else {
         plot_subtitle <- paste0(plot_subtitle, " Red diamond = baseline/original.")
       }

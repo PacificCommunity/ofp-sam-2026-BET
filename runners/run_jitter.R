@@ -234,6 +234,7 @@ jitter_run <- list(
     base_par = base_00_par_obj,
     jittered_par = jittered_00_par_obj,
     indepvar_map = indepvar_map,
+    jitter_cv = jitter_cv,
     change_tol = 1e-14
   )
 )
@@ -297,6 +298,10 @@ if (isTRUE(jitter_smoke_only)) {
       changed_pct = 100 * mean(jitter_run$comparison$labels$changed, na.rm = TRUE),
       mean_abs_delta = mean(abs(jitter_run$comparison$labels$delta), na.rm = TRUE),
       median_abs_delta = stats::median(abs(jitter_run$comparison$labels$delta), na.rm = TRUE),
+      mean_delta_from_adjusted_center = mean(jitter_run$comparison$labels$delta_from_adjusted_center, na.rm = TRUE),
+      mean_abs_delta_from_adjusted_center = mean(abs(jitter_run$comparison$labels$delta_from_adjusted_center), na.rm = TRUE),
+      outside_bound_after_n = sum(jitter_run$comparison$labels$outside_bound_after, na.rm = TRUE),
+      outside_bound_after_pct = 100 * mean(jitter_run$comparison$labels$outside_bound_after, na.rm = TRUE),
       mean_abs_pct_change = mean(abs(100 * (jitter_run$comparison$labels$delta / ifelse(abs(jitter_run$comparison$labels$before) > .Machine$double.eps, abs(jitter_run$comparison$labels$before), NA_real_))), na.rm = TRUE),
       median_abs_pct_change = stats::median(abs(100 * (jitter_run$comparison$labels$delta / ifelse(abs(jitter_run$comparison$labels$before) > .Machine$double.eps, abs(jitter_run$comparison$labels$before), NA_real_))), na.rm = TRUE)
     ),
@@ -429,6 +434,7 @@ if (!is.null(base_par_obj) && !is.null(output_par_obj)) {
     base_par = base_par_obj,
     jittered_par = output_par_obj,
     indepvar_file = indepvar_in_seed,
+    jitter_cv = jitter_cv,
     change_tol = 1e-14,
     output_prefix = FALSE
   )
@@ -440,6 +446,10 @@ if (!is.null(base_par_obj) && !is.null(output_par_obj)) {
     changed_pct = 100 * mean(fitted_parameter_changes$labels$changed, na.rm = TRUE),
     mean_abs_delta = mean(abs(fitted_parameter_changes$labels$delta), na.rm = TRUE),
     median_abs_delta = stats::median(abs(fitted_parameter_changes$labels$delta), na.rm = TRUE),
+    mean_delta_from_adjusted_center = mean(fitted_parameter_changes$labels$delta_from_adjusted_center, na.rm = TRUE),
+    mean_abs_delta_from_adjusted_center = mean(abs(fitted_parameter_changes$labels$delta_from_adjusted_center), na.rm = TRUE),
+    outside_bound_after_n = sum(fitted_parameter_changes$labels$outside_bound_after, na.rm = TRUE),
+    outside_bound_after_pct = 100 * mean(fitted_parameter_changes$labels$outside_bound_after, na.rm = TRUE),
     mean_abs_pct_change = mean(abs(100 * (fitted_parameter_changes$labels$delta / ifelse(abs(fitted_parameter_changes$labels$before) > .Machine$double.eps, abs(fitted_parameter_changes$labels$before), NA_real_))), na.rm = TRUE),
     median_abs_pct_change = stats::median(abs(100 * (fitted_parameter_changes$labels$delta / ifelse(abs(fitted_parameter_changes$labels$before) > .Machine$double.eps, abs(fitted_parameter_changes$labels$before), NA_real_))), na.rm = TRUE)
   )
@@ -469,6 +479,10 @@ info_list <- list(
     changed_pct = 100 * mean(jitter_run$comparison$labels$changed, na.rm = TRUE),
     mean_abs_delta = mean(abs(jitter_run$comparison$labels$delta), na.rm = TRUE),
     median_abs_delta = stats::median(abs(jitter_run$comparison$labels$delta), na.rm = TRUE),
+    mean_delta_from_adjusted_center = mean(jitter_run$comparison$labels$delta_from_adjusted_center, na.rm = TRUE),
+    mean_abs_delta_from_adjusted_center = mean(abs(jitter_run$comparison$labels$delta_from_adjusted_center), na.rm = TRUE),
+    outside_bound_after_n = sum(jitter_run$comparison$labels$outside_bound_after, na.rm = TRUE),
+    outside_bound_after_pct = 100 * mean(jitter_run$comparison$labels$outside_bound_after, na.rm = TRUE),
     mean_abs_pct_change = mean(abs(100 * (jitter_run$comparison$labels$delta / ifelse(abs(jitter_run$comparison$labels$before) > .Machine$double.eps, abs(jitter_run$comparison$labels$before), NA_real_))), na.rm = TRUE),
     median_abs_pct_change = stats::median(abs(100 * (jitter_run$comparison$labels$delta / ifelse(abs(jitter_run$comparison$labels$before) > .Machine$double.eps, abs(jitter_run$comparison$labels$before), NA_real_))), na.rm = TRUE)
   ),
