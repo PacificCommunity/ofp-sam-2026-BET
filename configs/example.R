@@ -18,7 +18,7 @@ models <- list(
     
     ## configuration for profiling
     Reps = "2 2 2 2 2 2",
-    scalers = paste0((seq(110, 90, by=-10)), collapse = " "),
+    scalars = paste0((seq(110, 90, by=-10)), collapse = " "),
     
     ## retrospective configuration
     retro_peels = "1 2",
@@ -58,7 +58,7 @@ models <- list(
     
     ## configuration for profiling
     Reps = "2 2 2 2 2 2",
-    scalers = paste0((seq(110, 90, by=-10)), collapse = " "),
+    scalars = paste0((seq(110, 90, by=-10)), collapse = " "),
     
     ## retrospective configuration
     retro_peels = "1 2 3",

@@ -81,10 +81,10 @@
         job_env$retro_peel <- as.character(spec$peel)
         remote_dir_suffix <- paste0(spec$model_name, "_peel", spec$peel, "_model")
         batch_suffix <- paste0("-retro", spec$peel)
-      } else if (!is.null(spec$scaler)) {
-        job_env$scaler <- as.character(spec$scaler)
-        remote_dir_suffix <- paste0(spec$model_name, "_sc", spec$scaler, "_model")
-        batch_suffix <- paste0("-sc", spec$scaler)
+      } else if (!is.null(spec$scalar)) {
+        job_env$scalar <- as.character(spec$scalar)
+        remote_dir_suffix <- paste0(spec$model_name, "_sc", spec$scalar, "_model")
+        batch_suffix <- paste0("-sc", spec$scalar)
       }
       
       remote_dir <- paste0(common_params$github_repo, "/", common_params$output_dir, "/", remote_dir_suffix)

@@ -187,14 +187,14 @@ extract_survey_index_like_from_raw <- function(raw_lines) {
 #' @param model_dir Base model directory
 get_avg_bio <- function(scenarios, model_dir = MODEL_DIR) {
   sapply(scenarios, function(x) {
-    # Look for avg_bio in prof/scaler_* folders
+    # Look for avg_bio in prof/scalar_* folders
     prof_dir <- file.path(model_dir, x, "prof")
-    scaler_dirs <- list.dirs(prof_dir, full.names = TRUE, recursive = FALSE)
-    scaler_dirs <- grep("scaler_\\d+$", scaler_dirs, value = TRUE)
+    scalar_dirs <- list.dirs(prof_dir, full.names = TRUE, recursive = FALSE)
+    scalar_dirs <- grep("scalar_\\d+$", scalar_dirs, value = TRUE)
     
-    if (length(scaler_dirs) > 0) {
+    if (length(scalar_dirs) > 0) {
       # Prefer profile payload avg_bio (matches shiny behavior)
-      payload_file <- file.path(scaler_dirs[1], "profile_payload.rds")
+      payload_file <- file.path(scalar_dirs[1], "profile_payload.rds")
       if (file.exists(payload_file)) {
         payload_avg <- tryCatch({
           suppressWarnings(as.numeric(readRDS(payload_file)$avg_bio))
@@ -202,8 +202,8 @@ get_avg_bio <- function(scenarios, model_dir = MODEL_DIR) {
         if (is.finite(payload_avg)) return(payload_avg)
       }
 
-      # Read from first scaler folder (value should be same across all)
-      avg_bio_file <- file.path(scaler_dirs[1], "avg_bio")
+      # Read from first scalar folder (value should be same across all)
+      avg_bio_file <- file.path(scalar_dirs[1], "avg_bio")
       if (file.exists(avg_bio_file)) {
         return(as.numeric(read.table(avg_bio_file)))
       }
@@ -219,12 +219,12 @@ get_avg_bio <- function(scenarios, model_dir = MODEL_DIR) {
   })
 }
 
-#' Convert scaler to biomass units
-#' @param scaler Numeric scaler value
+#' Convert scalar to biomass units
+#' @param scalar Numeric scalar value
 #' @param scenario Scenario name
 #' @param avg_bio Named vector of average biomass values
-scale_to_biomass <- function(scaler, scenario, avg_bio) {
-  sc <- as.numeric(scaler)
+scale_to_biomass <- function(scalar, scenario, avg_bio) {
+  sc <- as.numeric(scalar)
   b <- suppressWarnings(as.numeric(avg_bio[as.character(scenario)]))
   out <- sc * 0.01 * b
   bad <- !is.finite(b)
@@ -233,7 +233,7 @@ scale_to_biomass <- function(scaler, scenario, avg_bio) {
 }
 
 #' Create a standard likelihood profile plot
-#' @param data Data frame with columns: scaler, change, group_var, scenario
+#' @param data Data frame with columns: scalar, change, group_var, scenario
 #' @param group_var Name of the grouping variable (e.g., "Fishery", "Likelihood")
 #' @param label Annotation label for the plot
 create_piner_plot <- function(data, group_var, label = NULL) {
@@ -248,7 +248,7 @@ create_piner_plot <- function(data, group_var, label = NULL) {
     setNames(viridis::viridis(length(non_total_groups)), non_total_groups)
   )
   
-  p <- ggplot(data, aes(x = scaler, y = change, 
+  p <- ggplot(data, aes(x = scalar, y = change, 
                         colour = .data[[group_var]], 
                         shape = .data[[group_var]])) +
     geom_line(aes(linewidth = .data[[group_var]] == "Total"), alpha = 0.7) +
@@ -2222,7 +2222,7 @@ if (nrow(retro_df) > 0) {
 ```{r lik-profile-components, echo=FALSE, message=FALSE, fig.dim=c(11,8)}
 # =============================================================================
 # LIKELIHOOD PROFILE BY COMPONENT
-# Shows how each likelihood component changes across biomass scalers
+# Shows how each likelihood component changes across biomass scalars
 # =============================================================================
 
 prof_ctx <- get_profile_context(Info_list, ProfLikOut_list, ProfLikOutRaw_list)
@@ -2252,14 +2252,14 @@ if (length(scenarios_prof) > 0) {
 
       data.frame(
         scenario = sc,
-        scaler = scl,
+        scalar = scl,
         Likelihood = names(vals),
         value = as.numeric(vals),
         stringsAsFactors = FALSE
       )
     })
   }) %>%
-    mutate(scaler = scale_to_biomass(scaler, scenario, avg_bio))
+    mutate(scalar = scale_to_biomass(scalar, scenario, avg_bio))
 
   # Calculate change from minimum
   if (nrow(Likes_long) > 0) {
@@ -2269,7 +2269,7 @@ if (length(scenarios_prof) > 0) {
     cat("*No likelihood-component profile data available.*\n\n")
   }
 } else {
-  cat("*No profile outputs (`prof/scaler_*/profile_payload.rds`) were found across selected scenarios.*\n\n")
+  cat("*No profile outputs (`prof/scalar_*/profile_payload.rds`) were found across selected scenarios.*\n\n")
 }
 
 ```
@@ -2306,18 +2306,18 @@ if (length(scenarios_prof) > 0) {
       fish_names <- sapply(fish_ids, function(fid) get_fishery_name(fid))
       out <- data.frame(
         scenario = sc,
-        scaler = scl,
+        scalar = scl,
         Fishery = fish_names,
         value = as.numeric(cpue_vec),
         stringsAsFactors = FALSE
       )
       bind_rows(
         out,
-        data.frame(scenario = sc, scaler = scl, Fishery = "Total", value = sum(cpue_vec), stringsAsFactors = FALSE)
+        data.frame(scenario = sc, scalar = scl, Fishery = "Total", value = sum(cpue_vec), stringsAsFactors = FALSE)
       )
     })
   }) %>%
-    mutate(scaler = scale_to_biomass(scaler, scenario, avg_bio))
+    mutate(scalar = scale_to_biomass(scalar, scenario, avg_bio))
 
   if (nrow(Likes_long) > 0) {
     cat(sprintf("CPUE profile rows: %d | fisheries: %d | scenarios: %d\n\n",
@@ -2358,16 +2358,16 @@ if (length(scenarios_prof) > 0) {
       fish_names <- (fishery_map %>% with(setNames(fishery_name, fishery)))[as.character(seq_along(lf_vec))]
       out <- data.frame(
         scenario = sc,
-        scaler = scl,
+        scalar = scl,
         Fishery = fish_names,
         value = as.numeric(lf_vec),
         stringsAsFactors = FALSE
       ) %>% filter(is.finite(value), value != 0)
       if (nrow(out) == 0) return(data.frame())
-      bind_rows(out, data.frame(scenario = sc, scaler = scl, Fishery = "Total", value = sum(out$value), stringsAsFactors = FALSE))
+      bind_rows(out, data.frame(scenario = sc, scalar = scl, Fishery = "Total", value = sum(out$value), stringsAsFactors = FALSE))
     })
   }) %>%
-    mutate(scaler = scale_to_biomass(scaler, scenario, avg_bio))
+    mutate(scalar = scale_to_biomass(scalar, scenario, avg_bio))
   
   # Calculate change and plot
   if (nrow(Likes_long) > 0) {
@@ -2401,16 +2401,16 @@ if (length(scenarios_prof) > 0) {
       fish_names <- (fishery_map %>% with(setNames(fishery_name, fishery)))[as.character(seq_along(wf_vec))]
       out <- data.frame(
         scenario = sc,
-        scaler = scl,
+        scalar = scl,
         Fishery = fish_names,
         value = as.numeric(wf_vec),
         stringsAsFactors = FALSE
       ) %>% filter(is.finite(value), value != 0)
       if (nrow(out) == 0) return(data.frame())
-      bind_rows(out, data.frame(scenario = sc, scaler = scl, Fishery = "Total", value = sum(out$value), stringsAsFactors = FALSE))
+      bind_rows(out, data.frame(scenario = sc, scalar = scl, Fishery = "Total", value = sum(out$value), stringsAsFactors = FALSE))
     })
   }) %>%
-    mutate(scaler = scale_to_biomass(scaler, scenario, avg_bio))
+    mutate(scalar = scale_to_biomass(scalar, scenario, avg_bio))
   
   if (nrow(Likes_long) > 0) {
     Likes_change <- calc_lik_change(Likes_long, "Fishery")
@@ -2448,20 +2448,20 @@ if (length(scenarios_prof) > 0) {
       }
       data.frame(
         scenario = sc,
-        scaler = scl,
+        scalar = scl,
         program = as.character(program_names),
         value = as.numeric(sums_vec),
         stringsAsFactors = FALSE
       )
     })
   }) %>%
-    mutate(scaler = scale_to_biomass(scaler, scenario, avg_bio)) %>%
-    group_by(program, scaler, scenario) %>%
+    mutate(scalar = scale_to_biomass(scalar, scenario, avg_bio)) %>%
+    group_by(program, scalar, scenario) %>%
     summarise(value = sum(value), .groups = "drop")
   
   # Add total
   Likes_total <- Likes_long %>%
-    group_by(scaler, scenario) %>%
+    group_by(scalar, scenario) %>%
     summarise(value = sum(value), .groups = "drop") %>%
     mutate(program = "Total")
   
@@ -2504,13 +2504,13 @@ if (length(scenarios_prof) == 0 || length(scales) == 0) {
       arrange(first_order) %>%
       select(-first_order)
 
-    # Add likelihood values for each scaler
+    # Add likelihood values for each scalar
     map_dfr(scales, function(scl) {
       lik_vec <- ProfLikOut_list[[sc]][[scl]]@age_length
       alk_summary %>%
         mutate(
           scenario = sc,
-          scaler = scale_to_biomass(scl, sc, avg_bio),
+          scalar = scale_to_biomass(scl, sc, avg_bio),
           Lik = lik_vec[seq_len(nrow(alk_summary))]
         )
     })
@@ -2522,12 +2522,12 @@ if (length(scenarios_prof) == 0 || length(scales) == 0) {
 
   # Sum by fishery
   lik_by_fishery <- age_lik_data %>%
-    group_by(fishery, scaler, scenario) %>%
+    group_by(fishery, scalar, scenario) %>%
     summarise(value = sum(Lik, na.rm = TRUE), .groups = "drop")
 
   # Add total
   lik_total <- lik_by_fishery %>%
-    group_by(scaler, scenario) %>%
+    group_by(scalar, scenario) %>%
     summarise(value = sum(value), .groups = "drop") %>%
     mutate(fishery = "Total")
 
@@ -2575,7 +2575,7 @@ if (length(scenarios_prof) == 0 || length(scales) == 0) {
       alk_summary %>%
         mutate(
           scenario = sc,
-          scaler = scale_to_biomass(scl, sc, avg_bio),
+          scalar = scale_to_biomass(scl, sc, avg_bio),
           Lik = lik_vec[seq_len(nrow(alk_summary))]
         )
     })
@@ -2583,12 +2583,12 @@ if (length(scenarios_prof) == 0 || length(scales) == 0) {
 
   # Sum by year
   lik_by_year <- age_lik_data %>%
-    group_by(year, scaler, scenario) %>%
+    group_by(year, scalar, scenario) %>%
     summarise(value = sum(Lik, na.rm = TRUE), .groups = "drop")
 
   # Add total
   lik_total <- lik_by_year %>%
-    group_by(scaler, scenario) %>%
+    group_by(scalar, scenario) %>%
     summarise(value = sum(value), .groups = "drop") %>%
     mutate(year = "Total")
 

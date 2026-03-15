@@ -745,7 +745,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     bquote("Average biomass (" * 10^3 * " MT)")
   }
 
-  scaler_quantity <- function(profile_entry, scl) {
+  scalar_quantity <- function(profile_entry, scl) {
     key <- as.character(scl)
     suppressWarnings(as.numeric(profile_entry$actual_quantity[[key]]))
   }
@@ -1378,25 +1378,25 @@ mod_likelihood_server <- function(input, output, session, rv) {
   load_profile_outputs <- function(model_dir, scenario) {
     folder <- file.path(model_dir, scenario)
     prof_dir <- file.path(folder, "prof")
-    scaler_dirs <- list.dirs(prof_dir, full.names = TRUE, recursive = FALSE)
-    scaler_dirs <- grep("scaler_\\d+$", scaler_dirs, value = TRUE)
+    scalar_dirs <- list.dirs(prof_dir, full.names = TRUE, recursive = FALSE)
+    scalar_dirs <- grep("scalar_\\d+$", scalar_dirs, value = TRUE)
 
-    if (length(scaler_dirs) > 0) {
-      payload_files <- file.path(scaler_dirs, "profile_payload.rds")
+    if (length(scalar_dirs) > 0) {
+      payload_files <- file.path(scalar_dirs, "profile_payload.rds")
       has_payload <- file.exists(payload_files)
 
       if (any(has_payload)) {
         payloads <- map(payload_files[has_payload], ~ tryCatch(readRDS(.x), error = function(e) NULL))
         payloads <- payloads[!vapply(payloads, is.null, logical(1))]
-        scaler_keys <- basename(scaler_dirs[has_payload]) %>% str_extract("\\d+$")
-        info_files <- file.path(scaler_dirs[has_payload], "info.rds")
+        scalar_keys <- basename(scalar_dirs[has_payload]) %>% str_extract("\\d+$")
+        info_files <- file.path(scalar_dirs[has_payload], "info.rds")
         info_payloads <- setNames(
           lapply(info_files, function(x) if (file.exists(x)) tryCatch(readRDS(x), error = function(e) NULL) else NULL),
-          scaler_keys
+          scalar_keys
         )
 
         if (length(payloads) > 0) {
-          existing_scales <- as.character(vapply(payloads, function(x) as.numeric(x$scaler), numeric(1)))
+          existing_scales <- as.character(vapply(payloads, function(x) as.numeric(x$scalar), numeric(1)))
           lik_out <- setNames(map(payloads, "lik_out"), existing_scales)
           lik_raw <- setNames(map(payloads, "lik_raw"), existing_scales)
           max_grad <- setNames(vapply(payloads, function(x) suppressWarnings(as.numeric(x$max_grad)), numeric(1)), existing_scales)
@@ -1447,7 +1447,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
               NA_character_
             }
             data.frame(
-              scaler = as.character(sc),
+              scalar = as.character(sc),
               requested = requested,
               attempted = attempted,
               ok = ok,
@@ -1458,17 +1458,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
           })
           hessian_df <- bind_rows(hessian_rows)
           if (nrow(hessian_df) > 0) {
-            hessian_ok_by_scaler <- setNames(as.list(hessian_df$ok), hessian_df$scaler)
-            hessian_status_by_scaler <- setNames(as.list(hessian_df$status), hessian_df$scaler)
-            hessian_requested_by_scaler <- setNames(as.list(hessian_df$requested), hessian_df$scaler)
-            hessian_attempted_by_scaler <- setNames(as.list(hessian_df$attempted), hessian_df$scaler)
-            hessian_neg_by_scaler <- setNames(as.list(hessian_df$neg_eigen), hessian_df$scaler)
+            hessian_ok_by_scalar <- setNames(as.list(hessian_df$ok), hessian_df$scalar)
+            hessian_status_by_scalar <- setNames(as.list(hessian_df$status), hessian_df$scalar)
+            hessian_requested_by_scalar <- setNames(as.list(hessian_df$requested), hessian_df$scalar)
+            hessian_attempted_by_scalar <- setNames(as.list(hessian_df$attempted), hessian_df$scalar)
+            hessian_neg_by_scalar <- setNames(as.list(hessian_df$neg_eigen), hessian_df$scalar)
           } else {
-            hessian_ok_by_scaler <- list()
-            hessian_status_by_scaler <- list()
-            hessian_requested_by_scaler <- list()
-            hessian_attempted_by_scaler <- list()
-            hessian_neg_by_scaler <- list()
+            hessian_ok_by_scalar <- list()
+            hessian_status_by_scalar <- list()
+            hessian_requested_by_scalar <- list()
+            hessian_attempted_by_scalar <- list()
+            hessian_neg_by_scalar <- list()
           }
           hessian_df <- hessian_df[!is.na(hessian_df$requested) | !is.na(hessian_df$attempted) | !is.na(hessian_df$ok), , drop = FALSE]
           profile_hessian_attempted <- if (nrow(hessian_df) > 0) sum(hessian_df$attempted, na.rm = TRUE) else 0L
@@ -1507,15 +1507,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
           profile_hessian_requested <- 0L
           profile_hessian_status <- NA_character_
           profile_hessian_summary <- "Not requested"
-          hessian_ok_by_scaler <- list()
-          hessian_status_by_scaler <- list()
-          hessian_requested_by_scaler <- list()
-          hessian_attempted_by_scaler <- list()
-          hessian_neg_by_scaler <- list()
+          hessian_ok_by_scalar <- list()
+          hessian_status_by_scalar <- list()
+          hessian_requested_by_scalar <- list()
+          hessian_attempted_by_scalar <- list()
+          hessian_neg_by_scalar <- list()
         }
       } else {
-        scales <- basename(scaler_dirs) %>% str_extract("\\d+$")
-        output_files <- file.path(scaler_dirs, "test_plot_output")
+        scales <- basename(scalar_dirs) %>% str_extract("\\d+$")
+        output_files <- file.path(scalar_dirs, "test_plot_output")
         existing_files <- output_files[file.exists(output_files)]
         existing_scales <- scales[file.exists(output_files)]
 
@@ -1543,11 +1543,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
         profile_hessian_requested <- 0L
         profile_hessian_status <- NA_character_
         profile_hessian_summary <- "Not requested"
-        hessian_ok_by_scaler <- list()
-        hessian_status_by_scaler <- list()
-        hessian_requested_by_scaler <- list()
-        hessian_attempted_by_scaler <- list()
-        hessian_neg_by_scaler <- list()
+        hessian_ok_by_scalar <- list()
+        hessian_status_by_scalar <- list()
+        hessian_requested_by_scalar <- list()
+        hessian_attempted_by_scalar <- list()
+        hessian_neg_by_scalar <- list()
       }
     } else {
       output_files <- list.files(folder, pattern = "^test_plot_output_\\d+$", full.names = TRUE)
@@ -1578,11 +1578,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
       profile_hessian_requested <- 0L
       profile_hessian_status <- NA_character_
       profile_hessian_summary <- "Not requested"
-      hessian_ok_by_scaler <- list()
-      hessian_status_by_scaler <- list()
-      hessian_requested_by_scaler <- list()
-      hessian_attempted_by_scaler <- list()
-      hessian_neg_by_scaler <- list()
+      hessian_ok_by_scalar <- list()
+      hessian_status_by_scalar <- list()
+      hessian_requested_by_scalar <- list()
+      hessian_attempted_by_scalar <- list()
+      hessian_neg_by_scalar <- list()
     }
 
     list(
@@ -1605,11 +1605,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
       profile_hessian_requested = profile_hessian_requested,
       profile_hessian_status = profile_hessian_status,
       profile_hessian_summary = profile_hessian_summary,
-      profile_hessian_ok_by_scaler = hessian_ok_by_scaler,
-      profile_hessian_status_by_scaler = hessian_status_by_scaler,
-      profile_hessian_requested_by_scaler = hessian_requested_by_scaler,
-      profile_hessian_attempted_by_scaler = hessian_attempted_by_scaler,
-      profile_hessian_neg_by_scaler = hessian_neg_by_scaler
+      profile_hessian_ok_by_scalar = hessian_ok_by_scalar,
+      profile_hessian_status_by_scalar = hessian_status_by_scalar,
+      profile_hessian_requested_by_scalar = hessian_requested_by_scalar,
+      profile_hessian_attempted_by_scalar = hessian_attempted_by_scalar,
+      profile_hessian_neg_by_scalar = hessian_neg_by_scalar
     )
   }
 
@@ -1940,13 +1940,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
         actual_quantity <- pd$actual_quantity[[as.character(scl)]]
         target_quantity <- pd$target_quantity[[as.character(scl)]]
         target_rel_err <- pd$target_rel_err[[as.character(scl)]]
-        h_status <- if (!is.null(pd$profile_hessian_status_by_scaler)) pd$profile_hessian_status_by_scaler[[as.character(scl)]] else NA
-        h_neg <- if (!is.null(pd$profile_hessian_neg_by_scaler)) pd$profile_hessian_neg_by_scaler[[as.character(scl)]] else NA
-        h_requested <- if (!is.null(pd$profile_hessian_requested_by_scaler)) pd$profile_hessian_requested_by_scaler[[as.character(scl)]] else FALSE
-        h_attempted <- if (!is.null(pd$profile_hessian_attempted_by_scaler)) pd$profile_hessian_attempted_by_scaler[[as.character(scl)]] else FALSE
+        h_status <- if (!is.null(pd$profile_hessian_status_by_scalar)) pd$profile_hessian_status_by_scalar[[as.character(scl)]] else NA
+        h_neg <- if (!is.null(pd$profile_hessian_neg_by_scalar)) pd$profile_hessian_neg_by_scalar[[as.character(scl)]] else NA
+        h_requested <- if (!is.null(pd$profile_hessian_requested_by_scalar)) pd$profile_hessian_requested_by_scalar[[as.character(scl)]] else FALSE
+        h_attempted <- if (!is.null(pd$profile_hessian_attempted_by_scalar)) pd$profile_hessian_attempted_by_scalar[[as.character(scl)]] else FALSE
         rows[[length(rows) + 1]] <- data.frame(
           scenario = sc,
-          scaler = suppressWarnings(as.numeric(scl)),
+          scalar = suppressWarnings(as.numeric(scl)),
           actual_quantity = suppressWarnings(as.numeric(actual_quantity)),
           target_quantity = suppressWarnings(as.numeric(target_quantity)),
           target_rel_err = suppressWarnings(as.numeric(target_rel_err)),
@@ -1974,7 +1974,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       ) %>%
       select(
         Model = scenario,
-        Scaler = scaler,
+        Scalar = scalar,
         `Actual Quantity (k MT)` = actual_quantity_kmt,
         `Target Quantity (k MT)` = target_quantity_kmt,
         `Gap (%)` = target_gap_pct,
@@ -1985,7 +1985,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         `Hessian.Status` = hessian_status,
         `Neg..Eigen` = hessian_neg
       ) %>%
-      arrange(Model, Scaler)
+      arrange(Model, Scalar)
   })
   profile_gradient_table_reactive <- bindCache(
     profile_gradient_table_reactive,
@@ -2057,7 +2057,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     p <- ggplot(
       data,
-      aes(x = scaler, y = change, colour = .data[[group_var]])
+      aes(x = scalar, y = change, colour = .data[[group_var]])
     ) +
       geom_line(aes(linewidth = .data[[group_var]] == "Total"), alpha = 0.7) +
       geom_point(aes(size = .data[[group_var]] == "Total"), alpha = 0.8, shape = 16) +
@@ -2152,11 +2152,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
         )
         values <- c(values, Total = sum(values, na.rm = TRUE))
 
-        scaler_bio <- scaler_quantity(profile_data[[sc]], scl)
-        if (!is.finite(scaler_bio)) next
+        scalar_bio <- scalar_quantity(profile_data[[sc]], scl)
+        if (!is.finite(scalar_bio)) next
         rows[[length(rows) + 1]] <- data.frame(
           scenario = sc,
-          scaler = scaler_bio,
+          scalar = scalar_bio,
           Likelihood = names(values),
           value = as.numeric(values),
           stringsAsFactors = FALSE
@@ -2185,8 +2185,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       for (scl in scales) {
         lik <- profile_data[[sc]]$lik_out[[scl]]
         if (is.null(lik)) next
-        scaler_bio <- scaler_quantity(profile_data[[sc]], scl)
-        if (!is.finite(scaler_bio)) next
+        scalar_bio <- scalar_quantity(profile_data[[sc]], scl)
+        if (!is.finite(scalar_bio)) next
 
         vec <- slot(lik, slot_name)
         fish_ids <- as.character(seq_along(vec))
@@ -2208,7 +2208,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
         df <- data.frame(
           scenario = sc,
-          scaler = scaler_bio,
+          scalar = scalar_bio,
           group = fish_names,
           region = fish_regions,
           value = as.numeric(vec),
@@ -2216,7 +2216,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         )
 
         total_row <- df %>%
-          group_by(scenario, scaler, region) %>%
+          group_by(scenario, scalar, region) %>%
           summarise(value = sum(value), n_groups = dplyr::n_distinct(group), .groups = "drop") %>%
           filter(n_groups > 1) %>%
           select(-n_groups) %>%
@@ -2341,8 +2341,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
         raw <- profile_data[[sc]]$lik_raw[[scl]]
         vec <- extract_survey_index_like_from_raw(raw)
         if (length(vec) == 0) next
-        scaler_bio <- scaler_quantity(profile_data[[sc]], scl)
-        if (!is.finite(scaler_bio)) next
+        scalar_bio <- scalar_quantity(profile_data[[sc]], scl)
+        if (!is.finite(scalar_bio)) next
 
         fish_ids <- as.character(seq_along(vec))
         keep_idx <- is.finite(vec) & abs(vec) > 0
@@ -2360,7 +2360,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
         df <- data.frame(
           scenario = sc,
-          scaler = scaler_bio,
+          scalar = scalar_bio,
           Fishery = fish_names,
           region = fish_regions,
           value = as.numeric(vec),
@@ -2368,7 +2368,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         )
 
         total_row <- df %>%
-          group_by(scenario, scaler, region) %>%
+          group_by(scenario, scalar, region) %>%
           summarise(value = sum(value), n_groups = dplyr::n_distinct(Fishery), .groups = "drop") %>%
           filter(n_groups > 1) %>%
           select(-n_groups) %>%
@@ -2403,8 +2403,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       for (scl in scales) {
         lik <- profile_data[[sc]]$lik_out[[scl]]
         if (is.null(lik)) next
-        scaler_bio <- scaler_quantity(profile_data[[sc]], scl)
-        if (!is.finite(scaler_bio)) next
+        scalar_bio <- scalar_quantity(profile_data[[sc]], scl)
+        if (!is.finite(scalar_bio)) next
 
         tag_rel <- lik@tag_rel_fish
         sums_vec <- sapply(tag_rel, function(g) sum(unlist(g)))
@@ -2413,7 +2413,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
         df <- data.frame(
           scenario = sc,
-          scaler = scaler_bio,
+          scalar = scalar_bio,
           program = program_names,
           value = as.numeric(sums_vec),
           stringsAsFactors = FALSE
@@ -2427,7 +2427,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (nrow(data) == 0) return(data)
 
     data %>%
-      group_by(program, scaler, scenario) %>%
+      group_by(program, scalar, scenario) %>%
       summarise(value = sum(value), .groups = "drop")
   }
 
@@ -2473,8 +2473,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       for (scl in scales) {
         lik <- profile_data[[sc]]$lik_out[[scl]]
         if (is.null(lik)) next
-        scaler_bio <- scaler_quantity(profile_data[[sc]], scl)
-        if (!is.finite(scaler_bio)) next
+        scalar_bio <- scalar_quantity(profile_data[[sc]], scl)
+        if (!is.finite(scalar_bio)) next
 
         lik_vec <- lik@age_length
         n_use <- min(length(lik_vec), nrow(alk_summary))
@@ -2483,7 +2483,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         df <- alk_summary[seq_len(n_use), , drop = FALSE]
         df$Lik <- lik_vec[seq_len(n_use)]
         df$scenario <- sc
-        df$scaler <- scaler_bio
+        df$scalar <- scalar_bio
 
         if (by == "fishery") {
           if (length(allowed_ids) > 0) {
@@ -2498,11 +2498,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
           df$region[is.na(df$region) | !nzchar(df$region)] <- "Unknown"
 
           by_group <- df %>%
-            group_by(fishery, scaler, scenario, region) %>%
+            group_by(fishery, scalar, scenario, region) %>%
             summarise(value = sum(Lik, na.rm = TRUE), .groups = "drop")
 
           total_row <- by_group %>%
-            group_by(scaler, scenario, region) %>%
+            group_by(scalar, scenario, region) %>%
             summarise(value = sum(value), n_groups = dplyr::n_distinct(fishery), .groups = "drop") %>%
             filter(n_groups > 1) %>%
             select(-n_groups) %>%
@@ -2511,12 +2511,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
           rows[[length(rows) + 1]] <- bind_rows(by_group, total_row)
         } else {
           by_group <- df %>%
-            group_by(year, scaler, scenario) %>%
+            group_by(year, scalar, scenario) %>%
             summarise(value = sum(Lik, na.rm = TRUE), .groups = "drop")
 
           by_group$year <- as.character(by_group$year)
           total_row <- by_group %>%
-            group_by(scaler, scenario) %>%
+            group_by(scalar, scenario) %>%
             summarise(value = sum(value), .groups = "drop") %>%
             mutate(year = "Total")
 
@@ -3531,7 +3531,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     all_scales <- sort(unique(unlist(lapply(profile_data, function(x) x$scales))))
     if (length(all_scales) == 0) {
-      return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No scaler values found for the selected scenarios"))
+      return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No scalar values found for the selected scenarios"))
     }
 
     allowed_region_fisheries <- NULL
@@ -3545,7 +3545,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     if (type == "components") {
       data <- build_components_data(profile_data, names(profile_data), all_scales)
-      data <- data %>% filter(is.finite(value) & is.finite(scaler))
+      data <- data %>% filter(is.finite(value) & is.finite(scalar))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No component data available"))
       }
@@ -3561,17 +3561,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
         all_scales,
         allowed_fisheries = allowed_region_fisheries
       )
-      data <- data %>% filter(is.finite(value) & is.finite(scaler))
+      data <- data %>% filter(is.finite(value) & is.finite(scalar))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No CPUE profile data available"))
       }
       if (!isTRUE(filters$split_by_region) && "region" %in% names(data)) {
         data <- data %>%
           filter(Fishery != "Total") %>%
-          group_by(scenario, scaler, Fishery) %>%
+          group_by(scenario, scalar, Fishery) %>%
           summarise(value = sum(value), .groups = "drop")
         total_rows <- data %>%
-          group_by(scenario, scaler) %>%
+          group_by(scenario, scalar) %>%
           summarise(value = sum(value), .groups = "drop") %>%
           mutate(Fishery = "Total")
         data <- bind_rows(data, total_rows)
@@ -3584,17 +3584,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
       data <- build_fishery_data(profile_data, names(profile_data), rv$FISHERY_MAPS,
                                  "total_length_fish", "Fishery", all_scales,
                                  allowed_fisheries = allowed_region_fisheries)
-      data <- data %>% filter(is.finite(value) & is.finite(scaler))
+      data <- data %>% filter(is.finite(value) & is.finite(scalar))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No LF profile data available"))
       }
       if (!isTRUE(filters$split_by_region) && "region" %in% names(data)) {
         data <- data %>%
           filter(Fishery != "Total") %>%
-          group_by(scenario, scaler, Fishery) %>%
+          group_by(scenario, scalar, Fishery) %>%
           summarise(value = sum(value), .groups = "drop")
         total_rows <- data %>%
-          group_by(scenario, scaler) %>%
+          group_by(scenario, scalar) %>%
           summarise(value = sum(value), .groups = "drop") %>%
           mutate(Fishery = "Total")
         data <- bind_rows(data, total_rows)
@@ -3607,17 +3607,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
       data <- build_fishery_data(profile_data, names(profile_data), rv$FISHERY_MAPS,
                                  "total_weight_fish", "Fishery", all_scales,
                                  allowed_fisheries = allowed_region_fisheries)
-      data <- data %>% filter(is.finite(value) & is.finite(scaler))
+      data <- data %>% filter(is.finite(value) & is.finite(scalar))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No WF profile data available"))
       }
       if (!isTRUE(filters$split_by_region) && "region" %in% names(data)) {
         data <- data %>%
           filter(Fishery != "Total") %>%
-          group_by(scenario, scaler, Fishery) %>%
+          group_by(scenario, scalar, Fishery) %>%
           summarise(value = sum(value), .groups = "drop")
         total_rows <- data %>%
-          group_by(scenario, scaler) %>%
+          group_by(scenario, scalar) %>%
           summarise(value = sum(value), .groups = "drop") %>%
           mutate(Fishery = "Total")
         data <- bind_rows(data, total_rows)
@@ -3628,12 +3628,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     if (type == "tagging") {
       data <- build_tagging_data(profile_data, names(profile_data), rv$TagOut_list, all_scales)
-      data <- data %>% filter(is.finite(value) & is.finite(scaler))
+      data <- data %>% filter(is.finite(value) & is.finite(scalar))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No tagging profile data available"))
       }
       total_row <- data %>%
-        group_by(scaler, scenario) %>%
+        group_by(scalar, scenario) %>%
         summarise(value = sum(value), .groups = "drop") %>%
         mutate(program = "Total")
       data <- bind_rows(data, total_row)
@@ -3645,17 +3645,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
       data <- build_cal_data(profile_data, names(profile_data), rv$AgeOut_list,
                              rv$FISHERY_MAPS, by = "fishery", all_scales,
                              allowed_fisheries = allowed_region_fisheries)
-      data <- data %>% filter(is.finite(value) & is.finite(scaler))
+      data <- data %>% filter(is.finite(value) & is.finite(scalar))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No CAL by fishery data available"))
       }
       if (!isTRUE(filters$split_by_region) && "region" %in% names(data)) {
         data <- data %>%
           filter(fishery != "Total") %>%
-          group_by(scenario, scaler, fishery) %>%
+          group_by(scenario, scalar, fishery) %>%
           summarise(value = sum(value), .groups = "drop")
         total_rows <- data %>%
-          group_by(scenario, scaler) %>%
+          group_by(scenario, scalar) %>%
           summarise(value = sum(value), .groups = "drop") %>%
           mutate(fishery = "Total")
         data <- bind_rows(data, total_rows)
@@ -3667,7 +3667,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (type == "cal_year") {
       data <- build_cal_data(profile_data, names(profile_data), rv$AgeOut_list,
                              rv$FISHERY_MAPS, by = "year", all_scales)
-      data <- data %>% filter(is.finite(value) & is.finite(scaler))
+      data <- data %>% filter(is.finite(value) & is.finite(scalar))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No CAL by year data available"))
       }
@@ -5210,7 +5210,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (is.null(grad_tbl) || nrow(grad_tbl) == 0) return(NULL)
 
     box(
-      title = "Total Profile Scaler Diagnostics",
+      title = "Total Profile Scalar Diagnostics",
       width = 12,
       solidHeader = TRUE,
       status = "warning",

@@ -313,8 +313,8 @@
                numericInput("edit_nsplit", NULL, value = as.numeric(model$nsplit), min = 1, max = 20)
         )
       ),
-      div(class = "param-label", "Profile Scalers:"),
-      textInput("edit_scalers", NULL, value = model$scalers, width = "100%"),
+      div(class = "param-label", "Profile Scalars:"),
+      textInput("edit_scalars", NULL, value = model$scalars, width = "100%"),
       div(class = "param-label", "Profile Reps:"),
       textInput("edit_reps", NULL, value = model$Reps, width = "100%"),
       div(class = "param-label", "Profile Init Map RDS (relative to repo/base_dir):"),
@@ -327,9 +327,9 @@
       ),
       div(class = "param-label", "Profile Init Map (target:donor, comma):"),
       textInput(
-        "edit_init_from_scaler_map",
+        "edit_init_from_scalar_map",
         NULL,
-        value = if (!is.null(model$init_from_scaler_map)) model$init_from_scaler_map else "",
+        value = if (!is.null(model$init_from_scalar_map)) model$init_from_scalar_map else "",
         width = "100%",
         placeholder = "70:80,80:90,90:100"
       ),
@@ -400,10 +400,10 @@
     rv$models[[model_name]]$retro_hessian <- input$edit_retro_hessian
     rv$models[[model_name]]$retro_peels <- input$edit_retro_peels
     rv$models[[model_name]]$nsplit <- as.character(input$edit_nsplit)
-    rv$models[[model_name]]$scalers <- input$edit_scalers
+    rv$models[[model_name]]$scalars <- input$edit_scalars
     rv$models[[model_name]]$Reps <- input$edit_reps
     rv$models[[model_name]]$prof_init_map_rds <- input$edit_prof_init_map_rds
-    rv$models[[model_name]]$init_from_scaler_map <- input$edit_init_from_scaler_map
+    rv$models[[model_name]]$init_from_scalar_map <- input$edit_init_from_scalar_map
     rv$models[[model_name]]$init_par_override_map <- input$edit_init_par_override_map
     rv$models[[model_name]]$Af172 <- as.character(input$edit_af172)
     rv$models[[model_name]]$Af173 <- as.character(input$edit_af173)

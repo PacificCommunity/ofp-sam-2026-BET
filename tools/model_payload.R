@@ -372,18 +372,18 @@ mp_build_model_payload <- function(folder, tag_report_year1 = "auto") {
   )
 }
 
-mp_build_profile_payload <- function(scaler_dir) {
-  out_file <- file.path(scaler_dir, "test_plot_output")
+mp_build_profile_payload <- function(scalar_dir) {
+  out_file <- file.path(scalar_dir, "test_plot_output")
   if (!file.exists(out_file)) return(NULL)
-  info_file <- file.path(scaler_dir, "info.rds")
+  info_file <- file.path(scalar_dir, "info.rds")
   info_out <- if (file.exists(info_file)) mp_safe(readRDS(info_file)) else NULL
-  par_file <- mp_final_par(scaler_dir)
+  par_file <- mp_final_par(scalar_dir)
 
   list(
     version = "v1",
     created_at = as.character(Sys.time()),
-    scaler_dir = scaler_dir,
-    scaler = suppressWarnings(as.numeric(sub(".*?(\\d+)$", "\\1", basename(scaler_dir)))),
+    scalar_dir = scalar_dir,
+    scalar = suppressWarnings(as.numeric(sub(".*?(\\d+)$", "\\1", basename(scalar_dir)))),
     quantity_label = mp_safe(info_out$quantity_label),
     reference_quantity = suppressWarnings(as.numeric(info_out$reference_quantity)),
     target_quantity = suppressWarnings(as.numeric(info_out$target_quantity)),

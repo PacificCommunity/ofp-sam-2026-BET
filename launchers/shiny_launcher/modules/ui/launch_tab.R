@@ -73,7 +73,7 @@ launch_tab_ui <- function() {
                 ),
                 conditionalPanel(
                   condition = "input.prof_launch_strategy == 'seq_anchor_bidir'",
-                  numericInput("prof_anchor_scaler", "Anchor scaler:", value = 100, min = 1, step = 1)
+                  numericInput("prof_anchor_scalar", "Anchor scalar:", value = 100, min = 1, step = 1)
                 )
               )
             ),

@@ -17,7 +17,7 @@ models <- list(
     
     ## configuration for profiling
     Reps = "15 25 25 1000 1000 500",
-    scalers = paste0((seq(140, 60, by=-5)), collapse = " "),
+    scalars = paste0((seq(140, 60, by=-5)), collapse = " "),
     Af172 = "0",
     Af173 = "0",
     Af174 = "0",
@@ -47,7 +47,7 @@ models <- list(
     
     
     prof_init_map_rds="",
-    init_from_scaler_map=""
+    init_from_scalar_map=""
     
   )
   

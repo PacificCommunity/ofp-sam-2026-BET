@@ -17,7 +17,7 @@ models <- list(
     
     ## configuration for profiling
     Reps = "1 1 1 1 1 1",
-    scalers = paste0((seq(120, 80, by=-5)), collapse = " "),
+    scalars = paste0((seq(120, 80, by=-5)), collapse = " "),
     Af172 = "1",
     Af173 = "0",
     Af174 = "10",

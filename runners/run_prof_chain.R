@@ -9,27 +9,27 @@ parse_numeric_tokens <- function(x) {
   vals[is.finite(vals)]
 }
 
-read_indexed_chain_scalers <- function() {
+read_indexed_chain_scalars <- function() {
   n <- suppressWarnings(as.integer(Sys.getenv("chain_count", Sys.getenv("CHAIN_COUNT", ""))))
   if (!is.finite(n) || n < 1) return(numeric(0))
   out <- numeric(0)
   for (i in seq_len(n)) {
-    key_lo <- paste0("chain_scaler_", i)
-    key_up <- paste0("CHAIN_SCALER_", i)
+    key_lo <- paste0("chain_scalar_", i)
+    key_up <- paste0("CHAIN_SCALAR_", i)
     v <- suppressWarnings(as.numeric(Sys.getenv(key_lo, Sys.getenv(key_up, ""))))
     if (is.finite(v)) out <- c(out, v)
   }
   out
 }
 
-resolve_chain_from_scalers <- function(all_scalers, chain_name, chain_anchor) {
-  all_scalers <- sort(unique(all_scalers[is.finite(all_scalers)]))
-  if (length(all_scalers) == 0) return(numeric(0))
+resolve_chain_from_scalars <- function(all_scalars, chain_name, chain_anchor) {
+  all_scalars <- sort(unique(all_scalars[is.finite(all_scalars)]))
+  if (length(all_scalars) == 0) return(numeric(0))
   anch <- suppressWarnings(as.numeric(chain_anchor))
   if (!is.finite(anch)) anch <- 100
-  anchor_eff <- all_scalers[which.min(abs(all_scalers - anch))]
-  lower <- sort(all_scalers[all_scalers < anchor_eff], decreasing = TRUE)
-  upper <- sort(all_scalers[all_scalers > anchor_eff], decreasing = FALSE)
+  anchor_eff <- all_scalars[which.min(abs(all_scalars - anch))]
+  lower <- sort(all_scalars[all_scalars < anchor_eff], decreasing = TRUE)
+  upper <- sort(all_scalars[all_scalars > anchor_eff], decreasing = FALSE)
   nm <- tolower(trimws(as.character(chain_name)))
   if (identical(nm, "down")) {
     return(c(anchor_eff, lower))
@@ -41,25 +41,25 @@ resolve_chain_from_scalers <- function(all_scalers, chain_name, chain_anchor) {
 }
 
 chain_name <- Sys.getenv("chain_name", "chain")
-chain_scalers <- parse_numeric_tokens(Sys.getenv("chain_scalers", ""))
-if (length(chain_scalers) == 0) {
-  chain_scalers <- read_indexed_chain_scalers()
+chain_scalars <- parse_numeric_tokens(Sys.getenv("chain_scalars", ""))
+if (length(chain_scalars) == 0) {
+  chain_scalars <- read_indexed_chain_scalars()
 }
 chain_first_init_from <- suppressWarnings(as.numeric(Sys.getenv("chain_first_init_from", "")))
 chain_anchor <- Sys.getenv("chain_anchor", "")
 
-if (length(chain_scalers) == 0) {
-  all_scalers <- parse_numeric_tokens(Sys.getenv("scalers", ""))
-  chain_scalers <- resolve_chain_from_scalers(all_scalers, chain_name, chain_anchor)
-  if (length(chain_scalers) == 0) {
-    stop("No chain scalers found: missing indexed chain_scaler_* and failed to rebuild from scalers/chain_anchor.")
+if (length(chain_scalars) == 0) {
+  all_scalars <- parse_numeric_tokens(Sys.getenv("scalars", ""))
+  chain_scalars <- resolve_chain_from_scalars(all_scalars, chain_name, chain_anchor)
+  if (length(chain_scalars) == 0) {
+    stop("No chain scalars found: missing indexed chain_scalar_* and failed to rebuild from scalars/chain_anchor.")
   }
 }
 
 cat("=== Profile Chain Run ===\n")
 cat("chain_name:", chain_name, "\n")
-cat("chain_scalers_raw_env:", Sys.getenv("chain_scalers", "<none>"), "\n")
-cat("chain_scalers:", paste(chain_scalers, collapse = " "), "\n")
+cat("chain_scalars_raw_env:", Sys.getenv("chain_scalars", "<none>"), "\n")
+cat("chain_scalars:", paste(chain_scalars, collapse = " "), "\n")
 cat("chain_first_init_from:", ifelse(is.finite(chain_first_init_from), as.character(chain_first_init_from), "<none>"), "\n")
 cat("chain_anchor:", ifelse(nzchar(chain_anchor), chain_anchor, "<none>"), "\n")
 
@@ -69,20 +69,20 @@ if (!file.exists(run_prof_script)) {
   stop("Cannot find runners/run_prof.R under project root: ", project_root)
 }
 
-prev_scaler <- NA_real_
-for (i in seq_along(chain_scalers)) {
-  sc <- chain_scalers[[i]]
-  donor <- if (i == 1L) chain_first_init_from else prev_scaler
+prev_scalar <- NA_real_
+for (i in seq_along(chain_scalars)) {
+  sc <- chain_scalars[[i]]
+  donor <- if (i == 1L) chain_first_init_from else prev_scalar
 
   env_kv <- c(
-    paste0("scaler=", format(sc, scientific = FALSE, trim = TRUE)),
+    paste0("scalar=", format(sc, scientific = FALSE, trim = TRUE)),
     "skip_condor_archive_cleanup=1"
   )
   if (is.finite(donor)) {
-    env_kv <- c(env_kv, paste0("init_from_scaler=", format(donor, scientific = FALSE, trim = TRUE)))
+    env_kv <- c(env_kv, paste0("init_from_scalar=", format(donor, scientific = FALSE, trim = TRUE)))
   }
 
-  cat("\n--- chain step", i, "/", length(chain_scalers), " scaler=", sc,
+  cat("\n--- chain step", i, "/", length(chain_scalars), " scalar=", sc,
       " donor=", ifelse(is.finite(donor), as.character(donor), "<none>"), " ---\n", sep = "")
 
   status <- system2(
@@ -94,10 +94,10 @@ for (i in seq_along(chain_scalers)) {
   )
 
   if (!is.numeric(status) || length(status) != 1 || is.na(status) || as.integer(status) != 0L) {
-    stop("run_prof.R failed in chain ", chain_name, " at scaler ", sc, " (status=", status, ").")
+    stop("run_prof.R failed in chain ", chain_name, " at scalar ", sc, " (status=", status, ").")
   }
 
-  prev_scaler <- sc
+  prev_scalar <- sc
 }
 
 cleanup_script <- file.path(project_root, "tools", "condor_archive_cleanup.R")

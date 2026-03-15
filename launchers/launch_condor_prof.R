@@ -36,7 +36,7 @@ parse_num_vec <- function(x) {
   vals[is.finite(vals)]
 }
 
-parse_scaler_map <- function(txt) {
+parse_scalar_map <- function(txt) {
   out <- list()
   if (!nzchar(txt)) return(out)
   parts <- trimws(unlist(strsplit(txt, ",")))
@@ -66,45 +66,45 @@ parse_target_map <- function(txt) {
   out
 }
 
-target_scalers_from_map <- function(mp) {
+target_scalars_from_map <- function(mp) {
   if (length(mp) == 0) return(integer(0))
   keys <- suppressWarnings(as.integer(names(mp)))
   sort(unique(keys[is.finite(keys)]))
 }
 
-resolve_model_scalers <- function(model_cfg, scalers_override, init_map, init_override_map) {
-  base_scalers <- sort(unique(as.integer(round(parse_num_vec(model_cfg$scalers)))))
+resolve_model_scalars <- function(model_cfg, scalars_override, init_map, init_override_map) {
+  base_scalars <- sort(unique(as.integer(round(parse_num_vec(model_cfg$scalars)))))
   mapped_targets <- sort(unique(c(
-    target_scalers_from_map(init_map),
-    target_scalers_from_map(init_override_map)
+    target_scalars_from_map(init_map),
+    target_scalars_from_map(init_override_map)
   )))
-  scalers <- if (length(mapped_targets) > 0) mapped_targets else base_scalers
-  if (length(scalers_override) > 0) {
-    scalers <- intersect(scalers, as.integer(round(scalers_override)))
+  scalars <- if (length(mapped_targets) > 0) mapped_targets else base_scalars
+  if (length(scalars_override) > 0) {
+    scalars <- intersect(scalars, as.integer(round(scalars_override)))
   }
-  sort(unique(as.integer(round(scalers[is.finite(scalers)]))))
+  sort(unique(as.integer(round(scalars[is.finite(scalars)]))))
 }
 
-scalers_override_txt <- Sys.getenv("scalers_override", "")
-scalers_override <- parse_num_vec(scalers_override_txt)
-init_map <- parse_scaler_map(Sys.getenv("init_from_scaler_map", ""))
+scalars_override_txt <- Sys.getenv("scalars_override", "")
+scalars_override <- parse_num_vec(scalars_override_txt)
+init_map <- parse_scalar_map(Sys.getenv("init_from_scalar_map", ""))
 init_override_map <- parse_target_map(Sys.getenv("init_par_override_map", ""))
 
 cat("Profile Condor launcher\n")
 cat("- config_file:", config_file, "\n")
 cat("- remote dir:", run_dir, "\n")
-cat("- scalers_override:", ifelse(length(scalers_override) > 0, paste(scalers_override, collapse = " "), "<none>"), "\n")
-cat("- init_from_scaler_map entries:", length(init_map), "\n")
+cat("- scalars_override:", ifelse(length(scalars_override) > 0, paste(scalars_override, collapse = " "), "<none>"), "\n")
+cat("- init_from_scalar_map entries:", length(init_map), "\n")
 cat("- init_par_override_map entries:", length(init_override_map), "\n")
 cat("- auto_refine_profile:", auto_refine_profile, "\n")
 
 for (model_name in names(models)) {
-  model_scalers <- resolve_model_scalers(models[[model_name]], scalers_override, init_map, init_override_map)
-  if (length(model_scalers) == 0) next
+  model_scalars <- resolve_model_scalars(models[[model_name]], scalars_override, init_map, init_override_map)
+  if (length(model_scalars) == 0) next
 
-  for (sc in model_scalers) {
+  for (sc in model_scalars) {
     prof_env <- models[[model_name]]
-    prof_env$scaler <- as.character(sc)
+    prof_env$scalar <- as.character(sc)
 
     override_val <- init_override_map[[as.character(sc)]]
     if (!is.null(override_val) && nzchar(override_val)) {
@@ -112,7 +112,7 @@ for (model_name in names(models)) {
     } else {
       mapped <- init_map[[as.character(sc)]]
       if (!is.null(mapped) && nzchar(mapped)) {
-        prof_env$init_from_scaler <- mapped
+        prof_env$init_from_scalar <- mapped
       }
     }
 
@@ -149,10 +149,10 @@ for (model_name in names(models)) {
 }
 
 for (model_name in names(models)) {
-  model_scalers <- resolve_model_scalers(models[[model_name]], scalers_override, init_map, init_override_map)
-  if (length(model_scalers) == 0) next
+  model_scalars <- resolve_model_scalars(models[[model_name]], scalars_override, init_map, init_override_map)
+  if (length(model_scalars) == 0) next
 
-  for (sc in model_scalers) {
+  for (sc in model_scalars) {
     remote_dir <- paste0(github_repo, "/", run_dir, "/", model_name, "_sc", sc)
     CondorBox::BatchFileHandler(
       remote_user = remote_user,
@@ -169,25 +169,25 @@ for (model_name in names(models)) {
 }
 
 if (auto_refine_profile) {
-  parse_scalers_int <- function(x) sort(unique(as.integer(round(parse_num_vec(x)))))
-  nearest_right_else_left <- function(target, scalers) {
-    s <- sort(unique(as.integer(scalers)))
+  parse_scalars_int <- function(x) sort(unique(as.integer(round(parse_num_vec(x)))))
+  nearest_right_else_left <- function(target, scalars) {
+    s <- sort(unique(as.integer(scalars)))
     right <- s[s > target]
     if (length(right) > 0) return(as.integer(right[1]))
     left <- s[s < target]
     if (length(left) > 0) return(as.integer(left[length(left)]))
     NA_integer_
   }
-  detect_rough_scalers <- function(model_name, scalers) {
+  detect_rough_scalars <- function(model_name, scalars) {
     model_dir <- as.character(models[[model_name]]$model_dir)
-    rows <- lapply(scalers, function(sc) {
-      pp <- file.path(model_dir, "prof", paste0("scaler_", sc), "profile_payload.rds")
+    rows <- lapply(scalars, function(sc) {
+      pp <- file.path(model_dir, "prof", paste0("scalar_", sc), "profile_payload.rds")
       payload <- if (file.exists(pp)) tryCatch(readRDS(pp), error = function(e) NULL) else NULL
       obj <- if (!is.null(payload$obj_fun)) suppressWarnings(as.numeric(payload$obj_fun)) else NA_real_
-      data.frame(scaler = as.integer(sc), obj_fun = obj, stringsAsFactors = FALSE)
+      data.frame(scalar = as.integer(sc), obj_fun = obj, stringsAsFactors = FALSE)
     })
     df <- do.call(rbind, rows)
-    df <- df[order(df$scaler), , drop = FALSE]
+    df <- df[order(df$scalar), , drop = FALSE]
     if (nrow(df) < 3) return(integer(0))
     if (!any(is.finite(df$obj_fun))) return(integer(0))
     df$change <- df$obj_fun - min(df$obj_fun, na.rm = TRUE)
@@ -204,30 +204,30 @@ if (auto_refine_profile) {
     if (is.finite(auto_refine_abs)) thr <- max(thr, auto_refine_abs)
     idx <- which(is.finite(rough) & rough > thr)
     if (length(idx) == 0) return(integer(0))
-    flagged <- df$scaler[idx]
+    flagged <- df$scalar[idx]
     flagged <- flagged[order(rough[idx], decreasing = TRUE)]
     unique(as.integer(head(flagged, auto_refine_max)))
   }
 
   rerun_plan <- list()
   for (model_name in names(models)) {
-    model_scalers <- parse_scalers_int(models[[model_name]]$scalers)
-    if (length(scalers_override) > 0) model_scalers <- intersect(model_scalers, as.integer(round(scalers_override)))
-    if (length(model_scalers) < 3) next
-    flagged <- detect_rough_scalers(model_name, model_scalers)
+    model_scalars <- parse_scalars_int(models[[model_name]]$scalars)
+    if (length(scalars_override) > 0) model_scalars <- intersect(model_scalars, as.integer(round(scalars_override)))
+    if (length(model_scalars) < 3) next
+    flagged <- detect_rough_scalars(model_name, model_scalars)
     if (length(flagged) == 0) next
     rerun_plan[[model_name]] <- flagged
-    cat("[auto_refine]", model_name, "flagged scalers:", paste(flagged, collapse = " "), "\n")
+    cat("[auto_refine]", model_name, "flagged scalars:", paste(flagged, collapse = " "), "\n")
   }
 
   for (model_name in names(rerun_plan)) {
-    model_scalers <- parse_scalers_int(models[[model_name]]$scalers)
+    model_scalars <- parse_scalars_int(models[[model_name]]$scalars)
     flagged <- rerun_plan[[model_name]]
     for (sc in flagged) {
       prof_env <- models[[model_name]]
-      prof_env$scaler <- as.character(sc)
-      donor <- nearest_right_else_left(sc, model_scalers)
-      if (is.finite(donor)) prof_env$init_from_scaler <- as.character(donor)
+      prof_env$scalar <- as.character(sc)
+      donor <- nearest_right_else_left(sc, model_scalars)
+      if (is.finite(donor)) prof_env$init_from_scalar <- as.character(donor)
       CondorBox::CondorBox(
         make_options = "prof",
         remote_user = remote_user,
@@ -287,10 +287,10 @@ if (auto_refine_profile) {
 }
 
 for (model_name in names(models)) {
-  model_scalers <- resolve_model_scalers(models[[model_name]], scalers_override, init_map, init_override_map)
-  if (length(model_scalers) == 0) next
+  model_scalars <- resolve_model_scalars(models[[model_name]], scalars_override, init_map, init_override_map)
+  if (length(model_scalars) == 0) next
 
-  for (sc in model_scalers) {
+  for (sc in model_scalars) {
     CondorBox::BatchFileHandler(
       remote_user = remote_user,
       remote_host = remote_host,

@@ -6,7 +6,7 @@ apply_model_defaults <- function(models, defaults = list()) {
       program_path = "mfcl/exe/mfclo64_2023",
       base_dir = "mfcl/inputs/2023_rep",
       Reps = "15 25 25 1000 500 500",
-      scalers = paste0(seq(140, 50, by = -5), collapse = " "),
+      scalars = paste0(seq(140, 50, by = -5), collapse = " "),
       retro_peels = "1 2 3 4 5",
       jitter_seeds = paste0(1:10, collapse = " "),
       jitter_cv = "0.2",
@@ -14,7 +14,7 @@ apply_model_defaults <- function(models, defaults = list()) {
       model_hessian = "0",
       prof_hessian = "0",
       prof_init_map_rds = "",
-      init_from_scaler_map = "",
+      init_from_scalar_map = "",
       init_par_override_map = "",
       retro_hessian = "0",
       nsplit = "5"
@@ -26,7 +26,7 @@ apply_model_defaults <- function(models, defaults = list()) {
     program_path <- if (!is.null(model$program_path)) model$program_path else defaults$program_path
     base_dir <- if (!is.null(model$base_dir)) model$base_dir else defaults$base_dir
     reps <- if (!is.null(model$Reps)) model$Reps else defaults$Reps
-    scalers <- if (!is.null(model$scalers)) model$scalers else defaults$scalers
+    scalars <- if (!is.null(model$scalars)) model$scalars else defaults$scalars
     retro_peels <- if (!is.null(model$retro_peels)) model$retro_peels else defaults$retro_peels
     jitter_seeds <- if (!is.null(model$jitter_seeds)) model$jitter_seeds else defaults$jitter_seeds
     jitter_cv <- if (!is.null(model$jitter_cv)) model$jitter_cv else defaults$jitter_cv
@@ -34,7 +34,7 @@ apply_model_defaults <- function(models, defaults = list()) {
     model_hessian <- if (!is.null(model$model_hessian)) model$model_hessian else defaults$model_hessian
     prof_hessian <- if (!is.null(model$prof_hessian)) model$prof_hessian else defaults$prof_hessian
     prof_init_map_rds <- if (!is.null(model$prof_init_map_rds)) model$prof_init_map_rds else defaults$prof_init_map_rds
-    init_from_scaler_map <- if (!is.null(model$init_from_scaler_map)) model$init_from_scaler_map else defaults$init_from_scaler_map
+    init_from_scalar_map <- if (!is.null(model$init_from_scalar_map)) model$init_from_scalar_map else defaults$init_from_scalar_map
     init_par_override_map <- if (!is.null(model$init_par_override_map)) model$init_par_override_map else defaults$init_par_override_map
     retro_hessian <- if (!is.null(model$retro_hessian)) model$retro_hessian else defaults$retro_hessian
     nsplit <- if (!is.null(model$nsplit)) model$nsplit else defaults$nsplit
@@ -47,7 +47,7 @@ apply_model_defaults <- function(models, defaults = list()) {
     model$base_dir <- base_dir
     model$program_path <- program_path
     model$Reps <- reps
-    model$scalers <- scalers
+    model$scalars <- scalars
     model$retro_peels <- retro_peels
     model$jitter_seeds <- jitter_seeds
     model$jitter_cv <- jitter_cv
@@ -55,7 +55,7 @@ apply_model_defaults <- function(models, defaults = list()) {
     model$model_hessian <- model_hessian
     model$prof_hessian <- prof_hessian
     model$prof_init_map_rds <- prof_init_map_rds
-    model$init_from_scaler_map <- init_from_scaler_map
+    model$init_from_scalar_map <- init_from_scalar_map
     model$init_par_override_map <- init_par_override_map
     model$retro_hessian <- retro_hessian
     model$nsplit <- nsplit

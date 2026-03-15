@@ -186,7 +186,7 @@
           summarize_numeric_group(seed_vals, "seed"),
           summarize_numeric_group(part_vals, "part"),
           summarize_numeric_group(peel_vals, "peel"),
-          summarize_numeric_group(sc_vals, "scaler"),
+          summarize_numeric_group(sc_vals, "scalar"),
           if (prof_chain_count > 0) paste0("prof_chain: ", prof_chain_count) else NULL,
           if (other_count > 0) paste0("other: ", other_count) else NULL
         )

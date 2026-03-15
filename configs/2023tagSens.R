@@ -14,7 +14,7 @@ models <- list(
     
     ## configuration for profiling
     Reps = "15 25 25 1000 500 500",
-    scalers = paste0((seq(130, 70, by=-5)), collapse = " "),
+    scalars = paste0((seq(130, 70, by=-5)), collapse = " "),
     Af172 = "0",
     Af173 = "0",
     Af174 = "0",
@@ -55,7 +55,7 @@ models <- list(
     
     ## configuration for profiling
     Reps = "15 25 25 1000 500 500",
-    scalers = paste0((seq(130, 70, by=-5)), collapse = " "),
+    scalars = paste0((seq(130, 70, by=-5)), collapse = " "),
     
     ## retrospective configuration
     retro_peels = "1 2 3 4 5 6 7",
@@ -92,7 +92,7 @@ models <- list(
     
     ## configuration for profiling
     Reps = "15 25 25 1000 500 500",
-    scalers = paste0((seq(130, 70, by=-5)), collapse = " "),
+    scalars = paste0((seq(130, 70, by=-5)), collapse = " "),
     
     ## retrospective configuration
     retro_peels = "1 2 3 4 5 6 7",
@@ -129,7 +129,7 @@ models <- list(
     
     ## configuration for profiling
     Reps = "15 25 25 1000 500 500",
-    scalers = paste0((seq(130, 70, by=-5)), collapse = " "),
+    scalars = paste0((seq(130, 70, by=-5)), collapse = " "),
     
     ## retrospective configuration
     retro_peels = "1 2 3 4 5 6 7",

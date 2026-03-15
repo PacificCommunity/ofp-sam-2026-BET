@@ -500,7 +500,7 @@ generate_proflike_script <- function(
   Sys.chmod(filename, mode = "0755")
   
   cat("Generated bash script:", filename, "\n")
-  cat("  Scalers:", paste(Mults, collapse = ", "), "\n")
+  cat("  Scalars:", paste(Mults, collapse = ", "), "\n")
   cat("  Distance breaks:", paste(names(DistanceBreaks), DistanceBreaks, collapse = ", "), "\n")
   cat("  Penalty scales:", paste(names(PenaltyScales), PenaltyScales, collapse = ", "), "\n")
   cat("  Reps scales:", paste(names(RepsScales), RepsScales, collapse = ", "), "\n")

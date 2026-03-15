@@ -48,18 +48,18 @@ pm_read_model_payload <- function(folder, debug = FALSE) {
 pm_read_likelihood_profiles <- function(folder, debug = FALSE) {
   prof_dir <- file.path(folder, "prof")
   all_dirs <- list.dirs(prof_dir, full.names = TRUE, recursive = FALSE)
-  scaler_dirs <- grep("scaler_\\d+$", all_dirs, value = TRUE)
+  scalar_dirs <- grep("scalar_\\d+$", all_dirs, value = TRUE)
   
-  if (length(scaler_dirs) > 0) {
-    scales <- basename(scaler_dirs) %>% stringr::str_extract("\\d+$")
-    profile_payload_files <- file.path(scaler_dirs, "profile_payload.rds")
+  if (length(scalar_dirs) > 0) {
+    scales <- basename(scalar_dirs) %>% stringr::str_extract("\\d+$")
+    profile_payload_files <- file.path(scalar_dirs, "profile_payload.rds")
     has_payload <- file.exists(profile_payload_files)
     
     if (any(has_payload)) {
       payloads <- purrr::map(profile_payload_files[has_payload], ~ pm_safe_eval(quote(readRDS(.x)), label = "profile_payload", debug = debug))
       payloads <- payloads[!vapply(payloads, is.null, logical(1))]
       if (length(payloads) > 0) {
-        payload_scales <- as.character(vapply(payloads, function(x) as.numeric(x$scaler), numeric(1)))
+        payload_scales <- as.character(vapply(payloads, function(x) as.numeric(x$scalar), numeric(1)))
         lik_out <- setNames(purrr::map(payloads, "lik_out"), payload_scales)
         lik_raw <- setNames(purrr::map(payloads, "lik_raw"), payload_scales)
         existing_scales <- payload_scales
@@ -69,7 +69,7 @@ pm_read_likelihood_profiles <- function(folder, debug = FALSE) {
         existing_scales <- character(0)
       }
     } else {
-      output_files <- file.path(scaler_dirs, "test_plot_output")
+      output_files <- file.path(scalar_dirs, "test_plot_output")
       existing_files <- output_files[file.exists(output_files)]
       existing_scales <- scales[file.exists(output_files)]
     
