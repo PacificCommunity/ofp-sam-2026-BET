@@ -29,6 +29,22 @@ mod_stock_ui <- function() {
                 size = 10
               )
             ),
+            sliderInput(
+              "stock_plot_height",
+              "Plot height (px)",
+              min = 450,
+              max = 1800,
+              value = 900,
+              step = 50
+            ),
+            sliderInput(
+              "stock_plot_width",
+              "Plot width (px)",
+              min = 700,
+              max = 2200,
+              value = 1200,
+              step = 50
+            ),
             actionButton("stock_apply_filters", "Apply",
                          class = "btn-success",
                          style = "width: 100%;"),
@@ -51,7 +67,7 @@ mod_stock_ui <- function() {
             solidHeader = TRUE,
             status = "success",
             collapsible = TRUE,
-            plotOutput("stock_plot", height = "600px")
+            uiOutput("stock_plot_ui")
           )
         )
       )
@@ -60,13 +76,47 @@ mod_stock_ui <- function() {
 mod_stock_server <- function(input, output, session, rv) {
     # TAB 4: STOCK STATUS
     # ===========================================================================
+    stock_filters_current <- reactive({
+      list(
+        scenarios = input$stock_scenarios,
+        plot_height = if (is.null(input$stock_plot_height)) 900 else suppressWarnings(as.integer(input$stock_plot_height)),
+        plot_width = if (is.null(input$stock_plot_width)) 1200 else suppressWarnings(as.integer(input$stock_plot_width))
+      )
+    })
+    stock_filters_applied <- reactiveVal(NULL)
+
+    observe({
+      req(rv$data_loaded)
+      pending <- !isTRUE(input$live_update_plots) &&
+        !filters_equal(stock_filters_current(), stock_filters_applied())
+      set_apply_pending(session, "stock_apply_filters", pending)
+    })
+
+    observeEvent(input$stock_apply_filters, {
+      stock_filters_applied(isolate(stock_filters_current()))
+    }, ignoreInit = TRUE)
+
+    observeEvent(list(input$live_update_plots, input$stock_scenarios, input$stock_plot_height, input$stock_plot_width), {
+      req(rv$data_loaded)
+      if (!isTRUE(input$live_update_plots)) return()
+      if (length(input$stock_scenarios) == 0) return()
+      stock_filters_applied(isolate(stock_filters_current()))
+    }, ignoreInit = TRUE)
+
+    observeEvent(list(rv$initial_render_nonce, input$stock_scenarios), {
+      req(rv$data_loaded, rv$initial_render_nonce)
+      if (length(input$stock_scenarios) == 0) return()
+      stock_filters_applied(isolate(stock_filters_current()))
+    }, ignoreInit = TRUE)
   
     # Reactive: generate stock status plot
     stock_plot_reactive <- reactive({
-      req(rv$data_loaded, input$stock_scenarios)
+      filters <- stock_filters_applied()
+      req(rv$data_loaded, filters, filters$scenarios)
+      scenarios <- filters$scenarios
     
       # Check if any scenarios selected
-      if (length(input$stock_scenarios) == 0) {
+      if (length(scenarios) == 0) {
         p <- ggplot() + 
           annotate("text", x = 0.5, y = 0.5, label = "No models selected", size = 6, color = "#999") +
           theme_void()
@@ -75,7 +125,7 @@ mod_stock_server <- function(input, output, session, rv) {
     
       tryCatch({
         # Extract spawning biomass depletion (SB/SBF0)
-        SBdep <- map_dfr(input$stock_scenarios, function(scenario) {
+        SBdep <- map_dfr(scenarios, function(scenario) {
           rep_obj <- rv$RepOut_list[[scenario]]
           year_range <- rv$YearRanges[[scenario]]
         
@@ -103,7 +153,7 @@ mod_stock_server <- function(input, output, session, rv) {
         })
       
         # Extract recruitment
-        Rec <- map_dfr(input$stock_scenarios, function(scenario) {
+        Rec <- map_dfr(scenarios, function(scenario) {
           rep_obj <- rv$RepOut_list[[scenario]]
           year_range <- rv$YearRanges[[scenario]]
         
@@ -153,7 +203,7 @@ mod_stock_server <- function(input, output, session, rv) {
         }
       
         # Generate color palette for scenarios
-        scenario_colors <- get_scenario_colors(input$stock_scenarios)
+        scenario_colors <- get_scenario_colors(scenarios)
       
         # Plot 1: Spawning Biomass Depletion
         p1 <- ggplot(SBdep, aes(x = Year, y = Quant, color = Scenario, group = Scenario)) +
@@ -206,9 +256,21 @@ mod_stock_server <- function(input, output, session, rv) {
       stock_plot_reactive,
       rv$data_loaded,
       input$model_dir,
-      input$stock_scenarios
+      stock_filters_applied()
     )
-    stock_plot_reactive <- bindEvent(stock_plot_reactive, rv$data_loaded, input$stock_apply_filters, ignoreInit = FALSE)
+    stock_plot_reactive <- bindEvent(stock_plot_reactive, rv$data_loaded, input$stock_apply_filters, stock_filters_applied(), ignoreInit = FALSE)
+
+    output$stock_plot_ui <- renderUI({
+      filters <- stock_filters_applied()
+      h <- if (!is.null(filters)) suppressWarnings(as.integer(filters$plot_height)) else suppressWarnings(as.integer(input$stock_plot_height))
+      w <- if (!is.null(filters)) suppressWarnings(as.integer(filters$plot_width)) else suppressWarnings(as.integer(input$stock_plot_width))
+      if (!is.finite(h)) h <- 900
+      if (!is.finite(w)) w <- 1200
+      h <- min(max(h, 450), 1800)
+      w <- min(max(w, 700), 2200)
+
+      plotOutput("stock_plot", height = paste0(h, "px"), width = paste0(w, "px"))
+    })
   
     # Render stock status plot
     output$stock_plot <- renderPlot({

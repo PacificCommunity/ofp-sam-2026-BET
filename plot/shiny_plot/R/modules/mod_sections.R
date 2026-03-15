@@ -515,6 +515,22 @@ mod_harvest_ui <- function() {
           uiOutput("harvest_recent_summary_options_ui")
         ),
         selectInput("harvest_facet_ncol", "Facet columns:", choices = as.character(1:12), selected = "2"),
+        sliderInput(
+          "harvest_plot_height",
+          "Plot height (px)",
+          min = 450,
+          max = 1800,
+          value = 900,
+          step = 50
+        ),
+        sliderInput(
+          "harvest_plot_width",
+          "Plot width (px)",
+          min = 700,
+          max = 2200,
+          value = 1200,
+          step = 50
+        ),
         actionButton("harvest_apply_filters", "Apply", class = "btn-success", style = "width: 100%;"),
         tags$small("Selections update the plot when you click Apply.",
                    style = "display:block; margin-top:6px; color:#666;"),
@@ -531,7 +547,7 @@ mod_harvest_ui <- function() {
         div(
           class = "plot-loading-container",
           `data-output-id` = "harvest_plot_output",
-          plotOutput("harvest_plot_output", height = "730px"),
+          uiOutput("harvest_plot_output_ui"),
           div(
             class = "plot-loading-overlay",
             div(
@@ -607,7 +623,9 @@ mod_harvest_server <- function(input, output, session, rv) {
       ensemble = isTRUE(input$harvest_ensemble),
       ensemble_levels = input$harvest_ensemble_levels,
       ensemble_weighting = if (is.null(input$harvest_ensemble_weighting)) "equal" else input$harvest_ensemble_weighting,
-      ensemble_center = if (is.null(input$harvest_ensemble_center)) "quantile" else input$harvest_ensemble_center
+      ensemble_center = if (is.null(input$harvest_ensemble_center)) "quantile" else input$harvest_ensemble_center,
+      plot_height = if (is.null(input$harvest_plot_height)) 900 else suppressWarnings(as.integer(input$harvest_plot_height)),
+      plot_width = if (is.null(input$harvest_plot_width)) 1200 else suppressWarnings(as.integer(input$harvest_plot_width))
     )
   })
   harvest_filters_applied <- reactiveVal(NULL)
@@ -1431,7 +1449,8 @@ mod_harvest_server <- function(input, output, session, rv) {
                     input$harvest_recent_diag_model, input$harvest_recent_summary_options,
                     input$harvest_facet_ncol, input$harvest_ensemble,
                     input$harvest_ensemble_levels, input$harvest_ensemble_weighting,
-                    input$harvest_ensemble_center), {
+                    input$harvest_ensemble_center,
+                    input$harvest_plot_height, input$harvest_plot_width), {
     req(rv$data_loaded)
     if (!isTRUE(input$live_update_plots)) return()
     if (length(input$harvest_scenarios) == 0) return()
@@ -1450,6 +1469,18 @@ mod_harvest_server <- function(input, output, session, rv) {
   }, ignoreInit = TRUE)
   harvest_plot_reactive <- bindEvent(harvest_plot_reactive, rv$initial_render_nonce, input$harvest_apply_filters, harvest_live_update_nonce(), ignoreInit = FALSE)
 
+
+  output$harvest_plot_output_ui <- renderUI({
+    filters <- harvest_filters_applied()
+    h <- if (!is.null(filters)) suppressWarnings(as.integer(filters$plot_height)) else suppressWarnings(as.integer(input$harvest_plot_height))
+    w <- if (!is.null(filters)) suppressWarnings(as.integer(filters$plot_width)) else suppressWarnings(as.integer(input$harvest_plot_width))
+    if (!is.finite(h)) h <- 900
+    if (!is.finite(w)) w <- 1200
+    h <- min(max(h, 450), 1800)
+    w <- min(max(w, 700), 2200)
+
+    plotOutput("harvest_plot_output", height = paste0(h, "px"), width = paste0(w, "px"))
+  })
 
   output$harvest_plot_output <- renderPlot({
     harvest_plot_reactive()
@@ -1750,6 +1781,22 @@ mod_tagging_ui <- function() {
           )
         ),
         selectInput("tag_facet_ncol", "Facet columns:", choices = as.character(1:6), selected = "4"),
+        sliderInput(
+          "tag_plot_height",
+          "Plot height (px)",
+          min = 450,
+          max = 1800,
+          value = 900,
+          step = 50
+        ),
+        sliderInput(
+          "tag_plot_width",
+          "Plot width (px)",
+          min = 700,
+          max = 2200,
+          value = 1200,
+          step = 50
+        ),
         conditionalPanel(
           condition = "input.tag_plot == 'report'",
           checkboxInput("tag_rr_nonneg_only", "Tag RR filter: exclude rr <= 0", value = FALSE)
@@ -1778,7 +1825,7 @@ mod_tagging_ui <- function() {
         div(
           class = "plot-loading-container",
           `data-output-id` = "tagging_plot_output",
-          plotOutput("tagging_plot_output", height = "730px"),
+          uiOutput("tagging_plot_output_ui"),
           div(
             class = "plot-loading-overlay",
             div(
@@ -1801,7 +1848,9 @@ mod_tagging_server <- function(input, output, session, rv) {
       years = input$tag_years,
       facet_ncol = input$tag_facet_ncol,
       rr_nonneg_only = isTRUE(input$tag_rr_nonneg_only),
-      plot = if (is.null(input$tag_plot)) "report" else input$tag_plot
+      plot = if (is.null(input$tag_plot)) "report" else input$tag_plot,
+      plot_height = if (is.null(input$tag_plot_height)) 900 else suppressWarnings(as.integer(input$tag_plot_height)),
+      plot_width = if (is.null(input$tag_plot_width)) 1200 else suppressWarnings(as.integer(input$tag_plot_width))
     )
   })
   tag_filters_applied <- reactiveVal(NULL)
@@ -2385,7 +2434,8 @@ mod_tagging_server <- function(input, output, session, rv) {
   )
   observeEvent(list(input$live_update_plots, input$tag_scenarios, input$tag_plot,
                     input$tag_time_mode, input$tag_years, input$tag_facet_ncol,
-                    input$tag_rr_nonneg_only), {
+                    input$tag_rr_nonneg_only,
+                    input$tag_plot_height, input$tag_plot_width), {
     req(rv$data_loaded)
     if (!isTRUE(input$live_update_plots)) return()
     if (length(input$tag_scenarios) == 0) return()
@@ -2404,6 +2454,18 @@ mod_tagging_server <- function(input, output, session, rv) {
   }, ignoreInit = TRUE)
   tagging_plot_reactive <- bindEvent(tagging_plot_reactive, rv$initial_render_nonce, input$tag_apply_filters, tag_live_update_nonce(), ignoreInit = FALSE)
 
+
+  output$tagging_plot_output_ui <- renderUI({
+    filters <- tag_filters_applied()
+    h <- if (!is.null(filters)) suppressWarnings(as.integer(filters$plot_height)) else suppressWarnings(as.integer(input$tag_plot_height))
+    w <- if (!is.null(filters)) suppressWarnings(as.integer(filters$plot_width)) else suppressWarnings(as.integer(input$tag_plot_width))
+    if (!is.finite(h)) h <- 900
+    if (!is.finite(w)) w <- 1200
+    h <- min(max(h, 450), 1800)
+    w <- min(max(w, 700), 2200)
+
+    plotOutput("tagging_plot_output", height = paste0(h, "px"), width = paste0(w, "px"))
+  })
 
   output$tagging_plot_output <- renderPlot({
     tagging_plot_reactive()

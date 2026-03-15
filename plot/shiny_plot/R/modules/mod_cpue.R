@@ -66,6 +66,22 @@ mod_cpue_ui <- function() {
           )
         ),
         selectInput("cpue_facet_ncol", "Facet columns:", choices = as.character(1:12), selected = "3"),
+        sliderInput(
+          "cpue_plot_height",
+          "Plot height (px)",
+          min = 450,
+          max = 1800,
+          value = 900,
+          step = 50
+        ),
+        sliderInput(
+          "cpue_plot_width",
+          "Plot width (px)",
+          min = 700,
+          max = 2200,
+          value = 1200,
+          step = 50
+        ),
         actionButton("cpue_apply_filters", "Apply", class = "btn-primary", style = "width: 100%;"),
         tags$small("Selections update the plot when you click Apply.",
                    style = "display:block; margin-top:6px; color:#666;"),
@@ -88,7 +104,7 @@ mod_cpue_ui <- function() {
         div(
           class = "plot-loading-container",
           `data-output-id` = "cpue_plot",
-          plotOutput("cpue_plot", height = "650px"),
+          uiOutput("cpue_plot_ui"),
           div(
             class = "plot-loading-overlay",
             div(
@@ -112,7 +128,9 @@ mod_cpue_server <- function(input, output, session, rv) {
       fisheries = input$cpue_fisheries,
       view_mode = if (is.null(input$cpue_view_mode)) "overlay" else input$cpue_view_mode,
       metric = if (is.null(input$cpue_metric)) "fits" else input$cpue_metric,
-      facet_ncol = input$cpue_facet_ncol
+      facet_ncol = input$cpue_facet_ncol,
+      plot_height = if (is.null(input$cpue_plot_height)) 900 else suppressWarnings(as.integer(input$cpue_plot_height)),
+      plot_width = if (is.null(input$cpue_plot_width)) 1200 else suppressWarnings(as.integer(input$cpue_plot_width))
     )
   })
   cpue_filters_applied <- reactiveVal(NULL)
@@ -249,7 +267,8 @@ mod_cpue_server <- function(input, output, session, rv) {
   }, ignoreInit = TRUE)
 
   observeEvent(list(input$live_update_plots, input$cpue_scenarios, input$cpue_fisheries,
-                    input$cpue_view_mode, input$cpue_metric, input$cpue_facet_ncol), {
+                    input$cpue_view_mode, input$cpue_metric, input$cpue_facet_ncol,
+                    input$cpue_plot_height, input$cpue_plot_width), {
     req(rv$data_loaded)
     if (!isTRUE(input$live_update_plots)) return()
     if (length(input$cpue_scenarios) == 0 || length(input$cpue_fisheries) == 0) return()
@@ -310,7 +329,7 @@ mod_cpue_server <- function(input, output, session, rv) {
         p <- ggplot(cpue_all, aes(x = year_season, y = residual, color = Scenario)) +
           geom_hline(yintercept = 0, linetype = "dashed", color = "#666") +
           geom_point(size = 1.2, alpha = 0.55) +
-          facet_grid(Scenario ~ fishery_name, scales = "free_y") +
+          facet_grid(Scenario ~ fishery_name, scales = "free") +
           scale_color_manual(values = scenario_colors) +
           labs(x = "Year + Season", y = "Residual (obs - fit)", title = "CPUE Residuals by Model") +
           theme_bw(base_size = 12) +
@@ -353,7 +372,7 @@ mod_cpue_server <- function(input, output, session, rv) {
         p <- ggplot(cpue_all, aes(x = year_season)) +
           geom_point(data = obs_points, aes(y = obs), size = 1.8, alpha = 0.5, color = "#6b7280") +
           geom_line(aes(y = fit, color = Scenario), linewidth = 1.1, alpha = 0.9) +
-          facet_grid(Scenario ~ fishery_name, scales = "free_y") +
+          facet_grid(Scenario ~ fishery_name, scales = "free") +
           scale_color_manual(values = scenario_colors) +
           labs(x = "Year + Season", y = "CPUE", title = "CPUE Fits by Model") +
           theme_bw(base_size = 12) +
@@ -399,6 +418,18 @@ mod_cpue_server <- function(input, output, session, rv) {
     cpue_plot_reactive,
     cpue_filters()
   )
+
+  output$cpue_plot_ui <- renderUI({
+    filters <- cpue_filters()
+    h <- if (!is.null(filters)) suppressWarnings(as.integer(filters$plot_height)) else suppressWarnings(as.integer(input$cpue_plot_height))
+    w <- if (!is.null(filters)) suppressWarnings(as.integer(filters$plot_width)) else suppressWarnings(as.integer(input$cpue_plot_width))
+    if (!is.finite(h)) h <- 900
+    if (!is.finite(w)) w <- 1200
+    h <- min(max(h, 450), 1800)
+    w <- min(max(w, 700), 2200)
+
+    plotOutput("cpue_plot", height = paste0(h, "px"), width = paste0(w, "px"))
+  })
 
   output$cpue_plot <- renderPlot({
     cpue_plot_reactive()

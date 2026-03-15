@@ -135,6 +135,22 @@ mod_lf_ui <- function() {
               selected = "1.00"
             ),
             selectInput("lf_facet_ncol", "Facet columns:", choices = as.character(1:12), selected = "3"),
+            sliderInput(
+              "lf_plot_height",
+              "Plot height (px)",
+              min = 450,
+              max = 1800,
+              value = 900,
+              step = 50
+            ),
+            sliderInput(
+              "lf_plot_width",
+              "Plot width (px)",
+              min = 700,
+              max = 2200,
+              value = 1200,
+              step = 50
+            ),
             actionButton("lf_apply_filters", "Apply", class = "btn-primary", style = "width: 100%;"),
             tags$small("Selections update the plot when you click Apply.",
                        style = "display:block; margin-top:6px; color:#666;"),
@@ -189,7 +205,9 @@ mod_lf_server <- function(input, output, session, rv) {
         unc_level = if (is.null(input$lf_unc_level)) 95 else suppressWarnings(as.numeric(input$lf_unc_level)),
         plot_scale = if (is.null(input$lf_plot_scale)) "1.00" else input$lf_plot_scale,
         facet_ncol = input$lf_facet_ncol,
-        plot_style = if (is.null(input$lf_plot_style)) "hist" else input$lf_plot_style
+        plot_style = if (is.null(input$lf_plot_style)) "hist" else input$lf_plot_style,
+        plot_height = if (is.null(input$lf_plot_height)) 900 else suppressWarnings(as.integer(input$lf_plot_height)),
+        plot_width = if (is.null(input$lf_plot_width)) 1200 else suppressWarnings(as.integer(input$lf_plot_width))
       )
     })
     lf_filters_applied <- reactiveVal(NULL)
@@ -258,7 +276,8 @@ mod_lf_server <- function(input, output, session, rv) {
     observeEvent(list(input$live_update_plots, input$lf_scenarios, input$lf_model, input$lf_years,
                       input$lf_view_mode, input$lf_fishery, input$lf_fisheries_all,
                       input$lf_plot_style, input$lf_show_unc_band, input$lf_unc_level,
-                      input$lf_plot_scale, input$lf_facet_ncol), {
+                      input$lf_plot_scale, input$lf_facet_ncol,
+                      input$lf_plot_height, input$lf_plot_width), {
       req(rv$data_loaded)
       if (!isTRUE(input$live_update_plots)) return()
 
@@ -1073,16 +1092,17 @@ mod_lf_server <- function(input, output, session, rv) {
   
     # Render dynamic box for LF with calculated height
     output$lf_plot_box <- renderUI({
-      height <- lf_plot_height()
       filters <- lf_filters()
-      scale_val <- suppressWarnings(as.numeric(filters$plot_scale))
-      if (!is.finite(scale_val) || scale_val <= 0) scale_val <- 1
-      scaled_height <- max(round(height * scale_val), 320)
-      scaled_width_pct <- max(min(round(scale_val * 100), 100), 60)
+      h <- if (!is.null(filters)) suppressWarnings(as.integer(filters$plot_height)) else suppressWarnings(as.integer(input$lf_plot_height))
+      w <- if (!is.null(filters)) suppressWarnings(as.integer(filters$plot_width)) else suppressWarnings(as.integer(input$lf_plot_width))
+      if (!is.finite(h)) h <- 900
+      if (!is.finite(w)) w <- 1200
+      h <- min(max(h, 450), 1800)
+      w <- min(max(w, 700), 2200)
     
       div(
-        style = paste0("width:", scaled_width_pct, "%; margin: 0 auto;"),
-        plotOutput("lf_plot", height = paste0(scaled_height, "px"))
+        style = paste0("max-width: 100%; width:", w, "px; margin: 0 auto;"),
+        plotOutput("lf_plot", height = paste0(h, "px"), width = "100%")
       )
     })
   
