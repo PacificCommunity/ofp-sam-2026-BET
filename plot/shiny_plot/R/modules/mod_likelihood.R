@@ -1379,16 +1379,39 @@ mod_likelihood_server <- function(input, output, session, rv) {
     folder <- file.path(model_dir, scenario)
     prof_dir <- file.path(folder, "prof")
     scalar_dirs <- list.dirs(prof_dir, full.names = TRUE, recursive = FALSE)
-    scalar_dirs <- grep("scalar_\\d+$", scalar_dirs, value = TRUE)
+    scalar_dirs <- grep("(scalar|scaler)_\\d+$", scalar_dirs, value = TRUE)
 
     if (length(scalar_dirs) > 0) {
+      payload_scalar_value <- function(x, fallback = NA_real_) {
+        if (is.null(x) || !is.list(x)) return(fallback)
+        val <- NA_real_
+        if (!is.null(x$scalar)) {
+          val <- suppressWarnings(as.numeric(x$scalar))
+        }
+        if (!is.finite(val) && !is.null(x$scaler)) {
+          val <- suppressWarnings(as.numeric(x$scaler))
+        }
+        if (!is.finite(val)) val <- fallback
+        val
+      }
+
       payload_files <- file.path(scalar_dirs, "profile_payload.rds")
       has_payload <- file.exists(payload_files)
 
       if (any(has_payload)) {
-        payloads <- map(payload_files[has_payload], ~ tryCatch(readRDS(.x), error = function(e) NULL))
-        payloads <- payloads[!vapply(payloads, is.null, logical(1))]
         scalar_keys <- basename(scalar_dirs[has_payload]) %>% str_extract("\\d+$")
+        payload_pairs <- Map(
+          function(path, key) {
+            obj <- tryCatch(readRDS(path), error = function(e) NULL)
+            if (is.null(obj)) return(NULL)
+            list(payload = obj, key = key)
+          },
+          payload_files[has_payload],
+          scalar_keys
+        )
+        payload_pairs <- Filter(Negate(is.null), payload_pairs)
+        payloads <- lapply(payload_pairs, function(x) x$payload)
+        payload_keys <- vapply(payload_pairs, function(x) x$key, character(1))
         info_files <- file.path(scalar_dirs[has_payload], "info.rds")
         info_payloads <- setNames(
           lapply(info_files, function(x) if (file.exists(x)) tryCatch(readRDS(x), error = function(e) NULL) else NULL),
@@ -1396,7 +1419,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
         )
 
         if (length(payloads) > 0) {
-          existing_scales <- as.character(vapply(payloads, function(x) as.numeric(x$scalar), numeric(1)))
+          existing_scales <- as.character(vapply(seq_along(payloads), function(i) {
+            fallback <- suppressWarnings(as.numeric(payload_keys[[i]]))
+            payload_scalar_value(payloads[[i]], fallback = fallback)
+          }, numeric(1)))
           lik_out <- setNames(map(payloads, "lik_out"), existing_scales)
           lik_raw <- setNames(map(payloads, "lik_raw"), existing_scales)
           max_grad <- setNames(vapply(payloads, function(x) suppressWarnings(as.numeric(x$max_grad)), numeric(1)), existing_scales)
