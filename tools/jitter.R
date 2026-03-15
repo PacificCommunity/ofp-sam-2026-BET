@@ -9,6 +9,8 @@
 jitter_center_target_coverage <- 0.999
 jitter_resample_near_bound_frac <- 0.02
 jitter_min_change_frac <- 0.05
+jitter_min_change_cv_multiplier <- 3
+jitter_min_change_frac_floor <- 1e-6
 
 jitter_center_z <- function(target_coverage = jitter_center_target_coverage) {
   alpha <- max(min(1 - target_coverage, 1 - 1e-12), 1e-12)
@@ -48,16 +50,50 @@ jitter_outside_near_bound <- function(x, lower = -Inf, upper = Inf, margin_frac 
   all(keep)
 }
 
-jitter_min_change_threshold <- function(center, lower = -Inf, upper = Inf, min_frac = jitter_min_change_frac, eps = 1e-12) {
+jitter_effective_min_change_frac <- function(jitter_cv = NA_real_,
+                                             base_min_frac = jitter_min_change_frac,
+                                             cv_multiplier = jitter_min_change_cv_multiplier,
+                                             min_floor = jitter_min_change_frac_floor) {
+  cv_term <- suppressWarnings(as.numeric(jitter_cv))
+  if (!is.finite(cv_term) || cv_term <= 0) {
+    return(max(base_min_frac, min_floor))
+  }
+  max(min_floor, min(base_min_frac, cv_multiplier * cv_term))
+}
+
+jitter_min_change_threshold <- function(center,
+                                        lower = -Inf,
+                                        upper = Inf,
+                                        min_frac = jitter_min_change_frac,
+                                        jitter_cv = NA_real_,
+                                        eps = 1e-12) {
+  eff_min_frac <- jitter_effective_min_change_frac(
+    jitter_cv = jitter_cv,
+    base_min_frac = min_frac,
+    min_floor = jitter_min_change_frac_floor
+  )
   span <- if (is.finite(lower) && is.finite(upper)) upper - lower else NA_real_
-  if (is.finite(span) && span > eps) return(max(abs(span) * min_frac, eps * 10))
-  if (is.finite(center) && abs(center) > eps) return(max(abs(center) * min_frac, eps * 10))
+  if (is.finite(span) && span > eps) return(max(abs(span) * eff_min_frac, eps * 10))
+  if (is.finite(center) && abs(center) > eps) return(max(abs(center) * eff_min_frac, eps * 10))
   eps * 10
 }
 
-jitter_changed_enough <- function(proposal, center, lower = -Inf, upper = Inf, min_frac = jitter_min_change_frac, eps = 1e-12) {
+jitter_changed_enough <- function(proposal,
+                                  center,
+                                  lower = -Inf,
+                                  upper = Inf,
+                                  min_frac = jitter_min_change_frac,
+                                  jitter_cv = NA_real_,
+                                  eps = 1e-12) {
   if (!is.finite(proposal) || !is.finite(center)) return(FALSE)
-  abs(proposal - center) >= jitter_min_change_threshold(center, lower = lower, upper = upper, min_frac = min_frac, eps = eps)
+  abs(proposal - center) >= jitter_min_change_threshold(
+    center,
+    lower = lower,
+    upper = upper,
+    min_frac = min_frac,
+    jitter_cv = jitter_cv,
+    eps = eps
+  )
 }
 
 jitter_force_scalar_change <- function(current_val,
@@ -287,7 +323,7 @@ jitter_sample_multiplicative_cv <- function(current_val,
     proposal <- centered_current * exp(rnorm(1, mean = 0, sd = sigma))
     if (proposal > interior$lower && proposal < interior$upper &&
         jitter_outside_near_bound(proposal, lower = lower, upper = upper, margin_frac = jitter_resample_near_bound_frac, eps = eps) &&
-        jitter_changed_enough(proposal, centered_current, lower = lower, upper = upper, min_frac = jitter_min_change_frac, eps = eps)) {
+        jitter_changed_enough(proposal, centered_current, lower = lower, upper = upper, min_frac = jitter_min_change_frac, jitter_cv = jitter_cv, eps = eps)) {
       return(proposal)
     }
   }
@@ -333,7 +369,7 @@ jitter_sample_bounded_cv <- function(current_val,
     proposal <- lo + proposal_p * span
     if (proposal > lo && proposal < hi &&
         jitter_outside_near_bound(proposal, lower = lower, upper = upper, margin_frac = jitter_resample_near_bound_frac, eps = eps) &&
-        jitter_changed_enough(proposal, clipped_current, lower = lower, upper = upper, min_frac = jitter_min_change_frac, eps = eps)) {
+        jitter_changed_enough(proposal, clipped_current, lower = lower, upper = upper, min_frac = jitter_min_change_frac, jitter_cv = jitter_cv, eps = eps)) {
       return(proposal)
     }
   }
@@ -369,7 +405,7 @@ jitter_sample_additive_cv <- function(current_val,
     proposal <- rnorm(1, mean = centered_current, sd = jitter_cv * scale_val)
     if (proposal > interior$lower && proposal < interior$upper &&
         jitter_outside_near_bound(proposal, lower = lower, upper = upper, margin_frac = jitter_resample_near_bound_frac, eps = eps) &&
-        jitter_changed_enough(proposal, centered_current, lower = lower, upper = upper, min_frac = jitter_min_change_frac, eps = eps)) {
+        jitter_changed_enough(proposal, centered_current, lower = lower, upper = upper, min_frac = jitter_min_change_frac, jitter_cv = jitter_cv, eps = eps)) {
       return(proposal)
     }
   }
@@ -649,9 +685,14 @@ sample_dirichlet_bounded_cv <- function(current_vals,
   alpha <- pmax(alpha0 * probs, eps)
 
   min_delta <- function() {
+    eff_min_frac <- jitter_effective_min_change_frac(
+      jitter_cv = jitter_cv,
+      base_min_frac = jitter_min_change_frac,
+      min_floor = jitter_min_change_frac_floor
+    )
     span <- upper_eff - lower_eff
     span <- ifelse(is.finite(span) & span > eps, span, NA_real_)
-    cand <- ifelse(is.finite(span), span * jitter_min_change_frac, abs(current_vals) * jitter_min_change_frac)
+    cand <- ifelse(is.finite(span), span * eff_min_frac, abs(current_vals) * eff_min_frac)
     pmax(cand, eps * 10)
   }
   min_delta_vec <- min_delta()
