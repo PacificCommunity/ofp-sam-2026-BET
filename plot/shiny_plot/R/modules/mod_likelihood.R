@@ -2049,7 +2049,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     if (isTRUE(split_by_region) && "region" %in% names(data)) {
-      valid_regions <- data %>%
+      source_data <- data
+
+      valid_regions <- source_data %>%
         group_by(scenario, region) %>%
         summarise(
           has_non_total = any(.data[[group_var]] != "Total"),
@@ -2059,13 +2061,21 @@ mod_likelihood_server <- function(input, output, session, rv) {
         filter(has_non_total, has_signal) %>%
         select(scenario, region)
 
-      data <- data %>%
+      region_data <- source_data %>%
         inner_join(valid_regions, by = c("scenario", "region"))
+
+      overall_data <- source_data %>%
+        group_by(scenario, scalar, .data[[group_var]]) %>%
+        summarise(value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+        calc_lik_change(group_var = group_var) %>%
+        mutate(region = "Overall")
+
+      data <- bind_rows(region_data, overall_data)
 
       if (nrow(data) == 0) {
         return(
           ggplot() +
-            annotate("text", x = 0.5, y = 0.5, label = "No region panels with fishery lines after filtering", size = 6, color = "#999") +
+            annotate("text", x = 0.5, y = 0.5, label = "No region or overall panels available after filtering", size = 6, color = "#999") +
             theme_void()
         )
       }
@@ -2121,9 +2131,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
       )
 
     if (isTRUE(split_by_region) && "region" %in% names(data)) {
+      region_labels <- sort(unique(as.character(data$region)))
+      region_labels <- c(setdiff(region_labels, "Overall"), intersect("Overall", region_labels))
+      data$region <- factor(as.character(data$region), levels = region_labels)
+
       n_scenarios <- dplyr::n_distinct(data$scenario)
       if (n_scenarios == 1) {
-        region_labels <- sort(unique(as.character(data$region)))
         region_labeller <- setNames(region_labels, region_labels)
 
         p <- p +
