@@ -219,11 +219,15 @@ mod_likelihood_ui <- function() {
                         style = "display:block; margin-top:-6px; margin-bottom:6px; color:#666;"
                       ),
                       tags$small(
-                        "Jitter anchor is adjusted to keep proposals away from bounds; samples too close to bounds are resampled.",
+                        "Jitter uses CV-adaptive center shift only: center is moved so the one-tail 99.99% quantile aligns with bounds when needed.",
                         style = "display:block; margin-top:-4px; margin-bottom:6px; color:#666;"
                       ),
                       tags$small(
-                        "Some families use additive jitter so samples move around the adjusted center instead of sticking near zero.",
+                        "No extra near-bound rejection window is applied; bound hits can occur for large CV or tight bounds.",
+                        style = "display:block; margin-top:-4px; margin-bottom:6px; color:#666;"
+                      ),
+                      tags$small(
+                        "All free parameters use hard L/U bounds from indepvar. Sampler choice follows parameter geometry and fit purpose: multiplicative for positive-scale parameters (natural relative/% change), bounded/logit for finite-interval parameters (stable near bounds), additive for location-scale parameters (symmetric absolute movement), and simplex/Dirichlet for region_pars (sum-constrained composition).",
                         style = "display:block; margin-top:-4px; margin-bottom:6px; color:#666;"
                       )
                     )
@@ -4619,8 +4623,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
           } else {
             plot_subtitle <- paste0(plot_subtitle, " Red diamond = raw baseline/original value.")
           }
-          plot_subtitle <- paste0(plot_subtitle, " Orange circle = adjusted jitter center (interior-clipped baseline).")
-          plot_subtitle <- paste0(plot_subtitle, " Jitter samples are drawn around the adjusted center; some families use additive jitter to avoid near-zero sticking.")
+          plot_subtitle <- paste0(plot_subtitle, " Orange circle = CV-adaptive jitter center (tail-matched to bounds at one-tail 99.99% when needed).")
+          plot_subtitle <- paste0(plot_subtitle, " No extra near-bound rejection window. All free parameters keep hard L/U bounds; sampler type depends on parameter geometry (multiplicative/bounded-logit/additive/simplex).")
         } else if (show_ref_points_effective) {
           plot_subtitle <- paste0(plot_subtitle, " Red diamond = baseline/original.")
         }
@@ -4992,8 +4996,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
         } else {
           plot_subtitle <- paste0(plot_subtitle, " Red diamond = raw baseline/original value.")
         }
-        plot_subtitle <- paste0(plot_subtitle, " Orange circle = adjusted jitter center (interior-clipped baseline).")
-        plot_subtitle <- paste0(plot_subtitle, " Jitter samples are drawn around the adjusted center; some families use additive jitter to avoid near-zero sticking.")
+        plot_subtitle <- paste0(plot_subtitle, " Orange circle = CV-adaptive jitter center (tail-matched to bounds at one-tail 99.99% when needed).")
+        plot_subtitle <- paste0(plot_subtitle, " No extra near-bound rejection window. All free parameters keep hard L/U bounds; sampler type depends on parameter geometry (multiplicative/bounded-logit/additive/simplex).")
       } else if (show_ref_points_effective) {
         plot_subtitle <- paste0(plot_subtitle, " Red diamond = baseline/original.")
       }
