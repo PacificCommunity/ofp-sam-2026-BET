@@ -672,6 +672,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (identical(filters$profile_type, "jitter")) {
       key$jitter_converged_only_diagnostics <- isTRUE(filters$jitter_converged_only_diagnostics)
       key$jitter_grad_reference <- sanitize_numeric_scalar(filters$jitter_grad_reference, 0.001)
+      key$jitter_rel_diff_threshold <- sanitize_numeric_scalar(filters$jitter_rel_diff_threshold, 10)
       return(key)
     }
 
@@ -4304,17 +4305,25 @@ mod_likelihood_server <- function(input, output, session, rv) {
           rel_diff = dplyr::case_when(
             is.finite(ref_obj) & abs(ref_obj) > 1e-12 ~ (obj_fun - ref_obj) / abs(ref_obj),
             TRUE ~ NA_real_
-          )
+          ),
+          rel_diff_pct = 100 * rel_diff
         )
-      lower_outlier <- -rel_diff_threshold
-      upper_outlier <- rel_diff_threshold
+      lower_outlier <- -rel_diff_threshold_pct
+      upper_outlier <- rel_diff_threshold_pct
+      y_pad <- max(rel_diff_threshold_pct * 0.2, 0.2)
+      y_min <- lower_outlier - y_pad
+      y_max <- upper_outlier + y_pad
 
       plot_df <- plot_df %>%
         mutate(
-          is_outlier = rel_diff < lower_outlier | rel_diff > upper_outlier,
+          is_outlier = rel_diff_pct < lower_outlier | rel_diff_pct > upper_outlier,
+          threshold_status = case_when(
+            isTRUE(is_outlier) ~ "Outside",
+            TRUE ~ "Inside"
+          ),
           outlier_direction = case_when(
-            isTRUE(is_outlier) & rel_diff < 0 ~ "below",
-            isTRUE(is_outlier) & rel_diff >= 0 ~ "above",
+            isTRUE(is_outlier) & rel_diff_pct < 0 ~ "below",
+            isTRUE(is_outlier) & rel_diff_pct >= 0 ~ "above",
             TRUE ~ "none"
           )
         )
@@ -4324,7 +4333,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         summarise(ref_grad = first(ref_grad), .groups = "drop") %>%
         mutate(ref_grad = ifelse(ref_grad > 0, ref_grad, NA_real_))
 
-      point_df <- plot_df %>% filter(is.finite(max_grad), max_grad > 0, is.finite(rel_diff))
+      point_df <- plot_df %>% filter(is.finite(max_grad), max_grad > 0, is.finite(rel_diff_pct))
       if (nrow(point_df) == 0) {
         return(
           ggplot() +
@@ -4339,22 +4348,38 @@ mod_likelihood_server <- function(input, output, session, rv) {
             theme_void()
         )
       }
-      outlier_df <- point_df %>% filter(is_outlier)
+      outlier_df <- point_df %>%
+        filter(is_outlier)
+      clipped_corner_df <- outlier_df %>%
+        group_by(scenario) %>%
+        summarise(corner_x = max(max_grad, na.rm = TRUE), .groups = "drop") %>%
+        mutate(corner_y = y_max - 0.04 * (y_max - y_min))
+      outside_count <- nrow(outlier_df)
+      total_count <- nrow(point_df)
 
       return(
-        ggplot(point_df, aes(x = max_grad, y = rel_diff, color = jitter_id)) +
+        ggplot(point_df, aes(x = max_grad, y = rel_diff_pct, color = jitter_id)) +
           geom_point(size = 2.3, alpha = 0.7, na.rm = TRUE) +
-          geom_point(
+          geom_text(
             data = outlier_df %>% filter(outlier_direction == "above"),
-            aes(x = max_grad, y = rel_diff),
+            aes(x = max_grad, y = rel_diff_pct),
             inherit.aes = FALSE,
-            color = "#d97904", size = 2.8, shape = 24, fill = "#d97904", na.rm = TRUE
+            label = "↑",
+            color = "#d97904", size = 5.6, fontface = "bold", na.rm = TRUE
           ) +
-          geom_point(
+          geom_text(
             data = outlier_df %>% filter(outlier_direction == "below"),
-            aes(x = max_grad, y = rel_diff),
+            aes(x = max_grad, y = rel_diff_pct),
             inherit.aes = FALSE,
-            color = "#d97904", size = 2.8, shape = 25, fill = "#d97904", na.rm = TRUE
+            label = "↓",
+            color = "#d97904", size = 5.6, fontface = "bold", na.rm = TRUE
+          ) +
+          geom_text(
+            data = clipped_corner_df,
+            aes(x = corner_x, y = corner_y),
+            inherit.aes = FALSE,
+            label = "↑",
+            color = "#d97904", size = 6.8, fontface = "bold", vjust = 1, na.rm = TRUE
           ) +
           geom_point(
             data = ref_df,
@@ -4366,22 +4391,28 @@ mod_likelihood_server <- function(input, output, session, rv) {
           geom_hline(yintercept = c(lower_outlier, upper_outlier), linetype = "dotted", color = "#d97904", linewidth = 0.6, alpha = 0.7) +
           geom_vline(xintercept = grad_reference, linetype = "dotted", color = "gray50", linewidth = 0.6) +
           scale_x_log10() +
+          scale_y_continuous(expand = ggplot2::expansion(mult = c(0.02, 0.001))) +
+          coord_cartesian(ylim = c(y_min, y_max)) +
           scale_color_viridis_c(option = "D", guide = "none") +
           facet_wrap(~ scenario, scales = "free_x", ncol = facet_ncol) +
           labs(
             x = "Maximum Gradient (log scale)",
-            y = "Relative Difference in Objective Function ((jitter - reference) / |reference|)",
+            y = "Relative Difference in Objective Function (%)",
             title = "Jitter Analysis: Convergence Diagnostics",
             subtitle = if (isTRUE(converged_only)) {
               paste0(
                 "Converged only: max_grad <= ", format(grad_reference, trim = TRUE),
-                " | Red diamond = Reference model | Orange triangles = outside ±", format(rel_diff_threshold_pct, trim = TRUE), "% range",
+                " | Red diamond = Reference model | Orange arrows = outside ±", format(rel_diff_threshold_pct, trim = TRUE), "% range",
+                " (clipped to axis edge)",
+                " | Outside: ", outside_count, "/", total_count,
                 if (!is.null(jitter_counts)) paste0(" | Converged/total: ", jitter_counts) else ""
               )
             } else {
               paste0(
                 "Red diamond = Reference model | Gray line = ", format(grad_reference, trim = TRUE),
-                " | Orange triangles = outside ±", format(rel_diff_threshold_pct, trim = TRUE), "% range",
+                " | Orange arrows = outside ±", format(rel_diff_threshold_pct, trim = TRUE), "% range",
+                " (clipped to axis edge)",
+                " | Outside: ", outside_count, "/", total_count,
                 if (!is.null(jitter_counts)) paste0(" | Converged/total: ", jitter_counts) else ""
               )
             }
