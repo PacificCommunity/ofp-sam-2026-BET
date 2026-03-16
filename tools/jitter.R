@@ -1148,13 +1148,10 @@ apply_indepvar_cv_jitter <- function(par, indepvar_map, jitter_cv, eps = 1e-12) 
   }
 
   jitter_scale_val <- function(current_val, lower, upper, eps = 1e-12) {
-    lo <- suppressWarnings(as.numeric(lower))
-    hi <- suppressWarnings(as.numeric(upper))
-    if (is.finite(lo) && is.finite(hi) && hi > lo) {
-      span <- hi - lo
-      return(max(span, eps))
+    cur <- suppressWarnings(as.numeric(current_val))
+    if (is.finite(cur)) {
+      return(max(abs(cur), 1))
     }
-    if (is.finite(current_val) && abs(current_val) > eps) return(abs(current_val))
     1
   }
 
@@ -1163,12 +1160,21 @@ apply_indepvar_cv_jitter <- function(par, indepvar_map, jitter_cv, eps = 1e-12) 
     r <- mapping$key1[i]
     c <- mapping$key2[i]
     cur <- diff_coffs(par)[r, c]
-    diff_coffs(par)[r, c] <- jitter_sample_additive_cv(
-      cur, jitter_cv,
-      lower = max(eps, mapping$L_bound[i]), upper = mapping$U_bound[i],
-      scale_val = jitter_scale_val(cur, mapping$L_bound[i], mapping$U_bound[i], eps = eps),
-      eps = eps
-    )
+    lower_i <- mapping$L_bound[i]
+    upper_i <- mapping$U_bound[i]
+    if (is.finite(lower_i) && is.finite(upper_i)) {
+      diff_coffs(par)[r, c] <- jitter_sample_bounded_cv(
+        cur, jitter_cv,
+        lower = lower_i, upper = upper_i, eps = eps
+      )
+    } else {
+      diff_coffs(par)[r, c] <- jitter_sample_additive_cv(
+        cur, jitter_cv,
+        lower = lower_i, upper = upper_i,
+        scale_val = jitter_scale_val(cur, lower_i, upper_i, eps = eps),
+        eps = eps
+      )
+    }
   }
 
   rrd_rows <- which(mapping$family == "region_rec_diffs")
@@ -1179,12 +1185,21 @@ apply_indepvar_cv_jitter <- function(par, indepvar_map, jitter_cv, eps = 1e-12) 
     )
     for (i in rrd_rows) {
       cur <- rrv_export[mapping$key2[i], mapping$key1[i]]
-      rrv_export[mapping$key2[i], mapping$key1[i]] <- jitter_sample_additive_cv(
-        cur, jitter_cv,
-        lower = mapping$L_bound[i], upper = mapping$U_bound[i],
-        scale_val = jitter_scale_val(cur, mapping$L_bound[i], mapping$U_bound[i], eps = eps),
-        eps = eps
-      )
+      lower_i <- mapping$L_bound[i]
+      upper_i <- mapping$U_bound[i]
+      if (is.finite(lower_i) && is.finite(upper_i)) {
+        rrv_export[mapping$key2[i], mapping$key1[i]] <- jitter_sample_bounded_cv(
+          cur, jitter_cv,
+          lower = lower_i, upper = upper_i, eps = eps
+        )
+      } else {
+        rrv_export[mapping$key2[i], mapping$key1[i]] <- jitter_sample_additive_cv(
+          cur, jitter_cv,
+          lower = lower_i, upper = upper_i,
+          scale_val = jitter_scale_val(cur, lower_i, upper_i, eps = eps),
+          eps = eps
+        )
+      }
     }
     vec <- as.vector(rrv_export)
     current_rrv <- region_rec_var(par)
@@ -1201,12 +1216,21 @@ apply_indepvar_cv_jitter <- function(par, indepvar_map, jitter_cv, eps = 1e-12) 
       fish_idx <- mapping$key4[i]
       if (!is.finite(fish_idx)) next
       cur <- fishery_sel(par)[mapping$key2[i], 1, fish_idx, mapping$key3[i], 1, 1]
-      fishery_sel(par)[mapping$key2[i], 1, fish_idx, mapping$key3[i], 1, 1] <- jitter_sample_additive_cv(
-        cur, jitter_cv,
-        lower = mapping$L_bound[i], upper = mapping$U_bound[i],
-        scale_val = jitter_scale_val(cur, mapping$L_bound[i], mapping$U_bound[i], eps = eps),
-        eps = eps
-      )
+      lower_i <- mapping$L_bound[i]
+      upper_i <- mapping$U_bound[i]
+      if (is.finite(lower_i) && is.finite(upper_i)) {
+        fishery_sel(par)[mapping$key2[i], 1, fish_idx, mapping$key3[i], 1, 1] <- jitter_sample_bounded_cv(
+          cur, jitter_cv,
+          lower = lower_i, upper = upper_i, eps = eps
+        )
+      } else {
+        fishery_sel(par)[mapping$key2[i], 1, fish_idx, mapping$key3[i], 1, 1] <- jitter_sample_additive_cv(
+          cur, jitter_cv,
+          lower = lower_i, upper = upper_i,
+          scale_val = jitter_scale_val(cur, lower_i, upper_i, eps = eps),
+          eps = eps
+        )
+      }
     }
   }
 
@@ -1234,10 +1258,19 @@ apply_indepvar_cv_jitter <- function(par, indepvar_map, jitter_cv, eps = 1e-12) 
 
   tot_rows <- which(mapping$family == "totpop")
   if (length(tot_rows) == 1) {
-    tot_pop(par) <- jitter_sample_multiplicative_cv(
-      tot_pop(par), jitter_cv,
-      lower = max(eps, mapping$L_bound[tot_rows]), upper = mapping$U_bound[tot_rows], eps = eps
-    )
+    lower_i <- max(eps, mapping$L_bound[tot_rows])
+    upper_i <- mapping$U_bound[tot_rows]
+    if (is.finite(lower_i) && is.finite(upper_i)) {
+      tot_pop(par) <- jitter_sample_bounded_cv(
+        tot_pop(par), jitter_cv,
+        lower = lower_i, upper = upper_i, eps = eps
+      )
+    } else {
+      tot_pop(par) <- jitter_sample_multiplicative_cv(
+        tot_pop(par), jitter_cv,
+        lower = lower_i, upper = upper_i, eps = eps
+      )
+    }
   }
 
   tag_rows <- which(mapping$family == "tag_fish_rep")
@@ -1249,12 +1282,21 @@ apply_indepvar_cv_jitter <- function(par, indepvar_map, jitter_cv, eps = 1e-12) 
       idx <- which(grp_mat == grp_id & flag_mat == 1, arr.ind = TRUE)
       if (nrow(idx) == 0) next
       cur <- tag_fish_rep_rate(par)[idx[1, 1], idx[1, 2]]
-      tag_fish_rep_rate(par)[idx] <- jitter_sample_additive_cv(
-        cur, jitter_cv,
-        lower = mapping$L_bound[i], upper = mapping$U_bound[i],
-        scale_val = jitter_scale_val(cur, mapping$L_bound[i], mapping$U_bound[i], eps = eps),
-        eps = eps
-      )
+      lower_i <- mapping$L_bound[i]
+      upper_i <- mapping$U_bound[i]
+      if (is.finite(lower_i) && is.finite(upper_i)) {
+        tag_fish_rep_rate(par)[idx] <- jitter_sample_bounded_cv(
+          cur, jitter_cv,
+          lower = lower_i, upper = upper_i, eps = eps
+        )
+      } else {
+        tag_fish_rep_rate(par)[idx] <- jitter_sample_additive_cv(
+          cur, jitter_cv,
+          lower = lower_i, upper = upper_i,
+          scale_val = jitter_scale_val(cur, lower_i, upper_i, eps = eps),
+          eps = eps
+        )
+      }
     }
   }
 
@@ -1281,12 +1323,21 @@ apply_indepvar_cv_jitter <- function(par, indepvar_map, jitter_cv, eps = 1e-12) 
   for (i in sv_rows) {
     idx <- mapping$key1[i]
     cur <- season_growth_pars(par)[idx]
-    season_growth_pars(par)[idx] <- jitter_sample_additive_cv(
-      cur, jitter_cv,
-      lower = mapping$L_bound[i], upper = mapping$U_bound[i],
-      scale_val = jitter_scale_val(cur, mapping$L_bound[i], mapping$U_bound[i], eps = eps),
-      eps = eps
-    )
+    lower_i <- mapping$L_bound[i]
+    upper_i <- mapping$U_bound[i]
+    if (is.finite(lower_i) && is.finite(upper_i)) {
+      season_growth_pars(par)[idx] <- jitter_sample_bounded_cv(
+        cur, jitter_cv,
+        lower = lower_i, upper = upper_i, eps = eps
+      )
+    } else {
+      season_growth_pars(par)[idx] <- jitter_sample_additive_cv(
+        cur, jitter_cv,
+        lower = lower_i, upper = upper_i,
+        scale_val = jitter_scale_val(cur, lower_i, upper_i, eps = eps),
+        eps = eps
+      )
+    }
   }
 
   age_rows <- which(mapping$family == "age_pars")
@@ -1306,22 +1357,40 @@ apply_indepvar_cv_jitter <- function(par, indepvar_map, jitter_cv, eps = 1e-12) 
   vb_rows <- which(mapping$family == "vb_coff")
   for (i in vb_rows) {
     idx <- mapping$key1[i]
-    growth(par)[idx, 1] <- jitter_sample_multiplicative_cv(
-      growth(par)[idx, 1], jitter_cv,
-      lower = max(eps, mapping$L_bound[i]), upper = mapping$U_bound[i], eps = eps
-    )
+    lower_i <- max(eps, mapping$L_bound[i])
+    upper_i <- mapping$U_bound[i]
+    if (is.finite(lower_i) && is.finite(upper_i)) {
+      growth(par)[idx, 1] <- jitter_sample_bounded_cv(
+        growth(par)[idx, 1], jitter_cv,
+        lower = lower_i, upper = upper_i, eps = eps
+      )
+    } else {
+      growth(par)[idx, 1] <- jitter_sample_multiplicative_cv(
+        growth(par)[idx, 1], jitter_cv,
+        lower = lower_i, upper = upper_i, eps = eps
+      )
+    }
   }
 
   var_rows <- which(mapping$family == "var_coff")
   for (i in var_rows) {
     idx <- mapping$key1[i]
     cur <- growth_var_pars(par)[idx, 1]
-    growth_var_pars(par)[idx, 1] <- jitter_sample_additive_cv(
-      cur, jitter_cv,
-      lower = max(eps, mapping$L_bound[i]), upper = mapping$U_bound[i],
-      scale_val = jitter_scale_val(cur, mapping$L_bound[i], mapping$U_bound[i], eps = eps),
-      eps = eps
-    )
+    lower_i <- max(eps, mapping$L_bound[i])
+    upper_i <- mapping$U_bound[i]
+    if (is.finite(lower_i) && is.finite(upper_i)) {
+      growth_var_pars(par)[idx, 1] <- jitter_sample_bounded_cv(
+        cur, jitter_cv,
+        lower = lower_i, upper = upper_i, eps = eps
+      )
+    } else {
+      growth_var_pars(par)[idx, 1] <- jitter_sample_additive_cv(
+        cur, jitter_cv,
+        lower = lower_i, upper = upper_i,
+        scale_val = jitter_scale_val(cur, lower_i, upper_i, eps = eps),
+        eps = eps
+      )
+    }
   }
 
   par
