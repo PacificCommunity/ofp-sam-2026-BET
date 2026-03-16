@@ -128,14 +128,14 @@ file.copy(files_to_copy, to = model_dir, overwrite = TRUE, recursive = TRUE)
 cat("Base inputs directory:", base_dir_abs, "\n")
 cat("Model directory      :", model_dir, "\n")
 
-## When using phase-based legacy scripts (doitall.sh), copied .par phase files
-## can short-circuit all phases and silently skip optimization. Remove them to
-## force a fresh run from bet.ini in the model directory.
+## When using phase-based legacy scripts (doitall.sh), copied .par files
+## can short-circuit phases and silently skip optimization. Remove all copied
+## .par variants to force a fresh run from bet.ini in the model directory.
 if (identical(mfcl_commands_raw, "./doitall.sh")) {
-  phase_pars <- list.files(model_dir, pattern = "^[0-9]{2}\\.par$", full.names = TRUE)
-  if (length(phase_pars) > 0) {
-    unlink(phase_pars, force = TRUE)
-    cat("Removed", length(phase_pars), "existing phase .par files before doitall run\n")
+  copied_pars <- list.files(model_dir, pattern = "\\.par([0-9]+)?$", full.names = TRUE)
+  if (length(copied_pars) > 0) {
+    unlink(copied_pars, force = TRUE)
+    cat("Removed", length(copied_pars), "existing copied .par files before doitall run\n")
   }
 }
 

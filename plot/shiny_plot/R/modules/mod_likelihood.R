@@ -4451,33 +4451,6 @@ mod_likelihood_server <- function(input, output, session, rv) {
         safe_build_jitter_seed_status_tables(filters$scenarios, cutoff = converged_max_grad, context = "likelihood_plot_jitter_params")$summary
       )
 
-      jitter_interior_clip <- function(x, lower, upper, jitter_cv = 0.2, eps = 1e-12) {
-        x <- suppressWarnings(as.numeric(x))
-        lower <- suppressWarnings(as.numeric(lower))
-        upper <- suppressWarnings(as.numeric(upper))
-        jitter_cv <- suppressWarnings(as.numeric(jitter_cv))
-        jitter_cv[!is.finite(jitter_cv) | jitter_cv <= 0] <- 0.2
-        out <- x
-        ok <- is.finite(x) & is.finite(lower) & is.finite(upper) & (upper > lower)
-        if (any(ok)) {
-          span <- upper[ok] - lower[ok]
-          lo <- lower[ok] + pmax(abs(span) * 2e-2, eps)
-          hi <- upper[ok] - pmax(abs(span) * 2e-2, eps)
-          sigma <- sqrt(log1p(jitter_cv[ok]^2))
-          z <- stats::qnorm(1 - (1 - 0.999) / 2)
-          c_lo <- lo * exp(z * sigma)
-          c_hi <- hi * exp(-z * sigma)
-          x0 <- pmin(hi, pmax(lo, x[ok]))
-          center <- ifelse(
-            is.finite(c_lo) & is.finite(c_hi) & c_lo <= c_hi,
-            pmin(c_hi, pmax(c_lo, x0)),
-            sqrt(pmax(lo, eps) * pmax(hi, eps))
-          )
-          out[ok] <- pmin(hi, pmax(lo, center))
-        }
-        out
-      }
-
       if (identical(param_display, "family")) {
         signed_max_abs <- function(x) {
           x <- as.numeric(x)
@@ -4491,10 +4464,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
             family = ifelse(is.na(family) | !nzchar(family), "unclassified", family),
             is_bound_hit = is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) &
               is.finite(before) & (before <= L_bound | before >= U_bound),
-            center_value_raw = dplyr::case_when(
-              is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) & is.finite(before) ~
-                jitter_interior_clip(before, L_bound, U_bound, jitter_cv = jitter_cv),
-              TRUE ~ before
+            center_value_raw = mapply(
+              jitter_adjusted_center_one,
+              before = before,
+              family = family,
+              lower = L_bound,
+              upper = U_bound,
+              jitter_cv = jitter_cv,
+              MoreArgs = list(eps = 1e-12)
             ),
             is_center_adjusted = is.finite(center_value_raw) & is.finite(before) &
               (abs(center_value_raw - before) > 0),
@@ -4822,10 +4799,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
           param_label = paste0(Var_name, "\n[", family, "]"),
           is_bound_hit = is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) &
             is.finite(before) & (before <= L_bound | before >= U_bound),
-          center_value_raw = dplyr::case_when(
-            is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) & is.finite(before) ~
-              jitter_interior_clip(before, L_bound, U_bound, jitter_cv = jitter_cv),
-            TRUE ~ before
+          center_value_raw = mapply(
+            jitter_adjusted_center_one,
+            before = before,
+            family = family,
+            lower = L_bound,
+            upper = U_bound,
+            jitter_cv = jitter_cv,
+            MoreArgs = list(eps = 1e-12)
           ),
           is_center_adjusted = is.finite(center_value_raw) & is.finite(before) &
             (abs(center_value_raw - before) > 0),
