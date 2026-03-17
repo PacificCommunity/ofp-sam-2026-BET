@@ -9,6 +9,33 @@ parse_numeric_tokens <- function(x) {
   vals[is.finite(vals)]
 }
 
+parse_env_kv <- function(env_kv) {
+  if (!length(env_kv)) return(list())
+  out <- list()
+  for (entry in env_kv) {
+    eq_pos <- regexpr("=", entry, fixed = TRUE)[[1]]
+    if (!is.finite(eq_pos) || eq_pos < 2) next
+    key <- substr(entry, 1, eq_pos - 1)
+    val <- substr(entry, eq_pos + 1, nchar(entry))
+    out[[key]] <- val
+  }
+  out
+}
+
+run_with_env <- function(env_list, code) {
+  env_names <- names(env_list)
+  if (length(env_names) == 0) return(force(code))
+  old_vals <- Sys.getenv(env_names, unset = NA_character_)
+  on.exit({
+    for (nm in env_names) {
+      old <- old_vals[[nm]]
+      if (is.na(old)) Sys.unsetenv(nm) else Sys.setenv(structure(old, names = nm))
+    }
+  }, add = TRUE)
+  do.call(Sys.setenv, env_list)
+  force(code)
+}
+
 read_indexed_chain_scalars <- function() {
   n <- suppressWarnings(as.integer(Sys.getenv("chain_count", Sys.getenv("CHAIN_COUNT", ""))))
   if (!is.finite(n) || n < 1) return(numeric(0))
@@ -106,12 +133,15 @@ for (i in seq_along(chain_scalars)) {
   cat("\n--- chain step", i, "/", length(chain_scalars), " scalar=", sc,
       " donor=", ifelse(is.finite(donor), as.character(donor), "<none>"), " ---\n", sep = "")
 
-  status <- system2(
-    "Rscript",
-    args = c("runners/run_prof.R"),
-    env = env_kv,
-    stdout = "",
-    stderr = ""
+  env_list <- parse_env_kv(env_kv)
+  status <- run_with_env(
+    env_list,
+    system2(
+      "Rscript",
+      args = c("runners/run_prof.R"),
+      stdout = "",
+      stderr = ""
+    )
   )
 
   if (!is.numeric(status) || length(status) != 1 || is.na(status) || as.integer(status) != 0L) {
