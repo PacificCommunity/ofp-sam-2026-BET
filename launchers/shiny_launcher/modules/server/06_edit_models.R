@@ -341,6 +341,44 @@
         width = "100%",
         placeholder = "70:init_70.par,80:init_80.par"
       ),
+      div(class = "param-label", "Profile Fixed indepvar (name/index list):"),
+      textInput(
+        "edit_prof_fix_indepvar",
+        NULL,
+        value = if (!is.null(model$prof_fix_indepvar)) model$prof_fix_indepvar else "",
+        width = "100%",
+        placeholder = "totpop,recr(10) 또는 15,21"
+      ),
+      div(class = "param-label", "Profile Fixed values (optional; blank=init par values):"),
+      textInput(
+        "edit_prof_fix_values",
+        NULL,
+        value = if (!is.null(model$prof_fix_values)) model$prof_fix_values else "",
+        width = "100%",
+        placeholder = "1500000,0.12"
+      ),
+      fluidRow(
+        column(6,
+               div(class = "param-label", "indepvar.rpt path (optional):"),
+               textInput(
+                 "edit_prof_fix_indepvar_file",
+                 NULL,
+                 value = if (!is.null(model$prof_fix_indepvar_file)) model$prof_fix_indepvar_file else "",
+                 width = "100%",
+                 placeholder = "indepvar.rpt"
+               )
+        ),
+        column(6,
+               div(class = "param-label", "Profile Extra Switch (triplets):"),
+               textInput(
+                 "edit_prof_extra_switch",
+                 NULL,
+                 value = if (!is.null(model$prof_extra_switch)) model$prof_extra_switch else "",
+                 width = "100%",
+                 placeholder = "1 1 100"
+               )
+        )
+      ),
       shiny::hr(),
       div(class = "param-label", "Profile Biomass Options:"),
       fluidRow(
@@ -405,6 +443,10 @@
     rv$models[[model_name]]$prof_init_map_rds <- input$edit_prof_init_map_rds
     rv$models[[model_name]]$init_from_scalar_map <- input$edit_init_from_scalar_map
     rv$models[[model_name]]$init_par_override_map <- input$edit_init_par_override_map
+    rv$models[[model_name]]$prof_fix_indepvar <- input$edit_prof_fix_indepvar
+    rv$models[[model_name]]$prof_fix_values <- input$edit_prof_fix_values
+    rv$models[[model_name]]$prof_fix_indepvar_file <- input$edit_prof_fix_indepvar_file
+    rv$models[[model_name]]$prof_extra_switch <- input$edit_prof_extra_switch
     rv$models[[model_name]]$Af172 <- as.character(input$edit_af172)
     rv$models[[model_name]]$Af173 <- as.character(input$edit_af173)
     rv$models[[model_name]]$Af174 <- as.character(input$edit_af174)

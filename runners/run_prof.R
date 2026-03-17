@@ -6,6 +6,7 @@ source("tools/ProfLike_utils.R")
 source("tools/model_payload.R")
 source("tools/post_hessian.R")
 source("tools/condor_archive_cleanup.R")
+source("tools/jitter.R")
 
 ## environment variables
 program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_02_04_vsn2278")
@@ -32,6 +33,16 @@ init_par_override <- Sys.getenv("init_par_override", "")
 init_from_scalar <- suppressWarnings(as.numeric(Sys.getenv("init_from_scalar", "")))
 prof_init_map_rds <- Sys.getenv("prof_init_map_rds", "")
 prof_hessian <- tolower(Sys.getenv("prof_hessian", Sys.getenv("likelihood_hessian", Sys.getenv("hessian", "0")))) %in% c("1", "true", "yes", "y")
+prof_fix_indepvar <- Sys.getenv("prof_fix_indepvar", "")
+prof_fix_values <- Sys.getenv("prof_fix_values", "")
+prof_fix_indepvar_file <- Sys.getenv("prof_fix_indepvar_file", "")
+prof_extra_switch <- trimws(Sys.getenv("prof_extra_switch", ""))
+prof_use_quantity_penalty_raw <- trimws(Sys.getenv("prof_use_quantity_penalty", ""))
+prof_use_quantity_penalty <- if (nzchar(prof_use_quantity_penalty_raw)) {
+  tolower(prof_use_quantity_penalty_raw) %in% c("1", "true", "yes", "y")
+} else {
+  !nzchar(trimws(prof_fix_indepvar))
+}
 
 safe_read_scalar <- function(path) {
   if (!is.character(path) || length(path) != 1 || !nzchar(path) || !file.exists(path)) {
@@ -163,14 +174,169 @@ resolve_init_par <- function(init_par_override, init_from_scalar, scalar_dir, pr
   list(path = fallback_par, source = "default", donor = NA_integer_)
 }
 
+parse_tokens <- function(x) {
+  txt <- paste(as.character(x), collapse = " ")
+  if (!nzchar(trimws(txt))) return(character(0))
+  toks <- unlist(strsplit(txt, "[[:space:],]+", perl = TRUE))
+  toks <- trimws(toks)
+  toks[nzchar(toks)]
+}
+
+append_extra_switch <- function(base_switch, extra_switch) {
+  extra <- trimws(as.character(extra_switch))
+  if (!nzchar(extra)) return(base_switch)
+
+  extra_toks <- parse_tokens(extra)
+  if (length(extra_toks) %% 3 != 0) {
+    stop("prof_extra_switch must be triplets: type flag value")
+  }
+
+  m <- regexec("^(-switch[[:space:]]+)([0-9]+)([[:space:]].*)$", base_switch, perl = TRUE)
+  mm <- regmatches(base_switch, m)[[1]]
+  if (length(mm) < 4) {
+    stop("Internal error: invalid base -switch format")
+  }
+
+  base_n <- suppressWarnings(as.integer(mm[3]))
+  if (!is.finite(base_n)) {
+    stop("Internal error: invalid base switch count")
+  }
+
+  new_n <- base_n + as.integer(length(extra_toks) / 3)
+  paste0(mm[2], new_n, mm[4], " ", paste(extra_toks, collapse = " "))
+}
+
+resolve_indepvar_path <- function(explicit_path, scalar_dir, model_dir, base_dir_abs) {
+  if (nzchar(explicit_path)) {
+    candidates <- unique(c(
+      explicit_path,
+      if (!grepl("^/", explicit_path)) file.path(scalar_dir, explicit_path) else NA_character_,
+      if (!grepl("^/", explicit_path)) file.path(model_dir, explicit_path) else NA_character_,
+      if (!grepl("^/", explicit_path)) file.path(base_dir_abs, explicit_path) else NA_character_
+    ))
+  } else {
+    candidates <- c(
+      file.path(scalar_dir, "indepvar.rpt"),
+      file.path(model_dir, "indepvar.rpt"),
+      file.path(base_dir_abs, "indepvar.rpt")
+    )
+  }
+  candidates <- unique(candidates[is.character(candidates) & nzchar(candidates)])
+  hit <- candidates[file.exists(candidates)]
+  if (length(hit) == 0) return(NA_character_)
+  hit[[1]]
+}
+
+apply_indepvar_fix <- function(init_par_file,
+                               scalar_dir,
+                               model_dir,
+                               base_dir_abs,
+                               indepvar_select,
+                               indepvar_values,
+                               indepvar_file = "") {
+  tokens <- parse_tokens(indepvar_select)
+  if (length(tokens) == 0) {
+    return(list(
+      applied = FALSE,
+      reason = "no_selection",
+      indepvar_file = NA_character_,
+      par_file = init_par_file,
+      details = NULL
+    ))
+  }
+
+  indepvar_path <- resolve_indepvar_path(indepvar_file, scalar_dir, model_dir, base_dir_abs)
+  if (!is.character(indepvar_path) || length(indepvar_path) != 1 || !nzchar(indepvar_path) || !file.exists(indepvar_path)) {
+    stop("prof_fix_indepvar is set but indepvar.rpt was not found. Set prof_fix_indepvar_file if needed.")
+  }
+
+  init_par_obj <- suppressWarnings(tryCatch(read.MFCLPar(init_par_file), error = function(e) NULL))
+  if (is.null(init_par_obj)) {
+    stop("Failed to read Initp .par for indepvar fixing: ", init_par_file)
+  }
+
+  indepvar_map <- build_indepvar_mapping(init_par_obj, indepvar_file = indepvar_path, tol = 1e-14)
+  if (is.null(indepvar_map) || nrow(indepvar_map$mapping) == 0) {
+    stop("Failed to build indepvar mapping from: ", indepvar_path)
+  }
+
+  report <- parse_indepvar_report(indepvar_path)
+  if (is.null(report) || nrow(report) != nrow(indepvar_map$mapping)) {
+    stop("Could not parse indepvar.rpt consistently for fixing: ", indepvar_path)
+  }
+
+  selected_rows <- integer(0)
+  for (tok in tokens) {
+    if (grepl("^[0-9]+$", tok)) {
+      hit <- which(report$Index == as.integer(tok))
+    } else {
+      hit <- which(report$Var_name == tok)
+    }
+    if (length(hit) == 0) {
+      stop("prof_fix_indepvar token not found in indepvar.rpt: ", tok)
+    }
+    selected_rows <- c(selected_rows, hit[[1]])
+  }
+  selected_rows <- unique(selected_rows)
+
+  if (any(!indepvar_map$mapping$mapped[selected_rows])) {
+    bad <- indepvar_map$mapping$Var_name[selected_rows][!indepvar_map$mapping$mapped[selected_rows]]
+    stop("Selected indepvar parameters are not mapped to .par slots: ", paste(bad, collapse = ", "))
+  }
+
+  current_values <- extract_indepvar_values(init_par_obj, indepvar_map)
+
+  value_tokens <- parse_tokens(indepvar_values)
+  if (length(value_tokens) == 0) {
+    target_values <- as.numeric(current_values[selected_rows])
+  } else {
+    parsed_values <- suppressWarnings(as.numeric(value_tokens))
+    if (any(!is.finite(parsed_values))) {
+      stop("prof_fix_values includes non-numeric values.")
+    }
+    if (length(parsed_values) == 1L && length(selected_rows) > 1L) {
+      target_values <- rep(parsed_values[[1]], length(selected_rows))
+    } else if (length(parsed_values) == length(selected_rows)) {
+      target_values <- parsed_values
+    } else {
+      stop("prof_fix_values length must be 1 or match number of selected indepvar parameters.")
+    }
+  }
+
+  new_values <- current_values
+  new_values[selected_rows] <- target_values
+
+  fixed_par_obj <- inject_indepvar_values(init_par_obj, indepvar_map, new_values)
+  out_par <- file.path(scalar_dir, "warm_init_indepvar_fixed.par")
+  FLR4MFCL::write(fixed_par_obj, file = out_par)
+
+  details <- data.frame(
+    Index = report$Index[selected_rows],
+    Var_name = report$Var_name[selected_rows],
+    value_before = current_values[selected_rows],
+    value_after = target_values,
+    stringsAsFactors = FALSE
+  )
+
+  list(
+    applied = TRUE,
+    reason = "ok",
+    indepvar_file = indepvar_path,
+    par_file = out_par,
+    details = details
+  )
+}
+
 ## Create scalar-specific directory inside prof folder
-prof_dir <- file.path(model_dir, "prof")
+prof_subdir <- if (nzchar(trimws(prof_fix_indepvar))) "prof_indepvar" else "prof"
+prof_dir <- file.path(model_dir, prof_subdir)
 scalar_dir <- file.path(prof_dir, paste0("scalar_", scalar))
 
 cat("Running Profile Likelihood\n")
 cat("Base directory:", base_dir_abs, "\n")
 cat("Model directory:", model_dir, "\n")
 cat("Prof directory:", prof_dir, "\n")
+cat("Prof subdir:", prof_subdir, "\n")
 cat("Scalar directory:", scalar_dir, "\n")
 cat("Scalar:", scalar, "\n")
 cat("Reps:", Reps, "\n")
@@ -179,6 +345,11 @@ cat("AgeFlags:", AgeFlags, "\n")
 cat("init_par_override:", ifelse(nzchar(init_par_override), init_par_override, "<none>"), "\n")
 cat("init_from_scalar:", ifelse(is.finite(init_from_scalar), as.character(init_from_scalar), "<none>"), "\n")
 cat("prof_init_map_rds:", ifelse(nzchar(prof_init_map_rds), prof_init_map_rds, "<none>"), "\n")
+cat("prof_fix_indepvar:", ifelse(nzchar(prof_fix_indepvar), prof_fix_indepvar, "<none>"), "\n")
+cat("prof_fix_values:", ifelse(nzchar(prof_fix_values), prof_fix_values, "<none>"), "\n")
+cat("prof_fix_indepvar_file:", ifelse(nzchar(prof_fix_indepvar_file), prof_fix_indepvar_file, "<none>"), "\n")
+cat("prof_extra_switch:", ifelse(nzchar(prof_extra_switch), prof_extra_switch, "<none>"), "\n")
+cat("prof_use_quantity_penalty:", prof_use_quantity_penalty, "\n")
 cat("Profile post-hessian:", prof_hessian, "\n")
 
 ## Create scalar directory and copy all files from base_dir (inputs)
@@ -216,38 +387,90 @@ init_par_file <- init_info$path
 init_source <- init_info$source
 cat("Using Initp:", basename(init_par_file), "(source:", init_source, ")\n")
 
-quantity_label <- quantity_label_from_type(QuantityType)
-reference_quantity_path <- file.path(scalar_dir, quantity_label)
-if (!file.exists(reference_quantity_path)) {
-  cat("No reference quantity file found; refreshing from", basename(most_recent), "\n")
-  unlink(reference_quantity_path, force = TRUE)
-  ref_par <- file.path(scalar_dir, paste0("reference_", quantity_label, ".par"))
-  ref_command <- paste(
-    shQuote(program_path_abs),
-    shQuote(frq_file),
-    shQuote(basename(most_recent)),
-    shQuote(basename(ref_par)),
-    "-switch 10 2 32 1 1 187 0 1 188 0 -999 55 0 1 1 1",
-    "1 346", QuantityType,
-    "1 347 0",
-    "1 348 0",
-    "2 172", AgeFlags["Af172"],
-    "2 173", AgeFlags["Af173"],
-    "2 174", AgeFlags["Af174"]
+indepvar_fix_info <- list(
+  applied = FALSE,
+  reason = "disabled",
+  indepvar_file = NA_character_,
+  par_file = init_par_file,
+  details = NULL,
+  lock_rds = NA_character_
+)
+if (nzchar(prof_fix_indepvar)) {
+  indepvar_fix_info <- apply_indepvar_fix(
+    init_par_file = init_par_file,
+    scalar_dir = scalar_dir,
+    model_dir = model_dir,
+    base_dir_abs = base_dir_abs,
+    indepvar_select = prof_fix_indepvar,
+    indepvar_values = prof_fix_values,
+    indepvar_file = prof_fix_indepvar_file
   )
-  run_commands(commands = ref_command, work_dirs = scalar_dir, save_log = FALSE, verbose = TRUE)
+  init_par_file <- indepvar_fix_info$par_file
+  init_source <- paste0(init_source, "+indepvar_fix")
+  cat("Applied indepvar fixing using:", basename(indepvar_fix_info$indepvar_file), "\n")
+  if (is.data.frame(indepvar_fix_info$details) && nrow(indepvar_fix_info$details) > 0) {
+    indepvar_fix_info$lock_rds <- file.path(scalar_dir, "indepvar_lock_spec.rds")
+    saveRDS(
+      list(
+        Index = indepvar_fix_info$details$Index,
+        Var_name = indepvar_fix_info$details$Var_name,
+        value_after = indepvar_fix_info$details$value_after
+      ),
+      file = indepvar_fix_info$lock_rds,
+      compress = "xz"
+    )
+    cat("Fixed parameters:", paste(indepvar_fix_info$details$Var_name, collapse = ", "), "\n")
+  }
+  cat("Using fixed Initp:", basename(init_par_file), "(source:", init_source, ")\n")
 }
 
-initial_quantity_info <- detect_reference_quantity_file(model_dir, scalar_dir)
-reference_quantity <- safe_read_scalar(initial_quantity_info$path)
-target_quantity <- reference_quantity * scalar / 100
+quantity_label <- quantity_label_from_type(QuantityType)
+reference_quantity <- NA_real_
+target_quantity <- NA_real_
+if (isTRUE(prof_use_quantity_penalty)) {
+  reference_quantity_path <- file.path(scalar_dir, quantity_label)
+  if (!file.exists(reference_quantity_path)) {
+    cat("No reference quantity file found; refreshing from", basename(most_recent), "\n")
+    unlink(reference_quantity_path, force = TRUE)
+    ref_par <- file.path(scalar_dir, paste0("reference_", quantity_label, ".par"))
+    ref_switch <- paste(
+      "-switch 10 2 32 1 1 187 0 1 188 0 -999 55 0 1 1 1",
+      "1 346", QuantityType,
+      "1 347 0",
+      "1 348 0",
+      "2 172", AgeFlags["Af172"],
+      "2 173", AgeFlags["Af173"],
+      "2 174", AgeFlags["Af174"]
+    )
+    ref_switch <- append_extra_switch(ref_switch, prof_extra_switch)
+    ref_command <- paste(
+      shQuote(program_path_abs),
+      shQuote(frq_file),
+      shQuote(basename(most_recent)),
+      shQuote(basename(ref_par)),
+      ref_switch
+    )
+    run_commands(commands = ref_command, work_dirs = scalar_dir, save_log = FALSE, verbose = TRUE)
+  }
+
+  initial_quantity_info <- detect_reference_quantity_file(model_dir, scalar_dir)
+  reference_quantity <- safe_read_scalar(initial_quantity_info$path)
+  target_quantity <- reference_quantity * scalar / 100
+} else {
+  cat("Quantity penalty OFF for this profile run: skip avg_bio/relative_depletion switches.\n")
+}
 
 generate_proflike_script(
   Prog = program_path_abs,
   Reps = Reps,
   AgeFlags = AgeFlags,
   QuantityType = QuantityType,
-  FixedMLE = reference_quantity,
+  UseQuantityPenalty = prof_use_quantity_penalty,
+  FixedMLE = if (isTRUE(prof_use_quantity_penalty)) reference_quantity else NA_real_,
+  ExtraSwitch = prof_extra_switch,
+  IndepvarLockRds = if (is.character(indepvar_fix_info$lock_rds) && nzchar(indepvar_fix_info$lock_rds)) indepvar_fix_info$lock_rds else "",
+  IndepvarFile = if (is.character(indepvar_fix_info$indepvar_file) && nzchar(indepvar_fix_info$indepvar_file)) indepvar_fix_info$indepvar_file else "",
+  LockScript = file.path(project_root, "runners", "apply_indepvar_lock.R"),
   Frq = frq_file,
   Mults = scalar,
   Initp = basename(init_par_file),
@@ -273,15 +496,23 @@ hessian_summary <- mp_run_post_hessian(
   requested = prof_hessian
 )
 
-final_quantity_info <- detect_quantity_file(scalar_dir)
-actual_quantity <- safe_read_scalar(final_quantity_info$path)
-target_rel_err <- suppressWarnings(abs(actual_quantity - target_quantity) / pmax(abs(target_quantity), .Machine$double.eps))
+if (isTRUE(prof_use_quantity_penalty)) {
+  final_quantity_info <- detect_quantity_file(scalar_dir)
+  actual_quantity <- safe_read_scalar(final_quantity_info$path)
+  target_rel_err <- suppressWarnings(abs(actual_quantity - target_quantity) / pmax(abs(target_quantity), .Machine$double.eps))
+  quantity_label_out <- final_quantity_info$label
+} else {
+  actual_quantity <- NA_real_
+  target_rel_err <- NA_real_
+  quantity_label_out <- quantity_label
+}
 
 info_list <- list(
   Reps = Reps,
   AgeFlags = AgeFlags,
   scalar = scalar,
-  quantity_label = final_quantity_info$label,
+  use_quantity_penalty = isTRUE(prof_use_quantity_penalty),
+  quantity_label = quantity_label_out,
   reference_quantity = reference_quantity,
   target_quantity = target_quantity,
   actual_quantity = actual_quantity,
@@ -294,6 +525,10 @@ info_list <- list(
   init_par_used = basename(init_par_file),
   init_par_override = if (nzchar(init_par_override)) init_par_override else NA_character_,
   init_from_scalar = if (is.finite(init_info$donor)) init_info$donor else NA_integer_,
+  indepvar_fix_applied = isTRUE(indepvar_fix_info$applied),
+  indepvar_fix_file = if (is.character(indepvar_fix_info$indepvar_file) && nzchar(indepvar_fix_info$indepvar_file)) indepvar_fix_info$indepvar_file else NA_character_,
+  indepvar_fix_details = indepvar_fix_info$details,
+  indepvar_lock_rds = if (is.character(indepvar_fix_info$lock_rds) && nzchar(indepvar_fix_info$lock_rds)) indepvar_fix_info$lock_rds else NA_character_,
   prof_init_map_rds = if (is.character(init_map_obj$path) && length(init_map_obj$path) == 1 && nzchar(init_map_obj$path)) init_map_obj$path else NA_character_,
   final_par_lines = final_par_lines,
   hessian = hessian_summary
@@ -306,6 +541,10 @@ if (!is.null(profile_payload) && is.list(profile_payload)) {
   profile_payload$par_lines <- final_par_lines
   profile_payload$init_source <- init_source
   profile_payload$init_from_scalar <- if (is.finite(init_info$donor)) init_info$donor else NA_integer_
+  profile_payload$indepvar_fix_applied <- isTRUE(indepvar_fix_info$applied)
+  profile_payload$indepvar_fix_file <- if (is.character(indepvar_fix_info$indepvar_file) && nzchar(indepvar_fix_info$indepvar_file)) indepvar_fix_info$indepvar_file else NA_character_
+  profile_payload$indepvar_fix_details <- indepvar_fix_info$details
+  profile_payload$indepvar_lock_rds <- if (is.character(indepvar_fix_info$lock_rds) && nzchar(indepvar_fix_info$lock_rds)) indepvar_fix_info$lock_rds else NA_character_
   profile_payload$prof_init_map_rds <- if (is.character(init_map_obj$path) && length(init_map_obj$path) == 1 && nzchar(init_map_obj$path)) init_map_obj$path else NA_character_
 }
 saveRDS(profile_payload, file = file.path(scalar_dir, "profile_payload.rds"), compress = "xz")

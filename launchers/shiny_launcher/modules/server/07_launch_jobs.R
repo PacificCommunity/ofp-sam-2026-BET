@@ -462,8 +462,8 @@
       retro = c("retro_peel", "retro_peels", "retro_hessian"),
       jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian", "jitter_base_source"),
       hessian = c("hessian_part", "nsplit", "model_hessian"),
-      prof = c("scalar", "scalars", "prof_hessian", "prof_init_map_rds", "init_from_scalar_map", "init_par_override_map", "init_from_scalar", "init_par_override"),
-      prof_chain = c("chain_name", "chain_anchor", "chain_scalars", "chain_first_init_from", "scalars", "prof_hessian", "prof_init_map_rds", "init_from_scalar_map", "init_par_override_map"),
+      prof = c("scalar", "scalars", "prof_hessian", "prof_init_map_rds", "init_from_scalar_map", "init_par_override_map", "init_from_scalar", "init_par_override", "prof_fix_indepvar", "prof_fix_values", "prof_fix_indepvar_file", "prof_extra_switch"),
+      prof_chain = c("chain_name", "chain_anchor", "chain_scalars", "chain_first_init_from", "scalars", "prof_hessian", "prof_init_map_rds", "init_from_scalar_map", "init_par_override_map", "prof_fix_indepvar", "prof_fix_values", "prof_fix_indepvar_file", "prof_extra_switch"),
       character(0)
       )
 
@@ -507,8 +507,8 @@
         retro = c("retro_peel", "retro_peels", "retro_hessian"),
         jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian", "jitter_base_source"),
         hessian = c("hessian_part", "nsplit", "model_hessian"),
-        prof = c("scalar", "scalars", "prof_hessian", "prof_init_map_rds", "init_from_scalar_map", "init_par_override_map", "init_from_scalar", "init_par_override"),
-        prof_chain = c("chain_name", "chain_anchor", "chain_scalars", "chain_first_init_from", "scalars", "prof_hessian", "prof_init_map_rds", "init_from_scalar_map", "init_par_override_map"),
+        prof = c("scalar", "scalars", "prof_hessian", "prof_init_map_rds", "init_from_scalar_map", "init_par_override_map", "init_from_scalar", "init_par_override", "prof_fix_indepvar", "prof_fix_values", "prof_fix_indepvar_file", "prof_extra_switch"),
+        prof_chain = c("chain_name", "chain_anchor", "chain_scalars", "chain_first_init_from", "scalars", "prof_hessian", "prof_init_map_rds", "init_from_scalar_map", "init_par_override_map", "prof_fix_indepvar", "prof_fix_values", "prof_fix_indepvar_file", "prof_extra_switch"),
         character(0)
       )
     }

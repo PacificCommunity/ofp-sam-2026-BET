@@ -991,6 +991,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }
 
   quantity_axis_label <- function(profile_data) {
+    use_penalty_vals <- unlist(lapply(profile_data, function(x) x$use_quantity_penalty), use.names = FALSE)
+    use_penalty_vals <- use_penalty_vals[!is.na(use_penalty_vals)]
+    if (length(use_penalty_vals) > 0 && all(!use_penalty_vals)) {
+      return("Profile scalar")
+    }
+
     quantity_labels <- unlist(lapply(profile_data, function(x) x$quantity_label), use.names = FALSE)
     quantity_labels <- quantity_labels[nzchar(quantity_labels)]
     af172_vals <- unlist(lapply(profile_data, function(x) x$af172), use.names = FALSE)
@@ -1010,9 +1016,22 @@ mod_likelihood_server <- function(input, output, session, rv) {
     bquote("Average biomass (" * 10^3 * " MT)")
   }
 
+  quantity_axis_formatter <- function(profile_data) {
+    use_penalty_vals <- unlist(lapply(profile_data, function(x) x$use_quantity_penalty), use.names = FALSE)
+    use_penalty_vals <- use_penalty_vals[!is.na(use_penalty_vals)]
+    if (length(use_penalty_vals) > 0 && all(!use_penalty_vals)) {
+      return(function(x) x)
+    }
+    function(x) x / 1000
+  }
+
   scalar_quantity <- function(profile_entry, scl) {
     key <- as.character(scl)
-    suppressWarnings(as.numeric(profile_entry$actual_quantity[[key]]))
+    val <- suppressWarnings(as.numeric(profile_entry$actual_quantity[[key]]))
+    if (!is.finite(val)) {
+      val <- suppressWarnings(as.numeric(scl))
+    }
+    val
   }
 
   safe_payload_numeric <- function(x, field) {
@@ -1642,9 +1661,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
   })
 
   # Load profile outputs for a scenario
-  load_profile_outputs <- function(model_dir, scenario) {
+  load_profile_outputs <- function(model_dir, scenario, profile_subdir = "prof") {
     folder <- file.path(model_dir, scenario)
-    prof_dir <- file.path(folder, "prof")
+    prof_dir <- file.path(folder, profile_subdir)
     scalar_dirs <- list.dirs(prof_dir, full.names = TRUE, recursive = FALSE)
     scalar_dirs <- grep("(scalar|scaler)_\\d+$", scalar_dirs, value = TRUE)
 
@@ -1721,6 +1740,31 @@ mod_likelihood_server <- function(input, output, session, rv) {
             quantity_label_vals <- quantity_label_vals[nzchar(quantity_label_vals)]
           }
           quantity_label <- if (length(quantity_label_vals) > 0) quantity_label_vals[1] else NA_character_
+          use_quantity_penalty_vals <- suppressWarnings(vapply(payloads, function(x) {
+            if (is.null(x$use_quantity_penalty) || length(x$use_quantity_penalty) == 0) return(NA)
+            as.logical(x$use_quantity_penalty[[1]])
+          }, logical(1)))
+          use_quantity_penalty_vals <- use_quantity_penalty_vals[!is.na(use_quantity_penalty_vals)]
+          use_quantity_penalty <- if (length(use_quantity_penalty_vals) > 0) use_quantity_penalty_vals[1] else NA
+          indepvar_fix_applied_vals <- suppressWarnings(vapply(payloads, function(x) {
+            if (is.null(x$indepvar_fix_applied) || length(x$indepvar_fix_applied) == 0) return(FALSE)
+            isTRUE(as.logical(x$indepvar_fix_applied[[1]]))
+          }, logical(1)))
+          indepvar_fix_applied <- any(indepvar_fix_applied_vals, na.rm = TRUE)
+          fixed_indepvar_names <- character(0)
+          fixed_indepvar_n <- 0L
+          if (isTRUE(indepvar_fix_applied)) {
+            detail_candidates <- lapply(payloads, function(x) x$indepvar_fix_details)
+            detail_candidates <- Filter(function(x) is.data.frame(x) && nrow(x) > 0, detail_candidates)
+            if (length(detail_candidates) > 0) {
+              details_df <- detail_candidates[[1]]
+              if ("Var_name" %in% names(details_df)) {
+                fixed_indepvar_names <- unique(as.character(details_df$Var_name))
+                fixed_indepvar_names <- fixed_indepvar_names[nzchar(fixed_indepvar_names)]
+                fixed_indepvar_n <- length(fixed_indepvar_names)
+              }
+            }
+          }
           par_obj <- rv$ParOut_list[[scenario]]
           max_year <- suppressWarnings(as.numeric(tryCatch(par_obj@range["maxyear"], error = function(e) NA_real_)))
           seasons <- suppressWarnings(as.numeric(tryCatch(par_obj@dimensions["seasons"], error = function(e) NA_real_)))
@@ -1793,6 +1837,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
           af173 <- NA_real_
           af174 <- NA_real_
           quantity_label <- NA_character_
+          use_quantity_penalty <- NA
+          indepvar_fix_applied <- FALSE
+          fixed_indepvar_names <- character(0)
+          fixed_indepvar_n <- 0L
           max_year <- NA_real_
           seasons <- NA_real_
           profile_hessian_attempted <- 0L
@@ -1829,6 +1877,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
         af173 <- NA_real_
         af174 <- NA_real_
         quantity_label <- NA_character_
+        use_quantity_penalty <- NA
+        indepvar_fix_applied <- FALSE
+        fixed_indepvar_names <- character(0)
+        fixed_indepvar_n <- 0L
         max_year <- NA_real_
         seasons <- NA_real_
         profile_hessian_attempted <- 0L
@@ -1864,6 +1916,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
       af173 <- NA_real_
       af174 <- NA_real_
       quantity_label <- NA_character_
+      use_quantity_penalty <- NA
+      indepvar_fix_applied <- FALSE
+      fixed_indepvar_names <- character(0)
+      fixed_indepvar_n <- 0L
       max_year <- NA_real_
       seasons <- NA_real_
       profile_hessian_attempted <- 0L
@@ -1891,6 +1947,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
       af173 = af173,
       af174 = af174,
       quantity_label = quantity_label,
+      use_quantity_penalty = use_quantity_penalty,
+      indepvar_fix_applied = indepvar_fix_applied,
+      fixed_indepvar_names = fixed_indepvar_names,
+      fixed_indepvar_n = fixed_indepvar_n,
       max_year = max_year,
       seasons = seasons,
       profile_hessian_attempted = profile_hessian_attempted,
@@ -1913,10 +1973,18 @@ mod_likelihood_server <- function(input, output, session, rv) {
     selected <- filters$scenarios
     if (length(selected) == 0) return(list())
 
-    profile_data <- setNames(
-      lapply(selected, function(sc) load_profile_outputs(input$model_dir, sc)),
-      selected
-    )
+    profile_data <- list()
+    for (sc in selected) {
+      pd_main <- load_profile_outputs(input$model_dir, sc, profile_subdir = "prof")
+      if (length(pd_main$scales) > 0) {
+        profile_data[[sc]] <- pd_main
+      }
+
+      pd_indep <- load_profile_outputs(input$model_dir, sc, profile_subdir = "prof_indepvar")
+      if (length(pd_indep$scales) > 0) {
+        profile_data[[paste0(sc, " [indepvar]")]] <- pd_indep
+      }
+    }
 
     has_data <- vapply(profile_data, function(x) length(x$scales) > 0, logical(1))
     profile_data[has_data]
@@ -1951,6 +2019,18 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
       data.frame(
         Model = sc,
+        `Profile mode` = if (isFALSE(pd$use_quantity_penalty)) {
+          "Fixed-parameter (indepvar)"
+        } else if (isTRUE(pd$use_quantity_penalty)) {
+          "Average-biomass/depletion"
+        } else {
+          "Unknown"
+        },
+        `Fixed indepvar` = if (isTRUE(pd$indepvar_fix_applied)) {
+          if (is.finite(pd$fixed_indepvar_n) && pd$fixed_indepvar_n > 0) paste0(pd$fixed_indepvar_n, " selected") else "Applied"
+        } else {
+          "None"
+        },
         `Profile target` = profile_target_label(quantity_label),
         `Biomass type` = profile_biomass_label(af172),
         Af172 = if (is.finite(af172)) as.integer(af172) else NA_integer_,
@@ -2385,7 +2465,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
   # Create a standard likelihood profile plot
   create_piner_plot <- function(data, group_var, x_label, label = NULL, facet_ncol = 2, split_by_region = FALSE,
                                 y_label = "Changes in Likelihood", legend_mode = "all", legend_top_n = 12,
-                                deemphasize_others = FALSE) {
+                                deemphasize_others = FALSE, x_labels_fn = function(x) x / 1000) {
     if (nrow(data) == 0) return(NULL)
 
     if ("region" %in% names(data)) {
@@ -2528,7 +2608,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       scale_linewidth_manual(values = c("TRUE" = 1.5, "FALSE" = 0.7), guide = "none") +
       scale_size_manual(values = c("TRUE" = 3.5, "FALSE" = 2), guide = "none") +
       scale_x_continuous(
-        labels = function(x) x / 1000,
+        labels = x_labels_fn,
         name = x_label
       ) +
       labs(y = y_label, colour = NULL) +
@@ -5967,7 +6047,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
         y_label = "Changes in Likelihood",
         legend_mode = legend_mode,
         legend_top_n = legend_top_n,
-        deemphasize_others = deemphasize_others
+        deemphasize_others = deemphasize_others,
+        x_labels_fn = quantity_axis_formatter(info$profile_data)
       )
 
       if (isTRUE(force_hide_influence) || !isTRUE(filters$show_influence)) {
@@ -6067,7 +6148,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       bottom_plot <- ggplot(influence_comp_df, aes(x = scalar, y = change, fill = group_val)) +
         geom_col(width = bar_width, alpha = 0.9, color = "white", linewidth = 0.2, na.rm = TRUE) +
         scale_x_continuous(
-          labels = function(x) x / 1000,
+          labels = quantity_axis_formatter(info$profile_data),
           name = quantity_axis_label(info$profile_data)
         ) +
         labs(y = "Normalized influence (%)", fill = NULL) +
@@ -6140,7 +6221,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       p <- ggplot(component_df, aes(x = scalar, y = change, fill = group_val)) +
         geom_col(width = bar_width, alpha = 0.9, color = "white", linewidth = 0.2, na.rm = TRUE) +
         scale_x_continuous(
-          labels = function(x) x / 1000,
+          labels = quantity_axis_formatter(info$profile_data),
           name = x_label
         ) +
         labs(y = y_axis_label, fill = NULL) +
@@ -6189,7 +6270,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
                 alpha = 0.9
               )
             } +
-            scale_x_continuous(labels = function(x) x / 1000, name = x_label) +
+            scale_x_continuous(labels = quantity_axis_formatter(info$profile_data), name = x_label) +
             labs(y = y_axis_label, fill = NULL) +
             theme_bw(base_size = 12) +
             theme(
@@ -6228,7 +6309,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
                 alpha = 0.9
               )
             } +
-            scale_x_continuous(labels = function(x) x / 1000, name = x_label) +
+            scale_x_continuous(labels = quantity_axis_formatter(info$profile_data), name = x_label) +
             labs(y = y_axis_label, fill = NULL) +
             theme_bw(base_size = 12) +
             theme(
@@ -6268,7 +6349,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       y_label = y_axis_label,
       legend_mode = filters$legend_mode,
       legend_top_n = filters$legend_top_n,
-      deemphasize_others = isTRUE(filters$legend_deemphasize_others)
+      deemphasize_others = isTRUE(filters$legend_deemphasize_others),
+      x_labels_fn = quantity_axis_formatter(info$profile_data)
     )
   })
   observeEvent(list(input$live_update_plots, input$lik_main_tab, input$lik_scenarios, input$lik_profile_type, input$lik_jitter_type,

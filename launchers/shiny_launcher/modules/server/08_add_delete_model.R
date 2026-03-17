@@ -42,6 +42,10 @@
         prof_init_map_rds = "",
         init_from_scalar_map = "",
         init_par_override_map = "",
+        prof_fix_indepvar = "",
+        prof_fix_values = "",
+        prof_fix_indepvar_file = "",
+        prof_extra_switch = "",
         Af172 = "0",
         Af173 = "0",
         Af174 = "0"

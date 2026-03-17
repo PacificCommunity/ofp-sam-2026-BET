@@ -41,12 +41,17 @@ resolve_chain_from_scalars <- function(all_scalars, chain_name, chain_anchor) {
 }
 
 chain_name <- Sys.getenv("chain_name", "chain")
-chain_scalars <- parse_numeric_tokens(Sys.getenv("chain_scalars", ""))
+chain_scalars <- parse_numeric_tokens(Sys.getenv("scalars", Sys.getenv("chain_scalars", "")))
 if (length(chain_scalars) == 0) {
   chain_scalars <- read_indexed_chain_scalars()
 }
 chain_first_init_from <- suppressWarnings(as.numeric(Sys.getenv("chain_first_init_from", "")))
 chain_anchor <- Sys.getenv("chain_anchor", "")
+init_par_override <- Sys.getenv("init_par_override", "")
+prof_fix_indepvar <- Sys.getenv("prof_fix_indepvar", "")
+prof_fix_values <- Sys.getenv("prof_fix_values", "")
+prof_fix_indepvar_file <- Sys.getenv("prof_fix_indepvar_file", "")
+prof_extra_switch <- Sys.getenv("prof_extra_switch", "")
 
 if (length(chain_scalars) == 0) {
   all_scalars <- parse_numeric_tokens(Sys.getenv("scalars", ""))
@@ -58,10 +63,16 @@ if (length(chain_scalars) == 0) {
 
 cat("=== Profile Chain Run ===\n")
 cat("chain_name:", chain_name, "\n")
+cat("scalars_raw_env:", Sys.getenv("scalars", "<none>"), "\n")
 cat("chain_scalars_raw_env:", Sys.getenv("chain_scalars", "<none>"), "\n")
 cat("chain_scalars:", paste(chain_scalars, collapse = " "), "\n")
 cat("chain_first_init_from:", ifelse(is.finite(chain_first_init_from), as.character(chain_first_init_from), "<none>"), "\n")
 cat("chain_anchor:", ifelse(nzchar(chain_anchor), chain_anchor, "<none>"), "\n")
+cat("init_par_override:", ifelse(nzchar(init_par_override), init_par_override, "<none>"), "\n")
+cat("prof_fix_indepvar:", ifelse(nzchar(prof_fix_indepvar), prof_fix_indepvar, "<none>"), "\n")
+cat("prof_fix_values:", ifelse(nzchar(prof_fix_values), prof_fix_values, "<none>"), "\n")
+cat("prof_fix_indepvar_file:", ifelse(nzchar(prof_fix_indepvar_file), prof_fix_indepvar_file, "<none>"), "\n")
+cat("prof_extra_switch:", ifelse(nzchar(prof_extra_switch), prof_extra_switch, "<none>"), "\n")
 
 project_root <- tryCatch(normalizePath(getwd(), mustWork = TRUE), error = function(e) getwd())
 run_prof_script <- file.path(project_root, "runners", "run_prof.R")
@@ -78,6 +89,21 @@ for (i in seq_along(chain_scalars)) {
     paste0("scalar=", format(sc, scientific = FALSE, trim = TRUE)),
     "skip_condor_archive_cleanup=1"
   )
+  if (nzchar(prof_fix_indepvar)) {
+    env_kv <- c(env_kv, paste0("prof_fix_indepvar=", prof_fix_indepvar))
+  }
+  if (nzchar(prof_fix_values)) {
+    env_kv <- c(env_kv, paste0("prof_fix_values=", prof_fix_values))
+  }
+  if (nzchar(prof_fix_indepvar_file)) {
+    env_kv <- c(env_kv, paste0("prof_fix_indepvar_file=", prof_fix_indepvar_file))
+  }
+  if (nzchar(prof_extra_switch)) {
+    env_kv <- c(env_kv, paste0("prof_extra_switch=", prof_extra_switch))
+  }
+  if (nzchar(init_par_override) && i == 1L) {
+    env_kv <- c(env_kv, paste0("init_par_override=", init_par_override))
+  }
   if (is.finite(donor)) {
     env_kv <- c(env_kv, paste0("init_from_scalar=", format(donor, scientific = FALSE, trim = TRUE)))
   }

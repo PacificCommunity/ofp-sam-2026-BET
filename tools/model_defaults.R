@@ -16,6 +16,10 @@ apply_model_defaults <- function(models, defaults = list()) {
       prof_init_map_rds = "",
       init_from_scalar_map = "",
       init_par_override_map = "",
+      prof_fix_indepvar = "",
+      prof_fix_values = "",
+      prof_fix_indepvar_file = "",
+      prof_extra_switch = "",
       retro_hessian = "0",
       nsplit = "5"
     ),
@@ -36,6 +40,10 @@ apply_model_defaults <- function(models, defaults = list()) {
     prof_init_map_rds <- if (!is.null(model$prof_init_map_rds)) model$prof_init_map_rds else defaults$prof_init_map_rds
     init_from_scalar_map <- if (!is.null(model$init_from_scalar_map)) model$init_from_scalar_map else defaults$init_from_scalar_map
     init_par_override_map <- if (!is.null(model$init_par_override_map)) model$init_par_override_map else defaults$init_par_override_map
+    prof_fix_indepvar <- if (!is.null(model$prof_fix_indepvar)) model$prof_fix_indepvar else defaults$prof_fix_indepvar
+    prof_fix_values <- if (!is.null(model$prof_fix_values)) model$prof_fix_values else defaults$prof_fix_values
+    prof_fix_indepvar_file <- if (!is.null(model$prof_fix_indepvar_file)) model$prof_fix_indepvar_file else defaults$prof_fix_indepvar_file
+    prof_extra_switch <- if (!is.null(model$prof_extra_switch)) model$prof_extra_switch else defaults$prof_extra_switch
     retro_hessian <- if (!is.null(model$retro_hessian)) model$retro_hessian else defaults$retro_hessian
     nsplit <- if (!is.null(model$nsplit)) model$nsplit else defaults$nsplit
 
@@ -57,6 +65,10 @@ apply_model_defaults <- function(models, defaults = list()) {
     model$prof_init_map_rds <- prof_init_map_rds
     model$init_from_scalar_map <- init_from_scalar_map
     model$init_par_override_map <- init_par_override_map
+    model$prof_fix_indepvar <- prof_fix_indepvar
+    model$prof_fix_values <- prof_fix_values
+    model$prof_fix_indepvar_file <- prof_fix_indepvar_file
+    model$prof_extra_switch <- prof_extra_switch
     model$retro_hessian <- retro_hessian
     model$nsplit <- nsplit
     model
