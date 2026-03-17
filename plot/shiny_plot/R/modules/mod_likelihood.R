@@ -109,13 +109,14 @@ mod_likelihood_ui <- function() {
             choices = c(
               "By program" = "program",
               "By release group (facet by program)" = "release_group",
-              "By release region (facet by program)" = "release_region"
+              "By release region (facet by program)" = "release_region",
+              "By recapture fishery" = "recapture_fishery"
             ),
             selected = "program"
           )
         ),
         conditionalPanel(
-          condition = "input.lik_main_tab == 'likelihood' && input.lik_profile_type == 'tagging' && ['release_group','release_region'].includes(input.lik_tagging_view)",
+          condition = "input.lik_main_tab == 'likelihood' && input.lik_profile_type == 'tagging' && ['release_group','release_region','recapture_fishery'].includes(input.lik_tagging_view)",
           selectInput(
             "lik_tag_legend_mode",
             "Release-group/region legend:",
@@ -141,7 +142,7 @@ mod_likelihood_ui <- function() {
           )
         ),
         conditionalPanel(
-          condition = "input.lik_main_tab == 'likelihood' && ['components','cpues','lfs','wfs','tagging','cal_fishery','cal_year'].includes(input.lik_profile_type) && !(input.lik_profile_type == 'tagging' && ['release_group','release_region'].includes(input.lik_tagging_view))",
+          condition = "input.lik_main_tab == 'likelihood' && ['components','cpues','lfs','wfs','tagging','cal_fishery','cal_year'].includes(input.lik_profile_type) && !(input.lik_profile_type == 'tagging' && ['release_group','release_region','recapture_fishery'].includes(input.lik_tagging_view))",
           selectInput(
             "lik_legend_mode",
             "Legend:",
@@ -195,7 +196,7 @@ mod_likelihood_ui <- function() {
         ),
         selectInput("lik_facet_ncol", "Facet columns:", choices = as.character(1:12), selected = "2"),
         conditionalPanel(
-          condition = "input.lik_main_tab == 'likelihood' && !(input.lik_profile_type == 'tagging' && ['release_group','release_region'].includes(input.lik_tagging_view))",
+          condition = "input.lik_main_tab == 'likelihood' && !(input.lik_profile_type == 'tagging' && ['release_group','release_region','recapture_fishery'].includes(input.lik_tagging_view))",
           checkboxInput(
             "lik_show_influence",
             "Show influence panel",
@@ -658,7 +659,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       jitter_param_window = jitter_param_window,
       jitter_converged_only = isTRUE(input$lik_jitter_converged_only),
       jitter_converged_max_grad = jitter_converged_max_grad,
-      tagging_view = sanitize_profile_type(input$lik_tagging_view, allowed = c("program", "release_group", "release_region"), default = "program"),
+      tagging_view = sanitize_profile_type(input$lik_tagging_view, allowed = c("program", "release_group", "release_region", "recapture_fishery"), default = "program"),
       tag_legend_mode = tag_legend_mode,
       tag_legend_top_n = tag_legend_top_n,
       tag_deemphasize_others = isTRUE(input$lik_tag_deemphasize_others),
@@ -2454,7 +2455,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
     legend_top_n <- sanitize_integer_scalar(legend_top_n, 12L)
     legend_top_n <- pmax(1L, pmin(200L, legend_top_n))
 
-    unique_groups <- unique(data[[group_var]])
+    if (is.factor(data[[group_var]])) {
+      unique_groups <- levels(data[[group_var]])
+    } else {
+      unique_groups <- unique(data[[group_var]])
+    }
     non_total_groups <- setdiff(unique_groups, "Total")
     top_groups <- character(0)
 
@@ -2980,7 +2985,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     bind_rows(lapply(scenarios, get_cpue_rows_for_scenario))
   }
 
-  build_tagging_data <- function(profile_data, scenarios, tag_out_list, scales, view = "program") {
+  build_tagging_data <- function(profile_data, scenarios, tag_out_list, scales, view = "program", fishery_maps = NULL) {
     if (length(scales) == 0) return(data.frame())
 
     rows <- list()
@@ -2990,6 +2995,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
       rel_df <- tryCatch(safe_array_to_df(tag_out@releases), error = function(e) NULL)
       if (is.null(rel_df) || nrow(rel_df) == 0) next
+      fish_map <- if (!is.null(fishery_maps)) fishery_maps[[sc]] else NULL
 
       program_map <- rel_df %>%
         transmute(
@@ -3007,25 +3013,59 @@ mod_likelihood_server <- function(input, output, session, rv) {
         scalar_bio <- scalar_quantity(profile_data[[sc]], scl)
         if (!is.finite(scalar_bio)) next
 
-        tag_rel <- lik@tag_rel_fish
-        sums_vec <- sapply(tag_rel, function(g) sum(unlist(g)))
-        rel_groups <- suppressWarnings(as.integer(seq_along(sums_vec)))
-        program_names <- program_map$program_name[match(rel_groups, program_map$rel_group)]
-        release_regions <- program_map$release_region[match(rel_groups, program_map$rel_group)]
-        missing_program <- is.na(program_names) | !nzchar(program_names)
-        program_names[missing_program] <- paste("Program", rel_groups[missing_program])
-        release_regions[is.na(release_regions) | !nzchar(release_regions)] <- "Unknown"
+        if (identical(view, "recapture_fishery")) {
+          tag_rec <- NULL
+          if ("tag_rec_fish" %in% slotNames(lik)) {
+            tag_rec <- lik@tag_rec_fish
+          } else if ("tag_fish" %in% slotNames(lik)) {
+            tag_rec <- lik@tag_fish
+          } else if ("tag_fishery" %in% slotNames(lik)) {
+            tag_rec <- lik@tag_fishery
+          }
+          if (is.null(tag_rec)) next
 
-        df <- data.frame(
-          scenario = sc,
-          scalar = scalar_bio,
-          program = as.character(program_names),
-          release_region = as.character(release_regions),
-          rel_group = rel_groups,
-          release_group = paste0("RG ", rel_groups),
-          value = as.numeric(sums_vec),
-          stringsAsFactors = FALSE
-        )
+          sums_vec <- if (is.list(tag_rec)) {
+            sapply(tag_rec, function(g) sum(unlist(g)))
+          } else {
+            suppressWarnings(as.numeric(tag_rec))
+          }
+          fish_ids <- suppressWarnings(as.integer(seq_along(sums_vec)))
+          fish_names <- if (is.null(fish_map)) {
+            paste("Fishery", fish_ids)
+          } else {
+            vapply(fish_ids, function(fid) get_fishery_name(fid, fish_map), character(1))
+          }
+          fish_names[is.na(fish_names) | !nzchar(fish_names)] <- paste("Fishery", fish_ids[is.na(fish_names) | !nzchar(fish_names)])
+
+          df <- data.frame(
+            scenario = sc,
+            scalar = scalar_bio,
+            recapture_fishery = as.character(fish_names),
+            recapture_fishery_id = fish_ids,
+            value = as.numeric(sums_vec),
+            stringsAsFactors = FALSE
+          )
+        } else {
+          tag_rel <- lik@tag_rel_fish
+          sums_vec <- sapply(tag_rel, function(g) sum(unlist(g)))
+          rel_groups <- suppressWarnings(as.integer(seq_along(sums_vec)))
+          program_names <- program_map$program_name[match(rel_groups, program_map$rel_group)]
+          release_regions <- program_map$release_region[match(rel_groups, program_map$rel_group)]
+          missing_program <- is.na(program_names) | !nzchar(program_names)
+          program_names[missing_program] <- paste("Program", rel_groups[missing_program])
+          release_regions[is.na(release_regions) | !nzchar(release_regions)] <- "Unknown"
+
+          df <- data.frame(
+            scenario = sc,
+            scalar = scalar_bio,
+            program = as.character(program_names),
+            release_region = as.character(release_regions),
+            rel_group = rel_groups,
+            release_group = paste0("RG ", rel_groups),
+            value = as.numeric(sums_vec),
+            stringsAsFactors = FALSE
+          )
+        }
 
         rows[[length(rows) + 1]] <- df
       }
@@ -3049,6 +3089,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
           group_by(program, release_region, scalar, scenario) %>%
           summarise(value = sum(value), .groups = "drop") %>%
           arrange(scenario, scalar, program, release_region)
+      )
+    }
+
+    if (identical(view, "recapture_fishery")) {
+      return(
+        data %>%
+          group_by(recapture_fishery, recapture_fishery_id, scalar, scenario) %>%
+          summarise(value = sum(value), .groups = "drop") %>%
+          arrange(scenario, scalar, recapture_fishery_id)
       )
     }
 
@@ -4345,13 +4394,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     if (type == "tagging") {
-      tagging_view <- sanitize_profile_type(filters$tagging_view, allowed = c("program", "release_group", "release_region"), default = "program")
+      tagging_view <- sanitize_profile_type(filters$tagging_view, allowed = c("program", "release_group", "release_region", "recapture_fishery"), default = "program")
       data <- build_tagging_data(
         profile_data,
         names(profile_data),
         rv$TagOut_list,
         all_scales,
-        view = tagging_view
+        view = tagging_view,
+        fishery_maps = rv$FISHERY_MAPS
       )
       data <- data %>% filter(is.finite(value) & is.finite(scalar))
       if (nrow(data) == 0) {
@@ -4377,6 +4427,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
         data <- bind_rows(data, program_total, overall_release, overall_total)
         program_levels <- c(sort(setdiff(unique(as.character(data$program)), "Overall")), "Overall")
         data$program <- factor(as.character(data$program), levels = program_levels)
+        rg_vals <- unique(as.character(data$release_group))
+        rg_nums <- suppressWarnings(as.integer(gsub("[^0-9]", "", rg_vals)))
+        rg_order <- rg_vals[order(rg_nums, rg_vals, na.last = TRUE)]
+        rg_order <- c(setdiff(rg_order, "Total"), intersect("Total", rg_order))
+        data$release_group <- factor(as.character(data$release_group), levels = rg_order)
         data <- calc_lik_change(data, "release_group", extra_group_vars = "program")
         return(list(data = data, group_col = "release_group", label = "Tagging (Release Groups)", message = NULL, profile_data = profile_data))
       }
@@ -4402,6 +4457,25 @@ mod_likelihood_server <- function(input, output, session, rv) {
         data$program <- factor(as.character(data$program), levels = program_levels)
         data <- calc_lik_change(data, "release_region", extra_group_vars = "program")
         return(list(data = data, group_col = "release_region", label = "Tagging (Release Regions)", message = NULL, profile_data = profile_data))
+      }
+
+      if (identical(tagging_view, "recapture_fishery")) {
+        total_row <- data %>%
+          group_by(scenario, scalar) %>%
+          summarise(value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+          mutate(recapture_fishery = "Total", recapture_fishery_id = -1L)
+        data <- bind_rows(data, total_row)
+        if ("recapture_fishery_id" %in% names(data)) {
+          rf_levels <- data %>%
+            distinct(recapture_fishery, recapture_fishery_id) %>%
+            arrange(recapture_fishery_id, recapture_fishery) %>%
+            pull(recapture_fishery) %>%
+            as.character()
+          rf_levels <- c(setdiff(rf_levels, "Total"), intersect("Total", rf_levels))
+          data$recapture_fishery <- factor(as.character(data$recapture_fishery), levels = rf_levels)
+        }
+        data <- calc_lik_change(data, "recapture_fishery")
+        return(list(data = data, group_col = "recapture_fishery", label = "Tagging (Recapture Fishery)", message = NULL, profile_data = profile_data))
       }
 
       total_row <- data %>%
@@ -4546,7 +4620,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
         names(info$profile_data),
         rv$TagOut_list,
         all_scales,
-        view = "release_group"
+        view = "release_group",
+        fishery_maps = rv$FISHERY_MAPS
       )
       data <- data %>% filter(is.finite(value) & is.finite(scalar))
       if (nrow(data) > 0) {
@@ -4565,13 +4640,34 @@ mod_likelihood_server <- function(input, output, session, rv) {
         names(info$profile_data),
         rv$TagOut_list,
         all_scales,
-        view = "release_region"
+        view = "release_region",
+        fishery_maps = rv$FISHERY_MAPS
       )
       data <- data %>% filter(is.finite(value) & is.finite(scalar))
       if (nrow(data) > 0) {
         data <- calc_lik_change(data, "release_region")
         group_col <- "release_region"
         label <- "Tagging (Release Regions)"
+      }
+    }
+
+    if (identical(filters$profile_type, "tagging") &&
+        identical(filters$tagging_view, "recapture_fishery") &&
+        !("recapture_fishery" %in% names(data))) {
+      all_scales <- sort(unique(unlist(lapply(info$profile_data, function(x) x$scales))))
+      data <- build_tagging_data(
+        info$profile_data,
+        names(info$profile_data),
+        rv$TagOut_list,
+        all_scales,
+        view = "recapture_fishery",
+        fishery_maps = rv$FISHERY_MAPS
+      )
+      data <- data %>% filter(is.finite(value) & is.finite(scalar))
+      if (nrow(data) > 0) {
+        data <- calc_lik_change(data, "recapture_fishery")
+        group_col <- "recapture_fishery"
+        label <- "Tagging (Recapture Fishery)"
       }
     }
 
@@ -5850,7 +5946,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       legend_top_n <- 12L
       deemphasize_others <- FALSE
       force_hide_influence <- FALSE
-      if (identical(filters$profile_type, "tagging") && isTRUE(filters$tagging_view %in% c("release_group", "release_region"))) {
+      if (identical(filters$profile_type, "tagging") && isTRUE(filters$tagging_view %in% c("release_group", "release_region", "recapture_fishery"))) {
         legend_mode <- filters$tag_legend_mode
         legend_top_n <- filters$tag_legend_top_n
         deemphasize_others <- isTRUE(filters$tag_deemphasize_others)
@@ -6256,7 +6352,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
   output$influence_calc_ui <- renderUI({
     if (!identical(input$lik_main_tab, "likelihood")) return(NULL)
     filters <- lik_filters()
-    if (!is.null(filters) && identical(filters$profile_type, "tagging") && identical(filters$tagging_view, "release_group")) {
+    if (!is.null(filters) && identical(filters$profile_type, "tagging") &&
+        isTRUE(filters$tagging_view %in% c("release_group", "release_region", "recapture_fishery"))) {
       return(NULL)
     }
     if (is.null(filters) || !isTRUE(filters$show_influence)) return(NULL)
