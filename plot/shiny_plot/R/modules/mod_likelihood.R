@@ -102,6 +102,44 @@ mod_likelihood_ui <- function() {
           )
         ),
         conditionalPanel(
+          condition = "input.lik_main_tab == 'likelihood' && input.lik_profile_type == 'tagging'",
+          selectInput(
+            "lik_tagging_view",
+            "Tagging View:",
+            choices = c(
+              "By program" = "program",
+              "By release group (facet by program)" = "release_group"
+            ),
+            selected = "program"
+          )
+        ),
+        conditionalPanel(
+          condition = "input.lik_main_tab == 'likelihood' && input.lik_profile_type == 'tagging' && input.lik_tagging_view == 'release_group'",
+          selectInput(
+            "lik_tag_legend_mode",
+            "Release-group legend:",
+            choices = c(
+              "Top N" = "top",
+              "All" = "all",
+              "Hide" = "none"
+            ),
+            selected = "top"
+          ),
+          sliderInput(
+            "lik_tag_legend_top_n",
+            "Top N groups",
+            min = 1,
+            max = 50,
+            value = 12,
+            step = 1
+          ),
+          checkboxInput(
+            "lik_tag_deemphasize_others",
+            "De-emphasize non-top groups",
+            value = TRUE
+          )
+        ),
+        conditionalPanel(
           condition = "input.lik_main_tab == 'likelihood' && ['cpues', 'lfs', 'wfs', 'cal_fishery', 'influence_cpues', 'influence_lfs', 'influence_wfs', 'influence_cal_fishery'].includes(input.lik_profile_type)",
           tagList(
             checkboxInput(
@@ -130,7 +168,7 @@ mod_likelihood_ui <- function() {
         ),
         selectInput("lik_facet_ncol", "Facet columns:", choices = as.character(1:12), selected = "2"),
         conditionalPanel(
-          condition = "input.lik_main_tab == 'likelihood'",
+          condition = "input.lik_main_tab == 'likelihood' && !(input.lik_profile_type == 'tagging' && input.lik_tagging_view == 'release_group')",
           checkboxInput(
             "lik_show_influence",
             "Show influence panel",
@@ -380,6 +418,7 @@ mod_likelihood_ui <- function() {
         condition = "input.lik_main_tab == 'likelihood'",
         uiOutput("likelihood_info_ui"),
         uiOutput("influence_calc_ui"),
+        uiOutput("tag_release_info_ui"),
         uiOutput("profile_gradient_table_ui"),
         uiOutput("component_influence_table_ui")
       ),
@@ -543,6 +582,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
     jitter_param_range_pct <- sanitize_integer_scalar(input$lik_jitter_param_range_pct, 95L)
     jitter_param_range_pct <- pmax(50L, pmin(100L, jitter_param_range_pct))
 
+    tag_legend_mode <- sanitize_profile_type(input$lik_tag_legend_mode, allowed = c("top", "all", "none"), default = "top")
+    tag_legend_top_n <- sanitize_integer_scalar(input$lik_tag_legend_top_n, 12L)
+    tag_legend_top_n <- pmax(1L, pmin(200L, tag_legend_top_n))
+
     list(
       scenarios = sort(input$lik_scenarios),
       profile_type = current_profile_type(),
@@ -562,6 +605,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
       jitter_param_window = jitter_param_window,
       jitter_converged_only = isTRUE(input$lik_jitter_converged_only),
       jitter_converged_max_grad = jitter_converged_max_grad,
+      tagging_view = sanitize_profile_type(input$lik_tagging_view, allowed = c("program", "release_group"), default = "program"),
+      tag_legend_mode = tag_legend_mode,
+      tag_legend_top_n = tag_legend_top_n,
+      tag_deemphasize_others = isTRUE(input$lik_tag_deemphasize_others),
       jitter_derived_view = {
         view <- sanitize_profile_type(input$lik_jitter_derived_view, allowed = c("summary", "lines", "detail"), default = "summary")
         if (identical(view, "detail")) "lines" else view
@@ -597,6 +644,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       jitter_param_window = filters$jitter_param_window,
       jitter_converged_only = filters$jitter_converged_only,
       jitter_converged_max_grad = filters$jitter_converged_max_grad,
+      tagging_view = filters$tagging_view,
       jitter_derived_view = filters$jitter_derived_view,
       jitter_param_input_scale = filters$jitter_param_input_scale,
       jitter_param_metric = filters$jitter_param_metric,
@@ -654,6 +702,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
       return(key)
     }
 
+    if (identical(filters$profile_type, "tagging")) {
+      key$tagging_view <- filters$tagging_view
+      return(key)
+    }
+
     key
   })
   lik_plot_cache_key <- reactive({
@@ -705,6 +758,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     if (isTRUE(filters$profile_type %in% c("components", "components_signed", "tagging", "cal_year"))) {
+      if (identical(filters$profile_type, "tagging")) {
+        key$tagging_view <- filters$tagging_view
+        key$tag_legend_mode <- filters$tag_legend_mode
+        key$tag_legend_top_n <- filters$tag_legend_top_n
+        key$tag_deemphasize_others <- isTRUE(filters$tag_deemphasize_others)
+      }
       key$groups <- sort(filters$groups)
       return(key)
     }
@@ -2236,8 +2295,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
   )
 
   # Calculate likelihood change from minimum
-  calc_lik_change <- function(df, group_col) {
+  calc_lik_change <- function(df, group_col, extra_group_vars = NULL) {
     grouping_vars <- c(group_col, "scenario")
+    if (!is.null(extra_group_vars) && length(extra_group_vars) > 0) {
+      grouping_vars <- c(grouping_vars, extra_group_vars)
+    }
     if ("region" %in% names(df)) grouping_vars <- c(grouping_vars, "region")
 
     df %>%
@@ -2250,7 +2312,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }
 
   # Create a standard likelihood profile plot
-  create_piner_plot <- function(data, group_var, x_label, label = NULL, facet_ncol = 2, split_by_region = FALSE, y_label = "Changes in Likelihood") {
+  create_piner_plot <- function(data, group_var, x_label, label = NULL, facet_ncol = 2, split_by_region = FALSE,
+                                y_label = "Changes in Likelihood", legend_mode = "all", legend_top_n = 12,
+                                deemphasize_others = FALSE) {
     if (nrow(data) == 0) return(NULL)
 
     if ("region" %in% names(data)) {
@@ -2315,10 +2379,34 @@ mod_likelihood_server <- function(input, output, session, rv) {
       data$region <- factor(as.character(data$region), levels = region_labels)
     }
 
+    legend_mode <- tolower(as.character(legend_mode))
+    if (!legend_mode %in% c("all", "top", "none")) legend_mode <- "all"
+    legend_top_n <- sanitize_integer_scalar(legend_top_n, 12L)
+    legend_top_n <- pmax(1L, pmin(200L, legend_top_n))
+
     unique_groups <- unique(data[[group_var]])
     non_total_groups <- setdiff(unique_groups, "Total")
-    max_label_chars <- if (length(unique_groups) > 0) max(nchar(as.character(unique_groups)), na.rm = TRUE) else 0
-    n_groups <- length(unique_groups)
+    top_groups <- character(0)
+
+    if (identical(legend_mode, "top") && length(non_total_groups) > 0) {
+      top_groups <- data %>%
+        filter(.data[[group_var]] != "Total") %>%
+        group_by(.data[[group_var]]) %>%
+        summarise(score = max(abs(change), na.rm = TRUE), .groups = "drop") %>%
+        arrange(desc(score), .data[[group_var]]) %>%
+        slice_head(n = legend_top_n) %>%
+        pull(!!rlang::sym(group_var)) %>%
+        as.character()
+    }
+
+    legend_breaks <- if (identical(legend_mode, "top")) {
+      c(top_groups, intersect("Total", unique_groups))
+    } else {
+      c(setdiff(unique_groups, "Total"), intersect("Total", unique_groups))
+    }
+    legend_groups <- if (identical(legend_mode, "none")) character(0) else legend_breaks
+    max_label_chars <- if (length(legend_groups) > 0) max(nchar(as.character(legend_groups)), na.rm = TRUE) else 0
+    n_groups <- length(legend_groups)
     legend_ncol <- if (n_groups >= 36) {
       6
     } else if (n_groups >= 24) {
@@ -2343,12 +2431,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
     legend_spacing_x_pt <- min(46, max(12, round(0.9 * max_label_chars + 8)))
     legend_key_width_pt <- min(30, max(12, round(0.65 * max_label_chars + 8)))
     legend_text_size <- if (max_label_chars >= 20) 7.3 else if (max_label_chars >= 14) 7.5 else 7.6
-    legend_breaks <- c(setdiff(unique_groups, "Total"), intersect("Total", unique_groups))
-
-    color_values <- c(
-      "Total" = "black",
-      setNames(viridis::viridis(length(non_total_groups)), non_total_groups)
-    )
+    color_values <- c("Total" = "black")
+    if (length(non_total_groups) > 0) {
+      base_colors <- setNames(viridis::viridis(length(non_total_groups)), non_total_groups)
+      if (identical(legend_mode, "top") && isTRUE(deemphasize_others) && length(top_groups) > 0) {
+        other_groups <- setdiff(non_total_groups, top_groups)
+        if (length(other_groups) > 0) {
+          base_colors[other_groups] <- "#bdbdbd"
+        }
+      }
+      color_values <- c(color_values, base_colors)
+    }
 
     p <- ggplot(
       data,
@@ -2356,10 +2449,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     ) +
       geom_line(aes(linewidth = .data[[group_var]] == "Total"), alpha = 0.7) +
       geom_point(aes(size = .data[[group_var]] == "Total"), alpha = 0.8, shape = 16) +
-      scale_color_manual(
-        values = color_values,
-        breaks = legend_breaks
-      ) +
+      scale_color_manual(values = color_values, breaks = legend_breaks) +
       scale_linewidth_manual(values = c("TRUE" = 1.5, "FALSE" = 0.7), guide = "none") +
       scale_size_manual(values = c("TRUE" = 3.5, "FALSE" = 2), guide = "none") +
       scale_x_continuous(
@@ -2369,7 +2459,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       labs(y = y_label, colour = NULL) +
       theme_bw(base_size = 12) +
       theme(
-        legend.position = "bottom",
+        legend.position = if (identical(legend_mode, "none")) "none" else "bottom",
         legend.title = element_blank(),
         legend.text = element_text(size = legend_text_size, face = "bold", colour = "#222222", lineheight = 0.96,
                  margin = margin(r = 8)),
@@ -2393,7 +2483,19 @@ mod_likelihood_server <- function(input, output, session, rv) {
         )
       )
 
-    if (isTRUE(split_by_region) && "region" %in% names(data)) {
+    if (identical(group_var, "release_group") && "program" %in% names(data)) {
+      program_vals <- unique(as.character(data$program))
+      program_vals <- program_vals[nzchar(program_vals)]
+      program_vals <- c(setdiff(program_vals, "Overall"), intersect("Overall", program_vals))
+      data$program <- factor(as.character(data$program), levels = program_vals)
+
+      n_scenarios <- dplyr::n_distinct(data$scenario)
+      if (n_scenarios == 1) {
+        p <- p + facet_wrap(~program, scales = "free_y", ncol = facet_ncol)
+      } else {
+        p <- p + facet_grid(rows = vars(scenario), cols = vars(program), scales = "free_y")
+      }
+    } else if (isTRUE(split_by_region) && "region" %in% names(data)) {
       region_labels <- levels(data$region)
 
       n_scenarios <- dplyr::n_distinct(data$scenario)
@@ -2808,7 +2910,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     bind_rows(lapply(scenarios, get_cpue_rows_for_scenario))
   }
 
-  build_tagging_data <- function(profile_data, scenarios, tag_out_list, scales) {
+  build_tagging_data <- function(profile_data, scenarios, tag_out_list, scales, view = "program") {
     if (length(scales) == 0) return(data.frame())
 
     rows <- list()
@@ -2820,9 +2922,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
       if (is.null(rel_df) || nrow(rel_df) == 0) next
 
       program_map <- rel_df %>%
-        distinct(rel.group, program) %>%
-        arrange(rel.group) %>%
-        rename(program_name = program)
+        transmute(
+          rel_group = suppressWarnings(as.integer(rel.group)),
+          program_name = as.character(program)
+        ) %>%
+        filter(is.finite(rel_group)) %>%
+        distinct(rel_group, .keep_all = TRUE) %>%
+        arrange(rel_group)
 
       for (scl in scales) {
         lik <- profile_data[[sc]]$lik_out[[scl]]
@@ -2832,13 +2938,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
         tag_rel <- lik@tag_rel_fish
         sums_vec <- sapply(tag_rel, function(g) sum(unlist(g)))
-        program_names <- program_map$program_name[seq_along(sums_vec)]
-        program_names[is.na(program_names)] <- paste("Program", seq_along(sums_vec))
+        rel_groups <- suppressWarnings(as.integer(seq_along(sums_vec)))
+        program_names <- program_map$program_name[match(rel_groups, program_map$rel_group)]
+        missing_program <- is.na(program_names) | !nzchar(program_names)
+        program_names[missing_program] <- paste("Program", rel_groups[missing_program])
 
         df <- data.frame(
           scenario = sc,
           scalar = scalar_bio,
-          program = program_names,
+          program = as.character(program_names),
+          rel_group = rel_groups,
+          release_group = paste0("RG ", rel_groups),
           value = as.numeric(sums_vec),
           stringsAsFactors = FALSE
         )
@@ -2849,6 +2959,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     data <- bind_rows(rows)
     if (nrow(data) == 0) return(data)
+
+    if (identical(view, "release_group")) {
+      return(
+        data %>%
+          group_by(program, release_group, rel_group, scalar, scenario) %>%
+          summarise(value = sum(value), .groups = "drop") %>%
+          arrange(scenario, scalar, program, rel_group)
+      )
+    }
 
     data %>%
       group_by(program, scalar, scenario) %>%
@@ -4143,11 +4262,40 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     if (type == "tagging") {
-      data <- build_tagging_data(profile_data, names(profile_data), rv$TagOut_list, all_scales)
+      tagging_view <- sanitize_profile_type(filters$tagging_view, allowed = c("program", "release_group"), default = "program")
+      data <- build_tagging_data(
+        profile_data,
+        names(profile_data),
+        rv$TagOut_list,
+        all_scales,
+        view = tagging_view
+      )
       data <- data %>% filter(is.finite(value) & is.finite(scalar))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No tagging profile data available"))
       }
+
+      if (identical(tagging_view, "release_group")) {
+        program_total <- data %>%
+          group_by(scenario, scalar, program) %>%
+          summarise(value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+          mutate(release_group = "Total")
+
+        overall_release <- data %>%
+          group_by(scenario, scalar, release_group) %>%
+          summarise(value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+          mutate(program = "Overall")
+
+        overall_total <- data %>%
+          group_by(scenario, scalar) %>%
+          summarise(value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+          mutate(program = "Overall", release_group = "Total")
+
+        data <- bind_rows(data, program_total, overall_release, overall_total)
+        data <- calc_lik_change(data, "release_group", extra_group_vars = "program")
+        return(list(data = data, group_col = "release_group", label = "Tagging (Release Groups)", message = NULL, profile_data = profile_data))
+      }
+
       total_row <- data %>%
         group_by(scalar, scenario) %>%
         summarise(value = sum(value), .groups = "drop") %>%
@@ -4270,6 +4418,40 @@ mod_likelihood_server <- function(input, output, session, rv) {
     facet_ncol <- suppressWarnings(as.integer(filters$facet_ncol))
     if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 2
     facet_ncol <- min(max(facet_ncol, 1), 12)
+
+    if (identical(filters$profile_type, "tagging") &&
+        identical(filters$tagging_view, "release_group") &&
+        !("release_group" %in% names(data))) {
+      all_scales <- sort(unique(unlist(lapply(info$profile_data, function(x) x$scales))))
+      data <- build_tagging_data(
+        info$profile_data,
+        names(info$profile_data),
+        rv$TagOut_list,
+        all_scales,
+        view = "release_group"
+      )
+      data <- data %>% filter(is.finite(value) & is.finite(scalar))
+      if (nrow(data) > 0) {
+        data <- calc_lik_change(data, "release_group")
+        group_col <- "release_group"
+        label <- "Tagging (Release Groups)"
+      }
+    }
+
+    if (!is.null(group_col) && !(group_col %in% names(data))) {
+      return(
+        ggplot() +
+          annotate(
+            "text",
+            x = 0.5,
+            y = 0.5,
+            label = paste("Missing column:", group_col),
+            size = 6,
+            color = "#999"
+          ) +
+          theme_void()
+      )
+    }
 
     if (!isTRUE(plot_kind %in% c("jitter", "jitter_params", "jitter_derived")) &&
         !is.null(group_col) &&
@@ -5527,6 +5709,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     combined_influence_types <- c("components", "cpues", "lfs", "wfs", "tagging", "cal_fishery", "cal_year")
     if (isTRUE(filters$profile_type %in% combined_influence_types) && identical(plot_kind, "piner")) {
+      legend_mode <- "all"
+      legend_top_n <- 12L
+      deemphasize_others <- FALSE
+      force_hide_influence <- FALSE
+      if (identical(filters$profile_type, "tagging") && identical(filters$tagging_view, "release_group")) {
+        legend_mode <- filters$tag_legend_mode
+        legend_top_n <- filters$tag_legend_top_n
+        deemphasize_others <- isTRUE(filters$tag_deemphasize_others)
+        force_hide_influence <- TRUE
+      }
+
       top_plot <- create_piner_plot(
         data,
         group_col,
@@ -5534,10 +5727,16 @@ mod_likelihood_server <- function(input, output, session, rv) {
         label,
         facet_ncol = facet_ncol,
         split_by_region = isTRUE(filters$split_by_region),
-        y_label = "Changes in Likelihood"
+        y_label = "Changes in Likelihood",
+        legend_mode = legend_mode,
+        legend_top_n = legend_top_n,
+        deemphasize_others = deemphasize_others
       )
 
-      if (!isTRUE(filters$show_influence)) {
+      if (isTRUE(force_hide_influence) || !isTRUE(filters$show_influence)) {
+        return(top_plot)
+      }
+      if (is.null(group_col) || !(group_col %in% names(data))) {
         return(top_plot)
       }
 
@@ -5546,7 +5745,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         influence_data <- build_components_signed_data(info$profile_data, names(info$profile_data), all_scales) %>%
           filter(Likelihood != "Total", is.finite(change), is.finite(scalar))
       } else {
-        influence_base <- info$data %>%
+        influence_base <- data %>%
           filter(is.finite(value), is.finite(scalar))
 
         if ("region" %in% names(influence_base)) {
@@ -5839,7 +6038,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
                     input$lik_jitter_param_view, input$lik_jitter_param_display, input$lik_jitter_param_scope, input$lik_jitter_param_window,
                     input$lik_jitter_converged_only, input$lik_jitter_converged_max_grad,
                     input$lik_jitter_derived_view, input$lik_jitter_param_input_scale,
-                    input$lik_jitter_param_metric, input$lik_jitter_show_ref_points, input$lik_jitter_param_range_pct), {
+                    input$lik_jitter_param_metric, input$lik_jitter_show_ref_points, input$lik_jitter_param_range_pct,
+                    input$lik_tagging_view, input$lik_tag_legend_mode, input$lik_tag_legend_top_n, input$lik_tag_deemphasize_others), {
     req(rv$data_loaded)
     if (!isTRUE(input$live_update_plots)) return()
     if (length(input$lik_scenarios) == 0) return()
@@ -5911,6 +6111,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
   output$influence_calc_ui <- renderUI({
     if (!identical(input$lik_main_tab, "likelihood")) return(NULL)
     filters <- lik_filters()
+    if (!is.null(filters) && identical(filters$profile_type, "tagging") && identical(filters$tagging_view, "release_group")) {
+      return(NULL)
+    }
     if (is.null(filters) || !isTRUE(filters$show_influence)) return(NULL)
     combined_influence_types <- c("components", "cpues", "lfs", "wfs", "tagging", "cal_fishery", "cal_year")
     if (!isTRUE(filters$profile_type %in% combined_influence_types)) return(NULL)
@@ -5928,6 +6131,78 @@ mod_likelihood_server <- function(input, output, session, rv) {
         tags$div("For each scalar, component influence is computed from absolute change contribution and re-scaled to sum 100% across selected lines.", style = "font-size: 12px; color: #333;"),
         tags$div("Formula: influence_i(s) = 100 × |ΔL_i(s)| / Σ_j |ΔL_j(s)|; when line filters are applied, shown components are re-normalized to 100%.", style = "font-size: 12px; color: #333; margin-top: 4px;")
       )
+    )
+  })
+
+  tag_release_info_reactive <- reactive({
+    filters <- lik_filters()
+    if (is.null(filters) || !identical(filters$profile_type, "tagging") || !identical(filters$tagging_view, "release_group")) {
+      return(NULL)
+    }
+    scenarios <- filters$scenarios
+    if (is.null(scenarios) || length(scenarios) == 0) return(NULL)
+
+    pick_col <- function(df, candidates) {
+      for (nm in candidates) {
+        if (nm %in% names(df)) return(df[[nm]])
+      }
+      NULL
+    }
+
+    rows <- list()
+    for (sc in scenarios) {
+      tag_out <- rv$TagOut_list[[sc]]
+      if (is.null(tag_out)) next
+      rel_df <- tryCatch(safe_array_to_df(tag_out@releases), error = function(e) NULL)
+      if (is.null(rel_df) || nrow(rel_df) == 0) next
+
+      rel_group <- pick_col(rel_df, c("rel.group", "rel_group", "release_group", "relgroup"))
+      program <- pick_col(rel_df, c("program", "Program", "prog"))
+      year <- pick_col(rel_df, c("year", "Year"))
+      month <- pick_col(rel_df, c("month", "Month"))
+      region <- pick_col(rel_df, c("region", "Region"))
+
+      release_group <- if (!is.null(rel_group)) {
+        paste0("RG ", suppressWarnings(as.integer(rel_group)))
+      } else {
+        NA_character_
+      }
+
+      df <- data.frame(
+        Model = as.character(sc),
+        `Release group` = as.character(release_group),
+        Program = if (is.null(program)) NA_character_ else as.character(program),
+        Year = if (is.null(year)) NA_integer_ else suppressWarnings(as.integer(year)),
+        Month = if (is.null(month)) NA_integer_ else suppressWarnings(as.integer(month)),
+        Region = if (is.null(region)) NA_character_ else as.character(region),
+        stringsAsFactors = FALSE
+      )
+
+      rows[[length(rows) + 1]] <- df
+    }
+
+    out <- bind_rows(rows)
+    if (nrow(out) == 0) return(NULL)
+    out %>% arrange(Model, `Release group`)
+  })
+
+  output$tag_release_info_ui <- renderUI({
+    if (!identical(input$lik_main_tab, "likelihood")) return(NULL)
+    filters <- lik_filters()
+    if (is.null(filters) || !identical(filters$profile_type, "tagging") || !identical(filters$tagging_view, "release_group")) {
+      return(NULL)
+    }
+    tbl <- tag_release_info_reactive()
+    if (is.null(tbl) || nrow(tbl) == 0) return(NULL)
+
+    box(
+      title = "Tag Release Groups",
+      width = 12,
+      solidHeader = TRUE,
+      status = "warning",
+      collapsible = TRUE,
+      collapsed = TRUE,
+      DTOutput("tag_release_info_table")
     )
   })
 
@@ -6214,6 +6489,22 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     datatable(
       target_tbl,
+      options = list(pageLength = 10, scrollX = TRUE),
+      rownames = FALSE
+    )
+  })
+
+  output$tag_release_info_table <- renderDT({
+    if (!identical(input$lik_main_tab, "likelihood")) return(NULL)
+    filters <- lik_filters()
+    if (is.null(filters) || !identical(filters$profile_type, "tagging") || !identical(filters$tagging_view, "release_group")) {
+      return(NULL)
+    }
+    tbl <- tag_release_info_reactive()
+    if (is.null(tbl) || nrow(tbl) == 0) return(NULL)
+
+    datatable(
+      format_hessian_display_cols(tbl),
       options = list(pageLength = 10, scrollX = TRUE),
       rownames = FALSE
     )
