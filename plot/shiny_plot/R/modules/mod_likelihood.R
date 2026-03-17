@@ -2484,9 +2484,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
       )
 
     if (identical(group_var, "release_group") && "program" %in% names(data)) {
-      program_vals <- unique(as.character(data$program))
+      program_vals <- if (is.factor(data$program)) levels(data$program) else unique(as.character(data$program))
       program_vals <- program_vals[nzchar(program_vals)]
-      program_vals <- c(setdiff(program_vals, "Overall"), intersect("Overall", program_vals))
+      program_vals <- c(sort(setdiff(program_vals, "Overall")), intersect("Overall", program_vals))
       data$program <- factor(as.character(data$program), levels = program_vals)
 
       n_scenarios <- dplyr::n_distinct(data$scenario)
@@ -4292,6 +4292,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
           mutate(program = "Overall", release_group = "Total")
 
         data <- bind_rows(data, program_total, overall_release, overall_total)
+        program_levels <- c(sort(setdiff(unique(as.character(data$program)), "Overall")), "Overall")
+        data$program <- factor(as.character(data$program), levels = program_levels)
         data <- calc_lik_change(data, "release_group", extra_group_vars = "program")
         return(list(data = data, group_col = "release_group", label = "Tagging (Release Groups)", message = NULL, profile_data = profile_data))
       }
@@ -6135,75 +6137,119 @@ mod_likelihood_server <- function(input, output, session, rv) {
   })
 
   tag_release_info_reactive <- reactive({
-    filters <- lik_filters()
-    if (is.null(filters) || !identical(filters$profile_type, "tagging") || !identical(filters$tagging_view, "release_group")) {
-      return(NULL)
-    }
-    scenarios <- filters$scenarios
-    if (is.null(scenarios) || length(scenarios) == 0) return(NULL)
-
-    pick_col <- function(df, candidates) {
-      for (nm in candidates) {
-        if (nm %in% names(df)) return(df[[nm]])
+    tryCatch({
+      filters <- lik_filters()
+      if (is.null(filters) || !identical(filters$profile_type, "tagging") || !identical(filters$tagging_view, "release_group")) {
+        return(NULL)
       }
-      NULL
-    }
+      scenarios <- filters$scenarios
+      if (is.null(scenarios) || length(scenarios) == 0) return(NULL)
 
-    rows <- list()
-    for (sc in scenarios) {
-      tag_out <- rv$TagOut_list[[sc]]
-      if (is.null(tag_out)) next
-      rel_df <- tryCatch(safe_array_to_df(tag_out@releases), error = function(e) NULL)
-      if (is.null(rel_df) || nrow(rel_df) == 0) next
-
-      rel_group <- pick_col(rel_df, c("rel.group", "rel_group", "release_group", "relgroup"))
-      program <- pick_col(rel_df, c("program", "Program", "prog"))
-      year <- pick_col(rel_df, c("year", "Year"))
-      month <- pick_col(rel_df, c("month", "Month"))
-      region <- pick_col(rel_df, c("region", "Region"))
-
-      release_group <- if (!is.null(rel_group)) {
-        paste0("RG ", suppressWarnings(as.integer(rel_group)))
-      } else {
-        NA_character_
+      pick_col <- function(df, candidates) {
+        for (nm in candidates) {
+          if (nm %in% names(df)) return(df[[nm]])
+        }
+        NULL
       }
 
-      df <- data.frame(
-        Model = as.character(sc),
-        `Release group` = as.character(release_group),
-        Program = if (is.null(program)) NA_character_ else as.character(program),
-        Year = if (is.null(year)) NA_integer_ else suppressWarnings(as.integer(year)),
-        Month = if (is.null(month)) NA_integer_ else suppressWarnings(as.integer(month)),
-        Region = if (is.null(region)) NA_character_ else as.character(region),
-        stringsAsFactors = FALSE
-      )
+      rows <- list()
+      for (sc in scenarios) {
+        tag_out <- rv$TagOut_list[[sc]]
+        if (is.null(tag_out)) next
+        rel_df <- tryCatch(safe_array_to_df(tag_out@releases), error = function(e) NULL)
+        if (is.null(rel_df) || nrow(rel_df) == 0) next
 
-      rows[[length(rows) + 1]] <- df
-    }
+        rel_group <- pick_col(rel_df, c("rel.group", "rel_group", "release_group", "relgroup"))
+        program <- pick_col(rel_df, c("program", "Program", "prog"))
+        year <- pick_col(rel_df, c("year", "Year"))
+        month <- pick_col(rel_df, c("month", "Month"))
+        region <- pick_col(rel_df, c("region", "Region"))
 
-    out <- bind_rows(rows)
-    if (nrow(out) == 0) return(NULL)
-    out %>% arrange(Model, `Release group`)
+        release_group <- if (!is.null(rel_group)) {
+          paste0("RG ", suppressWarnings(as.integer(rel_group)))
+        } else {
+          NA_character_
+        }
+
+        df <- data.frame(
+          Model = as.character(sc),
+          release_group = as.character(release_group),
+          Program = if (is.null(program)) NA_character_ else as.character(program),
+          Year = if (is.null(year)) NA_integer_ else suppressWarnings(as.integer(year)),
+          Month = if (is.null(month)) NA_integer_ else suppressWarnings(as.integer(month)),
+          Region = if (is.null(region)) NA_character_ else as.character(region),
+          stringsAsFactors = FALSE
+        )
+
+        rows[[length(rows) + 1]] <- df
+      }
+
+      out <- bind_rows(rows)
+      if (nrow(out) == 0) return(NULL)
+      out %>%
+        rename(`Release group` = release_group) %>%
+        distinct(
+          Model,
+          .data[["Release group"]],
+          Program,
+          Year,
+          Month,
+          Region,
+          .keep_all = TRUE
+        ) %>%
+        arrange(Model, .data[["Release group"]], Year, Month, Program, Region)
+    }, error = function(e) {
+      data.frame(Message = paste("Tag release meta error:", conditionMessage(e)), stringsAsFactors = FALSE)
+    })
   })
 
   output$tag_release_info_ui <- renderUI({
-    if (!identical(input$lik_main_tab, "likelihood")) return(NULL)
-    filters <- lik_filters()
-    if (is.null(filters) || !identical(filters$profile_type, "tagging") || !identical(filters$tagging_view, "release_group")) {
-      return(NULL)
-    }
-    tbl <- tag_release_info_reactive()
-    if (is.null(tbl) || nrow(tbl) == 0) return(NULL)
-
-    box(
-      title = "Tag Release Groups",
-      width = 12,
-      solidHeader = TRUE,
-      status = "warning",
-      collapsible = TRUE,
-      collapsed = TRUE,
-      DTOutput("tag_release_info_table")
-    )
+    tryCatch({
+      if (!identical(input$lik_main_tab, "likelihood")) return(NULL)
+      filters <- lik_filters()
+      if (is.null(filters) || !identical(filters$profile_type, "tagging") || !identical(filters$tagging_view, "release_group")) {
+        return(NULL)
+      }
+      tbl <- tag_release_info_reactive()
+      model_choices <- character(0)
+      selected_model <- NA_character_
+      if (!is.null(tbl) && nrow(tbl) > 0 && "Model" %in% names(tbl)) {
+        model_choices <- unique(as.character(tbl$Model))
+        selected_model <- sanitize_text_scalar(input$tag_release_model)
+        if (is.na(selected_model) || !selected_model %in% model_choices) selected_model <- model_choices[[1]]
+      }
+      box(
+        title = "Tag Release Groups",
+        width = 12,
+        solidHeader = TRUE,
+        status = "warning",
+        collapsible = TRUE,
+        collapsed = TRUE,
+        if (length(model_choices) > 1) {
+          selectInput(
+            "tag_release_model",
+            "Release Group Model:",
+            choices = model_choices,
+            selected = selected_model
+          )
+        },
+        if (is.null(tbl) || nrow(tbl) == 0) {
+          tags$div(style = "color:#777;", "No release-group metadata available for the selected models.")
+        } else {
+          DTOutput("tag_release_info_table")
+        }
+      )
+    }, error = function(e) {
+      box(
+        title = "Tag Release Groups",
+        width = 12,
+        solidHeader = TRUE,
+        status = "warning",
+        collapsible = TRUE,
+        collapsed = TRUE,
+        tags$div(style = "color:#a94442;", paste("Tag release UI error:", conditionMessage(e)))
+      )
+    })
   })
 
   output$jitter_info_ui <- renderUI({
@@ -6495,19 +6541,31 @@ mod_likelihood_server <- function(input, output, session, rv) {
   })
 
   output$tag_release_info_table <- renderDT({
-    if (!identical(input$lik_main_tab, "likelihood")) return(NULL)
-    filters <- lik_filters()
-    if (is.null(filters) || !identical(filters$profile_type, "tagging") || !identical(filters$tagging_view, "release_group")) {
-      return(NULL)
-    }
-    tbl <- tag_release_info_reactive()
-    if (is.null(tbl) || nrow(tbl) == 0) return(NULL)
+    tryCatch({
+      if (!identical(input$lik_main_tab, "likelihood")) return(NULL)
+      filters <- lik_filters()
+      if (is.null(filters) || !identical(filters$profile_type, "tagging") || !identical(filters$tagging_view, "release_group")) {
+        return(NULL)
+      }
+      tbl <- tag_release_info_reactive()
+      if (is.null(tbl) || nrow(tbl) == 0) return(NULL)
+      selected_model <- sanitize_text_scalar(input$tag_release_model)
+      if (!is.na(selected_model) && "Model" %in% names(tbl) && selected_model %in% tbl$Model) {
+        tbl <- tbl %>% filter(Model == selected_model)
+      }
 
-    datatable(
-      format_hessian_display_cols(tbl),
-      options = list(pageLength = 10, scrollX = TRUE),
-      rownames = FALSE
-    )
+      datatable(
+        format_hessian_display_cols(tbl),
+        options = list(pageLength = 10, scrollX = TRUE),
+        rownames = FALSE
+      )
+    }, error = function(e) {
+      datatable(
+        data.frame(Message = paste("Tag release table error:", conditionMessage(e))),
+        options = list(dom = "t"),
+        rownames = FALSE
+      )
+    })
   })
 
   output$jitter_info_table <- renderDT({
