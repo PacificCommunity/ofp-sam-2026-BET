@@ -108,16 +108,17 @@ mod_likelihood_ui <- function() {
             "Tagging View:",
             choices = c(
               "By program" = "program",
-              "By release group (facet by program)" = "release_group"
+              "By release group (facet by program)" = "release_group",
+              "By release region (facet by program)" = "release_region"
             ),
             selected = "program"
           )
         ),
         conditionalPanel(
-          condition = "input.lik_main_tab == 'likelihood' && input.lik_profile_type == 'tagging' && input.lik_tagging_view == 'release_group'",
+          condition = "input.lik_main_tab == 'likelihood' && input.lik_profile_type == 'tagging' && ['release_group','release_region'].includes(input.lik_tagging_view)",
           selectInput(
             "lik_tag_legend_mode",
-            "Release-group legend:",
+            "Release-group/region legend:",
             choices = c(
               "Top N" = "top",
               "All" = "all",
@@ -140,7 +141,7 @@ mod_likelihood_ui <- function() {
           )
         ),
         conditionalPanel(
-          condition = "input.lik_main_tab == 'likelihood' && ['components','cpues','lfs','wfs','tagging','cal_fishery','cal_year'].includes(input.lik_profile_type) && !(input.lik_profile_type == 'tagging' && input.lik_tagging_view == 'release_group')",
+          condition = "input.lik_main_tab == 'likelihood' && ['components','cpues','lfs','wfs','tagging','cal_fishery','cal_year'].includes(input.lik_profile_type) && !(input.lik_profile_type == 'tagging' && ['release_group','release_region'].includes(input.lik_tagging_view))",
           selectInput(
             "lik_legend_mode",
             "Legend:",
@@ -194,7 +195,7 @@ mod_likelihood_ui <- function() {
         ),
         selectInput("lik_facet_ncol", "Facet columns:", choices = as.character(1:12), selected = "2"),
         conditionalPanel(
-          condition = "input.lik_main_tab == 'likelihood' && !(input.lik_profile_type == 'tagging' && input.lik_tagging_view == 'release_group')",
+          condition = "input.lik_main_tab == 'likelihood' && !(input.lik_profile_type == 'tagging' && ['release_group','release_region'].includes(input.lik_tagging_view))",
           checkboxInput(
             "lik_show_influence",
             "Show influence panel",
@@ -444,7 +445,29 @@ mod_likelihood_ui <- function() {
         condition = "input.lik_main_tab == 'likelihood'",
         uiOutput("likelihood_info_ui"),
         uiOutput("influence_calc_ui"),
-        uiOutput("tag_release_info_ui"),
+        conditionalPanel(
+          condition = "input.lik_profile_type == 'tagging' && ['release_group','release_region'].includes(input.lik_tagging_view)",
+          box(
+            title = "Tag Release Groups",
+            width = 12,
+            solidHeader = TRUE,
+            status = "warning",
+            collapsible = TRUE,
+            collapsed = TRUE,
+            selectInput(
+              "tag_release_model",
+              "Release Group Model:",
+              choices = character(0)
+            ),
+            selectInput(
+              "tag_release_program",
+              "Release Group Program:",
+              choices = character(0)
+            ),
+            uiOutput("tag_release_info_message_ui"),
+            DTOutput("tag_release_info_table")
+          )
+        ),
         uiOutput("profile_gradient_table_ui"),
         uiOutput("component_influence_table_ui")
       ),
@@ -635,7 +658,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       jitter_param_window = jitter_param_window,
       jitter_converged_only = isTRUE(input$lik_jitter_converged_only),
       jitter_converged_max_grad = jitter_converged_max_grad,
-      tagging_view = sanitize_profile_type(input$lik_tagging_view, allowed = c("program", "release_group"), default = "program"),
+      tagging_view = sanitize_profile_type(input$lik_tagging_view, allowed = c("program", "release_group", "release_region"), default = "program"),
       tag_legend_mode = tag_legend_mode,
       tag_legend_top_n = tag_legend_top_n,
       tag_deemphasize_others = isTRUE(input$lik_tag_deemphasize_others),
@@ -2530,7 +2553,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         )
       )
 
-    if (identical(group_var, "release_group") && "program" %in% names(data)) {
+    if (isTRUE(group_var %in% c("release_group", "release_region")) && "program" %in% names(data)) {
       program_vals <- if (is.factor(data$program)) levels(data$program) else unique(as.character(data$program))
       program_vals <- program_vals[nzchar(program_vals)]
       program_vals <- c(sort(setdiff(program_vals, "Overall")), intersect("Overall", program_vals))
@@ -2971,7 +2994,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       program_map <- rel_df %>%
         transmute(
           rel_group = suppressWarnings(as.integer(rel.group)),
-          program_name = as.character(program)
+          program_name = as.character(program),
+          release_region = as.character(region)
         ) %>%
         filter(is.finite(rel_group)) %>%
         distinct(rel_group, .keep_all = TRUE) %>%
@@ -2987,13 +3011,16 @@ mod_likelihood_server <- function(input, output, session, rv) {
         sums_vec <- sapply(tag_rel, function(g) sum(unlist(g)))
         rel_groups <- suppressWarnings(as.integer(seq_along(sums_vec)))
         program_names <- program_map$program_name[match(rel_groups, program_map$rel_group)]
+        release_regions <- program_map$release_region[match(rel_groups, program_map$rel_group)]
         missing_program <- is.na(program_names) | !nzchar(program_names)
         program_names[missing_program] <- paste("Program", rel_groups[missing_program])
+        release_regions[is.na(release_regions) | !nzchar(release_regions)] <- "Unknown"
 
         df <- data.frame(
           scenario = sc,
           scalar = scalar_bio,
           program = as.character(program_names),
+          release_region = as.character(release_regions),
           rel_group = rel_groups,
           release_group = paste0("RG ", rel_groups),
           value = as.numeric(sums_vec),
@@ -3013,6 +3040,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
           group_by(program, release_group, rel_group, scalar, scenario) %>%
           summarise(value = sum(value), .groups = "drop") %>%
           arrange(scenario, scalar, program, rel_group)
+      )
+    }
+
+    if (identical(view, "release_region")) {
+      return(
+        data %>%
+          group_by(program, release_region, scalar, scenario) %>%
+          summarise(value = sum(value), .groups = "drop") %>%
+          arrange(scenario, scalar, program, release_region)
       )
     }
 
@@ -4309,7 +4345,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     if (type == "tagging") {
-      tagging_view <- sanitize_profile_type(filters$tagging_view, allowed = c("program", "release_group"), default = "program")
+      tagging_view <- sanitize_profile_type(filters$tagging_view, allowed = c("program", "release_group", "release_region"), default = "program")
       data <- build_tagging_data(
         profile_data,
         names(profile_data),
@@ -4343,6 +4379,29 @@ mod_likelihood_server <- function(input, output, session, rv) {
         data$program <- factor(as.character(data$program), levels = program_levels)
         data <- calc_lik_change(data, "release_group", extra_group_vars = "program")
         return(list(data = data, group_col = "release_group", label = "Tagging (Release Groups)", message = NULL, profile_data = profile_data))
+      }
+
+      if (identical(tagging_view, "release_region")) {
+        program_total <- data %>%
+          group_by(scenario, scalar, program) %>%
+          summarise(value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+          mutate(release_region = "Total")
+
+        overall_release <- data %>%
+          group_by(scenario, scalar, release_region) %>%
+          summarise(value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+          mutate(program = "Overall")
+
+        overall_total <- data %>%
+          group_by(scenario, scalar) %>%
+          summarise(value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+          mutate(program = "Overall", release_region = "Total")
+
+        data <- bind_rows(data, program_total, overall_release, overall_total)
+        program_levels <- c(sort(setdiff(unique(as.character(data$program)), "Overall")), "Overall")
+        data$program <- factor(as.character(data$program), levels = program_levels)
+        data <- calc_lik_change(data, "release_region", extra_group_vars = "program")
+        return(list(data = data, group_col = "release_region", label = "Tagging (Release Regions)", message = NULL, profile_data = profile_data))
       }
 
       total_row <- data %>%
@@ -4494,6 +4553,25 @@ mod_likelihood_server <- function(input, output, session, rv) {
         data <- calc_lik_change(data, "release_group")
         group_col <- "release_group"
         label <- "Tagging (Release Groups)"
+      }
+    }
+
+    if (identical(filters$profile_type, "tagging") &&
+        identical(filters$tagging_view, "release_region") &&
+        !("release_region" %in% names(data))) {
+      all_scales <- sort(unique(unlist(lapply(info$profile_data, function(x) x$scales))))
+      data <- build_tagging_data(
+        info$profile_data,
+        names(info$profile_data),
+        rv$TagOut_list,
+        all_scales,
+        view = "release_region"
+      )
+      data <- data %>% filter(is.finite(value) & is.finite(scalar))
+      if (nrow(data) > 0) {
+        data <- calc_lik_change(data, "release_region")
+        group_col <- "release_region"
+        label <- "Tagging (Release Regions)"
       }
     }
 
@@ -5772,7 +5850,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       legend_top_n <- 12L
       deemphasize_others <- FALSE
       force_hide_influence <- FALSE
-      if (identical(filters$profile_type, "tagging") && identical(filters$tagging_view, "release_group")) {
+      if (identical(filters$profile_type, "tagging") && isTRUE(filters$tagging_view %in% c("release_group", "release_region"))) {
         legend_mode <- filters$tag_legend_mode
         legend_top_n <- filters$tag_legend_top_n
         deemphasize_others <- isTRUE(filters$tag_deemphasize_others)
@@ -6268,69 +6346,38 @@ mod_likelihood_server <- function(input, output, session, rv) {
     })
   })
 
-  output$tag_release_info_ui <- renderUI({
-    tryCatch({
-      if (!identical(input$lik_main_tab, "likelihood")) return(NULL)
-      filters <- lik_filters()
-      if (is.null(filters) || !identical(filters$profile_type, "tagging") || !identical(filters$tagging_view, "release_group")) {
-        return(NULL)
-      }
-      tbl <- tag_release_info_reactive()
-      model_choices <- character(0)
-      selected_model <- NA_character_
-      if (!is.null(tbl) && nrow(tbl) > 0 && "Model" %in% names(tbl)) {
-        model_choices <- unique(as.character(tbl$Model))
-        selected_model <- sanitize_text_scalar(isolate(input$tag_release_model))
-        if (is.na(selected_model) || !selected_model %in% model_choices) selected_model <- model_choices[[1]]
-      }
-      program_choices <- character(0)
-      selected_program <- NA_character_
-      if (!is.null(tbl) && nrow(tbl) > 0 && "Program" %in% names(tbl)) {
-        program_choices <- unique(as.character(tbl$Program))
-        selected_program <- sanitize_text_scalar(isolate(input$tag_release_program))
-        if (is.na(selected_program) || !selected_program %in% program_choices) selected_program <- program_choices[[1]]
-      }
-      box(
-        title = "Tag Release Groups",
-        width = 12,
-        solidHeader = TRUE,
-        status = "warning",
-        collapsible = TRUE,
-        collapsed = TRUE,
-        if (length(model_choices) >= 1) {
-          selectInput(
-            "tag_release_model",
-            "Release Group Model:",
-            choices = model_choices,
-            selected = selected_model
-          )
-        },
-        if (length(program_choices) >= 1) {
-          selectInput(
-            "tag_release_program",
-            "Release Group Program:",
-            choices = program_choices,
-            selected = selected_program
-          )
-        },
-        if (is.null(tbl) || nrow(tbl) == 0) {
-          tags$div(style = "color:#777;", "No release-group metadata available for the selected models.")
-        } else {
-          DTOutput("tag_release_info_table")
-        }
-      )
-    }, error = function(e) {
-      box(
-        title = "Tag Release Groups",
-        width = 12,
-        solidHeader = TRUE,
-        status = "warning",
-        collapsible = TRUE,
-        collapsed = TRUE,
-        tags$div(style = "color:#a94442;", paste("Tag release UI error:", conditionMessage(e)))
-      )
-    })
+  output$tag_release_info_message_ui <- renderUI({
+    if (!identical(input$lik_main_tab, "likelihood")) return(NULL)
+    filters <- lik_filters()
+    if (is.null(filters) || !identical(filters$profile_type, "tagging") ||
+        !isTRUE(filters$tagging_view %in% c("release_group", "release_region"))) {
+      return(NULL)
+    }
+    tbl <- tag_release_info_reactive()
+    if (is.null(tbl) || nrow(tbl) == 0) {
+      return(tags$div(style = "color:#777;", "No release-group metadata available for the selected models."))
+    }
+    NULL
   })
+
+  observeEvent(tag_release_info_reactive(), {
+    tbl <- tag_release_info_reactive()
+    if (is.null(tbl) || nrow(tbl) == 0) {
+      updateSelectInput(session, "tag_release_model", choices = character(0), selected = character(0))
+      updateSelectInput(session, "tag_release_program", choices = character(0), selected = character(0))
+      return()
+    }
+
+    model_choices <- unique(as.character(tbl$Model))
+    current_model <- isolate(input$tag_release_model)
+    if (is.null(current_model) || !(current_model %in% model_choices)) current_model <- model_choices[[1]]
+    updateSelectInput(session, "tag_release_model", choices = model_choices, selected = current_model)
+
+    program_choices <- unique(as.character(tbl$Program))
+    current_program <- isolate(input$tag_release_program)
+    if (is.null(current_program) || !(current_program %in% program_choices)) current_program <- program_choices[[1]]
+    updateSelectInput(session, "tag_release_program", choices = program_choices, selected = current_program)
+  }, ignoreInit = TRUE)
 
   output$jitter_info_ui <- renderUI({
     tryCatch({
