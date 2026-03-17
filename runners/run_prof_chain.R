@@ -23,17 +23,21 @@ parse_env_kv <- function(env_kv) {
 }
 
 run_with_env <- function(env_list, code) {
+  set_named_env <- function(key, value) {
+    do.call(Sys.setenv, setNames(list(value), key))
+  }
+
   env_names <- names(env_list)
-  if (length(env_names) == 0) return(force(code))
+  if (length(env_names) == 0) return(eval.parent(substitute(code)))
   old_vals <- Sys.getenv(env_names, unset = NA_character_)
   on.exit({
     for (nm in env_names) {
       old <- old_vals[[nm]]
-      if (is.na(old)) Sys.unsetenv(nm) else Sys.setenv(structure(old, names = nm))
+      if (is.na(old)) Sys.unsetenv(nm) else set_named_env(nm, old)
     }
   }, add = TRUE)
   do.call(Sys.setenv, env_list)
-  force(code)
+  eval.parent(substitute(code))
 }
 
 read_indexed_chain_scalars <- function() {

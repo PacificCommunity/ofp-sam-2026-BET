@@ -181,6 +181,13 @@ parse_tokens <- function(x) {
   toks[nzchar(toks)]
 }
 
+run_system2_in_dir <- function(command, args = character(0), dir = ".", stdout = "", stderr = "") {
+  old_wd <- getwd()
+  on.exit(setwd(old_wd), add = TRUE)
+  setwd(dir)
+  system2(command = command, args = args, stdout = stdout, stderr = stderr)
+}
+
 append_extra_switch <- function(base_switch, extra_switch) {
   extra <- trimws(as.character(extra_switch))
   if (!nzchar(extra)) return(base_switch)
@@ -437,12 +444,12 @@ if (isTRUE(prof_use_quantity_penalty)) {
       strsplit(ref_switch, "\\s+", perl = TRUE)[[1]]
     )
     ref_args <- ref_args[nzchar(ref_args)]
-    ref_status <- system2(
+    ref_status <- run_system2_in_dir(
       command = program_path_abs,
       args = ref_args,
+      dir = scalar_dir,
       stdout = "",
-      stderr = "",
-      wd = scalar_dir
+      stderr = ""
     )
     if (!is.numeric(ref_status) || length(ref_status) != 1 || is.na(ref_status) || as.integer(ref_status) != 0L) {
       stop("Reference quantity refresh failed (status=", ref_status, ").")
@@ -473,12 +480,12 @@ generate_proflike_script(
   filename = file.path(scalar_dir, "ProfLike.sh")
 )
 
-prof_status <- system2(
+prof_status <- run_system2_in_dir(
   command = "bash",
   args = c("./ProfLike.sh"),
+  dir = scalar_dir,
   stdout = "",
-  stderr = "",
-  wd = scalar_dir
+  stderr = ""
 )
 if (!is.numeric(prof_status) || length(prof_status) != 1 || is.na(prof_status) || as.integer(prof_status) != 0L) {
   stop("ProfLike.sh failed (status=", prof_status, ").")
