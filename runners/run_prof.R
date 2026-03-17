@@ -464,7 +464,7 @@ generate_proflike_script(
   filename = file.path(scalar_dir, "ProfLike.sh")
 )
 
-run_commands(commands = "./ProfLike.sh", work_dirs = scalar_dir, save_log = FALSE, verbose = TRUE)
+run_commands(commands = "bash ./ProfLike.sh", work_dirs = scalar_dir, save_log = FALSE, verbose = TRUE)
 
 final_profile_par <- mp_final_par(scalar_dir)
 final_par_lines <- if (!is.null(final_profile_par) && file.exists(final_profile_par)) {
