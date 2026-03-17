@@ -430,14 +430,23 @@ if (isTRUE(prof_use_quantity_penalty)) {
       "2 174", AgeFlags["Af174"]
     )
     ref_switch <- append_extra_switch(ref_switch, prof_extra_switch)
-    ref_command <- paste(
-      shQuote(program_path_abs),
-      shQuote(frq_file),
-      shQuote(basename(most_recent)),
-      shQuote(basename(ref_par)),
-      ref_switch
+    ref_args <- c(
+      frq_file,
+      basename(most_recent),
+      basename(ref_par),
+      strsplit(ref_switch, "\\s+", perl = TRUE)[[1]]
     )
-    run_commands(commands = ref_command, work_dirs = scalar_dir, save_log = FALSE, verbose = TRUE)
+    ref_args <- ref_args[nzchar(ref_args)]
+    ref_status <- system2(
+      command = program_path_abs,
+      args = ref_args,
+      stdout = "",
+      stderr = "",
+      wd = scalar_dir
+    )
+    if (!is.numeric(ref_status) || length(ref_status) != 1 || is.na(ref_status) || as.integer(ref_status) != 0L) {
+      stop("Reference quantity refresh failed (status=", ref_status, ").")
+    }
   }
 
   initial_quantity_info <- detect_reference_quantity_file(model_dir, scalar_dir)
@@ -464,7 +473,16 @@ generate_proflike_script(
   filename = file.path(scalar_dir, "ProfLike.sh")
 )
 
-run_commands(commands = "bash ./ProfLike.sh", work_dirs = scalar_dir, save_log = FALSE, verbose = TRUE)
+prof_status <- system2(
+  command = "bash",
+  args = c("./ProfLike.sh"),
+  stdout = "",
+  stderr = "",
+  wd = scalar_dir
+)
+if (!is.numeric(prof_status) || length(prof_status) != 1 || is.na(prof_status) || as.integer(prof_status) != 0L) {
+  stop("ProfLike.sh failed (status=", prof_status, ").")
+}
 
 final_profile_par <- mp_final_par(scalar_dir)
 final_par_lines <- if (!is.null(final_profile_par) && file.exists(final_profile_par)) {
