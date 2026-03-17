@@ -100,6 +100,103 @@ server <- function(input, output, session) {
     fishery_map_missing_models = NULL # Models missing fishery_map.R
   )
 
+  # ---------------------------------------------------------------------------
+  # Quick Figure Popup (header dropdown)
+  # ---------------------------------------------------------------------------
+  quick_fig_dir <- file.path("www", "quick_figures")
+
+  quick_fig_list <- reactive({
+    if (!dir.exists(quick_fig_dir)) dir.create(quick_fig_dir, recursive = TRUE)
+    list.files(quick_fig_dir, pattern = "\\.(png|jpg|jpeg|pdf)$", ignore.case = TRUE)
+  })
+
+  quick_fig_ordered <- reactiveVal(character(0))
+  quick_fig_index <- reactiveVal(1L)
+
+  observe({
+    fig_files <- quick_fig_list()
+    fig_labels <- tools::file_path_sans_ext(fig_files)
+    choices <- setNames(fig_files, fig_labels)
+    updatePickerInput(session, "quick_fig_select", choices = choices, selected = intersect(isolate(input$quick_fig_select), fig_files))
+  })
+
+  observeEvent(input$quick_fig_view_btn, {
+    file_sel <- input$quick_fig_select
+    if (is.null(file_sel) || length(file_sel) == 0) return()
+    fig_files <- quick_fig_list()
+    file_sel <- intersect(file_sel, fig_files)
+    if (length(file_sel) == 0) return()
+    quick_fig_ordered(file_sel)
+    quick_fig_index(1L)
+
+    showModal(
+      modalDialog(
+        title = "Quick Figures",
+        uiOutput("quick_fig_viewer"),
+        easyClose = TRUE,
+        size = "l",
+        footer = tagList(
+          actionButton("quick_fig_prev", "Previous"),
+          actionButton("quick_fig_next", "Next"),
+          modalButton("Close")
+        )
+      )
+    )
+  }, ignoreInit = TRUE)
+
+  output$quick_fig_viewer <- renderUI({
+    file_list <- quick_fig_ordered()
+    if (length(file_list) == 0) return(NULL)
+    idx <- quick_fig_index()
+    if (!is.finite(idx) || idx < 1) idx <- 1L
+    if (idx > length(file_list)) idx <- length(file_list)
+    file_sel <- file_list[[idx]]
+    ext <- tolower(tools::file_ext(file_sel))
+    src_path <- file.path("quick_figures", file_sel)
+
+    if (ext == "pdf") {
+      tagList(
+        tags$div(style = "font-weight: 600; margin-bottom: 6px;",
+                 paste0(tools::file_path_sans_ext(basename(file_sel)), " (", idx, "/", length(file_list), ")")),
+        tags$iframe(
+          src = src_path,
+          style = "width:100%; height:80vh; border: none;"
+        )
+      )
+    } else {
+      tagList(
+        tags$div(style = "font-weight: 600; margin-bottom: 6px;",
+                 paste0(tools::file_path_sans_ext(basename(file_sel)), " (", idx, "/", length(file_list), ")")),
+        tags$img(src = src_path, style = "width:100%; height:auto;")
+      )
+    }
+  })
+
+  observeEvent(input$quick_fig_prev, {
+    idx <- quick_fig_index()
+    file_list <- quick_fig_ordered()
+    if (length(file_list) == 0) return()
+    idx <- idx - 1L
+    if (idx < 1L) idx <- length(file_list)
+    quick_fig_index(idx)
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$quick_fig_next, {
+    idx <- quick_fig_index()
+    file_list <- quick_fig_ordered()
+    if (length(file_list) == 0) return()
+    idx <- idx + 1L
+    if (idx > length(file_list)) idx <- 1L
+    quick_fig_index(idx)
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$quick_fig_refresh, {
+    fig_files <- quick_fig_list()
+    fig_labels <- tools::file_path_sans_ext(fig_files)
+    choices <- setNames(fig_files, fig_labels)
+    updatePickerInput(session, "quick_fig_select", choices = choices, selected = intersect(isolate(input$quick_fig_select), fig_files))
+  }, ignoreInit = TRUE)
+
   session$allowReconnect(FALSE)
   session$onSessionEnded(function() {
     reset_loaded_data_state(rv)

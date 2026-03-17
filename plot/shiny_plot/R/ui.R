@@ -13,7 +13,37 @@ ui <- dashboardPage(
   # ---------------------------------------------------------------------------
   # Header
   # ---------------------------------------------------------------------------
-  dashboardHeader(title = "MFCL Output Viewer"),
+  dashboardHeader(
+    title = "MFCL Output Viewer",
+    tags$li(
+      class = "dropdown",
+      style = "padding: 10px 15px; min-width: 360px;",
+      div(
+        style = "font-size: 11px; color: #e8f3ff; margin-bottom: 4px; white-space: nowrap;",
+        "Quick figures: put files in ",
+        tags$code("plot/shiny_plot/www/quick_figures", style = "color:#fff; background:rgba(0,0,0,0.25); padding:1px 4px;")
+      ),
+      pickerInput(
+        "quick_fig_select",
+        NULL,
+        choices = character(0),
+        selected = NULL,
+        multiple = TRUE,
+        options = pickerOptions(
+          actionsBox = TRUE,
+          liveSearch = TRUE,
+          selectedTextFormat = "count > 2",
+          countSelectedText = "{0} selected"
+        ),
+        width = "320px"
+      ),
+      div(
+        style = "margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap;",
+        actionButton("quick_fig_refresh", "Refresh", class = "btn-default btn-sm"),
+        actionButton("quick_fig_view_btn", "View", class = "btn-info btn-sm")
+      )
+    )
+  ),
   
   # ---------------------------------------------------------------------------
   # Sidebar
