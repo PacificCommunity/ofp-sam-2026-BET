@@ -140,6 +140,32 @@ mod_likelihood_ui <- function() {
           )
         ),
         conditionalPanel(
+          condition = "input.lik_main_tab == 'likelihood' && ['components','cpues','lfs','wfs','tagging','cal_fishery','cal_year'].includes(input.lik_profile_type) && !(input.lik_profile_type == 'tagging' && input.lik_tagging_view == 'release_group')",
+          selectInput(
+            "lik_legend_mode",
+            "Legend:",
+            choices = c(
+              "Top N" = "top",
+              "All" = "all",
+              "Hide" = "none"
+            ),
+            selected = "top"
+          ),
+          sliderInput(
+            "lik_legend_top_n",
+            "Top N groups",
+            min = 1,
+            max = 50,
+            value = 12,
+            step = 1
+          ),
+          checkboxInput(
+            "lik_deemphasize_others",
+            "De-emphasize non-top groups",
+            value = TRUE
+          )
+        ),
+        conditionalPanel(
           condition = "input.lik_main_tab == 'likelihood' && ['cpues', 'lfs', 'wfs', 'cal_fishery', 'influence_cpues', 'influence_lfs', 'influence_wfs', 'influence_cal_fishery'].includes(input.lik_profile_type)",
           tagList(
             checkboxInput(
@@ -172,7 +198,7 @@ mod_likelihood_ui <- function() {
           checkboxInput(
             "lik_show_influence",
             "Show influence panel",
-            value = TRUE
+            value = FALSE
           )
         ),
         sliderInput(
@@ -586,6 +612,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
     tag_legend_top_n <- sanitize_integer_scalar(input$lik_tag_legend_top_n, 12L)
     tag_legend_top_n <- pmax(1L, pmin(200L, tag_legend_top_n))
 
+    legend_mode <- sanitize_profile_type(input$lik_legend_mode, allowed = c("top", "all", "none"), default = "all")
+    legend_top_n <- sanitize_integer_scalar(input$lik_legend_top_n, 12L)
+    legend_top_n <- pmax(1L, pmin(200L, legend_top_n))
+
     list(
       scenarios = sort(input$lik_scenarios),
       profile_type = current_profile_type(),
@@ -609,6 +639,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
       tag_legend_mode = tag_legend_mode,
       tag_legend_top_n = tag_legend_top_n,
       tag_deemphasize_others = isTRUE(input$lik_tag_deemphasize_others),
+      legend_mode = legend_mode,
+      legend_top_n = legend_top_n,
+      legend_deemphasize_others = isTRUE(input$lik_deemphasize_others),
       jitter_derived_view = {
         view <- sanitize_profile_type(input$lik_jitter_derived_view, allowed = c("summary", "lines", "detail"), default = "summary")
         if (identical(view, "detail")) "lines" else view
@@ -625,6 +658,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
   })
   lik_filters_applied <- reactiveVal(NULL)
   lik_last_initialized_nonce <- reactiveVal(0)
+  lik_pending_group_apply <- reactiveVal(FALSE)
+  lik_apply_nonce <- reactiveVal(0)
   lik_filters <- reactive({
     lik_filters_applied()
   })
@@ -719,7 +754,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       facet_ncol = filters$facet_ncol,
       show_influence = isTRUE(filters$show_influence),
       plot_height = sanitize_integer_scalar(filters$plot_height, 900L),
-      plot_width = sanitize_integer_scalar(filters$plot_width, 1200L)
+      plot_width = sanitize_integer_scalar(filters$plot_width, 1200L),
+      apply_nonce = lik_apply_nonce()
     )
 
     if (identical(filters$profile_type, "jitter")) {
@@ -748,6 +784,16 @@ mod_likelihood_server <- function(input, output, session, rv) {
       key$jitter_converged_max_grad <- sanitize_numeric_scalar(filters$jitter_converged_max_grad, 0.01)
       key$jitter_derived_view <- filters$jitter_derived_view
       return(key)
+    }
+
+    key$legend_mode <- filters$legend_mode
+    key$legend_top_n <- filters$legend_top_n
+    key$legend_deemphasize_others <- isTRUE(filters$legend_deemphasize_others)
+    if (identical(filters$profile_type, "tagging")) {
+      key$tagging_view <- filters$tagging_view
+      key$tag_legend_mode <- filters$tag_legend_mode
+      key$tag_legend_top_n <- filters$tag_legend_top_n
+      key$tag_deemphasize_others <- isTRUE(filters$tag_deemphasize_others)
     }
 
     if (isTRUE(filters$profile_type %in% fishery_region_types)) {
@@ -794,6 +840,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
   observeEvent(input$lik_apply_filters, {
     lik_filters_applied(isolate(lik_filters_current()))
+    lik_apply_nonce(isolate(lik_apply_nonce()) + 1)
   }, ignoreInit = FALSE)
 
   observeEvent(
@@ -4398,6 +4445,16 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     last_group_key(group_key)
     updatePickerInput(session, "lik_groups", choices = groups, selected = selected)
+    if (!isTRUE(input$live_update_plots)) {
+      lik_pending_group_apply(TRUE)
+    }
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$lik_groups, {
+    if (!isTRUE(lik_pending_group_apply())) return()
+    if (isTRUE(input$live_update_plots)) return()
+    lik_pending_group_apply(FALSE)
+    lik_filters_applied(isolate(lik_filters_current()))
   }, ignoreInit = TRUE)
 
   likelihood_plot_reactive <- reactive({
@@ -5720,6 +5777,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
         legend_top_n <- filters$tag_legend_top_n
         deemphasize_others <- isTRUE(filters$tag_deemphasize_others)
         force_hide_influence <- TRUE
+      } else {
+        legend_mode <- filters$legend_mode
+        legend_top_n <- filters$legend_top_n
+        deemphasize_others <- isTRUE(filters$legend_deemphasize_others)
       }
 
       top_plot <- create_piner_plot(
@@ -6030,7 +6091,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
       label,
       facet_ncol = facet_ncol,
       split_by_region = isTRUE(filters$split_by_region),
-      y_label = y_axis_label
+      y_label = y_axis_label,
+      legend_mode = filters$legend_mode,
+      legend_top_n = filters$legend_top_n,
+      deemphasize_others = isTRUE(filters$legend_deemphasize_others)
     )
   })
   observeEvent(list(input$live_update_plots, input$lik_main_tab, input$lik_scenarios, input$lik_profile_type, input$lik_jitter_type,
@@ -6041,7 +6105,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
                     input$lik_jitter_converged_only, input$lik_jitter_converged_max_grad,
                     input$lik_jitter_derived_view, input$lik_jitter_param_input_scale,
                     input$lik_jitter_param_metric, input$lik_jitter_show_ref_points, input$lik_jitter_param_range_pct,
-                    input$lik_tagging_view, input$lik_tag_legend_mode, input$lik_tag_legend_top_n, input$lik_tag_deemphasize_others), {
+                    input$lik_tagging_view, input$lik_tag_legend_mode, input$lik_tag_legend_top_n, input$lik_tag_deemphasize_others,
+                    input$lik_legend_mode, input$lik_legend_top_n, input$lik_deemphasize_others), {
     req(rv$data_loaded)
     if (!isTRUE(input$live_update_plots)) return()
     if (length(input$lik_scenarios) == 0) return()
@@ -6215,8 +6280,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
       selected_model <- NA_character_
       if (!is.null(tbl) && nrow(tbl) > 0 && "Model" %in% names(tbl)) {
         model_choices <- unique(as.character(tbl$Model))
-        selected_model <- sanitize_text_scalar(input$tag_release_model)
+        selected_model <- sanitize_text_scalar(isolate(input$tag_release_model))
         if (is.na(selected_model) || !selected_model %in% model_choices) selected_model <- model_choices[[1]]
+      }
+      program_choices <- character(0)
+      selected_program <- NA_character_
+      if (!is.null(tbl) && nrow(tbl) > 0 && "Program" %in% names(tbl)) {
+        program_choices <- unique(as.character(tbl$Program))
+        selected_program <- sanitize_text_scalar(isolate(input$tag_release_program))
+        if (is.na(selected_program) || !selected_program %in% program_choices) selected_program <- program_choices[[1]]
       }
       box(
         title = "Tag Release Groups",
@@ -6225,12 +6297,20 @@ mod_likelihood_server <- function(input, output, session, rv) {
         status = "warning",
         collapsible = TRUE,
         collapsed = TRUE,
-        if (length(model_choices) > 1) {
+        if (length(model_choices) >= 1) {
           selectInput(
             "tag_release_model",
             "Release Group Model:",
             choices = model_choices,
             selected = selected_model
+          )
+        },
+        if (length(program_choices) >= 1) {
+          selectInput(
+            "tag_release_program",
+            "Release Group Program:",
+            choices = program_choices,
+            selected = selected_program
           )
         },
         if (is.null(tbl) || nrow(tbl) == 0) {
@@ -6552,6 +6632,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
       selected_model <- sanitize_text_scalar(input$tag_release_model)
       if (!is.na(selected_model) && "Model" %in% names(tbl) && selected_model %in% tbl$Model) {
         tbl <- tbl %>% filter(Model == selected_model)
+      }
+      selected_program <- sanitize_text_scalar(input$tag_release_program)
+      if (!is.na(selected_program) && "Program" %in% names(tbl) && selected_program %in% tbl$Program) {
+        tbl <- tbl %>% filter(Program == selected_program)
       }
 
       datatable(
