@@ -6345,6 +6345,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
       data.frame(Message = paste("Tag release meta error:", conditionMessage(e)), stringsAsFactors = FALSE)
     })
   })
+  tag_release_info_reactive <- bindCache(
+    tag_release_info_reactive,
+    rv$data_loaded,
+    input$model_dir,
+    list(
+      scenarios = sort(isolate(lik_filters()$scenarios)),
+      tagging_view = isolate(lik_filters()$tagging_view)
+    )
+  )
 
   output$tag_release_info_message_ui <- renderUI({
     if (!identical(input$lik_main_tab, "likelihood")) return(NULL)
@@ -6601,7 +6610,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     datatable(
       htbl,
-      options = list(pageLength = 10, scrollX = TRUE),
+      options = list(pageLength = 10, scrollX = TRUE, deferRender = TRUE),
       rownames = FALSE
     )
   })
@@ -6617,7 +6626,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     datatable(
       format_hessian_display_cols(grad_tbl),
-      options = list(pageLength = 10, scrollX = TRUE),
+      options = list(pageLength = 10, scrollX = TRUE, deferRender = TRUE),
       rownames = FALSE
     )
   })
@@ -6650,7 +6659,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     datatable(
       format_hessian_display_cols(tbl),
-      options = list(pageLength = 10, scrollX = TRUE),
+      options = list(pageLength = 10, scrollX = TRUE, deferRender = TRUE),
       rownames = FALSE
     )
   })
@@ -6662,7 +6671,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     datatable(
       target_tbl,
-      options = list(pageLength = 10, scrollX = TRUE),
+      options = list(pageLength = 10, scrollX = TRUE, deferRender = TRUE),
       rownames = FALSE
     )
   })
@@ -6687,7 +6696,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
       datatable(
         format_hessian_display_cols(tbl),
-        options = list(pageLength = 10, scrollX = TRUE),
+        options = list(pageLength = 10, scrollX = TRUE, deferRender = TRUE),
         rownames = FALSE
       )
     }, error = function(e) {
@@ -6708,7 +6717,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
       datatable(
         format_hessian_display_cols(jitter_tbl),
-        options = list(pageLength = 10, scrollX = TRUE),
+        options = list(pageLength = 10, scrollX = TRUE, deferRender = TRUE),
         rownames = FALSE
       )
     }, error = function(e) {
@@ -6730,7 +6739,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
       datatable(
         format_hessian_display_cols(seed_tbl),
-        options = list(pageLength = 12, scrollX = TRUE),
+        options = list(pageLength = 12, scrollX = TRUE, deferRender = TRUE),
         rownames = FALSE
       )
     }, error = function(e) {
@@ -6771,7 +6780,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     datatable(
       tbl,
-      options = list(pageLength = 15, scrollX = TRUE),
+      options = list(pageLength = 15, scrollX = TRUE, deferRender = TRUE),
       rownames = FALSE
     )
   })
@@ -6783,7 +6792,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     datatable(
       tbl,
-      options = list(pageLength = 20, scrollX = TRUE),
+      options = list(pageLength = 20, scrollX = TRUE, deferRender = TRUE),
       rownames = FALSE
     )
   })

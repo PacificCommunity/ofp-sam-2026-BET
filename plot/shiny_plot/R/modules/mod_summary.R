@@ -345,7 +345,7 @@ mod_summary_server <- function(input, output, session, rv) {
     
       # Display as interactive table
       datatable(params_df, 
-                options = list(pageLength = 10, scrollX = TRUE, dom = 'tip'),
+                options = list(pageLength = 10, scrollX = TRUE, dom = 'tip', deferRender = TRUE),
                 rownames = FALSE)
     })
   
@@ -520,7 +520,7 @@ mod_summary_server <- function(input, output, session, rv) {
       if (is.null(tbl) || nrow(tbl) == 0) return(NULL)
       datatable(
         tbl,
-        options = list(pageLength = 15, scrollX = TRUE, dom = "tip"),
+        options = list(pageLength = 15, scrollX = TRUE, dom = "tip", deferRender = TRUE),
         rownames = FALSE
       )
     })
@@ -601,7 +601,7 @@ mod_summary_server <- function(input, output, session, rv) {
           style = "caption-side: top; text-align: left;",
           paste0("Overview Matrix | Base: ", input$summary_compare_model_a)
         ),
-        options = list(pageLength = 12, scrollX = TRUE, dom = "tip"),
+        options = list(pageLength = 12, scrollX = TRUE, dom = "tip", deferRender = TRUE),
         rownames = FALSE
       )
     })
@@ -634,7 +634,7 @@ mod_summary_server <- function(input, output, session, rv) {
           style = "caption-side: top; text-align: left;",
           paste0("Base: ", base_model, " | Compared: ", paste(compared_models, collapse = ", "))
         ),
-        options = list(pageLength = 15, scrollX = TRUE, dom = "tip"),
+        options = list(pageLength = 15, scrollX = TRUE, dom = "tip", deferRender = TRUE),
         rownames = FALSE
       )
     })

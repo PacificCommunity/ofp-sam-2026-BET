@@ -223,6 +223,7 @@ mod_fishery_names_server <- function(input, output, session, rv) {
       options = list(
         pageLength = 25,
         scrollX = TRUE,
+        deferRender = TRUE,
         dom = "frtip",
         columnDefs = list(
           list(className = "dt-center", targets = 0),
@@ -241,7 +242,7 @@ mod_fishery_names_server <- function(input, output, session, rv) {
       return(
         datatable(
           data.frame(Message = paste0("tag_rep_map.R not found for model: ", input$fishery_names_model)),
-          options = list(dom = "t", paging = FALSE),
+          options = list(dom = "t", paging = FALSE, deferRender = TRUE),
           rownames = FALSE
         )
       )
@@ -252,7 +253,7 @@ mod_fishery_names_server <- function(input, output, session, rv) {
       return(
         datatable(
           data.frame(Message = paste0("tag_rep_map.R found but invalid/empty for model: ", input$fishery_names_model)),
-          options = list(dom = "t", paging = FALSE),
+          options = list(dom = "t", paging = FALSE, deferRender = TRUE),
           rownames = FALSE
         )
       )
@@ -264,6 +265,7 @@ mod_fishery_names_server <- function(input, output, session, rv) {
       options = list(
         pageLength = 25,
         scrollX = TRUE,
+        deferRender = TRUE,
         dom = "frtip",
         columnDefs = list(
           list(className = "dt-center", targets = 0),

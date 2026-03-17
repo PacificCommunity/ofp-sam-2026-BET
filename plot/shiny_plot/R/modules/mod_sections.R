@@ -1512,7 +1512,7 @@ mod_harvest_server <- function(input, output, session, rv) {
         weight_tbl,
         rownames = FALSE,
         editable = list(target = "cell", disable = list(columns = c(0, 2, 3))),
-        options = list(dom = "t", paging = FALSE, ordering = FALSE)
+        options = list(dom = "t", paging = FALSE, ordering = FALSE, deferRender = TRUE)
       ))
     }
 
@@ -1530,7 +1530,7 @@ mod_harvest_server <- function(input, output, session, rv) {
     datatable(
       weight_tbl,
       rownames = FALSE,
-      options = list(dom = "t", paging = FALSE, ordering = FALSE)
+      options = list(dom = "t", paging = FALSE, ordering = FALSE, deferRender = TRUE)
     )
   })
 
@@ -1576,7 +1576,7 @@ mod_harvest_server <- function(input, output, session, rv) {
     datatable(
       method_tbl,
       rownames = FALSE,
-      options = list(dom = "t", paging = FALSE, ordering = FALSE, autoWidth = TRUE)
+      options = list(dom = "t", paging = FALSE, ordering = FALSE, autoWidth = TRUE, deferRender = TRUE)
     )
   })
 
@@ -1622,7 +1622,7 @@ mod_harvest_server <- function(input, output, session, rv) {
       tbl,
       rownames = FALSE,
       class = "compact nowrap",
-      options = list(pageLength = 15, scrollX = TRUE, autoWidth = FALSE, order = list(list(0, "asc"), list(1, "asc"))))
+      options = list(pageLength = 15, scrollX = TRUE, autoWidth = FALSE, order = list(list(0, "asc"), list(1, "asc")), deferRender = TRUE))
   })
 
   output$harvest_reference_note <- renderUI({

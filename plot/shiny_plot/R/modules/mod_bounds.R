@@ -178,7 +178,7 @@ mod_bounds_server <- function(input, output, session, rv) {
       )
     
       datatable(overview, 
-                options = list(pageLength = 10, dom = 'tip'), 
+                options = list(pageLength = 10, dom = 'tip', deferRender = TRUE), 
                 rownames = FALSE)
     })
 
@@ -194,7 +194,7 @@ mod_bounds_server <- function(input, output, session, rv) {
       if (nrow(bounds) == 0) {
         return(datatable(
           data.frame(Message = "✓ No bound hits detected"),
-          options = list(dom = "t"),
+          options = list(dom = "t", deferRender = TRUE),
           rownames = FALSE
         ))
       }
@@ -211,7 +211,7 @@ mod_bounds_server <- function(input, output, session, rv) {
 
       datatable(
         summary_tbl,
-        options = list(dom = "t", paging = FALSE, ordering = FALSE),
+        options = list(dom = "t", paging = FALSE, ordering = FALSE, deferRender = TRUE),
         rownames = FALSE
       ) %>%
         formatStyle(
@@ -242,7 +242,7 @@ mod_bounds_server <- function(input, output, session, rv) {
         # Display detailed bound hits
         bounds %>%
           select(Index, Var_Type, Var_name, Estimate, Hit_Type, L_bound, U_bound, Description, Source) %>%
-          datatable(options = list(pageLength = 20, scrollX = TRUE), 
+          datatable(options = list(pageLength = 20, scrollX = TRUE, deferRender = TRUE), 
                     rownames = FALSE) %>%
           formatStyle(
             "Hit_Type",
