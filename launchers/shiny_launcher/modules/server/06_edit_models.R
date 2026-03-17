@@ -347,7 +347,7 @@
         NULL,
         value = if (!is.null(model$prof_fix_indepvar)) model$prof_fix_indepvar else "",
         width = "100%",
-        placeholder = "totpop,recr(10) 또는 15,21"
+        placeholder = "totpop,recr(10) or 15,21"
       ),
       div(class = "param-label", "Profile Fixed values (optional; blank=init par values):"),
       textInput(

@@ -35,7 +35,6 @@ prof_init_map_rds <- Sys.getenv("prof_init_map_rds", "")
 prof_hessian <- tolower(Sys.getenv("prof_hessian", Sys.getenv("likelihood_hessian", Sys.getenv("hessian", "0")))) %in% c("1", "true", "yes", "y")
 prof_fix_indepvar <- Sys.getenv("prof_fix_indepvar", "")
 prof_fix_values <- Sys.getenv("prof_fix_values", "")
-prof_fix_indepvar_file <- Sys.getenv("prof_fix_indepvar_file", "")
 prof_extra_switch <- trimws(Sys.getenv("prof_extra_switch", ""))
 prof_use_quantity_penalty_raw <- trimws(Sys.getenv("prof_use_quantity_penalty", ""))
 prof_use_quantity_penalty <- if (nzchar(prof_use_quantity_penalty_raw)) {
@@ -206,21 +205,12 @@ append_extra_switch <- function(base_switch, extra_switch) {
   paste0(mm[2], new_n, mm[4], " ", paste(extra_toks, collapse = " "))
 }
 
-resolve_indepvar_path <- function(explicit_path, scalar_dir, model_dir, base_dir_abs) {
-  if (nzchar(explicit_path)) {
-    candidates <- unique(c(
-      explicit_path,
-      if (!grepl("^/", explicit_path)) file.path(scalar_dir, explicit_path) else NA_character_,
-      if (!grepl("^/", explicit_path)) file.path(model_dir, explicit_path) else NA_character_,
-      if (!grepl("^/", explicit_path)) file.path(base_dir_abs, explicit_path) else NA_character_
-    ))
-  } else {
-    candidates <- c(
-      file.path(scalar_dir, "indepvar.rpt"),
-      file.path(model_dir, "indepvar.rpt"),
-      file.path(base_dir_abs, "indepvar.rpt")
-    )
-  }
+resolve_indepvar_path <- function(scalar_dir, model_dir, base_dir_abs) {
+  candidates <- c(
+    file.path(scalar_dir, "indepvar.rpt"),
+    file.path(model_dir, "indepvar.rpt"),
+    file.path(base_dir_abs, "indepvar.rpt")
+  )
   candidates <- unique(candidates[is.character(candidates) & nzchar(candidates)])
   hit <- candidates[file.exists(candidates)]
   if (length(hit) == 0) return(NA_character_)
@@ -232,8 +222,7 @@ apply_indepvar_fix <- function(init_par_file,
                                model_dir,
                                base_dir_abs,
                                indepvar_select,
-                               indepvar_values,
-                               indepvar_file = "") {
+                               indepvar_values) {
   tokens <- parse_tokens(indepvar_select)
   if (length(tokens) == 0) {
     return(list(
@@ -245,9 +234,9 @@ apply_indepvar_fix <- function(init_par_file,
     ))
   }
 
-  indepvar_path <- resolve_indepvar_path(indepvar_file, scalar_dir, model_dir, base_dir_abs)
+  indepvar_path <- resolve_indepvar_path(scalar_dir, model_dir, base_dir_abs)
   if (!is.character(indepvar_path) || length(indepvar_path) != 1 || !nzchar(indepvar_path) || !file.exists(indepvar_path)) {
-    stop("prof_fix_indepvar is set but indepvar.rpt was not found. Set prof_fix_indepvar_file if needed.")
+    stop("prof_fix_indepvar is set but indepvar.rpt was not found in scalar/model/base directories.")
   }
 
   init_par_obj <- suppressWarnings(tryCatch(read.MFCLPar(init_par_file), error = function(e) NULL))
@@ -347,7 +336,6 @@ cat("init_from_scalar:", ifelse(is.finite(init_from_scalar), as.character(init_f
 cat("prof_init_map_rds:", ifelse(nzchar(prof_init_map_rds), prof_init_map_rds, "<none>"), "\n")
 cat("prof_fix_indepvar:", ifelse(nzchar(prof_fix_indepvar), prof_fix_indepvar, "<none>"), "\n")
 cat("prof_fix_values:", ifelse(nzchar(prof_fix_values), prof_fix_values, "<none>"), "\n")
-cat("prof_fix_indepvar_file:", ifelse(nzchar(prof_fix_indepvar_file), prof_fix_indepvar_file, "<none>"), "\n")
 cat("prof_extra_switch:", ifelse(nzchar(prof_extra_switch), prof_extra_switch, "<none>"), "\n")
 cat("prof_use_quantity_penalty:", prof_use_quantity_penalty, "\n")
 cat("Profile post-hessian:", prof_hessian, "\n")
@@ -402,8 +390,7 @@ if (nzchar(prof_fix_indepvar)) {
     model_dir = model_dir,
     base_dir_abs = base_dir_abs,
     indepvar_select = prof_fix_indepvar,
-    indepvar_values = prof_fix_values,
-    indepvar_file = prof_fix_indepvar_file
+    indepvar_values = prof_fix_values
   )
   init_par_file <- indepvar_fix_info$par_file
   init_source <- paste0(init_source, "+indepvar_fix")

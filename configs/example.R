@@ -91,10 +91,10 @@ models <- list(
     nsplit="5"
   ),
 
-  # 동시 운용 예시:
-  # - base: 일반 profile 결과 -> model/base/prof/
-  # - base_indepvar: indepvar 고정 profile 결과 -> model/base_indepvar/prof_indepvar/
-  # 같은 입력/스칼라를 써도 shiny_plot에서 두 결과가 함께 표시됩니다.
+  # Simultaneous operation example:
+  # - base: standard profile outputs -> model/base/prof/
+  # - base_indepvar: indepvar-fixed profile outputs -> model/base_indepvar/prof_indepvar/
+  # Even with the same inputs/scalars, both results are shown together in shiny_plot.
   "base_indepvar" = list(
 
     "description"="base + indepvar-fixed profile",
@@ -109,11 +109,11 @@ models <- list(
     ## configuration for profiling
     Reps = "2 2 2 2 2 2",
     scalars = paste0((seq(110, 90, by=-10)), collapse = " "),
-    prof_fix_indepvar = "M(1) M(2)",   # 예: indepvar.rpt Var_name 또는 Index 지정
-    # prof_fix_indepvar = "101 205",    # 예: indepvar.rpt Index 기반 지정
-    prof_fix_values = "0.2 0.2",       # 빈 문자열이면 init/par 값 유지
-    prof_fix_indepvar_file = "",       # 필요 시 indepvar.rpt 경로 지정
-    prof_extra_switch = "",            # 필요 시 추가 switch triplet
+    prof_fix_indepvar = "M(1) M(2)",   # Example: specify indepvar.rpt Var_name or Index
+    # prof_fix_indepvar = "101 205",    # Example: specify using indepvar.rpt Index values
+    prof_fix_values = "0.2 0.2",       # If empty, keeps values from the initial .par
+    prof_fix_indepvar_file = "",       # Optionally set an explicit indepvar.rpt path
+    prof_extra_switch = "",            # Optionally append extra switch triplets
 
     ## retrospective configuration
     retro_peels = "1 2 3",

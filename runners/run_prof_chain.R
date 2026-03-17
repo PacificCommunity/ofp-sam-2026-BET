@@ -50,7 +50,6 @@ chain_anchor <- Sys.getenv("chain_anchor", "")
 init_par_override <- Sys.getenv("init_par_override", "")
 prof_fix_indepvar <- Sys.getenv("prof_fix_indepvar", "")
 prof_fix_values <- Sys.getenv("prof_fix_values", "")
-prof_fix_indepvar_file <- Sys.getenv("prof_fix_indepvar_file", "")
 prof_extra_switch <- Sys.getenv("prof_extra_switch", "")
 
 if (length(chain_scalars) == 0) {
@@ -71,7 +70,6 @@ cat("chain_anchor:", ifelse(nzchar(chain_anchor), chain_anchor, "<none>"), "\n")
 cat("init_par_override:", ifelse(nzchar(init_par_override), init_par_override, "<none>"), "\n")
 cat("prof_fix_indepvar:", ifelse(nzchar(prof_fix_indepvar), prof_fix_indepvar, "<none>"), "\n")
 cat("prof_fix_values:", ifelse(nzchar(prof_fix_values), prof_fix_values, "<none>"), "\n")
-cat("prof_fix_indepvar_file:", ifelse(nzchar(prof_fix_indepvar_file), prof_fix_indepvar_file, "<none>"), "\n")
 cat("prof_extra_switch:", ifelse(nzchar(prof_extra_switch), prof_extra_switch, "<none>"), "\n")
 
 project_root <- tryCatch(normalizePath(getwd(), mustWork = TRUE), error = function(e) getwd())
@@ -94,9 +92,6 @@ for (i in seq_along(chain_scalars)) {
   }
   if (nzchar(prof_fix_values)) {
     env_kv <- c(env_kv, paste0("prof_fix_values=", prof_fix_values))
-  }
-  if (nzchar(prof_fix_indepvar_file)) {
-    env_kv <- c(env_kv, paste0("prof_fix_indepvar_file=", prof_fix_indepvar_file))
   }
   if (nzchar(prof_extra_switch)) {
     env_kv <- c(env_kv, paste0("prof_extra_switch=", prof_extra_switch))

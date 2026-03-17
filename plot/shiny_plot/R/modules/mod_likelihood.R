@@ -47,6 +47,13 @@ mod_likelihood_ui <- function() {
                 "Likelihood: CAL by Year" = "cal_year"
               ),
               selected = "components"
+            ),
+            tabsetPanel(
+              id = "lik_profile_source",
+              type = "pills",
+              selected = "standard",
+              tabPanel("Standard", value = "standard"),
+              tabPanel("Indepvar", value = "indepvar")
             )
           ),
           tabPanel(
@@ -643,6 +650,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     list(
       scenarios = sort(input$lik_scenarios),
       profile_type = current_profile_type(),
+      profile_source = sanitize_profile_type(input$lik_profile_source, allowed = c("standard", "indepvar"), default = "standard"),
       groups = input$lik_groups,
       regions = input$lik_regions,
       split_by_region = isTRUE(input$lik_split_by_region),
@@ -693,6 +701,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     list(
       scenarios = filters$scenarios,
       profile_type = filters$profile_type,
+      profile_source = filters$profile_source,
       regions = filters$regions,
       split_by_region = filters$split_by_region,
       jitter_grad_reference = filters$jitter_grad_reference,
@@ -715,7 +724,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
     filters <- lik_data_filters()
     if (is.null(filters)) return(NULL)
     list(
-      scenarios = filters$scenarios
+      scenarios = filters$scenarios,
+      profile_source = filters$profile_source
     )
   })
   lik_data_cache_key <- reactive({
@@ -724,6 +734,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     key <- list(
       profile_type = filters$profile_type,
+      profile_source = filters$profile_source,
       scenarios = sort(filters$scenarios)
     )
 
@@ -774,6 +785,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     key <- list(
       profile_type = filters$profile_type,
+      profile_source = filters$profile_source,
       scenarios = sort(filters$scenarios),
       facet_ncol = filters$facet_ncol,
       show_influence = isTRUE(filters$show_influence),
@@ -868,7 +880,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }, ignoreInit = FALSE)
 
   observeEvent(
-    list(input$lik_profile_type, input$lik_jitter_type),
+    list(input$lik_profile_type, input$lik_profile_source, input$lik_jitter_type),
     {
       req(rv$data_loaded)
       lik_filters_applied(isolate(lik_filters_current()))
@@ -907,7 +919,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     )
   }, ignoreInit = TRUE)
 
-  observeEvent(list(rv$data_loaded, input$lik_scenarios, input$lik_main_tab, input$lik_profile_type, input$lik_jitter_type), {
+  observeEvent(list(rv$data_loaded, input$lik_scenarios, input$lik_main_tab, input$lik_profile_type, input$lik_profile_source, input$lik_jitter_type), {
     req(rv$data_loaded)
 
     type <- isolate(current_profile_type())
@@ -1975,14 +1987,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     profile_data <- list()
     for (sc in selected) {
-      pd_main <- load_profile_outputs(input$model_dir, sc, profile_subdir = "prof")
-      if (length(pd_main$scales) > 0) {
-        profile_data[[sc]] <- pd_main
+      if (identical(filters$profile_source, "indepvar")) {
+        pd <- load_profile_outputs(input$model_dir, sc, profile_subdir = "prof_indepvar")
+      } else {
+        pd <- load_profile_outputs(input$model_dir, sc, profile_subdir = "prof")
       }
-
-      pd_indep <- load_profile_outputs(input$model_dir, sc, profile_subdir = "prof_indepvar")
-      if (length(pd_indep$scales) > 0) {
-        profile_data[[paste0(sc, " [indepvar]")]] <- pd_indep
+      if (length(pd$scales) > 0) {
+        profile_data[[sc]] <- pd
       }
     }
 
@@ -2308,6 +2319,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     list(
       scenarios = sort(input$lik_scenarios),
       profile_type = current_profile_type(),
+      profile_source = sanitize_profile_type(input$lik_profile_source, allowed = c("standard", "indepvar"), default = "standard"),
       grad_reference = input$lik_jitter_grad_reference,
       converged_max_grad = input$lik_jitter_converged_max_grad
     )
@@ -6353,7 +6365,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       x_labels_fn = quantity_axis_formatter(info$profile_data)
     )
   })
-  observeEvent(list(input$live_update_plots, input$lik_main_tab, input$lik_scenarios, input$lik_profile_type, input$lik_jitter_type,
+  observeEvent(list(input$live_update_plots, input$lik_main_tab, input$lik_scenarios, input$lik_profile_type, input$lik_profile_source, input$lik_jitter_type,
                     input$lik_groups, input$lik_regions, input$lik_split_by_region, input$lik_facet_ncol,
                     input$lik_jitter_grad_reference, input$lik_jitter_converged_only_diagnostics,
                     input$lik_jitter_rel_diff_threshold,
@@ -6415,8 +6427,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
     target_tbl <- profile_target_info_reactive()
     if (is.null(target_tbl) || nrow(target_tbl) == 0) return(NULL)
 
+    source_label <- if (identical(input$lik_profile_source, "indepvar")) {
+      "Indepvar"
+    } else {
+      "Standard"
+    }
+
     box(
-      title = "Profile Target Information",
+      title = paste0("Profile Target Information (", source_label, ")"),
       width = 12,
       solidHeader = TRUE,
       status = "warning",
