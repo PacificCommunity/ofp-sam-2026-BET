@@ -20,8 +20,8 @@ ui <- dashboardPage(
       style = "padding: 10px 15px; min-width: 360px;",
       div(
         style = "font-size: 11px; color: #e8f3ff; margin-bottom: 4px; white-space: nowrap;",
-        "Quick figures: put files in ",
-        tags$code("plot/shiny_plot/www/quick_figures", style = "color:#fff; background:rgba(0,0,0,0.25); padding:1px 4px;")
+        "Quick Reference: put files in ",
+        tags$code("plot/shiny_plot/www/quick_reference", style = "color:#fff; background:rgba(0,0,0,0.25); padding:1px 4px;")
       ),
       pickerInput(
         "quick_fig_select",

@@ -103,7 +103,7 @@ server <- function(input, output, session) {
   # ---------------------------------------------------------------------------
   # Quick Figure Popup (header dropdown)
   # ---------------------------------------------------------------------------
-  quick_fig_dir <- file.path("www", "quick_figures")
+  quick_fig_dir <- file.path("www", "quick_reference")
 
   quick_fig_list <- reactive({
     if (!dir.exists(quick_fig_dir)) dir.create(quick_fig_dir, recursive = TRUE)
@@ -152,7 +152,7 @@ server <- function(input, output, session) {
     if (idx > length(file_list)) idx <- length(file_list)
     file_sel <- file_list[[idx]]
     ext <- tolower(tools::file_ext(file_sel))
-    src_path <- file.path("quick_figures", file_sel)
+    src_path <- file.path("quick_reference", file_sel)
 
     if (ext == "pdf") {
       tagList(
