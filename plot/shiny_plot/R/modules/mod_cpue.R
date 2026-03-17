@@ -65,6 +65,14 @@ mod_cpue_ui <- function() {
             size = 10
           )
         ),
+        conditionalPanel(
+          condition = "input.cpue_view_mode == 'by_scenario'",
+          checkboxInput(
+            "cpue_free_y_panel",
+            "Free y per panel (by model)",
+            value = FALSE
+          )
+        ),
         selectInput("cpue_facet_ncol", "Facet columns:", choices = as.character(1:12), selected = "3"),
         sliderInput(
           "cpue_plot_height",
@@ -128,6 +136,7 @@ mod_cpue_server <- function(input, output, session, rv) {
       fisheries = input$cpue_fisheries,
       view_mode = if (is.null(input$cpue_view_mode)) "overlay" else input$cpue_view_mode,
       metric = if (is.null(input$cpue_metric)) "fits" else input$cpue_metric,
+      free_y_panel = isTRUE(input$cpue_free_y_panel),
       facet_ncol = input$cpue_facet_ncol,
       plot_height = if (is.null(input$cpue_plot_height)) 900 else suppressWarnings(as.integer(input$cpue_plot_height)),
       plot_width = if (is.null(input$cpue_plot_width)) 1200 else suppressWarnings(as.integer(input$cpue_plot_width))
@@ -321,15 +330,31 @@ mod_cpue_server <- function(input, output, session, rv) {
       scenario_colors <- get_scenario_colors(filters$scenarios)
       view_mode <- filters$view_mode
       metric <- filters$metric
+      free_y_panel <- isTRUE(filters$free_y_panel)
       facet_ncol <- suppressWarnings(as.integer(filters$facet_ncol))
       if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 3
       facet_ncol <- min(max(facet_ncol, 1), 12)
 
       if (identical(metric, "residuals") && identical(view_mode, "by_scenario")) {
-        p <- ggplot(cpue_all, aes(x = year_season, y = residual, color = Scenario)) +
+        plot_df <- cpue_all
+        facet_formula <- Scenario ~ fishery_name
+        if (isTRUE(free_y_panel)) {
+          plot_df <- plot_df %>%
+            mutate(scenario_fishery = paste(Scenario, fishery_name, sep = " | "))
+          facet_formula <- ~ scenario_fishery
+        }
+
+        p <- ggplot(plot_df, aes(x = year_season, y = residual, color = Scenario)) +
           geom_hline(yintercept = 0, linetype = "dashed", color = "#666") +
-          geom_point(size = 1.2, alpha = 0.55) +
-          facet_grid(Scenario ~ fishery_name, scales = "free") +
+          geom_point(size = 1.2, alpha = 0.55)
+
+        if (isTRUE(free_y_panel)) {
+          p <- p + facet_wrap(facet_formula, scales = "free_y", ncol = facet_ncol)
+        } else {
+          p <- p + facet_grid(facet_formula, scales = "free")
+        }
+
+        p <- p +
           scale_color_manual(values = scenario_colors) +
           labs(x = "Year + Season", y = "Residual (obs - fit)", title = "CPUE Residuals by Model") +
           theme_bw(base_size = 12) +
@@ -369,10 +394,30 @@ mod_cpue_server <- function(input, output, session, rv) {
       }
 
       if (identical(view_mode, "by_scenario")) {
-        p <- ggplot(cpue_all, aes(x = year_season)) +
-          geom_point(data = obs_points, aes(y = obs), size = 1.8, alpha = 0.5, color = "#6b7280") +
-          geom_line(aes(y = fit, color = Scenario), linewidth = 1.1, alpha = 0.9) +
-          facet_grid(Scenario ~ fishery_name, scales = "free") +
+        plot_df <- cpue_all
+        obs_df <- cpue_all %>%
+          group_by(Scenario, fishery_name, year_season) %>%
+          summarise(obs = first(obs), .groups = "drop")
+        facet_formula <- Scenario ~ fishery_name
+        if (isTRUE(free_y_panel)) {
+          plot_df <- plot_df %>%
+            mutate(scenario_fishery = paste(Scenario, fishery_name, sep = " | "))
+          obs_df <- obs_df %>%
+            mutate(scenario_fishery = paste(Scenario, fishery_name, sep = " | "))
+          facet_formula <- ~ scenario_fishery
+        }
+
+        p <- ggplot(plot_df, aes(x = year_season)) +
+          geom_point(data = obs_df, aes(y = obs), size = 1.8, alpha = 0.5, color = "#6b7280") +
+          geom_line(aes(y = fit, color = Scenario), linewidth = 1.1, alpha = 0.9)
+
+        if (isTRUE(free_y_panel)) {
+          p <- p + facet_wrap(facet_formula, scales = "free_y", ncol = facet_ncol)
+        } else {
+          p <- p + facet_grid(facet_formula, scales = "free")
+        }
+
+        p <- p +
           scale_color_manual(values = scenario_colors) +
           labs(x = "Year + Season", y = "CPUE", title = "CPUE Fits by Model") +
           theme_bw(base_size = 12) +
