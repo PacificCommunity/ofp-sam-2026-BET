@@ -374,16 +374,18 @@ mp_build_model_payload <- function(folder, tag_report_year1 = "auto") {
 
 mp_build_profile_payload <- function(scalar_dir) {
   out_file <- file.path(scalar_dir, "test_plot_output")
-  if (!file.exists(out_file)) return(NULL)
+  has_test_plot_output <- file.exists(out_file)
   info_file <- file.path(scalar_dir, "info.rds")
   info_out <- if (file.exists(info_file)) mp_safe(readRDS(info_file)) else NULL
   par_file <- mp_final_par(scalar_dir)
+  scalar_label <- stringr::str_extract(basename(scalar_dir), "[-+]?[0-9]*\\.?[0-9]+$")
 
   list(
     version = "v1",
     created_at = as.character(Sys.time()),
     scalar_dir = scalar_dir,
-    scalar = suppressWarnings(as.numeric(sub(".*?(\\d+)$", "\\1", basename(scalar_dir)))),
+    scalar = suppressWarnings(as.numeric(scalar_label)),
+    has_test_plot_output = has_test_plot_output,
     quantity_label = mp_safe(info_out$quantity_label),
     reference_quantity = suppressWarnings(as.numeric(info_out$reference_quantity)),
     target_quantity = suppressWarnings(as.numeric(info_out$target_quantity)),
@@ -409,8 +411,8 @@ mp_build_profile_payload <- function(scalar_dir) {
     hessian_reliability = if (!is.null(info_out$hessian$reliability)) as.character(info_out$hessian$reliability) else NA_character_,
     hessian_n_negative = if (!is.null(info_out$hessian$n_negative_eigenvalues)) suppressWarnings(as.integer(info_out$hessian$n_negative_eigenvalues)) else NA_integer_,
     hessian_n_total = if (!is.null(info_out$hessian$n_total_eigenvalues)) suppressWarnings(as.integer(info_out$hessian$n_total_eigenvalues)) else NA_integer_,
-    lik_out = mp_safe(read.MFCLLikelihood(out_file)),
-    lik_raw = mp_safe(readLines(out_file))
+    lik_out = if (has_test_plot_output) mp_safe(read.MFCLLikelihood(out_file)) else NULL,
+    lik_raw = if (has_test_plot_output) mp_safe(readLines(out_file)) else NULL
   )
 }
 

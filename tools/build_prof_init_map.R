@@ -9,10 +9,10 @@ parse_scalar_dirs <- function(prof_dir) {
   dirs <- list.dirs(prof_dir, recursive = FALSE, full.names = TRUE)
   if (length(dirs) == 0) return(data.frame())
   scalar_names <- basename(dirs)
-  scalars <- suppressWarnings(as.integer(sub("^scalar_", "", scalar_names)))
+  scalars <- suppressWarnings(as.numeric(sub("^scalar_", "", scalar_names)))
   keep <- is.finite(scalars)
   data.frame(
-    scalar = as.integer(scalars[keep]),
+    scalar = as.numeric(scalars[keep]),
     scalar_dir = dirs[keep],
     stringsAsFactors = FALSE
   )

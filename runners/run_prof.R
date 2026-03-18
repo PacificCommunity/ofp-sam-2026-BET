@@ -142,14 +142,15 @@ resolve_init_par <- function(init_par_override, init_from_scalar, scalar_dir, pr
 
   # 2) Donor scalar final par from model_dir/prof/scalar_<donor>
   if (is.finite(init_from_scalar)) {
+    donor_scalar_label <- format(init_from_scalar, scientific = FALSE, trim = TRUE)
     donor_lines <- extract_donor_par_lines(init_map_entries, init_from_scalar)
     if (length(donor_lines) > 0) {
-      out <- file.path(scalar_dir, paste0("warm_init_from_rds_", as.integer(round(init_from_scalar)), ".par"))
+      out <- file.path(scalar_dir, paste0("warm_init_from_rds_", donor_scalar_label, ".par"))
       writeLines(donor_lines, con = out, useBytes = TRUE)
-      return(list(path = out, source = "rds", donor = as.integer(round(init_from_scalar))))
+      return(list(path = out, source = "rds", donor = init_from_scalar))
     }
 
-    donor_dir <- file.path(prof_dir, paste0("scalar_", as.integer(round(init_from_scalar))))
+    donor_dir <- file.path(prof_dir, paste0("scalar_", donor_scalar_label))
     donor_payload <- file.path(donor_dir, "profile_payload.rds")
     if (file.exists(donor_payload)) {
       payload_obj <- tryCatch(readRDS(donor_payload), error = function(e) NULL)
@@ -158,17 +159,17 @@ resolve_init_par <- function(init_par_override, init_from_scalar, scalar_dir, pr
         payload_lines <- as.character(payload_obj$par_lines)
       }
       if (!is.null(payload_lines) && length(payload_lines) > 0) {
-        out <- file.path(scalar_dir, paste0("warm_init_from_payload_", as.integer(round(init_from_scalar)), ".par"))
+        out <- file.path(scalar_dir, paste0("warm_init_from_payload_", donor_scalar_label, ".par"))
         writeLines(payload_lines, con = out, useBytes = TRUE)
-        return(list(path = out, source = "payload", donor = as.integer(round(init_from_scalar))))
+        return(list(path = out, source = "payload", donor = init_from_scalar))
       }
     }
 
     donor_par <- mp_final_par(donor_dir)
     if (!is.null(donor_par) && file.exists(donor_par)) {
-      out <- file.path(scalar_dir, paste0("warm_init_from_scalar_", as.integer(round(init_from_scalar)), ".par"))
+      out <- file.path(scalar_dir, paste0("warm_init_from_scalar_", donor_scalar_label, ".par"))
       file.copy(donor_par, out, overwrite = TRUE)
-      return(list(path = out, source = "neighbor", donor = as.integer(round(init_from_scalar))))
+      return(list(path = out, source = "neighbor", donor = init_from_scalar))
     }
     warning("init_from_scalar set but donor final par not found in: ", donor_dir, " -> fallback")
   }

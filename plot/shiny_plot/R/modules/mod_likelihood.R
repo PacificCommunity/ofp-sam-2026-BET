@@ -774,7 +774,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       profile_type = filters$profile_type,
       profile_source = filters$profile_source,
       indepvar_profile_set = filters$indepvar_profile_set,
-      scenarios = sort(filters$scenarios)
+      scenarios = sort(filters$scenarios),
+      profile_files_cache = lik_profile_files_cache_key()
     )
 
     if (identical(filters$profile_type, "jitter")) {
@@ -826,6 +827,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       profile_type = filters$profile_type,
       profile_source = filters$profile_source,
       scenarios = sort(filters$scenarios),
+      profile_files_cache = lik_profile_files_cache_key(),
       x_axis_label_override = filters$x_axis_label_override,
       facet_ncol = filters$facet_ncol,
       show_influence = isTRUE(filters$show_influence),
@@ -1791,13 +1793,19 @@ mod_likelihood_server <- function(input, output, session, rv) {
     tryCatch(readRDS(info_file), error = function(e) NULL)
   }
 
+  scalar_suffix_pattern <- "[-+]?[0-9]*\\.?[0-9]+$"
+  scalar_dir_pattern <- paste0("(scalar|scaler)_", scalar_suffix_pattern)
+  extract_scalar_suffix <- function(x) {
+    stringr::str_extract(basename(x), scalar_suffix_pattern)
+  }
+
   discover_indepvar_profile_sets <- function(model_dir, scenario) {
     root_dir <- file.path(model_dir, scenario, "prof_indepvar")
     if (!dir.exists(root_dir)) return(data.frame())
 
     rows <- list()
     root_children <- list.dirs(root_dir, full.names = TRUE, recursive = FALSE)
-    root_scalar_dirs <- grep("(scalar|scaler)_\\d+$", root_children, value = TRUE)
+    root_scalar_dirs <- grep(scalar_dir_pattern, root_children, value = TRUE)
     if (length(root_scalar_dirs) > 0) {
       rows[[length(rows) + 1L]] <- data.frame(
         key = "__legacy__",
@@ -1808,10 +1816,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     child_dirs <- root_children[dir.exists(root_children)]
-    child_dirs <- child_dirs[!grepl("(scalar|scaler)_\\d+$", basename(child_dirs))]
+    child_dirs <- child_dirs[!grepl(scalar_dir_pattern, basename(child_dirs))]
     for (child in child_dirs) {
       child_scalar_dirs <- list.dirs(child, full.names = TRUE, recursive = FALSE)
-      child_scalar_dirs <- grep("(scalar|scaler)_\\d+$", child_scalar_dirs, value = TRUE)
+      child_scalar_dirs <- grep(scalar_dir_pattern, child_scalar_dirs, value = TRUE)
       if (length(child_scalar_dirs) == 0) next
       meta <- read_profile_set_info(child)
       label <- if (is.list(meta) && has_text_scalar(meta$profile_set_label)) {
@@ -1905,7 +1913,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     folder <- file.path(model_dir, scenario)
     prof_dir <- resolve_profile_dir(model_dir, scenario, profile_subdir = profile_subdir, profile_set = profile_set)
     scalar_dirs <- list.dirs(prof_dir, full.names = TRUE, recursive = FALSE)
-    scalar_dirs <- grep("(scalar|scaler)_\\d+$", scalar_dirs, value = TRUE)
+    scalar_dirs <- grep(scalar_dir_pattern, scalar_dirs, value = TRUE)
 
     if (length(scalar_dirs) > 0) {
       payload_scalar_value <- function(x, fallback = NA_real_) {
@@ -1917,7 +1925,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
         if (!is.finite(val) && !is.null(x$scaler)) {
           val <- suppressWarnings(as.numeric(x$scaler))
         }
-        if (!is.finite(val)) val <- fallback
+        if (!is.finite(val)) return(fallback)
+        if (is.finite(fallback) && !isTRUE(all.equal(val, fallback, tolerance = 1e-8))) {
+          return(fallback)
+        }
         val
       }
 
@@ -1925,17 +1936,16 @@ mod_likelihood_server <- function(input, output, session, rv) {
       has_payload <- file.exists(payload_files)
 
       if (any(has_payload)) {
-        scalar_keys <- basename(scalar_dirs[has_payload]) %>% str_extract("\\d+$")
+        scalar_keys <- extract_scalar_suffix(scalar_dirs[has_payload])
         payload_pairs <- Map(
           function(path, key) {
             obj <- tryCatch(readRDS(path), error = function(e) NULL)
-            if (is.null(obj)) return(NULL)
+            if (!is.list(obj)) obj <- list()
             list(payload = obj, key = key)
           },
           payload_files[has_payload],
           scalar_keys
         )
-        payload_pairs <- Filter(Negate(is.null), payload_pairs)
         payloads <- lapply(payload_pairs, function(x) x$payload)
         payload_keys <- vapply(payload_pairs, function(x) x$key, character(1))
         info_files <- file.path(scalar_dirs[has_payload], "info.rds")
@@ -1951,11 +1961,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
           }, numeric(1)))
           lik_out <- setNames(map(payloads, "lik_out"), existing_scales)
           lik_raw <- setNames(map(payloads, "lik_raw"), existing_scales)
-          max_grad <- setNames(vapply(payloads, function(x) suppressWarnings(as.numeric(x$max_grad)), numeric(1)), existing_scales)
-          obj_fun <- setNames(vapply(payloads, function(x) suppressWarnings(as.numeric(x$obj_fun)), numeric(1)), existing_scales)
-          actual_quantity <- setNames(vapply(payloads, function(x) suppressWarnings(as.numeric(x$actual_quantity)), numeric(1)), existing_scales)
-          target_quantity <- setNames(vapply(payloads, function(x) suppressWarnings(as.numeric(x$target_quantity)), numeric(1)), existing_scales)
-          target_rel_err <- setNames(vapply(payloads, function(x) suppressWarnings(as.numeric(x$target_rel_err)), numeric(1)), existing_scales)
+          max_grad <- setNames(vapply(payloads, function(x) safe_payload_numeric(x, "max_grad"), numeric(1)), existing_scales)
+          obj_fun <- setNames(vapply(payloads, function(x) safe_payload_numeric(x, "obj_fun"), numeric(1)), existing_scales)
+          actual_quantity <- setNames(vapply(payloads, function(x) safe_payload_numeric(x, "actual_quantity"), numeric(1)), existing_scales)
+          target_quantity <- setNames(vapply(payloads, function(x) safe_payload_numeric(x, "target_quantity"), numeric(1)), existing_scales)
+          target_rel_err <- setNames(vapply(payloads, function(x) safe_payload_numeric(x, "target_rel_err"), numeric(1)), existing_scales)
           af172_vals <- suppressWarnings(vapply(payloads, function(x) safe_payload_numeric(x, "af172"), numeric(1)))
           af172 <- if (length(af172_vals) > 0) af172_vals[1] else NA_real_
           af173_vals <- suppressWarnings(vapply(payloads, function(x) safe_payload_numeric(x, "af173"), numeric(1)))
@@ -2166,7 +2176,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           hessian_neg_by_scalar <- list()
         }
       } else {
-        scales <- basename(scalar_dirs) %>% str_extract("\\d+$")
+        scales <- extract_scalar_suffix(scalar_dirs)
         output_files <- file.path(scalar_dirs, "test_plot_output")
         existing_files <- output_files[file.exists(output_files)]
         existing_scales <- scales[file.exists(output_files)]
@@ -2212,10 +2222,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
         hessian_neg_by_scalar <- list()
       }
     } else {
-      output_files <- list.files(folder, pattern = "^test_plot_output_\\d+$", full.names = TRUE)
+      output_files <- list.files(folder, pattern = paste0("^test_plot_output_", scalar_suffix_pattern), full.names = TRUE)
 
       if (length(output_files) > 0) {
-        scales <- basename(output_files) %>% str_extract("\\d+$")
+        scales <- extract_scalar_suffix(output_files)
         lik_out <- setNames(map(output_files, read.MFCLLikelihood), scales)
         lik_raw <- setNames(map(output_files, readLines), scales)
         existing_scales <- scales
@@ -2295,6 +2305,40 @@ mod_likelihood_server <- function(input, output, session, rv) {
     )
   }
 
+  lik_profile_files_cache_key <- reactive({
+    filters <- lik_profile_output_filters()
+    req(input$model_dir, filters)
+
+    scenarios <- unique(as.character(filters$scenarios))
+    scenarios <- scenarios[nzchar(scenarios)]
+    if (length(scenarios) == 0) return(NULL)
+
+    roots <- vapply(scenarios, function(sc) {
+      if (identical(filters$profile_source, "indepvar")) {
+        resolve_profile_dir(input$model_dir, sc, profile_subdir = "prof_indepvar", profile_set = filters$indepvar_profile_set)
+      } else {
+        file.path(input$model_dir, sc, "prof")
+      }
+    }, character(1))
+    roots <- unique(roots[dir.exists(roots)])
+    if (length(roots) == 0) return(NULL)
+
+    files <- unique(unlist(lapply(roots, function(root) {
+      c(
+        root,
+        list.files(root, recursive = TRUE, full.names = TRUE, include.dirs = TRUE)
+      )
+    }), use.names = FALSE))
+    files <- files[file.exists(files) | dir.exists(files)]
+    if (length(files) == 0) return(NULL)
+
+    info <- file.info(files)
+    paste(
+      paste(files, format(info$mtime, "%Y-%m-%d %H:%M:%OS6"), info$size, sep = "::"),
+      collapse = "|"
+    )
+  })
+
   profile_outputs_reactive <- reactive({
     filters <- lik_profile_output_filters()
     req(rv$data_loaded, input$model_dir, filters, filters$scenarios)
@@ -2321,7 +2365,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
     profile_outputs_reactive,
     rv$data_loaded,
     input$model_dir,
-    lik_profile_output_filters()
+    lik_profile_output_filters(),
+    lik_profile_files_cache_key()
   )
 
   profile_target_info_reactive <- reactive({
@@ -2447,7 +2492,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
   profile_target_info_reactive <- bindCache(
     profile_target_info_reactive,
     input$model_dir,
-    lik_data_filters()
+    lik_data_filters(),
+    lik_profile_files_cache_key()
   )
 
   build_jitter_seed_status_tables <- function(scenarios, cutoff = 0.001) {
@@ -2835,7 +2881,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
   profile_gradient_table_reactive <- bindCache(
     profile_gradient_table_reactive,
     input$model_dir,
-    lik_data_filters()
+    lik_data_filters(),
+    lik_profile_files_cache_key()
   )
 
   # Calculate likelihood change from minimum
