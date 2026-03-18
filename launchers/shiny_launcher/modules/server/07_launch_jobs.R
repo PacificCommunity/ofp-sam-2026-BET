@@ -352,6 +352,9 @@
     }
 
     job_env <- model_env_list
+    # Profile sets are launch-time metadata, not runtime env vars.
+    # Remove to avoid passing large/non-scalar values to env.
+    job_env$profile_sets <- NULL
     batch_suffix <- ""
     profile_tag <- if (identical(spec$job_type, "prof") || identical(spec$job_type, "prof_chain")) {
       sanitize_profile_job_tag(first_scalar_string(job_env$profile_set_tag, default = first_scalar_string(job_env$profile_set_name, default = "")))
@@ -1779,6 +1782,11 @@
       stop(paste("Model env not found for", spec$model_name))
     }
     job_env <- list2env(model_env_list, parent = emptyenv())
+    # Profile sets are launch-time metadata, not runtime env vars.
+    # Remove to avoid passing large/non-scalar values to CondorBox.
+    if (exists("profile_sets", envir = job_env, inherits = FALSE)) {
+      rm(profile_sets, envir = job_env)
+    }
     job_env$DOCKER_IMAGE <- common_params$docker_image
     remote_dir_suffix <- spec$model_name
     batch_suffix <- ""

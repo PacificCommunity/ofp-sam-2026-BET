@@ -14,14 +14,7 @@ models <- list(
                           sep = " "),
     program_path = "mfcl/exe/mfclo64_2026_02_04_vsn2278",  # Model-specific path
     base_dir = "mfcl/inputs/2023_rep",                   # Model-specific dir
-    
-    ## configuration for profiling
-    Reps = "1 1 1 1 1 1",
-    scalars = paste0((seq(140, 60, by=-5)), collapse = " "),
-    Af172 = "0",
-    Af173 = "0",
-    Af174 = "0",
-    
+
     ## retrospective configuration
     retro_peels = "1 2 3 4 5 6 7",
     
@@ -57,15 +50,20 @@ models <- list(
     #    prof_hessian, prof_fix_* ...)
     profile_sets = list(
       standard = list(
-        enabled = "FALSE",
+        enabled = "TRUE",
+        Reps = "15 25 25 1000 1000 500",
+        scalars = paste0(seq(140, 60, by = -5), collapse = " "),
+        Af172 = "0",
+        Af173 = "0",
+        Af174 = "0",
         prof_fix_indepvar = "",
         prof_fix_values = "",
         prof_fix_indepvar_file = "",
-        scalars = paste0(seq(140, 60, by = -5), collapse = " "),
-        prof_extra_switch = "1 121 0"
+        prof_extra_switch = ""
       ),
       age_pars_5 = list(
         enabled = "TRUE",
+        Reps = "1 1 1 1 1 1",
         prof_fix_indepvar = "age_pars(5)",
         prof_fix_values = "",
         prof_fix_indepvar_file = "",
@@ -75,7 +73,8 @@ models <- list(
       )
       # ,vb_coff_1 = list(
       #   enabled = "FALSE",
-      #   prof_fix_indepvar = "vb_coff_1",
+      #   Reps = "1 1 1 1 1 1",
+      #   prof_fix_indepvar = "vb_coff(1)",
       #   prof_fix_values = "",
       #   prof_fix_indepvar_file = "",
       #   scalars = paste0(seq(110, 90, by = -2.5), collapse = " "),

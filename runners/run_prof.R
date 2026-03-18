@@ -530,8 +530,16 @@ if (isTRUE(prof_use_quantity_penalty)) {
       stdout = "",
       stderr = ""
     )
-    if (!is.numeric(ref_status) || length(ref_status) != 1 || is.na(ref_status) || as.integer(ref_status) != 0L) {
-      stop("Reference quantity refresh failed (status=", ref_status, ").")
+    # MFCL may emit non-zero status even when avg_bio/relative_depletion is produced.
+    # Treat missing reference output as the true failure condition.
+    if (!file.exists(reference_quantity_path)) {
+      stop(
+        "Reference quantity refresh did not create ",
+        basename(reference_quantity_path),
+        " (status=",
+        ref_status,
+        ")."
+      )
     }
   }
 
