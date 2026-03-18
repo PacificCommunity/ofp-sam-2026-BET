@@ -367,6 +367,8 @@ apply_indepvar_fix <- function(init_par_file,
     Var_name = report$Var_name[selected_rows],
     value_before = current_values[selected_rows],
     value_after = target_values,
+    L_bound = suppressWarnings(as.numeric(report$L_bound[selected_rows])),
+    U_bound = suppressWarnings(as.numeric(report$U_bound[selected_rows])),
     stringsAsFactors = FALSE
   )
 
@@ -482,7 +484,9 @@ if (nzchar(prof_fix_indepvar)) {
       list(
         Index = indepvar_fix_info$details$Index,
         Var_name = indepvar_fix_info$details$Var_name,
-        value_after = indepvar_fix_info$details$value_after
+        value_after = indepvar_fix_info$details$value_after,
+        L_bound = indepvar_fix_info$details$L_bound,
+        U_bound = indepvar_fix_info$details$U_bound
       ),
       file = indepvar_fix_info$lock_rds,
       compress = "xz"
