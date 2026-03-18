@@ -2769,12 +2769,43 @@ mod_likelihood_server <- function(input, output, session, rv) {
       pd <- profile_data[[sc]]
       if (length(pd$scales) == 0) next
 
+      fixed_value_by_scale <- suppressWarnings(as.numeric(unlist(pd$fixed_indepvar_value, use.names = TRUE)))
+      fixed_scale_vals <- suppressWarnings(as.numeric(names(unlist(pd$fixed_indepvar_value, use.names = TRUE))))
+      finite_anchor <- is.finite(fixed_scale_vals) & is.finite(fixed_value_by_scale)
+      fixed_scale_vals <- fixed_scale_vals[finite_anchor]
+      fixed_value_by_scale <- fixed_value_by_scale[finite_anchor]
+      anchor_scalar <- NA_real_
+      anchor_value <- NA_real_
+      if (length(fixed_scale_vals) > 0) {
+        idx_100 <- which(abs(fixed_scale_vals - 100) < 1e-8)
+        if (length(idx_100) > 0) {
+          anchor_scalar <- fixed_scale_vals[[idx_100[[1]]]]
+          anchor_value <- fixed_value_by_scale[[idx_100[[1]]]]
+        } else {
+          idx_near <- which.min(abs(fixed_scale_vals - 100))
+          anchor_scalar <- fixed_scale_vals[[idx_near]]
+          anchor_value <- fixed_value_by_scale[[idx_near]]
+        }
+      }
+
       for (scl in pd$scales) {
+        scl_num <- suppressWarnings(as.numeric(scl))
         grad_val <- pd$max_grad[[as.character(scl)]]
         obj_fun <- pd$obj_fun[[as.character(scl)]]
         actual_quantity <- pd$actual_quantity[[as.character(scl)]]
         target_quantity <- pd$target_quantity[[as.character(scl)]]
         target_rel_err <- pd$target_rel_err[[as.character(scl)]]
+        indepvar_x_value <- if (!is.null(pd$fixed_indepvar_value)) {
+          suppressWarnings(as.numeric(pd$fixed_indepvar_value[[as.character(scl)]]))
+        } else {
+          NA_real_
+        }
+        indepvar_scaled_anchor_value <- if (is.finite(anchor_scalar) && is.finite(anchor_value) && is.finite(scl_num) && abs(anchor_scalar) > .Machine$double.eps) {
+          anchor_value * scl_num / anchor_scalar
+        } else {
+          NA_real_
+        }
+        indepvar_mode <- isTRUE(pd$indepvar_fix_applied)
         h_status <- if (!is.null(pd$profile_hessian_status_by_scalar)) pd$profile_hessian_status_by_scalar[[as.character(scl)]] else NA
         h_neg <- if (!is.null(pd$profile_hessian_neg_by_scalar)) pd$profile_hessian_neg_by_scalar[[as.character(scl)]] else NA
         h_requested <- if (!is.null(pd$profile_hessian_requested_by_scalar)) pd$profile_hessian_requested_by_scalar[[as.character(scl)]] else FALSE
@@ -2787,6 +2818,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
           target_rel_err = suppressWarnings(as.numeric(target_rel_err)),
           obj_fun = suppressWarnings(as.numeric(obj_fun)),
           max_grad = suppressWarnings(as.numeric(grad_val)),
+          indepvar_x_value = indepvar_x_value,
+          indepvar_scaled_anchor_value = indepvar_scaled_anchor_value,
+          indepvar_mode = indepvar_mode,
           hessian_requested = isTRUE(h_requested),
           hessian_attempted = isTRUE(h_attempted),
           hessian_status = if (is.null(h_status) || !nzchar(as.character(h_status))) NA_character_ else as.character(h_status),
@@ -2801,19 +2835,34 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     out %>%
       mutate(
-        actual_quantity_kmt = actual_quantity / 1000,
+        actual_quantity_kmt = dplyr::case_when(
+          is.finite(actual_quantity) ~ actual_quantity / 1000,
+          indepvar_mode %in% TRUE & is.finite(indepvar_x_value) ~ indepvar_x_value,
+          indepvar_mode %in% TRUE & is.finite(indepvar_scaled_anchor_value) ~ indepvar_scaled_anchor_value,
+          TRUE ~ NA_real_
+        ),
         target_quantity_kmt = target_quantity / 1000,
         target_gap_pct = target_rel_err * 100,
         obj_fun = ifelse(is.finite(obj_fun), obj_fun, NA_real_),
         max_grad = ifelse(is.finite(max_grad), max_grad, NA_real_)
       ) %>%
+      group_by(scenario) %>%
+      mutate(
+        delta_obj_fun = if (any(is.finite(obj_fun))) {
+          obj_fun - min(obj_fun[is.finite(obj_fun)], na.rm = TRUE)
+        } else {
+          NA_real_
+        }
+      ) %>%
+      ungroup() %>%
       select(
         Model = scenario,
         Scalar = scalar,
-        `Actual Quantity (k MT)` = actual_quantity_kmt,
-        `Target Quantity (k MT)` = target_quantity_kmt,
+        `Actual Quantity` = actual_quantity_kmt,
+        `Target Quantity` = target_quantity_kmt,
         `Gap (%)` = target_gap_pct,
         `Objective Function` = obj_fun,
+        `Δ Objective` = delta_obj_fun,
         `Max Gradient` = max_grad,
         `Hessian.Requested` = hessian_requested,
         `Hessian.Attempted` = hessian_attempted,
@@ -6546,14 +6595,26 @@ mod_likelihood_server <- function(input, output, session, rv) {
       }
 
       influence_comp_df <- influence_data %>%
-        mutate(group_val = as.character(.data[[group_col]]))
+        mutate(group_val = as.character(.data[[group_col]])) %>%
+        group_by(scenario, scalar, group_val) %>%
+        summarise(change = sum(change, na.rm = TRUE), .groups = "drop")
 
       if (nrow(influence_comp_df) == 0) {
         return(top_plot)
       }
 
       scalar_vals <- sort(unique(influence_comp_df$scalar[is.finite(influence_comp_df$scalar)]))
-      bar_width <- if (length(scalar_vals) >= 2) max(1, 0.8 * min(diff(scalar_vals))) else 50
+      bar_width <- if (length(scalar_vals) >= 2) {
+        diffs <- diff(scalar_vals)
+        diffs <- diffs[is.finite(diffs) & diffs > 0]
+        if (length(diffs) == 0) {
+          0.8
+        } else {
+          max(0.05, 0.8 * min(diffs))
+        }
+      } else {
+        0.8
+      }
 
       top_non_total_groups <- setdiff(unique(as.character(data[[group_col]])), "Total")
       if (length(top_non_total_groups) == 0) {
