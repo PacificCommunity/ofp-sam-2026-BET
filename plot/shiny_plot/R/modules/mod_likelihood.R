@@ -57,11 +57,18 @@ mod_likelihood_ui <- function() {
             ),
             conditionalPanel(
               condition = "input.lik_profile_source == 'indepvar'",
-              selectInput(
-                "lik_indepvar_profile_set",
-                "Indepvar profile set:",
-                choices = NULL,
-                selected = NULL
+              tagList(
+                selectInput(
+                  "lik_indepvar_profile_set",
+                  "Indepvar profile set:",
+                  choices = NULL,
+                  selected = NULL
+                ),
+                textInput(
+                  "lik_x_axis_label_override",
+                  "X-axis label override:",
+                  value = ""
+                )
               )
             )
           ),
@@ -570,6 +577,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
     value
   }
+
+  has_text_scalar <- function(x) {
+    if (is.null(x) || length(x) == 0) return(FALSE)
+    val <- as.character(x[[1]])
+    if (!is.character(val) || length(val) == 0 || is.na(val)) return(FALSE)
+    nzchar(trimws(val))
+  }
   sanitize_plot_kind <- function(x, default = "piner") {
     sanitize_profile_type(
       x,
@@ -660,7 +674,22 @@ mod_likelihood_server <- function(input, output, session, rv) {
       scenarios = sort(input$lik_scenarios),
       profile_type = current_profile_type(),
       profile_source = sanitize_profile_type(input$lik_profile_source, allowed = c("standard", "indepvar"), default = "standard"),
-      indepvar_profile_set = if (!is.null(input$lik_indepvar_profile_set) && nzchar(trimws(input$lik_indepvar_profile_set))) trimws(input$lik_indepvar_profile_set) else NA_character_,
+      indepvar_profile_set = {
+        if (!has_text_scalar(input$lik_indepvar_profile_set)) {
+          NA_character_
+        } else {
+          raw_set <- trimws(as.character(input$lik_indepvar_profile_set[[1]]))
+          if (!nzchar(raw_set) || identical(raw_set, "__none__")) NA_character_ else raw_set
+        }
+      },
+      x_axis_label_override = {
+        if (!has_text_scalar(input$lik_x_axis_label_override)) {
+          NA_character_
+        } else {
+          raw_label <- trimws(as.character(input$lik_x_axis_label_override[[1]]))
+          if (!nzchar(raw_label)) NA_character_ else raw_label
+        }
+      },
       groups = input$lik_groups,
       regions = input$lik_regions,
       split_by_region = isTRUE(input$lik_split_by_region),
@@ -700,7 +729,6 @@ mod_likelihood_server <- function(input, output, session, rv) {
   })
   lik_filters_applied <- reactiveVal(NULL)
   lik_last_initialized_nonce <- reactiveVal(0)
-  lik_pending_group_apply <- reactiveVal(FALSE)
   lik_apply_nonce <- reactiveVal(0)
   lik_filters <- reactive({
     lik_filters_applied()
@@ -800,6 +828,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       profile_type = filters$profile_type,
       profile_source = filters$profile_source,
       scenarios = sort(filters$scenarios),
+      x_axis_label_override = filters$x_axis_label_override,
       facet_ncol = filters$facet_ncol,
       show_influence = isTRUE(filters$show_influence),
       plot_height = sanitize_integer_scalar(filters$plot_height, 900L),
@@ -887,9 +916,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
     clear_jitter_param_cache()
   }, ignoreInit = FALSE)
 
+  observeEvent(list(input$lik_profile_source, input$lik_indepvar_profile_set), {
+    clear_fishery_diag_cache()
+  }, ignoreInit = TRUE)
+
   observeEvent(input$lik_apply_filters, {
-    lik_filters_applied(isolate(lik_filters_current()))
-    lik_apply_nonce(isolate(lik_apply_nonce()) + 1)
+    session$onFlushed(function() {
+      lik_filters_applied(isolate(lik_filters_current()))
+      lik_apply_nonce(isolate(lik_apply_nonce()) + 1)
+    }, once = TRUE)
   }, ignoreInit = FALSE)
 
   observeEvent(
@@ -1015,7 +1050,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
     df
   }
 
-  quantity_axis_label <- function(profile_data) {
+  quantity_axis_label <- function(profile_data, override = NA_character_) {
+    if (is.character(override) && length(override) == 1 && !is.na(override) && nzchar(trimws(override))) {
+      return(trimws(override))
+    }
+
     indepvar_names <- unique(unlist(lapply(profile_data, function(x) {
       nm <- x$fixed_indepvar_name
       nm <- as.character(nm)
@@ -1085,6 +1124,41 @@ mod_likelihood_server <- function(input, output, session, rv) {
       val <- suppressWarnings(as.numeric(scl))
     }
     val
+  }
+
+  profile_entry_signature <- function(profile_entry, scales = NULL) {
+    if (is.null(profile_entry) || !is.list(profile_entry)) return("")
+
+    scale_keys <- scales
+    if (is.null(scale_keys) || length(scale_keys) == 0) {
+      scale_keys <- profile_entry$scales
+    }
+    scale_keys <- as.character(scale_keys)
+    scale_keys <- scale_keys[nzchar(scale_keys)]
+    scale_keys <- unique(scale_keys)
+    scale_keys <- sort(scale_keys)
+
+    scale_vals <- if (length(scale_keys) == 0) {
+      character(0)
+    } else {
+      vapply(scale_keys, function(sc) {
+        qv <- suppressWarnings(as.numeric(scalar_quantity(profile_entry, sc)))
+        if (is.finite(qv)) sprintf("%.10g", qv) else "NA"
+      }, character(1))
+    }
+
+    source_tag <- if (isTRUE(profile_entry$indepvar_fix_applied)) "indepvar" else "standard"
+    set_tag <- if (has_text_scalar(profile_entry$profile_set_key)) trimws(as.character(profile_entry$profile_set_key[[1]])) else ""
+    fixed_name_tag <- if (has_text_scalar(profile_entry$fixed_indepvar_name)) trimws(as.character(profile_entry$fixed_indepvar_name[[1]])) else ""
+
+    paste(
+      source_tag,
+      set_tag,
+      fixed_name_tag,
+      paste(scale_keys, collapse = ","),
+      paste(scale_vals, collapse = ","),
+      sep = "::"
+    )
   }
 
   safe_payload_numeric <- function(x, field) {
@@ -1742,12 +1816,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
       child_scalar_dirs <- grep("(scalar|scaler)_\\d+$", child_scalar_dirs, value = TRUE)
       if (length(child_scalar_dirs) == 0) next
       meta <- read_profile_set_info(child)
-      label <- if (is.list(meta) && !is.null(meta$profile_set_label) && nzchar(as.character(meta$profile_set_label))) {
+      label <- if (is.list(meta) && has_text_scalar(meta$profile_set_label)) {
         as.character(meta$profile_set_label)
       } else {
         basename(child)
       }
-      key <- if (is.list(meta) && !is.null(meta$profile_set_key) && nzchar(as.character(meta$profile_set_key))) {
+      key <- if (is.list(meta) && has_text_scalar(meta$profile_set_key)) {
         as.character(meta$profile_set_key)
       } else {
         basename(child)
@@ -1780,7 +1854,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       return(file.path(model_dir, scenario, "prof_indepvar"))
     }
 
-    if (is.character(profile_set) && length(profile_set) == 1 && nzchar(profile_set) && any(sets$key == profile_set)) {
+    if (is.character(profile_set) && length(profile_set) == 1 && !is.na(profile_set) && nzchar(profile_set) && any(sets$key == profile_set, na.rm = TRUE)) {
       return(sets$path[match(profile_set, sets$key)])
     }
 
@@ -1792,14 +1866,23 @@ mod_likelihood_server <- function(input, output, session, rv) {
     current <- isolate(input$lik_indepvar_profile_set)
     scenarios <- isolate(input$lik_scenarios)
     if (is.null(scenarios) || length(scenarios) == 0) {
-      updateSelectInput(session, "lik_indepvar_profile_set", choices = character(0), selected = character(0))
-      return()
+      scenarios <- names(rv$ParOut_list)
+      if (is.null(scenarios) || length(scenarios) == 0) {
+        scenarios <- names(rv$IndepOut_list)
+      }
     }
+    scenarios <- unique(as.character(scenarios))
+    scenarios <- scenarios[nzchar(scenarios)]
 
     set_tables <- lapply(scenarios, function(sc) discover_indepvar_profile_sets(input$model_dir, sc))
     set_tables <- Filter(function(x) is.data.frame(x) && nrow(x) > 0, set_tables)
     if (length(set_tables) == 0) {
-      updateSelectInput(session, "lik_indepvar_profile_set", choices = character(0), selected = character(0))
+      updateSelectInput(
+        session,
+        "lik_indepvar_profile_set",
+        choices = c("No indepvar profile sets found" = "__none__"),
+        selected = "__none__"
+      )
       return()
     }
 
@@ -1813,7 +1896,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       summarise(label = first(label), .groups = "drop")
 
     choices <- setNames(base_tbl$key, base_tbl$label)
-    selected <- if (!is.null(current) && length(current) == 1 && current %in% unname(choices)) current else if (length(choices) > 0) unname(choices)[[1]] else character(0)
+    selected <- if (!is.null(current) && length(current) == 1 && current %in% unname(choices)) current else if (length(choices) > 0) unname(choices)[[1]] else "__none__"
     updateSelectInput(session, "lik_indepvar_profile_set", choices = choices, selected = selected)
   })
 
@@ -1908,14 +1991,40 @@ mod_likelihood_server <- function(input, output, session, rv) {
             isTRUE(as.logical(x$indepvar_fix_applied[[1]]))
           }, logical(1)))
           indepvar_fix_applied <- any(indepvar_fix_applied_vals, na.rm = TRUE)
+          if (is.na(use_quantity_penalty) && isTRUE(indepvar_fix_applied)) {
+            use_quantity_penalty <- FALSE
+          }
+          profile_set_key_vals <- unlist(map(payloads, "profile_set_key"), use.names = FALSE)
+          profile_set_key_vals <- trimws(as.character(profile_set_key_vals))
+          profile_set_key_vals <- profile_set_key_vals[nzchar(profile_set_key_vals)]
+          if (length(profile_set_key_vals) == 0 && length(valid_infos) > 0) {
+            profile_set_key_vals <- unlist(map(valid_infos, "profile_set_key"), use.names = FALSE)
+            profile_set_key_vals <- trimws(as.character(profile_set_key_vals))
+            profile_set_key_vals <- profile_set_key_vals[nzchar(profile_set_key_vals)]
+          }
+          profile_set_key <- if (length(profile_set_key_vals) > 0) profile_set_key_vals[[1]] else NA_character_
+          profile_set_label_vals <- unlist(map(payloads, "profile_set_label"), use.names = FALSE)
+          profile_set_label_vals <- trimws(as.character(profile_set_label_vals))
+          profile_set_label_vals <- profile_set_label_vals[nzchar(profile_set_label_vals)]
+          if (length(profile_set_label_vals) == 0 && length(valid_infos) > 0) {
+            profile_set_label_vals <- unlist(map(valid_infos, "profile_set_label"), use.names = FALSE)
+            profile_set_label_vals <- trimws(as.character(profile_set_label_vals))
+            profile_set_label_vals <- profile_set_label_vals[nzchar(profile_set_label_vals)]
+          }
+          profile_set_label <- if (length(profile_set_label_vals) > 0) profile_set_label_vals[[1]] else NA_character_
           fixed_indepvar_names <- character(0)
           fixed_indepvar_n <- 0L
           fixed_indepvar_value <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+          fixed_indepvar_lower <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+          fixed_indepvar_upper <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
           fixed_indepvar_name <- NA_character_
           if (isTRUE(indepvar_fix_applied)) {
             detail_candidates <- lapply(seq_along(payloads), function(i) {
               x <- payloads[[i]]
               details <- x$indepvar_fix_details
+              if ((!is.data.frame(details) || nrow(details) == 0) && !is.null(valid_infos[[as.character(existing_scales[[i]])]])) {
+                details <- valid_infos[[as.character(existing_scales[[i]])]]$indepvar_fix_details
+              }
               if (!is.data.frame(details) || nrow(details) == 0) return(NULL)
               list(scale = existing_scales[[i]], details = details)
             })
@@ -1933,6 +2042,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
                 if ("value_after" %in% names(dd) && nrow(dd) > 0) {
                   v <- suppressWarnings(as.numeric(dd$value_after[[1]]))
                   if (is.finite(v)) fixed_indepvar_value[[as.character(it$scale)]] <- v
+                }
+                if ("L_bound" %in% names(dd) && nrow(dd) > 0) {
+                  v <- suppressWarnings(as.numeric(dd$L_bound[[1]]))
+                  if (is.finite(v)) fixed_indepvar_lower[[as.character(it$scale)]] <- v
+                }
+                if ("U_bound" %in% names(dd) && nrow(dd) > 0) {
+                  v <- suppressWarnings(as.numeric(dd$U_bound[[1]]))
+                  if (is.finite(v)) fixed_indepvar_upper[[as.character(it$scale)]] <- v
                 }
               }
             }
@@ -2011,9 +2128,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
           quantity_label <- NA_character_
           use_quantity_penalty <- NA
           indepvar_fix_applied <- FALSE
+          profile_set_key <- NA_character_
+          profile_set_label <- NA_character_
           fixed_indepvar_names <- character(0)
           fixed_indepvar_n <- 0L
           fixed_indepvar_value <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+          fixed_indepvar_lower <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+          fixed_indepvar_upper <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
           fixed_indepvar_name <- NA_character_
           max_year <- NA_real_
           seasons <- NA_real_
@@ -2053,9 +2174,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
         quantity_label <- NA_character_
         use_quantity_penalty <- NA
         indepvar_fix_applied <- FALSE
+        profile_set_key <- NA_character_
+        profile_set_label <- NA_character_
         fixed_indepvar_names <- character(0)
         fixed_indepvar_n <- 0L
         fixed_indepvar_value <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+        fixed_indepvar_lower <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+        fixed_indepvar_upper <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
         fixed_indepvar_name <- NA_character_
         max_year <- NA_real_
         seasons <- NA_real_
@@ -2094,9 +2219,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
       quantity_label <- NA_character_
       use_quantity_penalty <- NA
       indepvar_fix_applied <- FALSE
+      profile_set_key <- NA_character_
+      profile_set_label <- NA_character_
       fixed_indepvar_names <- character(0)
       fixed_indepvar_n <- 0L
       fixed_indepvar_value <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+      fixed_indepvar_lower <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+      fixed_indepvar_upper <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
       fixed_indepvar_name <- NA_character_
       max_year <- NA_real_
       seasons <- NA_real_
@@ -2127,9 +2256,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
       quantity_label = quantity_label,
       use_quantity_penalty = use_quantity_penalty,
       indepvar_fix_applied = indepvar_fix_applied,
+      profile_set_key = profile_set_key,
+      profile_set_label = profile_set_label,
       fixed_indepvar_names = fixed_indepvar_names,
       fixed_indepvar_n = fixed_indepvar_n,
       fixed_indepvar_value = fixed_indepvar_value,
+      fixed_indepvar_lower = fixed_indepvar_lower,
+      fixed_indepvar_upper = fixed_indepvar_upper,
       fixed_indepvar_name = fixed_indepvar_name,
       max_year = max_year,
       seasons = seasons,
@@ -2203,18 +2336,41 @@ mod_likelihood_server <- function(input, output, session, rv) {
       if ((!nzchar(fixed_param_name)) && is.character(pd$fixed_indepvar_names) && length(pd$fixed_indepvar_names) > 0) {
         fixed_param_name <- paste(pd$fixed_indepvar_names[nzchar(trimws(pd$fixed_indepvar_names))], collapse = ", ")
       }
-      profile_set_label <- if (!is.null(pd$profile_set_label) && nzchar(as.character(pd$profile_set_label))) as.character(pd$profile_set_label) else NA_character_
+      profile_set_label <- if (has_text_scalar(pd$profile_set_label)) as.character(pd$profile_set_label[[1]]) else NA_character_
       fixed_param_vals <- suppressWarnings(as.numeric(unlist(pd$fixed_indepvar_value, use.names = FALSE)))
       fixed_param_vals <- fixed_param_vals[is.finite(fixed_param_vals)]
+      fixed_lower_vals <- suppressWarnings(as.numeric(unlist(pd$fixed_indepvar_lower, use.names = FALSE)))
+      fixed_lower_vals <- fixed_lower_vals[is.finite(fixed_lower_vals)]
+      fixed_upper_vals <- suppressWarnings(as.numeric(unlist(pd$fixed_indepvar_upper, use.names = FALSE)))
+      fixed_upper_vals <- fixed_upper_vals[is.finite(fixed_upper_vals)]
+      has_indepvar_details <-
+        length(fixed_param_vals) > 0 ||
+        length(fixed_lower_vals) > 0 ||
+        length(fixed_upper_vals) > 0 ||
+        nzchar(fixed_param_name)
+      indepvar_mode <- identical(filters$profile_source, "indepvar") ||
+        (isTRUE(pd$indepvar_fix_applied) && has_indepvar_details)
       fixed_param_range <- if (length(fixed_param_vals) > 0) {
         paste0(signif(min(fixed_param_vals), 6), " to ", signif(max(fixed_param_vals), 6))
       } else {
         NA_character_
       }
-      profile_mode <- if (isFALSE(pd$use_quantity_penalty)) {
+      fixed_lower_range <- if (length(fixed_lower_vals) > 0) {
+        paste0(signif(min(fixed_lower_vals), 6), " to ", signif(max(fixed_lower_vals), 6))
+      } else {
+        NA_character_
+      }
+      fixed_upper_range <- if (length(fixed_upper_vals) > 0) {
+        paste0(signif(min(fixed_upper_vals), 6), " to ", signif(max(fixed_upper_vals), 6))
+      } else {
+        NA_character_
+      }
+      profile_mode <- if (isTRUE(indepvar_mode)) {
         "Fixed-parameter (indepvar)"
       } else if (isTRUE(pd$use_quantity_penalty)) {
         "Average-biomass/depletion"
+      } else if (identical(filters$profile_source, "standard")) {
+        "Standard profile"
       } else {
         "Unknown"
       }
@@ -2223,26 +2379,28 @@ mod_likelihood_server <- function(input, output, session, rv) {
         Model = sc,
         `Profile set` = profile_set_label,
         `Profile mode` = profile_mode,
-        `Fixed indepvar` = if (isTRUE(pd$indepvar_fix_applied)) {
+        `Fixed indepvar` = if (isTRUE(indepvar_mode)) {
           if (nzchar(fixed_param_name)) fixed_param_name else if (is.finite(pd$fixed_indepvar_n) && pd$fixed_indepvar_n > 0) paste0(pd$fixed_indepvar_n, " selected") else "Applied"
         } else {
           "None"
         },
-        `Fixed value range` = if (isTRUE(pd$indepvar_fix_applied)) fixed_param_range else NA_character_,
-        `Profile target` = if (isTRUE(pd$indepvar_fix_applied)) {
+        `Fixed value range` = if (isTRUE(indepvar_mode)) fixed_param_range else NA_character_,
+        `Lower bound range` = if (isTRUE(indepvar_mode)) fixed_lower_range else NA_character_,
+        `Upper bound range` = if (isTRUE(indepvar_mode)) fixed_upper_range else NA_character_,
+        `Profile target` = if (isTRUE(indepvar_mode)) {
           "Parameter value"
         } else {
           profile_target_label(quantity_label)
         },
-        `Biomass type` = if (isTRUE(pd$indepvar_fix_applied)) {
+        `Biomass type` = if (isTRUE(indepvar_mode)) {
           NA_character_
         } else {
           profile_biomass_label(af172)
         },
-        Af172 = if (isTRUE(pd$indepvar_fix_applied)) NA_integer_ else if (is.finite(af172)) as.integer(af172) else NA_integer_,
-        Af173 = if (isTRUE(pd$indepvar_fix_applied)) NA_integer_ else if (is.finite(af173)) as.integer(af173) else NA_integer_,
-        Af174 = if (isTRUE(pd$indepvar_fix_applied)) NA_integer_ else if (is.finite(af174)) as.integer(af174) else NA_integer_,
-        `Time-period window` = if (isTRUE(pd$indepvar_fix_applied)) {
+        Af172 = if (isTRUE(indepvar_mode)) NA_integer_ else if (is.finite(af172)) as.integer(af172) else NA_integer_,
+        Af173 = if (isTRUE(indepvar_mode)) NA_integer_ else if (is.finite(af173)) as.integer(af173) else NA_integer_,
+        Af174 = if (isTRUE(indepvar_mode)) NA_integer_ else if (is.finite(af174)) as.integer(af174) else NA_integer_,
+        `Time-period window` = if (isTRUE(indepvar_mode)) {
           NA_character_
         } else if (is.finite(af173) && is.finite(af174)) {
           if (af173 == 0 && af174 == 0) {
@@ -2253,7 +2411,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         } else {
           "Not available"
         },
-        `Period definition` = profile_period_label(quantity_label, af173, af174, max_year, seasons),
+        `Period definition` = if (isTRUE(indepvar_mode)) NA_character_ else profile_period_label(quantity_label, af173, af174, max_year, seasons),
         stringsAsFactors = FALSE
       )
     })
@@ -3064,7 +3222,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
     get_fishery_rows_for_scenario <- function(sc) {
       allowed_ids <- if (!is.null(allowed_fisheries)) as.character(allowed_fisheries[[sc]]) else character(0)
       allowed_ids <- allowed_ids[!is.na(allowed_ids)]
-      cache_key <- paste(sc, slot_name, as.character(isTRUE(fallback_nonzero_only)), paste(sort(unique(allowed_ids)), collapse = "|"), sep = "::")
+      profile_sig <- profile_entry_signature(profile_data[[sc]], scales)
+      scales_sig <- paste(sort(unique(as.character(scales))), collapse = "|")
+      cache_key <- paste(sc, slot_name, as.character(isTRUE(fallback_nonzero_only)), paste(sort(unique(allowed_ids)), collapse = "|"), scales_sig, profile_sig, sep = "::")
       cached <- fishery_diag_cache$fishery_slot[[cache_key]]
       if (!is.null(cached)) {
         return(cached)
@@ -3217,7 +3377,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
     get_cpue_rows_for_scenario <- function(sc) {
       allowed_ids <- if (!is.null(allowed_fisheries)) as.character(allowed_fisheries[[sc]]) else character(0)
       allowed_ids <- allowed_ids[!is.na(allowed_ids)]
-      cache_key <- paste(sc, paste(sort(unique(allowed_ids)), collapse = "|"), sep = "::")
+      profile_sig <- profile_entry_signature(profile_data[[sc]], scales)
+      scales_sig <- paste(sort(unique(as.character(scales))), collapse = "|")
+      cache_key <- paste(sc, paste(sort(unique(allowed_ids)), collapse = "|"), scales_sig, profile_sig, sep = "::")
       cached <- fishery_diag_cache$cpue[[cache_key]]
       if (!is.null(cached)) {
         return(cached)
@@ -3415,7 +3577,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
     get_cal_rows_for_scenario <- function(sc) {
       allowed_ids <- if (!is.null(allowed_fisheries)) as.character(allowed_fisheries[[sc]]) else character(0)
       allowed_ids <- allowed_ids[!is.na(allowed_ids)]
-      cache_key <- paste(sc, by, paste(sort(unique(allowed_ids)), collapse = "|"), sep = "::")
+      profile_sig <- profile_entry_signature(profile_data[[sc]], scales)
+      scales_sig <- paste(sort(unique(as.character(scales))), collapse = "|")
+      cache_key <- paste(sc, by, paste(sort(unique(allowed_ids)), collapse = "|"), scales_sig, profile_sig, sep = "::")
       cached <- fishery_diag_cache$cal[[cache_key]]
       if (!is.null(cached)) {
         return(cached)
@@ -4863,16 +5027,6 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     last_group_key(group_key)
     updatePickerInput(session, "lik_groups", choices = groups, selected = selected)
-    if (!isTRUE(input$live_update_plots)) {
-      lik_pending_group_apply(TRUE)
-    }
-  }, ignoreInit = TRUE)
-
-  observeEvent(input$lik_groups, {
-    if (!isTRUE(lik_pending_group_apply())) return()
-    if (isTRUE(input$live_update_plots)) return()
-    lik_pending_group_apply(FALSE)
-    lik_filters_applied(isolate(lik_filters_current()))
   }, ignoreInit = TRUE)
 
   likelihood_plot_reactive <- reactive({
@@ -6259,7 +6413,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       top_plot <- create_piner_plot(
         data,
         group_col,
-        quantity_axis_label(info$profile_data),
+        quantity_axis_label(info$profile_data, filters$x_axis_label_override),
         label,
         facet_ncol = facet_ncol,
         split_by_region = isTRUE(filters$split_by_region),
@@ -6368,7 +6522,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         geom_col(width = bar_width, alpha = 0.9, color = "white", linewidth = 0.2, na.rm = TRUE) +
         scale_x_continuous(
           labels = quantity_axis_formatter(info$profile_data),
-          name = quantity_axis_label(info$profile_data)
+          name = quantity_axis_label(info$profile_data, filters$x_axis_label_override)
         ) +
         labs(y = "Normalized influence (%)", fill = NULL) +
         theme_bw(base_size = 12) +
@@ -6406,7 +6560,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       return(cowplot::plot_grid(top_plot, bottom_plot, ncol = 1, rel_heights = c(1, 1), align = "v"))
     }
 
-    x_label <- quantity_axis_label(info$profile_data)
+    x_label <- quantity_axis_label(info$profile_data, filters$x_axis_label_override)
     influence_types <- c("components_signed", "influence_cpues", "influence_lfs", "influence_wfs", "influence_cal_fishery")
     y_axis_label <- if (isTRUE(filters$profile_type %in% influence_types)) {
       "Normalized influence (%)"
@@ -6573,7 +6727,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     )
   })
   observeEvent(list(input$live_update_plots, input$lik_main_tab, input$lik_scenarios, input$lik_profile_type, input$lik_profile_source, input$lik_jitter_type,
-                    input$lik_groups, input$lik_regions, input$lik_split_by_region, input$lik_facet_ncol,
+                    input$lik_regions, input$lik_split_by_region, input$lik_facet_ncol,
                     input$lik_jitter_grad_reference, input$lik_jitter_converged_only_diagnostics,
                     input$lik_jitter_rel_diff_threshold,
                     input$lik_jitter_param_view, input$lik_jitter_param_display, input$lik_jitter_param_scope, input$lik_jitter_param_window,
@@ -6581,7 +6735,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
                     input$lik_jitter_derived_view, input$lik_jitter_param_input_scale,
                     input$lik_jitter_param_metric, input$lik_jitter_show_ref_points, input$lik_jitter_param_range_pct,
                     input$lik_tagging_view, input$lik_tag_legend_mode, input$lik_tag_legend_top_n, input$lik_tag_deemphasize_others,
-                    input$lik_legend_mode, input$lik_legend_top_n, input$lik_deemphasize_others), {
+                    input$lik_legend_mode, input$lik_legend_top_n, input$lik_deemphasize_others,
+                    input$lik_x_axis_label_override), {
     req(rv$data_loaded)
     if (!isTRUE(input$live_update_plots)) return()
     if (length(input$lik_scenarios) == 0) return()
@@ -6650,7 +6805,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
       div(
         style = "margin-bottom: 10px; padding: 10px 12px; background: #fff8e1; border: 1px solid #f0d98c; border-left: 4px solid #f39c12; border-radius: 4px;",
         tags$div("Shown from the profile setup flags saved with each model.", style = "font-weight: bold; margin-bottom: 4px;"),
-        tags$div("Af172 distinguishes adult vs total biomass. Af173 and Af174 define the time-period window, counting backwards from the end of the time series.", style = "font-size: 12px; color: #333;")
+        if (identical(input$lik_profile_source, "indepvar")) {
+          tags$div("For indepvar profiles, fixed parameter name, realized value range, and indepvar lower/upper bound ranges are read from the saved lock details.", style = "font-size: 12px; color: #333;")
+        } else {
+          tags$div("Af172 distinguishes adult vs total biomass. Af173 and Af174 define the time-period window, counting backwards from the end of the time series.", style = "font-size: 12px; color: #333;")
+        }
       ),
       DTOutput("profile_target_info_table")
     )
@@ -6686,9 +6845,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
   tag_release_info_reactive <- reactive({
     tryCatch({
       filters <- lik_filters()
-      if (is.null(filters) || !identical(filters$profile_type, "tagging") || !identical(filters$tagging_view, "release_group")) {
+      if (is.null(filters) || !identical(filters$profile_type, "tagging") ||
+          !isTRUE(filters$tagging_view %in% c("release_group", "release_region"))) {
         return(NULL)
       }
+      tagging_view <- sanitize_profile_type(filters$tagging_view, allowed = c("release_group", "release_region"), default = "release_group")
       scenarios <- filters$scenarios
       if (is.null(scenarios) || length(scenarios) == 0) return(NULL)
 
@@ -6713,7 +6874,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
         region <- pick_col(rel_df, c("region", "Region"))
 
         release_group <- if (!is.null(rel_group)) {
-          paste0("RG ", suppressWarnings(as.integer(rel_group)))
+          rel_group_chr <- trimws(as.character(rel_group))
+          rel_group_num <- suppressWarnings(as.integer(rel_group_chr))
+          ifelse(
+            is.finite(rel_group_num),
+            paste0("RG ", rel_group_num),
+            ifelse(nzchar(rel_group_chr), rel_group_chr, NA_character_)
+          )
         } else {
           NA_character_
         }
@@ -6721,10 +6888,18 @@ mod_likelihood_server <- function(input, output, session, rv) {
         df <- data.frame(
           Model = as.character(sc),
           release_group = as.character(release_group),
-          Program = if (is.null(program)) NA_character_ else as.character(program),
+          Program = if (is.null(program)) "Unknown" else {
+            out <- trimws(as.character(program))
+            out[is.na(out) | !nzchar(out)] <- "Unknown"
+            out
+          },
           Year = if (is.null(year)) NA_integer_ else suppressWarnings(as.integer(year)),
           Month = if (is.null(month)) NA_integer_ else suppressWarnings(as.integer(month)),
-          Region = if (is.null(region)) NA_character_ else as.character(region),
+          Region = if (is.null(region)) NA_character_ else {
+            out <- trimws(as.character(region))
+            out[!nzchar(out)] <- NA_character_
+            out
+          },
           stringsAsFactors = FALSE
         )
 
@@ -6733,6 +6908,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
       out <- bind_rows(rows)
       if (nrow(out) == 0) return(NULL)
+
+      if (identical(tagging_view, "release_region")) {
+        return(
+          out %>%
+            distinct(Model, Program, Region, Year, Month, .keep_all = TRUE) %>%
+            arrange(Model, Region, Year, Month, Program)
+        )
+      }
+
       out %>%
         rename(`Release group` = release_group) %>%
         distinct(
@@ -6753,10 +6937,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
     tag_release_info_reactive,
     rv$data_loaded,
     input$model_dir,
-    list(
-      scenarios = sort(isolate(lik_filters()$scenarios)),
-      tagging_view = isolate(lik_filters()$tagging_view)
-    )
+    lik_apply_nonce(),
+    lik_filters()
   )
 
   output$tag_release_info_message_ui <- renderUI({
@@ -6787,6 +6969,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
     updateSelectInput(session, "tag_release_model", choices = model_choices, selected = current_model)
 
     program_choices <- unique(as.character(tbl$Program))
+    program_choices <- program_choices[!is.na(program_choices) & nzchar(trimws(program_choices))]
+    program_choices <- c("All", sort(program_choices))
     current_program <- isolate(input$tag_release_program)
     if (is.null(current_program) || !(current_program %in% program_choices)) current_program <- program_choices[[1]]
     updateSelectInput(session, "tag_release_program", choices = program_choices, selected = current_program)
@@ -7084,7 +7268,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
     tryCatch({
       if (!identical(input$lik_main_tab, "likelihood")) return(NULL)
       filters <- lik_filters()
-      if (is.null(filters) || !identical(filters$profile_type, "tagging") || !identical(filters$tagging_view, "release_group")) {
+      if (is.null(filters) || !identical(filters$profile_type, "tagging") ||
+          !isTRUE(filters$tagging_view %in% c("release_group", "release_region"))) {
         return(NULL)
       }
       tbl <- tag_release_info_reactive()
@@ -7094,7 +7279,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         tbl <- tbl %>% filter(Model == selected_model)
       }
       selected_program <- sanitize_text_scalar(input$tag_release_program)
-      if (!is.na(selected_program) && "Program" %in% names(tbl) && selected_program %in% tbl$Program) {
+      if (!is.na(selected_program) && !identical(selected_program, "All") && "Program" %in% names(tbl) && selected_program %in% tbl$Program) {
         tbl <- tbl %>% filter(Program == selected_program)
       }
 
