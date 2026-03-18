@@ -358,7 +358,7 @@
         placeholder = "1500000,0.12"
       ),
       fluidRow(
-        column(6,
+        column(4,
                div(class = "param-label", "indepvar.rpt path (optional):"),
                textInput(
                  "edit_prof_fix_indepvar_file",
@@ -368,7 +368,7 @@
                  placeholder = "indepvar.rpt"
                )
         ),
-        column(6,
+        column(4,
                div(class = "param-label", "Profile Extra Switch (triplets):"),
                textInput(
                  "edit_prof_extra_switch",
@@ -376,6 +376,16 @@
                  value = if (!is.null(model$prof_extra_switch)) model$prof_extra_switch else "",
                  width = "100%",
                  placeholder = "1 1 100"
+               )
+        ),
+        column(4,
+               div(class = "param-label", "Indepvar profile reps (blank = Reps4):"),
+               textInput(
+                 "edit_indepvar_reps",
+                 NULL,
+                 value = if (!is.null(model$indepvar_reps)) model$indepvar_reps else "",
+                 width = "100%",
+                 placeholder = "200"
                )
         )
       ),
@@ -446,6 +456,7 @@
     rv$models[[model_name]]$prof_fix_indepvar <- input$edit_prof_fix_indepvar
     rv$models[[model_name]]$prof_fix_values <- input$edit_prof_fix_values
     rv$models[[model_name]]$prof_fix_indepvar_file <- input$edit_prof_fix_indepvar_file
+    rv$models[[model_name]]$indepvar_reps <- input$edit_indepvar_reps
     rv$models[[model_name]]$prof_extra_switch <- input$edit_prof_extra_switch
     rv$models[[model_name]]$Af172 <- as.character(input$edit_af172)
     rv$models[[model_name]]$Af173 <- as.character(input$edit_af173)

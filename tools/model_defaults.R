@@ -19,6 +19,7 @@ apply_model_defaults <- function(models, defaults = list()) {
       prof_fix_indepvar = "",
       prof_fix_values = "",
       prof_fix_indepvar_file = "",
+      indepvar_reps = "",
       prof_extra_switch = "",
       retro_hessian = "0",
       nsplit = "5"
@@ -43,6 +44,7 @@ apply_model_defaults <- function(models, defaults = list()) {
     prof_fix_indepvar <- if (!is.null(model$prof_fix_indepvar)) model$prof_fix_indepvar else defaults$prof_fix_indepvar
     prof_fix_values <- if (!is.null(model$prof_fix_values)) model$prof_fix_values else defaults$prof_fix_values
     prof_fix_indepvar_file <- if (!is.null(model$prof_fix_indepvar_file)) model$prof_fix_indepvar_file else defaults$prof_fix_indepvar_file
+    indepvar_reps <- if (!is.null(model$indepvar_reps)) model$indepvar_reps else defaults$indepvar_reps
     prof_extra_switch <- if (!is.null(model$prof_extra_switch)) model$prof_extra_switch else defaults$prof_extra_switch
     retro_hessian <- if (!is.null(model$retro_hessian)) model$retro_hessian else defaults$retro_hessian
     nsplit <- if (!is.null(model$nsplit)) model$nsplit else defaults$nsplit
@@ -68,6 +70,7 @@ apply_model_defaults <- function(models, defaults = list()) {
     model$prof_fix_indepvar <- prof_fix_indepvar
     model$prof_fix_values <- prof_fix_values
     model$prof_fix_indepvar_file <- prof_fix_indepvar_file
+    model$indepvar_reps <- indepvar_reps
     model$prof_extra_switch <- prof_extra_switch
     model$retro_hessian <- retro_hessian
     model$nsplit <- nsplit

@@ -297,9 +297,9 @@ mod_likelihood_ui <- function() {
 	                  "Input Param Scale:",
 	                  choices = c(
 	                    "Bound position (0-1)" = "bound_position",
-	                    "Raw value" = "value",
-	                    "Baseline - fitted" = "baseline_minus",
-	                    "Relative difference (%) (Baseline - fitted)/Baseline" = "rel_baseline_minus"
+	                    "Bound-normalized displacement" = "bound_delta",
+                      "Original-normalized change (%)" = "pct_change",
+	                    "Raw value" = "value"
 	                  ),
 	                  selected = "bound_position"
 	                      ),
@@ -330,9 +330,7 @@ mod_likelihood_ui <- function() {
                   "Bound position (0-1)" = "bound_position",
                   "Parameter value" = "value",
                   "Change from original" = "delta",
-                  "% change from original" = "pct_change",
-                  "Baseline - fitted" = "baseline_minus",
-                  "Relative difference (%) (Baseline - fitted)/Baseline" = "rel_baseline_minus"
+                  "% change from original" = "pct_change"
                 ),
                 selected = "bound_position"
               )
@@ -342,8 +340,8 @@ mod_likelihood_ui <- function() {
                 "Ref points",
                 value = FALSE
               ),
-	            conditionalPanel(
-	              condition = "(input.lik_jitter_param_view == 'final' && ['delta', 'pct_change', 'baseline_minus', 'rel_baseline_minus'].includes(input.lik_jitter_param_metric)) || (input.lik_jitter_param_view == 'input' && ['baseline_minus', 'rel_baseline_minus'].includes(input.lik_jitter_param_input_scale))",
+              conditionalPanel(
+                condition = "(input.lik_jitter_param_view == 'final' && ['delta', 'pct_change', 'bound_delta'].includes(input.lik_jitter_param_metric)) || (input.lik_jitter_param_view == 'input' && ['pct_change'].includes(input.lik_jitter_param_input_scale))",
 	              tagList(
 	                sliderInput(
 	                  "lik_jitter_param_range_pct",
@@ -717,10 +715,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
         view <- sanitize_profile_type(input$lik_jitter_derived_view, allowed = c("summary", "lines", "detail"), default = "summary")
         if (identical(view, "detail")) "lines" else view
       },
-      jitter_param_input_scale = sanitize_profile_type(input$lik_jitter_param_input_scale, allowed = c("bound_position", "value"), default = "bound_position"),
+      jitter_param_input_scale = sanitize_profile_type(input$lik_jitter_param_input_scale, allowed = c("bound_position", "bound_delta", "pct_change", "value"), default = "bound_position"),
       jitter_param_metric = sanitize_profile_type(
         input$lik_jitter_param_metric,
-        allowed = c("value", "delta", "pct_change", "bound_position", "baseline_minus", "rel_baseline_minus"),
+        allowed = c("value", "delta", "pct_change", "bound_position", "bound_delta"),
         default = "pct_change"
       ),
       jitter_show_ref_points = isTRUE(input$lik_jitter_show_ref_points),
@@ -1864,13 +1862,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
   observe({
     req(input$model_dir)
     current <- isolate(input$lik_indepvar_profile_set)
-    scenarios <- isolate(input$lik_scenarios)
-    if (is.null(scenarios) || length(scenarios) == 0) {
-      scenarios <- names(rv$ParOut_list)
-      if (is.null(scenarios) || length(scenarios) == 0) {
-        scenarios <- names(rv$IndepOut_list)
-      }
-    }
+    # React to scenario selection changes (not isolated), and also
+    # union with ALL loaded scenarios so indepvar sets are found even
+    # when the standard-profile scenarios are currently selected.
+    sel_scenarios <- input$lik_scenarios
+    scenarios <- unique(c(
+      as.character(sel_scenarios),
+      names(rv$ParOut_list),
+      names(rv$IndepOut_list)
+    ))
     scenarios <- unique(as.character(scenarios))
     scenarios <- scenarios[nzchar(scenarios)]
 
@@ -2018,7 +2018,16 @@ mod_likelihood_server <- function(input, output, session, rv) {
           fixed_indepvar_lower <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
           fixed_indepvar_upper <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
           fixed_indepvar_name <- NA_character_
-          if (isTRUE(indepvar_fix_applied)) {
+          # Also attempt extraction when indepvar_fix_details is present in the
+          # payload even if the indepvar_fix_applied flag is missing/FALSE.
+          has_fix_details_in_payloads <- any(vapply(seq_along(payloads), function(i) {
+            dd <- payloads[[i]]$indepvar_fix_details
+            if (!is.data.frame(dd) || nrow(dd) == 0) {
+              dd <- valid_infos[[as.character(existing_scales[[i]])]]$indepvar_fix_details
+            }
+            is.data.frame(dd) && nrow(dd) > 0
+          }, logical(1)))
+          if (isTRUE(indepvar_fix_applied) || has_fix_details_in_payloads) {
             detail_candidates <- lapply(seq_along(payloads), function(i) {
               x <- payloads[[i]]
               details <- x$indepvar_fix_details
@@ -2053,6 +2062,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
                 }
               }
             }
+          }
+          # If details were found without the explicit flag, update the flag so
+          # downstream code (use_quantity_penalty fallback, returned payload)
+          # correctly reflects that indepvar fixes were applied.
+          if (!isTRUE(indepvar_fix_applied) && has_fix_details_in_payloads) {
+            indepvar_fix_applied <- TRUE
+            if (is.na(use_quantity_penalty)) use_quantity_penalty <- FALSE
           }
           par_obj <- rv$ParOut_list[[scenario]]
           max_year <- suppressWarnings(as.numeric(tryCatch(par_obj@range["maxyear"], error = function(e) NA_real_)))
@@ -5346,6 +5362,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
             plot_value = case_when(
               metric == "bound_position" & is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) ~
                 (after - L_bound) / (U_bound - L_bound),
+              metric == "bound_delta" & is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) ~
+                (after - before) / (U_bound - L_bound),
               metric == "value" ~ after,
               metric == "delta" ~ delta,
               metric == "baseline_minus" ~ (before - after),
@@ -5365,6 +5383,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
                 is.finite(before) ~ {
                   (before - L_bound) / (U_bound - L_bound)
                 },
+              metric == "bound_delta" ~ 0,
               metric == "value" ~ before,
               TRUE ~ 0
             ),
@@ -5379,7 +5398,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           ) %>%
           filter(is.finite(plot_value), !is.na(seed), nzchar(as.character(seed)))
 
-        if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus")) {
+        if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus", "bound_delta")) {
           family_seed_df <- family_plot_df %>%
             group_by(scenario, family, seed) %>%
             summarise(plot_value = signed_max_abs(plot_value), .groups = "drop") %>%
@@ -5406,7 +5425,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           )
         }
 
-        if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus")) {
+        if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus", "bound_delta")) {
           original_family_df <- family_plot_df %>%
             group_by(scenario, family) %>%
             summarise(
@@ -5427,22 +5446,16 @@ mod_likelihood_server <- function(input, output, session, rv) {
               .groups = "drop"
             )
         }
-        boundhit_family_df <- original_family_df %>%
-          filter(isTRUE(has_center_adjusted) | has_center_adjusted) %>%
-          filter(is.finite(adjusted_center_value), is.finite(original_value)) %>%
-          filter(abs(adjusted_center_value - original_value) > 1e-10)
-        boundhit_family_df <- boundhit_family_df %>%
-          mutate(center_shift = adjusted_center_value - original_value)
-
         plot_limit <- NULL
-        if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus") && range_pct < 100) {
-          finite_vals <- family_seed_df$plot_value[is.finite(family_seed_df$plot_value)]
+        if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus", "bound_delta") && range_pct < 100) {
           if (length(finite_vals) > 0) {
             robust_limit <- suppressWarnings(as.numeric(stats::quantile(abs(finite_vals), probs = range_pct / 100, na.rm = TRUE)))
             if (is.finite(robust_limit) && robust_limit > 0) {
               plot_limit <- c(-1.1 * robust_limit, 1.1 * robust_limit)
               if (metric %in% c("pct_change", "rel_baseline_minus")) {
                 plot_limit <- c(max(plot_limit[1], -100), min(plot_limit[2], 100))
+              } else if (identical(metric, "bound_delta")) {
+                plot_limit <- c(max(plot_limit[1], -1), min(plot_limit[2], 1))
               }
             }
           }
@@ -5450,6 +5463,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
         y_label <- case_when(
           metric == "bound_position" ~ "Position within indepvar bounds",
+          metric == "bound_delta" ~ "Bound-normalised displacement (after - before) / (U - L)",
           metric == "value" && identical(param_view, "input") ~ "Jittered input parameter value",
           metric == "value" ~ "Parameter value",
           metric == "delta" ~ "Change from original",
@@ -5460,6 +5474,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
         plot_title <- case_when(
           metric == "bound_position" ~ "Jitter Parameter Family Summary (Bound Position)",
+          metric == "bound_delta" && identical(param_view, "final") ~ "Final Fitted Parameter Family Summary (Bound-normalised Displacement)",
+          metric == "bound_delta" ~ "Jitter Parameter Family Summary (Bound-normalised Displacement)",
           metric == "value" && identical(param_view, "final") ~ "Final Fitted Parameter Family Summary",
           metric == "delta" && identical(param_view, "final") ~ "Final Fitted Parameter Family Change Summary",
           metric == "baseline_minus" && identical(param_view, "final") ~ "Final Fitted Parameter Family Summary (Baseline - fitted)",
@@ -5472,7 +5488,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           TRUE ~ "Jittered Input Parameter Family % Change Summary"
         )
 
-        agg_label <- if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus")) {
+        agg_label <- if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus", "bound_delta")) {
           "max |change| parameter by seed (signed)"
         } else {
           "median by seed"
@@ -5484,11 +5500,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
         } else {
           paste0("Family-level summary across parameters (", agg_label, ") from jittered input parameters.")
         }
-        if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus")) {
+        if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus", "bound_delta")) {
           plot_subtitle <- paste0(
             plot_subtitle,
             if (range_pct < 100) paste0(" Showing ", range_pct, "th percentile focused range.") else " Showing full range."
           )
+        }
+        if (identical(metric, "bound_delta")) {
+          plot_subtitle <- paste0(plot_subtitle, " 0 = no change from original. Red diamond = 0 (fixed).")
         }
         if (!is.null(jitter_counts)) {
           plot_subtitle <- paste0(plot_subtitle, " Converged/total: ", jitter_counts, ".")
@@ -5499,8 +5518,6 @@ mod_likelihood_server <- function(input, output, session, rv) {
           } else {
             plot_subtitle <- paste0(plot_subtitle, " Red diamond = raw baseline/original value.")
           }
-          plot_subtitle <- paste0(plot_subtitle, " Orange circle = CV-adaptive jitter center (tail-matched to bounds at one-tail 99.99% when needed).")
-          plot_subtitle <- paste0(plot_subtitle, " No extra near-bound rejection window. All free parameters keep hard L/U bounds; sampler type depends on parameter geometry (multiplicative/bounded-logit/additive/simplex).")
         } else if (show_ref_points_effective) {
           plot_subtitle <- paste0(plot_subtitle, " Red diamond = baseline/original.")
         }
@@ -5533,31 +5550,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
               na.rm = TRUE
             )
           } +
-          {
-            if (show_ref_points && identical(param_view, "input") && metric %in% c("bound_position", "value") && nrow(boundhit_family_df) > 0) geom_segment(
-              data = boundhit_family_df,
-              aes(x = family, xend = family, y = original_value, yend = adjusted_center_value),
-              inherit.aes = FALSE,
-              color = "#ff7f0e",
-              linewidth = 0.5,
-              alpha = 0.85,
-              na.rm = TRUE
-            )
-          } +
-          {
-            if (show_ref_points && identical(param_view, "input") && metric %in% c("bound_position", "value") && nrow(boundhit_family_df) > 0) geom_point(
-              data = boundhit_family_df,
-              aes(x = family, y = adjusted_center_value),
-              inherit.aes = FALSE,
-              color = "#ff7f0e",
-              fill = "white",
-              shape = 21,
-              size = 2.6,
-              stroke = 0.9,
-              na.rm = TRUE
-            )
-          } +
-          facet_wrap(~ scenario, scales = "free", ncol = facet_ncol) +
+          facet_wrap(~ scenario, scales = "fixed", ncol = facet_ncol) +
           labs(
             x = NULL,
             y = y_label,
@@ -5588,32 +5581,42 @@ mod_likelihood_server <- function(input, output, session, rv) {
       ranked_params <- ranked_params_all %>%
         filter(is.finite(median_abs_pct_change))
 
-      selected_params <- ranked_params %>%
-        group_by(scenario, family) %>%
-        arrange(dplyr::desc(median_abs_pct_change), dplyr::desc(mean_abs_pct_change), Var_name, Index, .by_group = TRUE) %>%
+      # Global ranking: use Index (scenario-agnostic) to find top-20 params important
+      # across ALL scenarios, so every facet shows the same parameter set.
+      # param_key = "scenario::Index" so it is scenario-specific; Index alone is not.
+      global_ranked <- ranked_params %>%
+        group_by(Index, Var_name, family) %>%
+        summarise(
+          global_median = max(median_abs_pct_change, na.rm = TRUE),
+          global_mean   = max(mean_abs_pct_change,   na.rm = TRUE),
+          .groups = "drop"
+        )
+
+      # Top-1 per family globally (most important representative by Index)
+      global_family_rep <- global_ranked %>%
+        group_by(family) %>%
+        arrange(dplyr::desc(global_median), dplyr::desc(global_mean), Var_name, Index, .by_group = TRUE) %>%
         slice_head(n = 1) %>%
         ungroup()
 
-      scenario_slots <- selected_params %>%
-        group_by(scenario) %>%
-        summarise(family_count = dplyr::n(), .groups = "drop") %>%
-        mutate(extra_slots = pmax(20 - family_count, 0L))
+      n_families <- nrow(global_family_rep)
+      n_extra    <- max(20L - n_families, 0L)
 
-      remaining_slots <- ranked_params %>%
-        anti_join(selected_params %>% select(scenario, param_key), by = c("scenario", "param_key")) %>%
-        left_join(scenario_slots, by = "scenario") %>%
-        group_by(scenario) %>%
-        arrange(dplyr::desc(median_abs_pct_change), dplyr::desc(mean_abs_pct_change), Var_name, Index, .by_group = TRUE) %>%
-        mutate(extra_rank = row_number()) %>%
-        filter(extra_rank <= first(extra_slots)) %>%
-        ungroup() %>%
-        select(-family_count, -extra_slots, -extra_rank)
+      global_extra <- global_ranked %>%
+        anti_join(global_family_rep %>% dplyr::select(Index), by = "Index") %>%
+        arrange(dplyr::desc(global_median), dplyr::desc(global_mean), Var_name, Index) %>%
+        slice_head(n = n_extra)
 
-      selected_params <- bind_rows(selected_params, remaining_slots) %>%
-        group_by(scenario) %>%
-        arrange(dplyr::desc(median_abs_pct_change), dplyr::desc(mean_abs_pct_change), Var_name, Index, .by_group = TRUE) %>%
-        mutate(plot_rank = row_number()) %>%
-        ungroup()
+      global_selected_index <- bind_rows(global_family_rep, global_extra) %>%
+        arrange(dplyr::desc(global_median), dplyr::desc(global_mean), Var_name, Index) %>%
+        mutate(global_rank = dplyr::row_number()) %>%
+        dplyr::select(Index, global_rank)
+
+      # Apply the common Index set to all scenarios, keeping each scenario's own param_key
+      selected_params <- ranked_params_all %>%
+        inner_join(global_selected_index, by = "Index") %>%
+        mutate(plot_rank = global_rank) %>%
+        dplyr::select(-global_rank)
 
       if (identical(param_scope, "all")) {
         window_start <- max(1L, min(param_window[1], 100L))
@@ -5681,6 +5684,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
           plot_value = case_when(
             metric == "bound_position" & is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) ~
               (after - L_bound) / (U_bound - L_bound),
+            metric == "bound_delta" & is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) ~
+              (after - before) / (U_bound - L_bound),
             metric == "value" ~ after,
             metric == "delta" ~ delta,
             metric == "baseline_minus" ~ (before - after),
@@ -5700,6 +5705,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
             is.finite(before) ~ {
                 (before - L_bound) / (U_bound - L_bound)
               },
+            metric == "bound_delta" ~ 0,
             metric == "value" ~ before,
             TRUE ~ 0
           ),
@@ -5756,14 +5762,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
         mutate(center_shift = adjusted_center_value - original_value)
 
       plot_limit <- NULL
-      if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus") && range_pct < 100) {
-        finite_vals <- plot_df$plot_value[is.finite(plot_df$plot_value)]
+      if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus", "bound_delta") && range_pct < 100) {
         if (length(finite_vals) > 0) {
           robust_limit <- suppressWarnings(as.numeric(stats::quantile(abs(finite_vals), probs = range_pct / 100, na.rm = TRUE)))
           if (is.finite(robust_limit) && robust_limit > 0) {
             plot_limit <- c(-1.1 * robust_limit, 1.1 * robust_limit)
             if (metric %in% c("pct_change", "rel_baseline_minus")) {
               plot_limit <- c(max(plot_limit[1], -100), min(plot_limit[2], 100))
+            } else if (identical(metric, "bound_delta")) {
+              plot_limit <- c(max(plot_limit[1], -1), min(plot_limit[2], 1))
             }
           }
         }
@@ -5805,6 +5812,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
       y_label <- case_when(
         metric == "bound_position" ~ "Position within indepvar bounds",
+        metric == "bound_delta" ~ "Bound-normalised displacement (after - before) / (U - L)",
         metric == "value" && identical(param_view, "input") ~ "Jittered input parameter value",
         metric == "value" ~ "Parameter value",
         metric == "delta" ~ "Change from original",
@@ -5814,8 +5822,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
       )
 
       plot_title <- case_when(
-        metric == "bound_position" ~ "Jittered Input Parameter Bound Positions",
         metric == "bound_position" && identical(param_view, "final") ~ "Final Fitted Parameter Bound Positions",
+        metric == "bound_position" ~ "Jittered Input Parameter Bound Positions",
+        metric == "bound_delta" && identical(param_view, "final") ~ "Final Fitted Parameter Bound-normalised Displacement",
+        metric == "bound_delta" ~ "Jittered Input Parameter Bound-normalised Displacement",
         metric == "value" && identical(param_view, "final") ~ "Final Fitted Parameter Distributions",
         metric == "delta" && identical(param_view, "final") ~ "Final Fitted Parameter Changes",
         metric == "baseline_minus" && identical(param_view, "final") ~ "Final Fitted Parameters (Baseline - fitted)",
@@ -5832,6 +5842,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
         metric == "bound_position" && identical(param_view, "final") && converged_only ~ paste0("About 20 parameters per scenario from converged final runs (max_grad <= ", format(converged_max_grad, trim = TRUE), "), shown as position within indepvar bounds. Red diamond = original position."),
         metric == "bound_position" && identical(param_view, "final") ~ "About 20 parameters per scenario from completed final runs, shown as position within indepvar bounds. Red diamond = original position.",
         metric == "bound_position" ~ "About 20 parameters per scenario from jittered input pars, shown as position within indepvar bounds.",
+        metric == "bound_delta" && identical(param_view, "final") && converged_only ~ paste0("About 20 parameters per scenario from converged final runs (max_grad <= ", format(converged_max_grad, trim = TRUE), "). (after-before)/(U-L). Red diamond = 0."),
+        metric == "bound_delta" && identical(param_view, "final") ~ "About 20 parameters per scenario from completed final runs. (after-before)/(U-L). Red diamond = 0.",
+        metric == "bound_delta" ~ "About 20 parameters per scenario from jittered input pars. (after-before)/(U-L). Red diamond = 0.",
         metric == "value" && identical(param_view, "final") && converged_only ~ paste0("About 20 parameters per scenario from converged final runs (max_grad <= ", format(converged_max_grad, trim = TRUE), "). Red diamond = original value"),
         metric == "delta" && identical(param_view, "final") && converged_only ~ paste0("About 20 parameters per scenario from converged final runs (max_grad <= ", format(converged_max_grad, trim = TRUE), "). Red diamond = no change"),
         metric == "baseline_minus" && identical(param_view, "final") && converged_only ~ paste0("About 20 parameters per scenario from converged final runs (max_grad <= ", format(converged_max_grad, trim = TRUE), "). Red diamond = no difference"),
@@ -5861,11 +5874,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
         }
       }
 
-        if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus")) {
+        if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus", "bound_delta")) {
           plot_subtitle <- paste0(
             plot_subtitle,
             if (range_pct < 100) paste0(" Showing ", range_pct, "th percentile focused range.") else " Showing full range."
           )
+        }
+        if (identical(metric, "bound_delta")) {
+          plot_subtitle <- paste0(plot_subtitle, " 0 = no change from original. Red diamond = 0 (fixed).")
         }
         if (!is.null(jitter_counts)) {
           plot_subtitle <- paste0(plot_subtitle, " Converged/total: ", jitter_counts, ".")
@@ -5876,8 +5892,6 @@ mod_likelihood_server <- function(input, output, session, rv) {
         } else {
           plot_subtitle <- paste0(plot_subtitle, " Red diamond = raw baseline/original value.")
         }
-        plot_subtitle <- paste0(plot_subtitle, " Orange circle = CV-adaptive jitter center (tail-matched to bounds at one-tail 99.99% when needed).")
-        plot_subtitle <- paste0(plot_subtitle, " No extra near-bound rejection window. All free parameters keep hard L/U bounds; sampler type depends on parameter geometry (multiplicative/bounded-logit/additive/simplex).")
       } else if (show_ref_points_effective) {
         plot_subtitle <- paste0(plot_subtitle, " Red diamond = baseline/original.")
       }
@@ -5994,7 +6008,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       }
 
       p <- p +
-        facet_wrap(~ scenario, scales = "free", ncol = facet_ncol) +
+        facet_wrap(~ scenario, scales = "fixed", ncol = facet_ncol) +
         scale_x_discrete(drop = FALSE, labels = function(x) {
           lab_map <- setNames(as.character(label_map$param_label), as.character(label_map$param_key))
           unname(lab_map[as.character(x)])

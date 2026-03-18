@@ -45,6 +45,7 @@
         prof_fix_indepvar = "",
         prof_fix_values = "",
         prof_fix_indepvar_file = "",
+        indepvar_reps = "",
         prof_extra_switch = "",
         Af172 = "0",
         Af173 = "0",

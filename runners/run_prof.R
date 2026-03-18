@@ -23,6 +23,10 @@ base_dir_abs <- file.path(project_root, base_dir)
 scalar <- as.numeric(Sys.getenv("scalar", "90"))
 Reps <- as.integer(unlist(strsplit(Sys.getenv("Reps", "1 1 1 1 1 1"), "\\s+")))
 names(Reps) <- paste0("Reps", 1:length(Reps))
+# indepvar_reps: reps for indepvar fixed-parameter profile (no penalty ramp).
+# Defaults to Reps4 from the Reps vector; set independently via env var if needed.
+indepvar_reps <- suppressWarnings(as.integer(Sys.getenv("indepvar_reps", "")))
+if (!is.finite(indepvar_reps) || indepvar_reps < 1L) indepvar_reps <- Reps["Reps4"]
 QuantityType <- as.numeric(Sys.getenv("QuantityType", "2"))
 AgeFlags <- c(
   Af172 = as.numeric(Sys.getenv("Af172", "0")),
@@ -541,6 +545,7 @@ generate_proflike_script(
   UseQuantityPenalty = prof_use_quantity_penalty,
   FixedMLE = if (isTRUE(prof_use_quantity_penalty)) reference_quantity else NA_real_,
   ExtraSwitch = prof_extra_switch,
+  IndepvarReps = indepvar_reps,
   IndepvarLockRds = if (is.character(indepvar_fix_info$lock_rds) && nzchar(indepvar_fix_info$lock_rds)) indepvar_fix_info$lock_rds else "",
   IndepvarFile = if (is.character(indepvar_fix_info$indepvar_file) && nzchar(indepvar_fix_info$indepvar_file)) indepvar_fix_info$indepvar_file else "",
   LockScript = file.path(project_root, "runners", "apply_indepvar_lock.R"),

@@ -16,7 +16,7 @@ models <- list(
     base_dir = "mfcl/inputs/2023_rep",                   # Model-specific dir
     
     ## configuration for profiling
-    Reps = "15 25 25 1000 1000 500",
+    Reps = "1 1 1 1 1 1",
     scalars = paste0((seq(140, 60, by=-5)), collapse = " "),
     Af172 = "0",
     Af173 = "0",
@@ -47,7 +47,13 @@ models <- list(
     
     
     prof_init_map_rds="",
-    init_from_scalar_map=""
+    init_from_scalar_map="",
+    
+    prof_fix_indepvar="age_pars(5)",
+    prof_fix_values="",
+    prof_fix_indepvar_file="",
+    indepvar_reps="200",        # Reps per optimizer call for indepvar fixed-parameter profile
+    prof_extra_switch="1 121 0"
     
   )
   

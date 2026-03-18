@@ -22,6 +22,7 @@ models <- list(
     prof_fix_indepvar = "",
     prof_fix_values = "",
     prof_fix_indepvar_file = "",
+    indepvar_reps = "",           # Reps per optimizer call for indepvar fixed-parameter profile (blank = Reps4)
     prof_extra_switch = "",
     
     ## retrospective configuration
@@ -66,6 +67,7 @@ models <- list(
     prof_fix_indepvar = "",
     prof_fix_values = "",
     prof_fix_indepvar_file = "",
+    indepvar_reps = "",           # Reps per optimizer call for indepvar fixed-parameter profile (blank = Reps4)
     prof_extra_switch = "",
     
     ## retrospective configuration
@@ -109,10 +111,11 @@ models <- list(
     ## configuration for profiling
     Reps = "2 2 2 2 2 2",
     scalars = paste0((seq(110, 90, by=-10)), collapse = " "),
-    prof_fix_indepvar = "M(1) M(2)",   # Example: specify indepvar.rpt Var_name or Index
-    # prof_fix_indepvar = "101 205",    # Example: specify using indepvar.rpt Index values
-    prof_fix_values = "0.2 0.2",       # If empty, keeps values from the initial .par
+    prof_fix_indepvar = "M(1) M(2)",   # Specify by indepvar.rpt Var_name or Index
+    # prof_fix_indepvar = "101 205",    # Alternative: specify by Index number
+    prof_fix_values = "0.2 0.2",       # If empty, values are taken from the initial .par
     prof_fix_indepvar_file = "",       # Optionally set an explicit indepvar.rpt path
+    indepvar_reps = "300",             # Reps per optimizer call (2 calls per scalar); blank = Reps4
     prof_extra_switch = "",            # Optionally append extra switch triplets
 
     ## retrospective configuration
