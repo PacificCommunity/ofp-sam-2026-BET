@@ -51,8 +51,8 @@ models <- list(
     profile_sets = list(
       standard = list(
         enabled = "TRUE",
-        Reps = "15 25 25 1000 1000 500",
-        scalars = paste0(seq(140, 60, by = -5), collapse = " "),
+        Reps = "1 1 1 1 1 1",
+        scalars = paste0(seq(110, 80, by = -10), collapse = " "),
         Af172 = "0",
         Af173 = "0",
         Af174 = "0",
@@ -63,24 +63,22 @@ models <- list(
       ),
       age_pars_5 = list(
         enabled = "TRUE",
-        Reps = "1 1 1 1 1 1",
         prof_fix_indepvar = "age_pars(5)",
         prof_fix_values = "",
         prof_fix_indepvar_file = "",
-        scalars = paste0(seq(120, 80, by = -2.5), collapse = " "),
-        indepvar_reps = "200",
+        scalars = paste0(seq(120, 80, by = -10), collapse = " "),
+        indepvar_reps = "1",
         prof_extra_switch = "1 121 0"
       )
-      # ,vb_coff_1 = list(
-      #   enabled = "FALSE",
-      #   Reps = "1 1 1 1 1 1",
-      #   prof_fix_indepvar = "vb_coff(1)",
-      #   prof_fix_values = "",
-      #   prof_fix_indepvar_file = "",
-      #   scalars = paste0(seq(110, 90, by = -2.5), collapse = " "),
-      #   indepvar_reps = "100",
-      #   prof_extra_switch = "1 121 0"
-      # )
+      ,vb_coff_1 = list(
+        enabled = "TRUE",
+        prof_fix_indepvar = "vb_coff(1)",
+        prof_fix_values = "",
+        prof_fix_indepvar_file = "",
+        scalars = paste0(seq(110, 90, by = -10), collapse = " "),
+        indepvar_reps = "1",
+        prof_extra_switch = "1 12 0"
+      )
     )
     # When using profile_sets, all profile-related fields (prof_fix_indepvar,
     # indepvar_reps, prof_extra_switch, etc.) should be specified per set.
