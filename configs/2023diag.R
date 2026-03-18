@@ -52,14 +52,17 @@ models <- list(
     # Profile launch sets:
     # - set enabled="TRUE" to launch that set
     # - standard uses prof_fix_indepvar=""
-    # - each indepvar set can have its own scalar grid / indepvar_reps
+    # - each set can override profile-related fields independently
+    #   (e.g., scalars, Reps, indepvar_reps, prof_extra_switch,
+    #    prof_hessian, prof_fix_* ...)
     profile_sets = list(
       standard = list(
         enabled = "FALSE",
         prof_fix_indepvar = "",
         prof_fix_values = "",
         prof_fix_indepvar_file = "",
-        scalars = paste0(seq(140, 60, by = -5), collapse = " ")
+        scalars = paste0(seq(140, 60, by = -5), collapse = " "),
+        prof_extra_switch = "1 121 0"
       ),
       age_pars_5 = list(
         enabled = "TRUE",
@@ -67,7 +70,8 @@ models <- list(
         prof_fix_values = "",
         prof_fix_indepvar_file = "",
         scalars = paste0(seq(120, 80, by = -2.5), collapse = " "),
-        indepvar_reps = "200"
+        indepvar_reps = "200",
+        prof_extra_switch = "1 121 0"
       )
       # ,vb_coff_1 = list(
       #   enabled = "FALSE",
@@ -75,7 +79,8 @@ models <- list(
       #   prof_fix_values = "",
       #   prof_fix_indepvar_file = "",
       #   scalars = paste0(seq(110, 90, by = -2.5), collapse = " "),
-      #   indepvar_reps = "100"
+      #   indepvar_reps = "100",
+      #   prof_extra_switch = "1 121 0"
       # )
     ),
 

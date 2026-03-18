@@ -144,7 +144,9 @@ launch_tab_ui <- function() {
             div(
               style = "margin-top: 10px; padding: 8px 10px; background: #f4f8fb; border-left: 4px solid #3c8dbc;",
               strong("Estimated Jobs: "),
-              textOutput("estimated_jobs_text", inline = TRUE)
+              textOutput("estimated_jobs_text", inline = TRUE),
+              br(),
+              tags$small(textOutput("estimated_jobs_breakdown_text", inline = TRUE), style = "color:#666;")
             ),
             
             actionButton("launch_btn", "Launch Job(s)", 

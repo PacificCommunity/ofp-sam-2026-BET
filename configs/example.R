@@ -164,19 +164,24 @@ models <- list(
     profile_sets = list(
       standard = list(
         scalars = paste0(seq(120, 80, by = -5), collapse = " "),
-        prof_fix_indepvar = ""
+        prof_fix_indepvar = "",
+        prof_extra_switch = ""
       ),
       age_pars_5 = list(
         prof_fix_indepvar = "age_pars(5)",
         prof_fix_values = "",
         scalars = paste0(seq(120, 80, by = -2.5), collapse = " "),
-        indepvar_reps = "1"
+        indepvar_reps = "1",
+        Reps = "2 2 2 2 2 2",
+        prof_hessian = "0",
+        prof_extra_switch = "1 121 0"
       ),
       vb_coff_1 = list(
         prof_fix_indepvar = "vb_coff_1",
         prof_fix_values = "",
         scalars = paste0(seq(110, 90, by = -2.5), collapse = " "),
-        indepvar_reps = "50"
+        indepvar_reps = "50",
+        prof_extra_switch = "1 121 0"
       )
     ),
 

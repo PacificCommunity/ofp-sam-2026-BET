@@ -74,12 +74,6 @@ mod_likelihood_ui <- function() {
                     liveSearchPlaceholder = "Search profile sets...",
                     size = 8
                   )
-                ),
-                tags$label("X-axis label override by set:"),
-                DTOutput("lik_x_axis_override_table"),
-                tags$small(
-                  "Edit the X-axis label cell for each selected profile set. Matching works by both profile-set key and label.",
-                  style = "display:block; margin-top:-6px; color:#666;"
                 )
               )
             )
@@ -674,7 +668,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       return(list(default = NA_character_, map = out_map))
     }
 
-    txt <- if (is.null(override) || length(override) == 0) {
+    txt <- if (is.null(override) || length(override) == 0 || all(is.na(override))) {
       ""
     } else {
       paste(as.character(override), collapse = "\n")
@@ -774,7 +768,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         vals <- vals[vals != "__none__"]
         sort(unique(vals))
       },
-      x_axis_label_override = lik_x_axis_override_table(),
+      x_axis_label_override = character(0),
       groups = input$lik_groups,
       regions = input$lik_regions,
       split_by_region = isTRUE(input$lik_split_by_region),
@@ -1045,11 +1039,30 @@ mod_likelihood_server <- function(input, output, session, rv) {
     info <- input$lik_x_axis_override_table_cell_edit
     tbl <- lik_x_axis_override_table()
     if (!is.list(info) || !is.data.frame(tbl) || nrow(tbl) == 0) return()
-    row <- suppressWarnings(as.integer(info$row))
-    col <- suppressWarnings(as.integer(info$col))
-    if (!is.finite(row) || !is.finite(col) || row < 1 || row > nrow(tbl)) return()
-    if (col != 2L) return()
-    tbl$x_axis_label[[row]] <- trimws(as.character(info$value))
+    row_raw <- suppressWarnings(as.integer(info$row))
+    col_raw <- suppressWarnings(as.integer(info$col))
+    if (!is.finite(row_raw) || !is.finite(col_raw)) return()
+
+    row_idx <- if (row_raw >= 1L && row_raw <= nrow(tbl)) {
+      row_raw
+    } else if (row_raw >= 0L && row_raw < nrow(tbl)) {
+      row_raw + 1L
+    } else {
+      NA_integer_
+    }
+    if (!is.finite(row_idx)) return()
+
+    col_idx <- if (col_raw >= 1L && col_raw <= ncol(tbl)) {
+      col_raw
+    } else if (col_raw >= 0L && col_raw < ncol(tbl)) {
+      col_raw + 1L
+    } else {
+      NA_integer_
+    }
+    if (!is.finite(col_idx)) return()
+
+    if (!identical(names(tbl)[[col_idx]], "x_axis_label")) return()
+    tbl$x_axis_label[[row_idx]] <- trimws(as.character(info$value))
     lik_x_axis_override_table(tbl)
   }, ignoreInit = TRUE)
 
@@ -1225,6 +1238,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }
 
   resolve_profile_specific_axis_label <- function(profile_entry, override = NA_character_) {
+    profile_set_key <- sanitize_text_scalar(profile_entry$profile_set_key)
+    if (!is.na(profile_set_key) && nzchar(trimws(profile_set_key))) {
+      return(trimws(profile_set_key))
+    }
+
     spec <- parse_axis_label_override_spec(override)
     map_vals <- spec$map
     candidate_keys <- c(
@@ -1234,6 +1252,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       sanitize_text_scalar(profile_entry$scenario_name),
       sanitize_text_scalar(profile_entry$scenario_label)
     )
+    candidate_keys <- trimws(as.character(candidate_keys))
     candidate_keys <- unique(candidate_keys[!is.na(candidate_keys) & nzchar(candidate_keys)])
 
     if (length(map_vals) > 0 && length(candidate_keys) > 0) {
@@ -1241,6 +1260,22 @@ mod_likelihood_server <- function(input, output, session, rv) {
         hit <- map_vals[[key]]
         if (!is.null(hit) && nzchar(trimws(as.character(hit)))) {
           return(trimws(as.character(hit)))
+        }
+      }
+
+      map_names <- names(map_vals)
+      if (!is.null(map_names) && length(map_names) > 0) {
+        map_names_norm <- tolower(trimws(as.character(map_names)))
+        for (key in candidate_keys) {
+          key_norm <- tolower(trimws(as.character(key)))
+          idx <- which(map_names_norm == key_norm)
+          if (length(idx) > 0) {
+            map_key <- map_names[[idx[[1]]]]
+            hit <- map_vals[[map_key]]
+            if (!is.null(hit) && nzchar(trimws(as.character(hit)))) {
+              return(trimws(as.character(hit)))
+            }
+          }
         }
       }
     }
@@ -2597,6 +2632,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
           if (length(pd$scales) > 0) {
             set_label <- sanitize_text_scalar(pd$profile_set_label)
             if (is.na(set_label) || !nzchar(set_label)) set_label <- set_key
+            set_key_existing <- sanitize_text_scalar(pd$profile_set_key)
+            if (is.na(set_key_existing) || !nzchar(set_key_existing)) {
+              pd$profile_set_key <- set_key
+            }
+            pd$profile_set_label <- set_label
             display_name <- if (!is.na(set_label) && nzchar(set_label)) paste0(sc, " [", set_label, "]") else sc
             pd$scenario_name <- sc
             pd$scenario_label <- display_name

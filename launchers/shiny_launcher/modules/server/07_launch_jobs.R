@@ -766,6 +766,90 @@
     as.integer(total_jobs)
   }
 
+  estimate_jobs_breakdown <- function(selected_models, selected_job_types,
+                                      prof_chain_mode = FALSE,
+                                      is_local_mode = FALSE,
+                                      prof_anchor_requested = 100,
+                                      local_prof_chain_parallel = FALSE) {
+    rows <- list()
+    if (length(selected_models) == 0 || length(selected_job_types) == 0) {
+      return(data.frame(model = character(0), item = character(0), jobs = integer(0), stringsAsFactors = FALSE))
+    }
+
+    for (model_name in selected_models) {
+      model_env <- rv$models[[model_name]]
+      if (is.null(model_env)) next
+
+      for (job_type in selected_job_types) {
+        if (identical(job_type, "jitter")) {
+          jobs <- length(parse_numeric_tokens(model_env$jitter_seeds))
+          rows[[length(rows) + 1L]] <- data.frame(model = model_name, item = "jitter", jobs = as.integer(jobs), stringsAsFactors = FALSE)
+        } else if (identical(job_type, "hessian")) {
+          nsplit <- suppressWarnings(as.integer(model_env$nsplit))
+          if (!is.finite(nsplit) || nsplit < 1) nsplit <- 0L
+          rows[[length(rows) + 1L]] <- data.frame(model = model_name, item = "hessian", jobs = as.integer(nsplit), stringsAsFactors = FALSE)
+        } else if (identical(job_type, "retro")) {
+          jobs <- length(parse_numeric_tokens(model_env$retro_peels))
+          rows[[length(rows) + 1L]] <- data.frame(model = model_name, item = "retro", jobs = as.integer(jobs), stringsAsFactors = FALSE)
+        } else if (identical(job_type, "prof")) {
+          prof_envs <- resolve_profile_job_envs(model_env)
+          for (prof_env in prof_envs) {
+            nm <- first_scalar_string(prof_env$profile_set_name, default = "profile")
+            scalars <- resolve_prof_scalars_for_mode(prof_env, prof_chain_mode = prof_chain_mode)
+            if (isTRUE(prof_chain_mode) && (!isTRUE(is_local_mode) || isTRUE(local_prof_chain_parallel))) {
+              plan <- resolve_prof_anchor_and_chains(scalars, prof_anchor_requested)
+              down_chain <- c(if (is.finite(plan$anchor)) plan$anchor else numeric(0), plan$lower)
+              up_chain <- plan$upper
+              jobs <- as.integer((length(down_chain) > 0) + (length(up_chain) > 0))
+              rows[[length(rows) + 1L]] <- data.frame(model = model_name, item = paste0("prof:", nm, " (chains)"), jobs = jobs, stringsAsFactors = FALSE)
+            } else {
+              rows[[length(rows) + 1L]] <- data.frame(model = model_name, item = paste0("prof:", nm), jobs = as.integer(length(scalars)), stringsAsFactors = FALSE)
+            }
+          }
+        } else if (identical(job_type, "model")) {
+          rows[[length(rows) + 1L]] <- data.frame(model = model_name, item = "model", jobs = 1L, stringsAsFactors = FALSE)
+        }
+      }
+    }
+
+    if (length(rows) == 0) {
+      return(data.frame(model = character(0), item = character(0), jobs = integer(0), stringsAsFactors = FALSE))
+    }
+    do.call(rbind, rows)
+  }
+
+  output$estimated_jobs_breakdown_text <- renderText({
+    if (length(rv$models) == 0) return("")
+    selected_job_types <- input$job_types
+    if (is.null(selected_job_types) || length(selected_job_types) == 0) return("")
+    selected_models <- selected_models_from_checkboxes()
+    if (length(selected_models) == 0) return("")
+
+    launch_mode <- if (!is.null(input$launch_mode) && nzchar(input$launch_mode)) input$launch_mode else "condor"
+    is_local_mode <- identical(launch_mode, "local_native") || identical(launch_mode, "local_docker")
+    prof_chain_mode <- identical(input$prof_launch_strategy, "seq_anchor_bidir") && "prof" %in% selected_job_types
+    prof_anchor_requested <- suppressWarnings(as.numeric(input$prof_anchor_scalar))
+    if (!is.finite(prof_anchor_requested)) prof_anchor_requested <- 100
+
+    bd <- estimate_jobs_breakdown(
+      selected_models,
+      selected_job_types,
+      prof_chain_mode = prof_chain_mode,
+      is_local_mode = is_local_mode,
+      prof_anchor_requested = prof_anchor_requested,
+      local_prof_chain_parallel = isTRUE(input$parallel_launch)
+    )
+    if (!is.data.frame(bd) || nrow(bd) == 0) return("")
+
+    model_split <- split(bd, bd$model)
+    model_text <- vapply(names(model_split), function(mn) {
+      piece <- model_split[[mn]]
+      item_txt <- paste0(piece$item, "=", piece$jobs, collapse = "; ")
+      paste0(mn, ": ", item_txt)
+    }, character(1), USE.NAMES = FALSE)
+    paste(model_text, collapse = " | ")
+  })
+
   output$estimated_jobs_text <- renderText({
     if (length(rv$models) == 0) return("0 (load config first)")
     selected_job_types <- input$job_types
