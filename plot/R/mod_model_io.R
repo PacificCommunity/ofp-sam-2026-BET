@@ -46,14 +46,34 @@ pm_read_model_payload <- function(folder, debug = FALSE) {
 
 # Read likelihood profile outputs from either new or legacy layout.
 pm_read_likelihood_profiles <- function(folder, debug = FALSE) {
+  resolve_profile_root <- function(root_dir) {
+    if (!dir.exists(root_dir)) return(NA_character_)
+
+    direct_dirs <- list.dirs(root_dir, full.names = TRUE, recursive = FALSE)
+    direct_scalar_dirs <- grep("(scalar|scaler)_\\d+$", direct_dirs, value = TRUE)
+    if (length(direct_scalar_dirs) > 0) return(root_dir)
+
+    child_dirs <- direct_dirs[dir.exists(direct_dirs)]
+    child_scalar_counts <- vapply(child_dirs, function(d) {
+      hits <- list.dirs(d, full.names = TRUE, recursive = FALSE)
+      sum(grepl("(scalar|scaler)_\\d+$", hits))
+    }, numeric(1))
+    child_dirs <- child_dirs[child_scalar_counts > 0]
+    if (length(child_dirs) == 0) return(NA_character_)
+
+    child_info <- file.info(child_dirs)
+    rownames(child_info)[which.max(child_info$mtime)]
+  }
+
   profile_roots <- c(
     file.path(folder, "prof_indepvar"),
     file.path(folder, "prof")
   )
   scalar_dirs <- character(0)
   for (prof_dir in profile_roots) {
-    if (!dir.exists(prof_dir)) next
-    all_dirs <- list.dirs(prof_dir, full.names = TRUE, recursive = FALSE)
+    prof_dir_resolved <- resolve_profile_root(prof_dir)
+    if (!is.character(prof_dir_resolved) || !nzchar(prof_dir_resolved) || !dir.exists(prof_dir_resolved)) next
+    all_dirs <- list.dirs(prof_dir_resolved, full.names = TRUE, recursive = FALSE)
     hits <- grep("(scalar|scaler)_\\d+$", all_dirs, value = TRUE)
     if (length(hits) > 0) {
       scalar_dirs <- hits

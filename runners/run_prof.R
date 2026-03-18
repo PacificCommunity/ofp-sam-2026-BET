@@ -181,6 +181,42 @@ parse_tokens <- function(x) {
   toks[nzchar(toks)]
 }
 
+sanitize_profile_set_key <- function(x, max_len = 80L) {
+  txt <- paste(parse_tokens(x), collapse = "__")
+  txt <- gsub("[^A-Za-z0-9]+", "_", txt)
+  txt <- gsub("_+", "_", txt)
+  txt <- gsub("^_|_$", "", txt)
+  if (!nzchar(txt)) txt <- "indepvar"
+  if (nchar(txt) > max_len) txt <- substr(txt, 1L, max_len)
+  txt
+}
+
+resolve_profile_storage <- function(model_dir, prof_fix_indepvar) {
+  prof_fix_indepvar <- trimws(as.character(prof_fix_indepvar))
+  if (!nzchar(prof_fix_indepvar)) {
+    return(list(
+      prof_subdir = "prof",
+      prof_dir = file.path(model_dir, "prof"),
+      profile_set_key = NA_character_,
+      profile_set_label = NA_character_,
+      profile_root_dir = file.path(model_dir, "prof")
+    ))
+  }
+
+  profile_set_label <- paste(parse_tokens(prof_fix_indepvar), collapse = ", ")
+  profile_set_key <- sanitize_profile_set_key(prof_fix_indepvar)
+  profile_root_dir <- file.path(model_dir, "prof_indepvar")
+  prof_subdir <- file.path("prof_indepvar", profile_set_key)
+
+  list(
+    prof_subdir = prof_subdir,
+    prof_dir = file.path(model_dir, prof_subdir),
+    profile_set_key = profile_set_key,
+    profile_set_label = profile_set_label,
+    profile_root_dir = profile_root_dir
+  )
+}
+
 run_system2_in_dir <- function(command, args = character(0), dir = ".", stdout = "", stderr = "") {
   old_wd <- getwd()
   on.exit(setwd(old_wd), add = TRUE)
@@ -340,8 +376,9 @@ apply_indepvar_fix <- function(init_par_file,
 }
 
 ## Create scalar-specific directory inside prof folder
-prof_subdir <- if (nzchar(trimws(prof_fix_indepvar))) "prof_indepvar" else "prof"
-prof_dir <- file.path(model_dir, prof_subdir)
+profile_storage <- resolve_profile_storage(model_dir, prof_fix_indepvar)
+prof_subdir <- profile_storage$prof_subdir
+prof_dir <- profile_storage$prof_dir
 scalar_dir <- file.path(prof_dir, paste0("scalar_", scalar))
 
 cat("Running Profile Likelihood\n")
@@ -349,6 +386,8 @@ cat("Base directory:", base_dir_abs, "\n")
 cat("Model directory:", model_dir, "\n")
 cat("Prof directory:", prof_dir, "\n")
 cat("Prof subdir:", prof_subdir, "\n")
+cat("Profile set key:", ifelse(is.character(profile_storage$profile_set_key) && nzchar(profile_storage$profile_set_key), profile_storage$profile_set_key, "<none>"), "\n")
+cat("Profile set label:", ifelse(is.character(profile_storage$profile_set_label) && nzchar(profile_storage$profile_set_label), profile_storage$profile_set_label, "<none>"), "\n")
 cat("Scalar directory:", scalar_dir, "\n")
 cat("Scalar:", scalar, "\n")
 cat("Reps:", Reps, "\n")
@@ -365,6 +404,19 @@ cat("Profile post-hessian:", prof_hessian, "\n")
 
 ## Create scalar directory and copy all files from base_dir (inputs)
 dir.create(scalar_dir, recursive = TRUE, showWarnings = FALSE)
+if (nzchar(trimws(prof_fix_indepvar))) {
+  saveRDS(
+    list(
+      profile_source = "indepvar",
+      profile_set_key = profile_storage$profile_set_key,
+      profile_set_label = profile_storage$profile_set_label,
+      prof_fix_indepvar = prof_fix_indepvar,
+      prof_fix_values = prof_fix_values
+    ),
+    file = file.path(prof_dir, "profile_set_info.rds"),
+    compress = "xz"
+  )
+}
 files_to_copy <- list.files(base_dir_abs, full.names = TRUE)
 file.copy(files_to_copy, to = scalar_dir, overwrite = TRUE, recursive = TRUE)
 
@@ -559,6 +611,8 @@ info_list <- list(
   indepvar_fix_file = if (is.character(indepvar_fix_info$indepvar_file) && nzchar(indepvar_fix_info$indepvar_file)) indepvar_fix_info$indepvar_file else NA_character_,
   indepvar_fix_details = indepvar_fix_info$details,
   indepvar_lock_rds = if (is.character(indepvar_fix_info$lock_rds) && nzchar(indepvar_fix_info$lock_rds)) indepvar_fix_info$lock_rds else NA_character_,
+  profile_set_key = if (is.character(profile_storage$profile_set_key) && nzchar(profile_storage$profile_set_key)) profile_storage$profile_set_key else NA_character_,
+  profile_set_label = if (is.character(profile_storage$profile_set_label) && nzchar(profile_storage$profile_set_label)) profile_storage$profile_set_label else NA_character_,
   prof_init_map_rds = if (is.character(init_map_obj$path) && length(init_map_obj$path) == 1 && nzchar(init_map_obj$path)) init_map_obj$path else NA_character_,
   final_par_lines = final_par_lines,
   hessian = hessian_summary
@@ -575,6 +629,8 @@ if (!is.null(profile_payload) && is.list(profile_payload)) {
   profile_payload$indepvar_fix_file <- if (is.character(indepvar_fix_info$indepvar_file) && nzchar(indepvar_fix_info$indepvar_file)) indepvar_fix_info$indepvar_file else NA_character_
   profile_payload$indepvar_fix_details <- indepvar_fix_info$details
   profile_payload$indepvar_lock_rds <- if (is.character(indepvar_fix_info$lock_rds) && nzchar(indepvar_fix_info$lock_rds)) indepvar_fix_info$lock_rds else NA_character_
+  profile_payload$profile_set_key <- if (is.character(profile_storage$profile_set_key) && nzchar(profile_storage$profile_set_key)) profile_storage$profile_set_key else NA_character_
+  profile_payload$profile_set_label <- if (is.character(profile_storage$profile_set_label) && nzchar(profile_storage$profile_set_label)) profile_storage$profile_set_label else NA_character_
   profile_payload$prof_init_map_rds <- if (is.character(init_map_obj$path) && length(init_map_obj$path) == 1 && nzchar(init_map_obj$path)) init_map_obj$path else NA_character_
 }
 saveRDS(profile_payload, file = file.path(scalar_dir, "profile_payload.rds"), compress = "xz")

@@ -54,6 +54,15 @@ mod_likelihood_ui <- function() {
               selected = "standard",
               tabPanel("Standard", value = "standard"),
               tabPanel("Indepvar", value = "indepvar")
+            ),
+            conditionalPanel(
+              condition = "input.lik_profile_source == 'indepvar'",
+              selectInput(
+                "lik_indepvar_profile_set",
+                "Indepvar profile set:",
+                choices = NULL,
+                selected = NULL
+              )
             )
           ),
           tabPanel(
@@ -651,6 +660,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       scenarios = sort(input$lik_scenarios),
       profile_type = current_profile_type(),
       profile_source = sanitize_profile_type(input$lik_profile_source, allowed = c("standard", "indepvar"), default = "standard"),
+      indepvar_profile_set = if (!is.null(input$lik_indepvar_profile_set) && nzchar(trimws(input$lik_indepvar_profile_set))) trimws(input$lik_indepvar_profile_set) else NA_character_,
       groups = input$lik_groups,
       regions = input$lik_regions,
       split_by_region = isTRUE(input$lik_split_by_region),
@@ -702,6 +712,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       scenarios = filters$scenarios,
       profile_type = filters$profile_type,
       profile_source = filters$profile_source,
+      indepvar_profile_set = filters$indepvar_profile_set,
       regions = filters$regions,
       split_by_region = filters$split_by_region,
       jitter_grad_reference = filters$jitter_grad_reference,
@@ -725,7 +736,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (is.null(filters)) return(NULL)
     list(
       scenarios = filters$scenarios,
-      profile_source = filters$profile_source
+      profile_source = filters$profile_source,
+      indepvar_profile_set = filters$indepvar_profile_set
     )
   })
   lik_data_cache_key <- reactive({
@@ -735,6 +747,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     key <- list(
       profile_type = filters$profile_type,
       profile_source = filters$profile_source,
+      indepvar_profile_set = filters$indepvar_profile_set,
       scenarios = sort(filters$scenarios)
     )
 
@@ -1700,10 +1713,114 @@ mod_likelihood_server <- function(input, output, session, rv) {
     out
   })
 
+  read_profile_set_info <- function(profile_dir) {
+    info_file <- file.path(profile_dir, "profile_set_info.rds")
+    if (!file.exists(info_file)) return(NULL)
+    tryCatch(readRDS(info_file), error = function(e) NULL)
+  }
+
+  discover_indepvar_profile_sets <- function(model_dir, scenario) {
+    root_dir <- file.path(model_dir, scenario, "prof_indepvar")
+    if (!dir.exists(root_dir)) return(data.frame())
+
+    rows <- list()
+    root_children <- list.dirs(root_dir, full.names = TRUE, recursive = FALSE)
+    root_scalar_dirs <- grep("(scalar|scaler)_\\d+$", root_children, value = TRUE)
+    if (length(root_scalar_dirs) > 0) {
+      rows[[length(rows) + 1L]] <- data.frame(
+        key = "__legacy__",
+        label = "Legacy/root",
+        path = root_dir,
+        stringsAsFactors = FALSE
+      )
+    }
+
+    child_dirs <- root_children[dir.exists(root_children)]
+    child_dirs <- child_dirs[!grepl("(scalar|scaler)_\\d+$", basename(child_dirs))]
+    for (child in child_dirs) {
+      child_scalar_dirs <- list.dirs(child, full.names = TRUE, recursive = FALSE)
+      child_scalar_dirs <- grep("(scalar|scaler)_\\d+$", child_scalar_dirs, value = TRUE)
+      if (length(child_scalar_dirs) == 0) next
+      meta <- read_profile_set_info(child)
+      label <- if (is.list(meta) && !is.null(meta$profile_set_label) && nzchar(as.character(meta$profile_set_label))) {
+        as.character(meta$profile_set_label)
+      } else {
+        basename(child)
+      }
+      key <- if (is.list(meta) && !is.null(meta$profile_set_key) && nzchar(as.character(meta$profile_set_key))) {
+        as.character(meta$profile_set_key)
+      } else {
+        basename(child)
+      }
+      rows[[length(rows) + 1L]] <- data.frame(
+        key = key,
+        label = label,
+        path = child,
+        stringsAsFactors = FALSE
+      )
+    }
+
+    if (length(rows) == 0) return(data.frame())
+    out <- bind_rows(rows)
+    out <- out[!duplicated(out$key), , drop = FALSE]
+    row_info <- file.info(out$path)
+    out$mtime <- row_info$mtime
+    out <- out[order(out$mtime, decreasing = TRUE), , drop = FALSE]
+    out$mtime <- NULL
+    out
+  }
+
+  resolve_profile_dir <- function(model_dir, scenario, profile_subdir = "prof", profile_set = NA_character_) {
+    if (!identical(profile_subdir, "prof_indepvar")) {
+      return(file.path(model_dir, scenario, profile_subdir))
+    }
+
+    sets <- discover_indepvar_profile_sets(model_dir, scenario)
+    if (nrow(sets) == 0) {
+      return(file.path(model_dir, scenario, "prof_indepvar"))
+    }
+
+    if (is.character(profile_set) && length(profile_set) == 1 && nzchar(profile_set) && any(sets$key == profile_set)) {
+      return(sets$path[match(profile_set, sets$key)])
+    }
+
+    sets$path[[1]]
+  }
+
+  observe({
+    req(input$model_dir)
+    current <- isolate(input$lik_indepvar_profile_set)
+    scenarios <- isolate(input$lik_scenarios)
+    if (is.null(scenarios) || length(scenarios) == 0) {
+      updateSelectInput(session, "lik_indepvar_profile_set", choices = character(0), selected = character(0))
+      return()
+    }
+
+    set_tables <- lapply(scenarios, function(sc) discover_indepvar_profile_sets(input$model_dir, sc))
+    set_tables <- Filter(function(x) is.data.frame(x) && nrow(x) > 0, set_tables)
+    if (length(set_tables) == 0) {
+      updateSelectInput(session, "lik_indepvar_profile_set", choices = character(0), selected = character(0))
+      return()
+    }
+
+    common_keys <- Reduce(intersect, lapply(set_tables, function(x) x$key))
+    if (length(common_keys) == 0) {
+      common_keys <- unique(unlist(lapply(set_tables, function(x) x$key), use.names = FALSE))
+    }
+    base_tbl <- bind_rows(set_tables) %>%
+      filter(key %in% common_keys) %>%
+      group_by(key) %>%
+      summarise(label = first(label), .groups = "drop")
+
+    choices <- setNames(base_tbl$key, base_tbl$label)
+    selected <- if (!is.null(current) && length(current) == 1 && current %in% unname(choices)) current else if (length(choices) > 0) unname(choices)[[1]] else character(0)
+    updateSelectInput(session, "lik_indepvar_profile_set", choices = choices, selected = selected)
+  })
+
   # Load profile outputs for a scenario
-  load_profile_outputs <- function(model_dir, scenario, profile_subdir = "prof") {
+  load_profile_outputs <- function(model_dir, scenario, profile_subdir = "prof", profile_set = NA_character_) {
     folder <- file.path(model_dir, scenario)
-    prof_dir <- file.path(folder, profile_subdir)
+    prof_dir <- resolve_profile_dir(model_dir, scenario, profile_subdir = profile_subdir, profile_set = profile_set)
     scalar_dirs <- list.dirs(prof_dir, full.names = TRUE, recursive = FALSE)
     scalar_dirs <- grep("(scalar|scaler)_\\d+$", scalar_dirs, value = TRUE)
 
@@ -2039,7 +2156,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     profile_data <- list()
     for (sc in selected) {
       if (identical(filters$profile_source, "indepvar")) {
-        pd <- load_profile_outputs(input$model_dir, sc, profile_subdir = "prof_indepvar")
+        pd <- load_profile_outputs(input$model_dir, sc, profile_subdir = "prof_indepvar", profile_set = filters$indepvar_profile_set)
       } else {
         pd <- load_profile_outputs(input$model_dir, sc, profile_subdir = "prof")
       }
@@ -2078,27 +2195,56 @@ mod_likelihood_server <- function(input, output, session, rv) {
       af174 <- suppressWarnings(as.numeric(pd$af174))
       max_year <- suppressWarnings(as.numeric(pd$max_year))
       seasons <- suppressWarnings(as.numeric(pd$seasons))
+      fixed_param_name <- if (is.character(pd$fixed_indepvar_name) && length(pd$fixed_indepvar_name) > 0) {
+        trimws(as.character(pd$fixed_indepvar_name[[1]]))
+      } else {
+        ""
+      }
+      if ((!nzchar(fixed_param_name)) && is.character(pd$fixed_indepvar_names) && length(pd$fixed_indepvar_names) > 0) {
+        fixed_param_name <- paste(pd$fixed_indepvar_names[nzchar(trimws(pd$fixed_indepvar_names))], collapse = ", ")
+      }
+      profile_set_label <- if (!is.null(pd$profile_set_label) && nzchar(as.character(pd$profile_set_label))) as.character(pd$profile_set_label) else NA_character_
+      fixed_param_vals <- suppressWarnings(as.numeric(unlist(pd$fixed_indepvar_value, use.names = FALSE)))
+      fixed_param_vals <- fixed_param_vals[is.finite(fixed_param_vals)]
+      fixed_param_range <- if (length(fixed_param_vals) > 0) {
+        paste0(signif(min(fixed_param_vals), 6), " to ", signif(max(fixed_param_vals), 6))
+      } else {
+        NA_character_
+      }
+      profile_mode <- if (isFALSE(pd$use_quantity_penalty)) {
+        "Fixed-parameter (indepvar)"
+      } else if (isTRUE(pd$use_quantity_penalty)) {
+        "Average-biomass/depletion"
+      } else {
+        "Unknown"
+      }
 
       data.frame(
         Model = sc,
-        `Profile mode` = if (isFALSE(pd$use_quantity_penalty)) {
-          "Fixed-parameter (indepvar)"
-        } else if (isTRUE(pd$use_quantity_penalty)) {
-          "Average-biomass/depletion"
-        } else {
-          "Unknown"
-        },
+        `Profile set` = profile_set_label,
+        `Profile mode` = profile_mode,
         `Fixed indepvar` = if (isTRUE(pd$indepvar_fix_applied)) {
-          if (is.finite(pd$fixed_indepvar_n) && pd$fixed_indepvar_n > 0) paste0(pd$fixed_indepvar_n, " selected") else "Applied"
+          if (nzchar(fixed_param_name)) fixed_param_name else if (is.finite(pd$fixed_indepvar_n) && pd$fixed_indepvar_n > 0) paste0(pd$fixed_indepvar_n, " selected") else "Applied"
         } else {
           "None"
         },
-        `Profile target` = profile_target_label(quantity_label),
-        `Biomass type` = profile_biomass_label(af172),
-        Af172 = if (is.finite(af172)) as.integer(af172) else NA_integer_,
-        Af173 = if (is.finite(af173)) as.integer(af173) else NA_integer_,
-        Af174 = if (is.finite(af174)) as.integer(af174) else NA_integer_,
-        `Time-period window` = if (is.finite(af173) && is.finite(af174)) {
+        `Fixed value range` = if (isTRUE(pd$indepvar_fix_applied)) fixed_param_range else NA_character_,
+        `Profile target` = if (isTRUE(pd$indepvar_fix_applied)) {
+          "Parameter value"
+        } else {
+          profile_target_label(quantity_label)
+        },
+        `Biomass type` = if (isTRUE(pd$indepvar_fix_applied)) {
+          NA_character_
+        } else {
+          profile_biomass_label(af172)
+        },
+        Af172 = if (isTRUE(pd$indepvar_fix_applied)) NA_integer_ else if (is.finite(af172)) as.integer(af172) else NA_integer_,
+        Af173 = if (isTRUE(pd$indepvar_fix_applied)) NA_integer_ else if (is.finite(af173)) as.integer(af173) else NA_integer_,
+        Af174 = if (isTRUE(pd$indepvar_fix_applied)) NA_integer_ else if (is.finite(af174)) as.integer(af174) else NA_integer_,
+        `Time-period window` = if (isTRUE(pd$indepvar_fix_applied)) {
+          NA_character_
+        } else if (is.finite(af173) && is.finite(af174)) {
           if (af173 == 0 && af174 == 0) {
             "Whole time series"
           } else {
@@ -4708,14 +4854,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (!identical(last_group_key(), group_key)) {
       selected <- groups
     } else {
-      if (is.null(current) || length(current) == 0) {
+      if (is.null(current)) {
         selected <- groups
       } else {
         selected <- intersect(current, groups)
-        if ("Total" %in% groups && !("Total" %in% selected)) {
-          selected <- c("Total", selected)
-        }
-        if (length(selected) == 0) selected <- groups
       }
     }
 
@@ -4837,6 +4979,20 @@ mod_likelihood_server <- function(input, output, session, rv) {
         !is.null(filters$groups) &&
         length(filters$groups) > 0) {
       data <- data[data[[group_col]] %in% filters$groups, , drop = FALSE]
+    }
+
+    if (!isTRUE(plot_kind %in% c("jitter", "jitter_params", "jitter_derived")) &&
+        !is.null(group_col) &&
+        length(group_col) == 1 &&
+        nzchar(group_col) &&
+        group_col %in% names(data) &&
+        !is.null(filters$groups) &&
+        length(filters$groups) == 0) {
+      return(
+        ggplot() +
+          annotate("text", x = 0.5, y = 0.5, label = "No lines selected", size = 6, color = "#999") +
+          theme_void()
+      )
     }
 
     if (nrow(data) == 0) {
