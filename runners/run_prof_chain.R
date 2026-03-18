@@ -72,10 +72,10 @@ resolve_chain_from_scalars <- function(all_scalars, chain_name, chain_anchor) {
 }
 
 chain_name <- Sys.getenv("chain_name", "chain")
-chain_scalars <- parse_numeric_tokens(Sys.getenv("scalars", Sys.getenv("chain_scalars", "")))
-if (length(chain_scalars) == 0) {
-  chain_scalars <- read_indexed_chain_scalars()
-}
+scalars_env <- Sys.getenv("scalars", "")
+chain_scalars_env <- Sys.getenv("chain_scalars", "")
+chain_scalars <- parse_numeric_tokens(chain_scalars_env)
+if (length(chain_scalars) == 0) chain_scalars <- read_indexed_chain_scalars()
 chain_first_init_from <- suppressWarnings(as.numeric(Sys.getenv("chain_first_init_from", "")))
 chain_anchor <- Sys.getenv("chain_anchor", "")
 init_par_override <- Sys.getenv("init_par_override", "")
@@ -84,7 +84,7 @@ prof_fix_values <- Sys.getenv("prof_fix_values", "")
 prof_extra_switch <- Sys.getenv("prof_extra_switch", "")
 
 if (length(chain_scalars) == 0) {
-  all_scalars <- parse_numeric_tokens(Sys.getenv("scalars", ""))
+  all_scalars <- parse_numeric_tokens(scalars_env)
   chain_scalars <- resolve_chain_from_scalars(all_scalars, chain_name, chain_anchor)
   if (length(chain_scalars) == 0) {
     stop("No chain scalars found: missing indexed chain_scalar_* and failed to rebuild from scalars/chain_anchor.")
