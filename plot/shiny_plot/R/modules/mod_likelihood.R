@@ -2366,18 +2366,28 @@ mod_likelihood_server <- function(input, output, session, rv) {
         nzchar(fixed_param_name)
       indepvar_mode <- identical(filters$profile_source, "indepvar") ||
         (isTRUE(pd$indepvar_fix_applied) && has_indepvar_details)
+      format_range_or_value <- function(vals) {
+        vals <- vals[is.finite(vals)]
+        if (length(vals) == 0) return(NA_character_)
+        lo <- min(vals)
+        hi <- max(vals)
+        if (isTRUE(all.equal(lo, hi, tolerance = 1e-12))) {
+          return(as.character(signif(lo, 6)))
+        }
+        paste0(signif(lo, 6), " to ", signif(hi, 6))
+      }
       fixed_param_range <- if (length(fixed_param_vals) > 0) {
-        paste0(signif(min(fixed_param_vals), 6), " to ", signif(max(fixed_param_vals), 6))
+        format_range_or_value(fixed_param_vals)
       } else {
         NA_character_
       }
       fixed_lower_range <- if (length(fixed_lower_vals) > 0) {
-        paste0(signif(min(fixed_lower_vals), 6), " to ", signif(max(fixed_lower_vals), 6))
+        format_range_or_value(fixed_lower_vals)
       } else {
         NA_character_
       }
       fixed_upper_range <- if (length(fixed_upper_vals) > 0) {
-        paste0(signif(min(fixed_upper_vals), 6), " to ", signif(max(fixed_upper_vals), 6))
+        format_range_or_value(fixed_upper_vals)
       } else {
         NA_character_
       }
