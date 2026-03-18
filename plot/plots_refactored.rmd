@@ -232,11 +232,129 @@ scale_to_biomass <- function(scalar, scenario, avg_bio) {
   out
 }
 
+read_profile_payload_safe <- function(scalar_dir) {
+  payload_file <- file.path(scalar_dir, "profile_payload.rds")
+  if (file.exists(payload_file)) {
+    obj <- tryCatch(readRDS(payload_file), error = function(e) NULL)
+    if (is.list(obj)) return(obj)
+  }
+  info_file <- file.path(scalar_dir, "info.rds")
+  if (file.exists(info_file)) {
+    obj <- tryCatch(readRDS(info_file), error = function(e) NULL)
+    if (is.list(obj)) return(obj)
+  }
+  NULL
+}
+
+extract_profile_param_meta <- function(obj) {
+  if (is.null(obj) || !is.list(obj)) {
+    return(list(value = NA_real_, name = NA_character_))
+  }
+  details <- obj$indepvar_fix_details
+  if (!is.data.frame(details) || nrow(details) == 0) {
+    return(list(value = NA_real_, name = NA_character_))
+  }
+  val <- suppressWarnings(as.numeric(details$value_after[[1]]))
+  nm <- if ("Var_name" %in% names(details)) as.character(details$Var_name[[1]]) else NA_character_
+  if (!is.finite(val)) val <- NA_real_
+  if (!is.character(nm) || !nzchar(nm)) nm <- NA_character_
+  list(value = val, name = nm)
+}
+
+build_profile_x_lookup <- function(scenarios, model_dir = MODEL_DIR) {
+  rows <- list()
+
+  for (sc in scenarios) {
+    base_dirs <- c(
+      file.path(model_dir, sc, "prof_indepvar"),
+      file.path(model_dir, sc, "prof")
+    )
+    for (base_dir in base_dirs) {
+      if (!dir.exists(base_dir)) next
+      scalar_dirs <- list.dirs(base_dir, full.names = TRUE, recursive = FALSE)
+      scalar_dirs <- grep("(scalar|scaler)_\\d+$", scalar_dirs, value = TRUE)
+      if (length(scalar_dirs) == 0) next
+
+      for (sd in scalar_dirs) {
+        scalar_chr <- sub("^(scalar|scaler)_", "", basename(sd))
+        payload <- read_profile_payload_safe(sd)
+        meta <- extract_profile_param_meta(payload)
+        if (is.finite(meta$value)) {
+          rows[[length(rows) + 1L]] <- data.frame(
+            scenario = as.character(sc),
+            scalar_chr = as.character(scalar_chr),
+            x_value = as.numeric(meta$value),
+            param_name = as.character(meta$name),
+            stringsAsFactors = FALSE
+          )
+        }
+      }
+    }
+  }
+
+  if (length(rows) == 0) {
+    return(list(
+      lookup = data.frame(),
+      has_param = FALSE,
+      x_name = bquote("Average total biomass (" * 10^3 * " MT)"),
+      x_scale = "biomass"
+    ))
+  }
+
+  lookup <- bind_rows(rows) %>%
+    mutate(param_name = ifelse(is.na(param_name), "", trimws(param_name))) %>%
+    group_by(scenario, scalar_chr) %>%
+    summarise(
+      x_value = suppressWarnings(as.numeric(first(x_value))),
+      param_name = first(param_name),
+      .groups = "drop"
+    )
+
+  pnames <- unique(lookup$param_name[nzchar(lookup$param_name)])
+  x_name <- if (length(pnames) == 1) pnames[[1]] else "Profile parameter value"
+
+  list(
+    lookup = lookup,
+    has_param = nrow(lookup) > 0,
+    x_name = x_name,
+    x_scale = "identity"
+  )
+}
+
+scale_profile_x <- function(scalar, scenario, avg_bio, profile_x_lookup = NULL) {
+  sc_num <- suppressWarnings(as.numeric(scalar))
+  out <- scale_to_biomass(sc_num, scenario, avg_bio)
+
+  if (is.null(profile_x_lookup) || !is.data.frame(profile_x_lookup) || nrow(profile_x_lookup) == 0) {
+    return(out)
+  }
+
+  map_df <- data.frame(
+    idx = seq_along(sc_num),
+    scalar_chr = as.character(scalar),
+    scenario = as.character(scenario),
+    stringsAsFactors = FALSE
+  ) %>%
+    left_join(profile_x_lookup, by = c("scenario", "scalar_chr"))
+
+  hit <- is.finite(map_df$x_value)
+  out[hit] <- map_df$x_value[hit]
+  out
+}
+
 #' Create a standard likelihood profile plot
 #' @param data Data frame with columns: scalar, change, group_var, scenario
 #' @param group_var Name of the grouping variable (e.g., "Fishery", "Likelihood")
 #' @param label Annotation label for the plot
-create_piner_plot <- function(data, group_var, label = NULL) {
+create_piner_plot <- function(data, group_var, label = NULL, x_name = NULL, x_scale = c("biomass", "identity")) {
+  x_scale <- match.arg(x_scale)
+  if (is.null(x_name)) {
+    x_name <- if (identical(x_scale, "biomass")) {
+      bquote("Average total biomass (" * 10^3 * " MT)")
+    } else {
+      "Profile parameter value"
+    }
+  }
   
   # Get unique groups excluding "Total"
   unique_groups <- unique(data[[group_var]])
@@ -258,10 +376,13 @@ create_piner_plot <- function(data, group_var, label = NULL) {
     scale_size_manual(values = c("TRUE" = 3.5, "FALSE" = 2), guide = "none") +
     scale_shape_manual(values = rep(0:24, length.out = length(unique_groups))) +
     facet_wrap(~scenario, scales = "free") +
-    scale_x_continuous(
-      labels = function(x) x / 1000,
-      name = bquote("Average biomass (" * 10^3 * " MT)")
-    ) +
+    {
+      if (identical(x_scale, "biomass")) {
+        scale_x_continuous(labels = function(x) x / 1000, name = x_name)
+      } else {
+        scale_x_continuous(name = x_name)
+      }
+    } +
     labs(y = "Changes in Likelihood", colour = group_var, shape = group_var) +
     theme(
       legend.position = "bottom",
@@ -2232,6 +2353,7 @@ if (length(scenarios_prof) > 0) {
 
   # Get average biomass for scaling
   avg_bio <- get_avg_bio(scenarios_prof)
+  profile_x <- build_profile_x_lookup(scenarios_prof)
 
   Likes_long <- purrr::map_dfr(scenarios_prof, function(sc) {
     sc_scales <- names(ProfLikOut_list[[sc]])
@@ -2259,12 +2381,12 @@ if (length(scenarios_prof) > 0) {
       )
     })
   }) %>%
-    mutate(scalar = scale_to_biomass(scalar, scenario, avg_bio))
+    mutate(scalar = scale_profile_x(scalar, scenario, avg_bio, profile_x$lookup))
 
   # Calculate change from minimum
   if (nrow(Likes_long) > 0) {
     Likes_change <- calc_lik_change(Likes_long, "Likelihood")
-    print(create_piner_plot(Likes_change, "Likelihood"))
+    print(create_piner_plot(Likes_change, "Likelihood", x_name = profile_x$x_name, x_scale = profile_x$x_scale))
   } else {
     cat("*No likelihood-component profile data available.*\n\n")
   }
@@ -2289,6 +2411,7 @@ scenarios_prof <- prof_ctx$scenarios
 
 if (length(scenarios_prof) > 0) {
   avg_bio <- get_avg_bio(scenarios_prof)
+  profile_x <- build_profile_x_lookup(scenarios_prof)
 
   Likes_long <- purrr::map_dfr(scenarios_prof, function(sc) {
     sc_scales <- names(ProfLikOutRaw_list[[sc]])
@@ -2317,7 +2440,7 @@ if (length(scenarios_prof) > 0) {
       )
     })
   }) %>%
-    mutate(scalar = scale_to_biomass(scalar, scenario, avg_bio))
+    mutate(scalar = scale_profile_x(scalar, scenario, avg_bio, profile_x$lookup))
 
   if (nrow(Likes_long) > 0) {
     cat(sprintf("CPUE profile rows: %d | fisheries: %d | scenarios: %d\n\n",
@@ -2325,7 +2448,7 @@ if (length(scenarios_prof) > 0) {
                 dplyr::n_distinct(Likes_long$Fishery),
                 dplyr::n_distinct(Likes_long$scenario)))
     Likes_change <- calc_lik_change(Likes_long, "Fishery")
-    print(create_piner_plot(Likes_change, "Fishery", "CPUEs"))
+    print(create_piner_plot(Likes_change, "Fishery", "CPUEs", x_name = profile_x$x_name, x_scale = profile_x$x_scale))
   } else {
     cat("*No CPUE profile rows parsed from `# Survey_index_like_by_fishery` blocks.*\n\n")
   }
@@ -2350,6 +2473,7 @@ scenarios_prof <- prof_ctx$scenarios
 
 if (length(scenarios_prof) > 0) {
   avg_bio <- get_avg_bio(scenarios_prof)
+  profile_x <- build_profile_x_lookup(scenarios_prof)
   
   Likes_long <- purrr::map_dfr(scenarios_prof, function(sc) {
     sc_scales <- names(ProfLikOut_list[[sc]])
@@ -2367,12 +2491,12 @@ if (length(scenarios_prof) > 0) {
       bind_rows(out, data.frame(scenario = sc, scalar = scl, Fishery = "Total", value = sum(out$value), stringsAsFactors = FALSE))
     })
   }) %>%
-    mutate(scalar = scale_to_biomass(scalar, scenario, avg_bio))
+    mutate(scalar = scale_profile_x(scalar, scenario, avg_bio, profile_x$lookup))
   
   # Calculate change and plot
   if (nrow(Likes_long) > 0) {
     Likes_change <- calc_lik_change(Likes_long, "Fishery")
-    print(create_piner_plot(Likes_change, "Fishery", "LFs"))
+    print(create_piner_plot(Likes_change, "Fishery", "LFs", x_name = profile_x$x_name, x_scale = profile_x$x_scale))
   } else {
     cat("*No LF profile data available.*\n\n")
   }
@@ -2393,6 +2517,7 @@ scenarios_prof <- prof_ctx$scenarios
 
 if (length(scenarios_prof) > 0) {
   avg_bio <- get_avg_bio(scenarios_prof)
+  profile_x <- build_profile_x_lookup(scenarios_prof)
   
   Likes_long <- purrr::map_dfr(scenarios_prof, function(sc) {
     sc_scales <- names(ProfLikOut_list[[sc]])
@@ -2410,11 +2535,11 @@ if (length(scenarios_prof) > 0) {
       bind_rows(out, data.frame(scenario = sc, scalar = scl, Fishery = "Total", value = sum(out$value), stringsAsFactors = FALSE))
     })
   }) %>%
-    mutate(scalar = scale_to_biomass(scalar, scenario, avg_bio))
+    mutate(scalar = scale_profile_x(scalar, scenario, avg_bio, profile_x$lookup))
   
   if (nrow(Likes_long) > 0) {
     Likes_change <- calc_lik_change(Likes_long, "Fishery")
-    print(create_piner_plot(Likes_change, "Fishery", "WFs"))
+    print(create_piner_plot(Likes_change, "Fishery", "WFs", x_name = profile_x$x_name, x_scale = profile_x$x_scale))
   } else {
     cat("*No WF profile data available.*\n\n")
   }
@@ -2435,6 +2560,7 @@ scenarios_prof <- prof_ctx$scenarios
 
 if (length(scenarios_prof) > 0) {
   avg_bio <- get_avg_bio(scenarios_prof)
+  profile_x <- build_profile_x_lookup(scenarios_prof)
   
   # Extract tag likelihoods by program
   Likes_long <- purrr::map_dfr(scenarios_prof, function(sc) {
@@ -2455,7 +2581,7 @@ if (length(scenarios_prof) > 0) {
       )
     })
   }) %>%
-    mutate(scalar = scale_to_biomass(scalar, scenario, avg_bio)) %>%
+    mutate(scalar = scale_profile_x(scalar, scenario, avg_bio, profile_x$lookup)) %>%
     group_by(program, scalar, scenario) %>%
     summarise(value = sum(value), .groups = "drop")
   
@@ -2469,7 +2595,7 @@ if (length(scenarios_prof) > 0) {
   
   if (nrow(Likes_long) > 0) {
     Likes_change <- calc_lik_change(Likes_long, "program")
-    print(create_piner_plot(Likes_change, "program", "Tagging program"))
+    print(create_piner_plot(Likes_change, "program", "Tagging program", x_name = profile_x$x_name, x_scale = profile_x$x_scale))
   } else {
     cat("*No tagging profile data available.*\n\n")
   }
@@ -2489,6 +2615,7 @@ prof_ctx <- get_profile_context(Info_list, ProfLikOut_list, ProfLikOutRaw_list)
 scenarios_prof <- prof_ctx$scenarios
 scales <- prof_ctx$common_scales
 avg_bio <- get_avg_bio(scenarios_prof)
+profile_x <- build_profile_x_lookup(scenarios_prof)
 
 if (length(scenarios_prof) == 0 || length(scales) == 0) {
   cat("*No shared CAL-by-fishery profile outputs were found.*\n\n")
@@ -2510,7 +2637,7 @@ if (length(scenarios_prof) == 0 || length(scales) == 0) {
       alk_summary %>%
         mutate(
           scenario = sc,
-          scalar = scale_to_biomass(scl, sc, avg_bio),
+          scalar = scale_profile_x(scl, sc, avg_bio, profile_x$lookup),
           Lik = lik_vec[seq_len(nrow(alk_summary))]
         )
     })
@@ -2539,7 +2666,7 @@ if (length(scenarios_prof) == 0 || length(scales) == 0) {
     ungroup()
 
   if (nrow(lik_change) > 0) {
-    print(create_piner_plot(lik_change, "fishery", "CAL"))
+    print(create_piner_plot(lik_change, "fishery", "CAL", x_name = profile_x$x_name, x_scale = profile_x$x_scale))
   } else {
     cat("*No shared CAL-by-fishery profile outputs were found.*\n\n")
   }
@@ -2557,6 +2684,7 @@ prof_ctx <- get_profile_context(Info_list, ProfLikOut_list, ProfLikOutRaw_list)
 scenarios_prof <- prof_ctx$scenarios
 scales <- prof_ctx$common_scales
 avg_bio <- get_avg_bio(scenarios_prof)
+profile_x <- build_profile_x_lookup(scenarios_prof)
 
 if (length(scenarios_prof) == 0 || length(scales) == 0) {
   cat("*No shared CAL-by-year profile outputs were found.*\n\n")
@@ -2575,7 +2703,7 @@ if (length(scenarios_prof) == 0 || length(scales) == 0) {
       alk_summary %>%
         mutate(
           scenario = sc,
-          scalar = scale_to_biomass(scl, sc, avg_bio),
+          scalar = scale_profile_x(scl, sc, avg_bio, profile_x$lookup),
           Lik = lik_vec[seq_len(nrow(alk_summary))]
         )
     })
@@ -2603,7 +2731,7 @@ if (length(scenarios_prof) == 0 || length(scales) == 0) {
     ungroup()
 
   if (nrow(lik_change) > 0) {
-    print(create_piner_plot(lik_change, "year", "CAL"))
+    print(create_piner_plot(lik_change, "year", "CAL", x_name = profile_x$x_name, x_scale = profile_x$x_scale))
   } else {
     cat("*No shared CAL-by-year profile outputs were found.*\n\n")
   }

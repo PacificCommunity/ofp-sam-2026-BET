@@ -229,7 +229,9 @@ apply_indepvar_fix <- function(init_par_file,
                                model_dir,
                                base_dir_abs,
                                indepvar_select,
-                               indepvar_values) {
+                               indepvar_values,
+                               scalar_percent = NA_real_,
+                               baseline_par_file = NA_character_) {
   tokens <- parse_tokens(indepvar_select)
   if (length(tokens) == 0) {
     return(list(
@@ -284,7 +286,21 @@ apply_indepvar_fix <- function(init_par_file,
 
   value_tokens <- parse_tokens(indepvar_values)
   if (length(value_tokens) == 0) {
-    target_values <- as.numeric(current_values[selected_rows])
+    scale_pct <- suppressWarnings(as.numeric(scalar_percent))
+    baseline_values <- current_values
+
+    if (is.finite(scale_pct) && is.character(baseline_par_file) && length(baseline_par_file) == 1 && nzchar(baseline_par_file) && file.exists(baseline_par_file)) {
+      baseline_par_obj <- suppressWarnings(tryCatch(read.MFCLPar(baseline_par_file), error = function(e) NULL))
+      if (!is.null(baseline_par_obj)) {
+        baseline_values <- extract_indepvar_values(baseline_par_obj, indepvar_map)
+      }
+    }
+
+    if (is.finite(scale_pct)) {
+      target_values <- as.numeric(baseline_values[selected_rows]) * scale_pct / 100
+    } else {
+      target_values <- as.numeric(current_values[selected_rows])
+    }
   } else {
     parsed_values <- suppressWarnings(as.numeric(value_tokens))
     if (any(!is.finite(parsed_values))) {
@@ -397,7 +413,9 @@ if (nzchar(prof_fix_indepvar)) {
     model_dir = model_dir,
     base_dir_abs = base_dir_abs,
     indepvar_select = prof_fix_indepvar,
-    indepvar_values = prof_fix_values
+    indepvar_values = prof_fix_values,
+    scalar_percent = scalar,
+    baseline_par_file = most_recent
   )
   init_par_file <- indepvar_fix_info$par_file
   init_source <- paste0(init_source, "+indepvar_fix")

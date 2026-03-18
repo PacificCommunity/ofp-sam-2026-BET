@@ -1003,6 +1003,21 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }
 
   quantity_axis_label <- function(profile_data) {
+    indepvar_names <- unique(unlist(lapply(profile_data, function(x) {
+      nm <- x$fixed_indepvar_name
+      nm <- as.character(nm)
+      nm[nzchar(trimws(nm))]
+    }), use.names = FALSE))
+    indepvar_values <- unlist(lapply(profile_data, function(x) {
+      vals <- x$fixed_indepvar_value
+      suppressWarnings(as.numeric(unlist(vals, use.names = FALSE)))
+    }), use.names = FALSE)
+    indepvar_values <- indepvar_values[is.finite(indepvar_values)]
+    if (length(indepvar_values) > 0) {
+      if (length(indepvar_names) == 1) return(indepvar_names[[1]])
+      return("Profile parameter value")
+    }
+
     use_penalty_vals <- unlist(lapply(profile_data, function(x) x$use_quantity_penalty), use.names = FALSE)
     use_penalty_vals <- use_penalty_vals[!is.na(use_penalty_vals)]
     if (length(use_penalty_vals) > 0 && all(!use_penalty_vals)) {
@@ -1029,6 +1044,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }
 
   quantity_axis_formatter <- function(profile_data) {
+    indepvar_values <- unlist(lapply(profile_data, function(x) {
+      vals <- x$fixed_indepvar_value
+      suppressWarnings(as.numeric(unlist(vals, use.names = FALSE)))
+    }), use.names = FALSE)
+    indepvar_values <- indepvar_values[is.finite(indepvar_values)]
+    if (length(indepvar_values) > 0) {
+      return(function(x) x)
+    }
+
     use_penalty_vals <- unlist(lapply(profile_data, function(x) x$use_quantity_penalty), use.names = FALSE)
     use_penalty_vals <- use_penalty_vals[!is.na(use_penalty_vals)]
     if (length(use_penalty_vals) > 0 && all(!use_penalty_vals)) {
@@ -1039,6 +1063,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
   scalar_quantity <- function(profile_entry, scl) {
     key <- as.character(scl)
+    fixed_val <- suppressWarnings(as.numeric(profile_entry$fixed_indepvar_value[[key]]))
+    if (is.finite(fixed_val)) {
+      return(fixed_val)
+    }
     val <- suppressWarnings(as.numeric(profile_entry$actual_quantity[[key]]))
     if (!is.finite(val)) {
       val <- suppressWarnings(as.numeric(scl))
@@ -1765,15 +1793,30 @@ mod_likelihood_server <- function(input, output, session, rv) {
           indepvar_fix_applied <- any(indepvar_fix_applied_vals, na.rm = TRUE)
           fixed_indepvar_names <- character(0)
           fixed_indepvar_n <- 0L
+          fixed_indepvar_value <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+          fixed_indepvar_name <- NA_character_
           if (isTRUE(indepvar_fix_applied)) {
-            detail_candidates <- lapply(payloads, function(x) x$indepvar_fix_details)
-            detail_candidates <- Filter(function(x) is.data.frame(x) && nrow(x) > 0, detail_candidates)
+            detail_candidates <- lapply(seq_along(payloads), function(i) {
+              x <- payloads[[i]]
+              details <- x$indepvar_fix_details
+              if (!is.data.frame(details) || nrow(details) == 0) return(NULL)
+              list(scale = existing_scales[[i]], details = details)
+            })
+            detail_candidates <- Filter(Negate(is.null), detail_candidates)
             if (length(detail_candidates) > 0) {
-              details_df <- detail_candidates[[1]]
+              details_df <- detail_candidates[[1]]$details
               if ("Var_name" %in% names(details_df)) {
                 fixed_indepvar_names <- unique(as.character(details_df$Var_name))
                 fixed_indepvar_names <- fixed_indepvar_names[nzchar(fixed_indepvar_names)]
                 fixed_indepvar_n <- length(fixed_indepvar_names)
+                if (fixed_indepvar_n > 0) fixed_indepvar_name <- fixed_indepvar_names[[1]]
+              }
+              for (it in detail_candidates) {
+                dd <- it$details
+                if ("value_after" %in% names(dd) && nrow(dd) > 0) {
+                  v <- suppressWarnings(as.numeric(dd$value_after[[1]]))
+                  if (is.finite(v)) fixed_indepvar_value[[as.character(it$scale)]] <- v
+                }
               }
             }
           }
@@ -1853,6 +1896,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
           indepvar_fix_applied <- FALSE
           fixed_indepvar_names <- character(0)
           fixed_indepvar_n <- 0L
+          fixed_indepvar_value <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+          fixed_indepvar_name <- NA_character_
           max_year <- NA_real_
           seasons <- NA_real_
           profile_hessian_attempted <- 0L
@@ -1893,6 +1938,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
         indepvar_fix_applied <- FALSE
         fixed_indepvar_names <- character(0)
         fixed_indepvar_n <- 0L
+        fixed_indepvar_value <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+        fixed_indepvar_name <- NA_character_
         max_year <- NA_real_
         seasons <- NA_real_
         profile_hessian_attempted <- 0L
@@ -1932,6 +1979,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       indepvar_fix_applied <- FALSE
       fixed_indepvar_names <- character(0)
       fixed_indepvar_n <- 0L
+      fixed_indepvar_value <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+      fixed_indepvar_name <- NA_character_
       max_year <- NA_real_
       seasons <- NA_real_
       profile_hessian_attempted <- 0L
@@ -1963,6 +2012,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       indepvar_fix_applied = indepvar_fix_applied,
       fixed_indepvar_names = fixed_indepvar_names,
       fixed_indepvar_n = fixed_indepvar_n,
+      fixed_indepvar_value = fixed_indepvar_value,
+      fixed_indepvar_name = fixed_indepvar_name,
       max_year = max_year,
       seasons = seasons,
       profile_hessian_attempted = profile_hessian_attempted,

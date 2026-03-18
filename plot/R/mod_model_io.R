@@ -46,9 +46,20 @@ pm_read_model_payload <- function(folder, debug = FALSE) {
 
 # Read likelihood profile outputs from either new or legacy layout.
 pm_read_likelihood_profiles <- function(folder, debug = FALSE) {
-  prof_dir <- file.path(folder, "prof")
-  all_dirs <- list.dirs(prof_dir, full.names = TRUE, recursive = FALSE)
-  scalar_dirs <- grep("(scalar|scaler)_\\d+$", all_dirs, value = TRUE)
+  profile_roots <- c(
+    file.path(folder, "prof_indepvar"),
+    file.path(folder, "prof")
+  )
+  scalar_dirs <- character(0)
+  for (prof_dir in profile_roots) {
+    if (!dir.exists(prof_dir)) next
+    all_dirs <- list.dirs(prof_dir, full.names = TRUE, recursive = FALSE)
+    hits <- grep("(scalar|scaler)_\\d+$", all_dirs, value = TRUE)
+    if (length(hits) > 0) {
+      scalar_dirs <- hits
+      break
+    }
+  }
   
   if (length(scalar_dirs) > 0) {
     scales <- basename(scalar_dirs) %>% stringr::str_extract("\\d+$")
