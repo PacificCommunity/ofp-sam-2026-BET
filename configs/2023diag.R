@@ -82,15 +82,11 @@ models <- list(
       #   indepvar_reps = "100",
       #   prof_extra_switch = "1 121 0"
       # )
-    ),
+    )
+    # When using profile_sets, all profile-related fields (prof_fix_indepvar,
+    # indepvar_reps, prof_extra_switch, etc.) should be specified per set.
+    # Top-level fallbacks for those fields are not needed.
 
-    # Backward-compatible top-level defaults (used when a profile set does not override them)
-    prof_fix_indepvar="",
-    prof_fix_values="",
-    prof_fix_indepvar_file="",
-    indepvar_reps="200",        # Default indepvar reps if not overridden in profile_sets
-    prof_extra_switch="1 121 0"
-    
   )
   
   )

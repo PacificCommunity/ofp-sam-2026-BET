@@ -158,9 +158,10 @@ models <- list(
 
     Reps = "2 2 2 2 2 2",
     scalars = paste0(seq(120, 80, by = -5), collapse = " "),
-    indepvar_reps = "200",
-    prof_extra_switch = "",
 
+    # Each profile set specifies its own prof_fix_indepvar, scalars,
+    # indepvar_reps, and prof_extra_switch directly.
+    # Top-level fallbacks for those fields are not needed.
     profile_sets = list(
       standard = list(
         scalars = paste0(seq(120, 80, by = -5), collapse = " "),
