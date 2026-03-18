@@ -58,16 +58,28 @@ mod_likelihood_ui <- function() {
             conditionalPanel(
               condition = "input.lik_profile_source == 'indepvar'",
               tagList(
-                selectInput(
+                pickerInput(
                   "lik_indepvar_profile_set",
-                  "Indepvar profile set:",
+                  "Indepvar profile set(s):",
                   choices = NULL,
-                  selected = NULL
+                  selected = NULL,
+                  multiple = TRUE,
+                  options = pickerOptions(
+                    actionsBox = TRUE,
+                    selectAllText = "Select All",
+                    deselectAllText = "Deselect All",
+                    selectedTextFormat = "count > 2",
+                    countSelectedText = "{0} sets selected",
+                    liveSearch = TRUE,
+                    liveSearchPlaceholder = "Search profile sets...",
+                    size = 8
+                  )
                 ),
-                textInput(
-                  "lik_x_axis_label_override",
-                  "X-axis label override:",
-                  value = ""
+                tags$label("X-axis label override by set:"),
+                DTOutput("lik_x_axis_override_table"),
+                tags$small(
+                  "Edit the X-axis label cell for each selected profile set. Matching works by both profile-set key and label.",
+                  style = "display:block; margin-top:-6px; color:#666;"
                 )
               )
             )
@@ -516,6 +528,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
     hessian = list(),
     retro_plot = list()
   )
+  lik_indepvar_set_catalog <- reactiveVal(data.frame(key = character(0), label = character(0), stringsAsFactors = FALSE))
+  lik_x_axis_override_table <- reactiveVal(data.frame(
+    profile_set_label = character(0),
+    profile_set_key = character(0),
+    x_axis_label = character(0),
+    stringsAsFactors = FALSE
+  ))
   fishery_diag_cache <- reactiveValues(
     cpue = list(),
     fishery_slot = list(),
@@ -615,6 +634,84 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (length(value) != 1 || is.na(value) || !nzchar(value)) return(NA_character_)
     value
   }
+  sanitize_text_vector <- function(x) {
+    if (is.null(x) || length(x) == 0) return(character(0))
+    vals <- trimws(as.character(x))
+    vals <- vals[!is.na(vals) & nzchar(vals)]
+    unique(vals)
+  }
+  profile_entry_scenario_name <- function(profile_entry, fallback = NA_character_) {
+    nm <- sanitize_text_scalar(profile_entry$scenario_name)
+    if (is.na(nm) || !nzchar(nm)) fallback else nm
+  }
+  profile_entry_display_name <- function(profile_entry, fallback = NA_character_) {
+    nm <- sanitize_text_scalar(profile_entry$scenario_label)
+    if (is.na(nm) || !nzchar(nm)) {
+      profile_entry_scenario_name(profile_entry, fallback = fallback)
+    } else {
+      nm
+    }
+  }
+  parse_axis_label_override_spec <- function(override = NA_character_) {
+    if (is.data.frame(override)) {
+      cols <- names(override)
+      key_col <- intersect(cols, c("profile_set_key", "key", "Profile set key"))
+      label_col <- intersect(cols, c("profile_set_label", "label", "Profile set"))
+      value_col <- intersect(cols, c("x_axis_label", "X-axis label", "x_label"))
+      if (length(value_col) == 0) {
+        return(list(default = NA_character_, map = list()))
+      }
+      key_vals <- if (length(key_col) > 0) trimws(as.character(override[[key_col[[1]]]])) else rep("", nrow(override))
+      label_vals <- if (length(label_col) > 0) trimws(as.character(override[[label_col[[1]]]])) else rep("", nrow(override))
+      value_vals <- trimws(as.character(override[[value_col[[1]]]]))
+      out_map <- list()
+      for (i in seq_len(nrow(override))) {
+        val <- value_vals[[i]]
+        if (is.na(val) || !nzchar(val)) next
+        if (!is.na(key_vals[[i]]) && nzchar(key_vals[[i]])) out_map[[key_vals[[i]]]] <- val
+        if (!is.na(label_vals[[i]]) && nzchar(label_vals[[i]])) out_map[[label_vals[[i]]]] <- val
+      }
+      return(list(default = NA_character_, map = out_map))
+    }
+
+    txt <- if (is.null(override) || length(override) == 0) {
+      ""
+    } else {
+      paste(as.character(override), collapse = "\n")
+    }
+    txt <- trimws(txt)
+    if (!nzchar(txt)) {
+      return(list(default = NA_character_, map = list()))
+    }
+
+    lines <- trimws(unlist(strsplit(txt, "\\r?\\n|;", perl = TRUE)))
+    lines <- lines[nzchar(lines)]
+    if (length(lines) == 0) {
+      return(list(default = NA_character_, map = list()))
+    }
+
+    has_mapping <- any(grepl("=|:", lines))
+    if (!has_mapping && length(lines) == 1) {
+      return(list(default = lines[[1]], map = list()))
+    }
+
+    out_map <- list()
+    default_val <- NA_character_
+    for (ln in lines) {
+      m <- regexpr("=|:", ln, perl = TRUE)
+      if (isTRUE(m[[1]] > 0)) {
+        key <- trimws(substr(ln, 1, m[[1]] - 1))
+        val <- trimws(substr(ln, m[[1]] + 1, nchar(ln)))
+        if (nzchar(key) && nzchar(val)) out_map[[key]] <- val
+      } else if (!isTRUE(has_mapping) && !is.na(default_val)) {
+        default_val <- ln
+      } else if (!isTRUE(has_mapping) && is.na(default_val)) {
+        default_val <- ln
+      }
+    }
+
+    list(default = default_val, map = out_map)
+  }
   lik_live_update_nonce <- reactiveVal(0)
   fishery_region_types <- c("cpues", "lfs", "wfs", "cal_fishery", "influence_cpues", "influence_lfs", "influence_wfs", "influence_cal_fishery")
   current_profile_type <- reactive({
@@ -673,21 +770,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
       profile_type = current_profile_type(),
       profile_source = sanitize_profile_type(input$lik_profile_source, allowed = c("standard", "indepvar"), default = "standard"),
       indepvar_profile_set = {
-        if (!has_text_scalar(input$lik_indepvar_profile_set)) {
-          NA_character_
-        } else {
-          raw_set <- trimws(as.character(input$lik_indepvar_profile_set[[1]]))
-          if (!nzchar(raw_set) || identical(raw_set, "__none__")) NA_character_ else raw_set
-        }
+        vals <- sanitize_text_vector(input$lik_indepvar_profile_set)
+        vals <- vals[vals != "__none__"]
+        sort(unique(vals))
       },
-      x_axis_label_override = {
-        if (!has_text_scalar(input$lik_x_axis_label_override)) {
-          NA_character_
-        } else {
-          raw_label <- trimws(as.character(input$lik_x_axis_label_override[[1]]))
-          if (!nzchar(raw_label)) NA_character_ else raw_label
-        }
-      },
+      x_axis_label_override = lik_x_axis_override_table(),
       groups = input$lik_groups,
       regions = input$lik_regions,
       split_by_region = isTRUE(input$lik_split_by_region),
@@ -738,7 +825,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       scenarios = filters$scenarios,
       profile_type = filters$profile_type,
       profile_source = filters$profile_source,
-      indepvar_profile_set = filters$indepvar_profile_set,
+      indepvar_profile_set = sort(unique(as.character(filters$indepvar_profile_set))),
       regions = filters$regions,
       split_by_region = filters$split_by_region,
       jitter_grad_reference = filters$jitter_grad_reference,
@@ -773,7 +860,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     key <- list(
       profile_type = filters$profile_type,
       profile_source = filters$profile_source,
-      indepvar_profile_set = filters$indepvar_profile_set,
+      indepvar_profile_set = sort(unique(as.character(filters$indepvar_profile_set))),
       scenarios = sort(filters$scenarios),
       profile_files_cache = lik_profile_files_cache_key()
     )
@@ -828,6 +915,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       profile_source = filters$profile_source,
       scenarios = sort(filters$scenarios),
       profile_files_cache = lik_profile_files_cache_key(),
+      indepvar_profile_set = sort(unique(as.character(filters$indepvar_profile_set))),
       x_axis_label_override = filters$x_axis_label_override,
       facet_ncol = filters$facet_ncol,
       show_influence = isTRUE(filters$show_influence),
@@ -918,6 +1006,51 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
   observeEvent(list(input$lik_profile_source, input$lik_indepvar_profile_set), {
     clear_fishery_diag_cache()
+  }, ignoreInit = TRUE)
+
+  output$lik_x_axis_override_table <- renderDT({
+    tbl <- lik_x_axis_override_table()
+    if (!is.data.frame(tbl) || nrow(tbl) == 0) {
+      tbl <- data.frame(
+        `Profile set` = character(0),
+        `Profile set key` = character(0),
+        `X-axis label` = character(0),
+        stringsAsFactors = FALSE
+      )
+    } else {
+      tbl <- data.frame(
+        `Profile set` = tbl$profile_set_label,
+        `Profile set key` = tbl$profile_set_key,
+        `X-axis label` = tbl$x_axis_label,
+        stringsAsFactors = FALSE
+      )
+    }
+
+    datatable(
+      tbl,
+      rownames = FALSE,
+      editable = list(target = "cell", disable = list(columns = c(0, 1))),
+      options = list(
+        dom = "t",
+        paging = FALSE,
+        searching = FALSE,
+        ordering = FALSE,
+        info = FALSE,
+        autoWidth = TRUE
+      )
+    )
+  })
+
+  observeEvent(input$lik_x_axis_override_table_cell_edit, {
+    info <- input$lik_x_axis_override_table_cell_edit
+    tbl <- lik_x_axis_override_table()
+    if (!is.list(info) || !is.data.frame(tbl) || nrow(tbl) == 0) return()
+    row <- suppressWarnings(as.integer(info$row))
+    col <- suppressWarnings(as.integer(info$col))
+    if (!is.finite(row) || !is.finite(col) || row < 1 || row > nrow(tbl)) return()
+    if (col != 2L) return()
+    tbl$x_axis_label[[row]] <- trimws(as.character(info$value))
+    lik_x_axis_override_table(tbl)
   }, ignoreInit = TRUE)
 
   observeEvent(input$lik_apply_filters, {
@@ -1050,11 +1183,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     df
   }
 
-  quantity_axis_label <- function(profile_data, override = NA_character_) {
-    if (is.character(override) && length(override) == 1 && !is.na(override) && nzchar(trimws(override))) {
-      return(trimws(override))
-    }
-
+  auto_quantity_axis_label <- function(profile_data) {
     indepvar_names <- unique(unlist(lapply(profile_data, function(x) {
       nm <- x$fixed_indepvar_name
       nm <- as.character(nm)
@@ -1093,6 +1222,73 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (all(af172_vals > 0)) return(bquote("Average adult biomass (" * 10^3 * " MT)"))
     if (all(af172_vals == 0)) return(bquote("Average total biomass (" * 10^3 * " MT)"))
     bquote("Average biomass (" * 10^3 * " MT)")
+  }
+
+  resolve_profile_specific_axis_label <- function(profile_entry, override = NA_character_) {
+    spec <- parse_axis_label_override_spec(override)
+    map_vals <- spec$map
+    candidate_keys <- c(
+      sanitize_text_scalar(profile_entry$profile_set_key),
+      sanitize_text_scalar(profile_entry$profile_set_label),
+      sanitize_text_scalar(profile_entry$fixed_indepvar_name),
+      sanitize_text_scalar(profile_entry$scenario_name),
+      sanitize_text_scalar(profile_entry$scenario_label)
+    )
+    candidate_keys <- unique(candidate_keys[!is.na(candidate_keys) & nzchar(candidate_keys)])
+
+    if (length(map_vals) > 0 && length(candidate_keys) > 0) {
+      for (key in candidate_keys) {
+        hit <- map_vals[[key]]
+        if (!is.null(hit) && nzchar(trimws(as.character(hit)))) {
+          return(trimws(as.character(hit)))
+        }
+      }
+    }
+
+    if (is.character(spec$default) && length(spec$default) == 1 && !is.na(spec$default) && nzchar(trimws(spec$default))) {
+      return(trimws(spec$default))
+    }
+
+    auto_quantity_axis_label(list(profile_entry))
+  }
+
+  quantity_axis_label <- function(profile_data, override = NA_character_) {
+    spec <- parse_axis_label_override_spec(override)
+    if (length(spec$map) == 0 && is.character(spec$default) && length(spec$default) == 1 && !is.na(spec$default) && nzchar(trimws(spec$default))) {
+      return(trimws(spec$default))
+    }
+
+    per_entry_labels <- unique(unlist(lapply(profile_data, function(x) {
+      lab <- resolve_profile_specific_axis_label(x, override = override)
+      if (is.language(lab)) return(NA_character_)
+      as.character(lab)
+    }), use.names = FALSE))
+    per_entry_labels <- per_entry_labels[!is.na(per_entry_labels) & nzchar(trimws(per_entry_labels))]
+
+    if (length(per_entry_labels) == 1) {
+      return(per_entry_labels[[1]])
+    }
+
+    auto_lab <- auto_quantity_axis_label(profile_data)
+    if (length(profile_data) > 1 && length(per_entry_labels) > 1) {
+      return("Profile parameter value")
+    }
+    auto_lab
+  }
+
+  profile_entry_plot_name <- function(profile_entry, override = NA_character_, fallback = NA_character_) {
+    base <- profile_entry_display_name(profile_entry, fallback = fallback)
+    axis_lab <- resolve_profile_specific_axis_label(profile_entry, override = override)
+    axis_txt <- if (is.language(axis_lab)) {
+      NA_character_
+    } else {
+      sanitize_text_scalar(axis_lab)
+    }
+    if (!is.na(axis_txt) && nzchar(axis_txt)) {
+      paste0(base, "\nX: ", axis_txt)
+    } else {
+      base
+    }
   }
 
   quantity_axis_formatter <- function(profile_data) {
@@ -1869,7 +2065,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
   observe({
     req(input$model_dir)
-    current <- isolate(input$lik_indepvar_profile_set)
+    current <- sanitize_text_vector(isolate(input$lik_indepvar_profile_set))
     # React to scenario selection changes (not isolated), and also
     # union with ALL loaded scenarios so indepvar sets are found even
     # when the standard-profile scenarios are currently selected.
@@ -1885,11 +2081,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
     set_tables <- lapply(scenarios, function(sc) discover_indepvar_profile_sets(input$model_dir, sc))
     set_tables <- Filter(function(x) is.data.frame(x) && nrow(x) > 0, set_tables)
     if (length(set_tables) == 0) {
-      updateSelectInput(
+      updatePickerInput(
         session,
         "lik_indepvar_profile_set",
         choices = c("No indepvar profile sets found" = "__none__"),
-        selected = "__none__"
+        selected = character(0)
       )
       return()
     }
@@ -1902,10 +2098,50 @@ mod_likelihood_server <- function(input, output, session, rv) {
       filter(key %in% common_keys) %>%
       group_by(key) %>%
       summarise(label = first(label), .groups = "drop")
+    lik_indepvar_set_catalog(base_tbl)
 
     choices <- setNames(base_tbl$key, base_tbl$label)
-    selected <- if (!is.null(current) && length(current) == 1 && current %in% unname(choices)) current else if (length(choices) > 0) unname(choices)[[1]] else "__none__"
-    updateSelectInput(session, "lik_indepvar_profile_set", choices = choices, selected = selected)
+    selected <- intersect(current, unname(choices))
+    if (length(selected) == 0 && length(choices) > 0) {
+      selected <- unname(choices)[[1]]
+    }
+    updatePickerInput(session, "lik_indepvar_profile_set", choices = choices, selected = selected)
+  })
+
+  observe({
+    catalog <- lik_indepvar_set_catalog()
+    selected <- sanitize_text_vector(input$lik_indepvar_profile_set)
+    selected <- selected[selected != "__none__"]
+
+    if (!is.data.frame(catalog) || nrow(catalog) == 0 || length(selected) == 0) {
+      lik_x_axis_override_table(data.frame(
+        profile_set_label = character(0),
+        profile_set_key = character(0),
+        x_axis_label = character(0),
+        stringsAsFactors = FALSE
+      ))
+      return()
+    }
+
+    selected_tbl <- catalog %>%
+      filter(key %in% selected) %>%
+      mutate(key = as.character(key), label = as.character(label))
+
+    old_tbl <- lik_x_axis_override_table()
+    old_vals <- if (is.data.frame(old_tbl) && nrow(old_tbl) > 0) {
+      setNames(as.character(old_tbl$x_axis_label), as.character(old_tbl$profile_set_key))
+    } else {
+      character(0)
+    }
+
+    new_tbl <- data.frame(
+      profile_set_label = selected_tbl$label,
+      profile_set_key = selected_tbl$key,
+      x_axis_label = unname(old_vals[selected_tbl$key]),
+      stringsAsFactors = FALSE
+    )
+    new_tbl$x_axis_label[is.na(new_tbl$x_axis_label)] <- ""
+    lik_x_axis_override_table(new_tbl)
   })
 
   # Load profile outputs for a scenario
@@ -2301,7 +2537,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
       profile_hessian_status_by_scalar = hessian_status_by_scalar,
       profile_hessian_requested_by_scalar = hessian_requested_by_scalar,
       profile_hessian_attempted_by_scalar = hessian_attempted_by_scalar,
-      profile_hessian_neg_by_scalar = hessian_neg_by_scalar
+      profile_hessian_neg_by_scalar = hessian_neg_by_scalar,
+      scenario_name = scenario,
+      scenario_label = scenario
     )
   }
 
@@ -2313,13 +2551,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
     scenarios <- scenarios[nzchar(scenarios)]
     if (length(scenarios) == 0) return(NULL)
 
-    roots <- vapply(scenarios, function(sc) {
-      if (identical(filters$profile_source, "indepvar")) {
-        resolve_profile_dir(input$model_dir, sc, profile_subdir = "prof_indepvar", profile_set = filters$indepvar_profile_set)
-      } else {
-        file.path(input$model_dir, sc, "prof")
-      }
-    }, character(1))
+    if (identical(filters$profile_source, "indepvar")) {
+      profile_sets <- sort(unique(as.character(filters$indepvar_profile_set)))
+      if (length(profile_sets) == 0) return(NULL)
+      roots <- unique(unlist(lapply(scenarios, function(sc) {
+        vapply(profile_sets, function(set_key) {
+          resolve_profile_dir(input$model_dir, sc, profile_subdir = "prof_indepvar", profile_set = set_key)
+        }, character(1))
+      }), use.names = FALSE))
+    } else {
+      roots <- vapply(scenarios, function(sc) file.path(input$model_dir, sc, "prof"), character(1))
+    }
     roots <- unique(roots[dir.exists(roots)])
     if (length(roots) == 0) return(NULL)
 
@@ -2349,12 +2591,25 @@ mod_likelihood_server <- function(input, output, session, rv) {
     profile_data <- list()
     for (sc in selected) {
       if (identical(filters$profile_source, "indepvar")) {
-        pd <- load_profile_outputs(input$model_dir, sc, profile_subdir = "prof_indepvar", profile_set = filters$indepvar_profile_set)
+        profile_sets <- sort(unique(as.character(filters$indepvar_profile_set)))
+        for (set_key in profile_sets) {
+          pd <- load_profile_outputs(input$model_dir, sc, profile_subdir = "prof_indepvar", profile_set = set_key)
+          if (length(pd$scales) > 0) {
+            set_label <- sanitize_text_scalar(pd$profile_set_label)
+            if (is.na(set_label) || !nzchar(set_label)) set_label <- set_key
+            display_name <- if (!is.na(set_label) && nzchar(set_label)) paste0(sc, " [", set_label, "]") else sc
+            pd$scenario_name <- sc
+            pd$scenario_label <- display_name
+            profile_data[[paste0(sc, "::", set_key)]] <- pd
+          }
+        }
       } else {
         pd <- load_profile_outputs(input$model_dir, sc, profile_subdir = "prof")
-      }
-      if (length(pd$scales) > 0) {
-        profile_data[[sc]] <- pd
+        if (length(pd$scales) > 0) {
+          pd$scenario_name <- sc
+          pd$scenario_label <- sc
+          profile_data[[sc]] <- pd
+        }
       }
     }
 
@@ -2383,6 +2638,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     rows <- lapply(names(profile_data), function(sc) {
       pd <- profile_data[[sc]]
+      scenario_label <- profile_entry_display_name(pd, fallback = sc)
       quantity_label <- pd$quantity_label
       af172 <- suppressWarnings(as.numeric(pd$af172))
       af173 <- suppressWarnings(as.numeric(pd$af173))
@@ -2447,7 +2703,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       }
 
       data.frame(
-        Model = sc,
+        Model = scenario_label,
         `Profile set` = profile_set_label,
         `Profile mode` = profile_mode,
         `Fixed indepvar` = if (isTRUE(indepvar_mode)) {
@@ -2767,6 +3023,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     rows <- list()
     for (sc in names(profile_data)) {
       pd <- profile_data[[sc]]
+      scenario_label <- profile_entry_display_name(pd, fallback = sc)
       if (length(pd$scales) == 0) next
 
       fixed_value_by_scale <- suppressWarnings(as.numeric(unlist(pd$fixed_indepvar_value, use.names = TRUE)))
@@ -2811,7 +3068,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         h_requested <- if (!is.null(pd$profile_hessian_requested_by_scalar)) pd$profile_hessian_requested_by_scalar[[as.character(scl)]] else FALSE
         h_attempted <- if (!is.null(pd$profile_hessian_attempted_by_scalar)) pd$profile_hessian_attempted_by_scalar[[as.character(scl)]] else FALSE
         rows[[length(rows) + 1]] <- data.frame(
-          scenario = sc,
+          scenario = scenario_label,
           scalar = suppressWarnings(as.numeric(scl)),
           actual_quantity = suppressWarnings(as.numeric(actual_quantity)),
           target_quantity = suppressWarnings(as.numeric(target_quantity)),
@@ -3173,11 +3430,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
     p
   }
 
-  build_components_data <- function(profile_data, scenarios, scales) {
+  build_components_data <- function(profile_data, scenarios, scales, x_axis_override = NA_character_) {
     if (length(scales) == 0) return(data.frame())
 
     rows <- list()
     for (sc in scenarios) {
+      scenario_label <- profile_entry_plot_name(profile_data[[sc]], override = x_axis_override, fallback = sc)
       for (scl in scales) {
         lik <- profile_data[[sc]]$lik_out[[scl]]
         raw <- profile_data[[sc]]$lik_raw[[scl]]
@@ -3201,7 +3459,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         scalar_bio <- scalar_quantity(profile_data[[sc]], scl)
         if (!is.finite(scalar_bio)) next
         rows[[length(rows) + 1]] <- data.frame(
-          scenario = sc,
+          scenario = scenario_label,
           scalar = scalar_bio,
           Likelihood = names(values),
           value = as.numeric(values),
@@ -3213,8 +3471,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
     bind_rows(rows)
   }
 
-  build_components_signed_data <- function(profile_data, scenarios, scales) {
-    base <- build_components_data(profile_data, scenarios, scales)
+  build_components_signed_data <- function(profile_data, scenarios, scales, x_axis_override = NA_character_) {
+    base <- build_components_data(profile_data, scenarios, scales, x_axis_override = x_axis_override)
     build_signed_influence_from_base(base, group_col = "Likelihood", use_region = FALSE)
   }
 
@@ -3338,10 +3596,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }
 
   build_fishery_data <- function(profile_data, scenarios, fishery_maps, slot_name, label, scales,
-                                 allowed_fisheries = NULL, fallback_nonzero_only = FALSE) {
+                                 allowed_fisheries = NULL, fallback_nonzero_only = FALSE,
+                                 x_axis_override = NA_character_) {
     if (length(scales) == 0) return(data.frame())
 
     get_fishery_rows_for_scenario <- function(sc) {
+      scenario_id <- profile_entry_scenario_name(profile_data[[sc]], fallback = sc)
+      scenario_label <- profile_entry_plot_name(profile_data[[sc]], override = x_axis_override, fallback = sc)
       allowed_ids <- if (!is.null(allowed_fisheries)) as.character(allowed_fisheries[[sc]]) else character(0)
       allowed_ids <- allowed_ids[!is.na(allowed_ids)]
       profile_sig <- profile_entry_signature(profile_data[[sc]], scales)
@@ -3353,7 +3614,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       }
 
       rows <- list()
-      fish_lookup <- get_fishery_lookup(sc, fishery_maps[[sc]])
+  fish_lookup <- get_fishery_lookup(scenario_id, fishery_maps[[scenario_id]])
       for (scl in scales) {
         lik <- profile_data[[sc]]$lik_out[[scl]]
         if (is.null(lik)) next
@@ -3379,7 +3640,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         fish_regions[is.na(fish_regions) | !nzchar(fish_regions)] <- "Unknown"
 
         df <- data.frame(
-          scenario = sc,
+          scenario = scenario_label,
           scalar = scalar_bio,
           group = fish_names,
           region = fish_regions,
@@ -3407,14 +3668,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
     data
   }
 
-  allowed_fisheries_for_regions <- function(scenarios, fishery_maps, regions) {
+  allowed_fisheries_for_regions <- function(profile_data, scenarios, fishery_maps, regions) {
     if (is.null(regions) || length(regions) == 0) return(NULL)
     region_vals <- as.character(regions)
     region_vals <- region_vals[nzchar(region_vals)]
     if (length(region_vals) == 0) return(NULL)
 
     out <- lapply(scenarios, function(sc) {
-      fish_map <- fishery_maps[[sc]]
+      scenario_id <- profile_entry_scenario_name(profile_data[[sc]], fallback = sc)
+      fish_map <- fishery_maps[[scenario_id]]
       if (is.null(fish_map) || !"fishery" %in% names(fish_map) || !"region" %in% names(fish_map)) {
         return(character(0))
       }
@@ -3493,10 +3755,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
     vals[is.finite(vals)]
   }
 
-  build_cpue_fishery_data <- function(profile_data, scenarios, fishery_maps, scales, allowed_fisheries = NULL) {
+  build_cpue_fishery_data <- function(profile_data, scenarios, fishery_maps, scales, allowed_fisheries = NULL,
+                                      x_axis_override = NA_character_) {
     if (length(scales) == 0) return(data.frame())
 
     get_cpue_rows_for_scenario <- function(sc) {
+      scenario_id <- profile_entry_scenario_name(profile_data[[sc]], fallback = sc)
+      scenario_label <- profile_entry_plot_name(profile_data[[sc]], override = x_axis_override, fallback = sc)
       allowed_ids <- if (!is.null(allowed_fisheries)) as.character(allowed_fisheries[[sc]]) else character(0)
       allowed_ids <- allowed_ids[!is.na(allowed_ids)]
       profile_sig <- profile_entry_signature(profile_data[[sc]], scales)
@@ -3508,8 +3773,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       }
 
       rows <- list()
-      fish_map <- fishery_maps[[sc]]
-      fish_lookup <- get_fishery_lookup(sc, fish_map)
+  fish_map <- fishery_maps[[scenario_id]]
+  fish_lookup <- get_fishery_lookup(scenario_id, fish_map)
 
       for (scl in scales) {
         raw <- profile_data[[sc]]$lik_raw[[scl]]
@@ -3533,7 +3798,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         fish_regions[is.na(fish_regions) | !nzchar(fish_regions)] <- "Unknown"
 
         df <- data.frame(
-          scenario = sc,
+          scenario = scenario_label,
           scalar = scalar_bio,
           Fishery = fish_names,
           region = fish_regions,
@@ -3558,17 +3823,20 @@ mod_likelihood_server <- function(input, output, session, rv) {
     bind_rows(lapply(scenarios, get_cpue_rows_for_scenario))
   }
 
-  build_tagging_data <- function(profile_data, scenarios, tag_out_list, scales, view = "program", fishery_maps = NULL) {
+  build_tagging_data <- function(profile_data, scenarios, tag_out_list, scales, view = "program", fishery_maps = NULL,
+                                 x_axis_override = NA_character_) {
     if (length(scales) == 0) return(data.frame())
 
     rows <- list()
     for (sc in scenarios) {
-      tag_out <- tag_out_list[[sc]]
+      scenario_id <- profile_entry_scenario_name(profile_data[[sc]], fallback = sc)
+      scenario_label <- profile_entry_plot_name(profile_data[[sc]], override = x_axis_override, fallback = sc)
+      tag_out <- tag_out_list[[scenario_id]]
       if (is.null(tag_out)) next
 
       rel_df <- tryCatch(safe_array_to_df(tag_out@releases), error = function(e) NULL)
       if (is.null(rel_df) || nrow(rel_df) == 0) next
-      fish_map <- if (!is.null(fishery_maps)) fishery_maps[[sc]] else NULL
+      fish_map <- if (!is.null(fishery_maps)) fishery_maps[[scenario_id]] else NULL
 
       program_map <- rel_df %>%
         transmute(
@@ -3611,7 +3879,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           fish_names[is.na(fish_names) | !nzchar(fish_names)] <- paste("Fishery", fish_ids[is.na(fish_names) | !nzchar(fish_names)])
 
           df <- data.frame(
-            scenario = sc,
+            scenario = scenario_label,
             scalar = scalar_bio,
             recapture_fishery = as.character(fish_names),
             recapture_fishery_id = fish_ids,
@@ -3629,7 +3897,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           release_regions[is.na(release_regions) | !nzchar(release_regions)] <- "Unknown"
 
           df <- data.frame(
-            scenario = sc,
+            scenario = scenario_label,
             scalar = scalar_bio,
             program = as.character(program_names),
             release_region = as.character(release_regions),
@@ -3693,10 +3961,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }
 
   build_cal_data <- function(profile_data, scenarios, age_out_list, fishery_maps, by = "fishery", scales,
-                             allowed_fisheries = NULL) {
+                             allowed_fisheries = NULL, x_axis_override = NA_character_) {
     if (length(scales) == 0) return(data.frame())
 
     get_cal_rows_for_scenario <- function(sc) {
+      scenario_id <- profile_entry_scenario_name(profile_data[[sc]], fallback = sc)
+      scenario_label <- profile_entry_plot_name(profile_data[[sc]], override = x_axis_override, fallback = sc)
       allowed_ids <- if (!is.null(allowed_fisheries)) as.character(allowed_fisheries[[sc]]) else character(0)
       allowed_ids <- allowed_ids[!is.na(allowed_ids)]
       profile_sig <- profile_entry_signature(profile_data[[sc]], scales)
@@ -3707,10 +3977,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
         return(cached)
       }
 
-      alk_summary <- fishery_diag_cache$alk_summary[[sc]]
+      alk_summary <- fishery_diag_cache$alk_summary[[scenario_id]]
       if (is.null(alk_summary)) {
-        alk_summary <- get_alk_summary(age_out_list[[sc]])
-        fishery_diag_cache$alk_summary[[sc]] <- alk_summary
+        alk_summary <- get_alk_summary(age_out_list[[scenario_id]])
+        fishery_diag_cache$alk_summary[[scenario_id]] <- alk_summary
       }
       if (is.null(alk_summary) || nrow(alk_summary) == 0) {
         fishery_diag_cache$cal[[cache_key]] <- data.frame()
@@ -3718,7 +3988,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       }
 
       rows <- list()
-      fish_lookup <- get_fishery_lookup(sc, fishery_maps[[sc]])
+  fish_lookup <- get_fishery_lookup(scenario_id, fishery_maps[[scenario_id]])
 
       for (scl in scales) {
         lik <- profile_data[[sc]]$lik_out[[scl]]
@@ -3732,7 +4002,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
         df <- alk_summary[seq_len(n_use), , drop = FALSE]
         df$Lik <- lik_vec[seq_len(n_use)]
-        df$scenario <- sc
+        df$scenario <- scenario_label
         df$scalar <- scalar_bio
 
         if (by == "fishery") {
@@ -4790,6 +5060,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     allowed_region_fisheries <- NULL
     if (isTRUE(type %in% fishery_region_types)) {
       allowed_region_fisheries <- allowed_fisheries_for_regions(
+        profile_data,
         names(profile_data),
         rv$FISHERY_MAPS,
         filters$regions
@@ -4797,7 +5068,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     if (type == "components") {
-      data <- build_components_data(profile_data, names(profile_data), all_scales)
+      data <- build_components_data(profile_data, names(profile_data), all_scales, x_axis_override = filters$x_axis_label_override)
       data <- data %>% filter(is.finite(value) & is.finite(scalar))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No component data available"))
@@ -4807,7 +5078,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     if (type == "components_signed") {
-      data <- build_components_signed_data(profile_data, names(profile_data), all_scales)
+      data <- build_components_signed_data(profile_data, names(profile_data), all_scales, x_axis_override = filters$x_axis_label_override)
       data <- data %>% filter(is.finite(change) & is.finite(scalar))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No signed component influence data available"))
@@ -4822,26 +5093,30 @@ mod_likelihood_server <- function(input, output, session, rv) {
           names(profile_data),
           rv$FISHERY_MAPS,
           all_scales,
-          allowed_fisheries = allowed_region_fisheries
+          allowed_fisheries = allowed_region_fisheries,
+          x_axis_override = filters$x_axis_label_override
         )
         group_col <- "Fishery"
         label <- "CPUE Influence (normalized %)"
       } else if (identical(type, "influence_lfs")) {
         data <- build_fishery_data(profile_data, names(profile_data), rv$FISHERY_MAPS,
                                    "total_length_fish", "Fishery", all_scales,
-                                   allowed_fisheries = allowed_region_fisheries)
+                                   allowed_fisheries = allowed_region_fisheries,
+                                   x_axis_override = filters$x_axis_label_override)
         group_col <- "Fishery"
         label <- "LF Influence (normalized %)"
       } else if (identical(type, "influence_wfs")) {
         data <- build_fishery_data(profile_data, names(profile_data), rv$FISHERY_MAPS,
                                    "total_weight_fish", "Fishery", all_scales,
-                                   allowed_fisheries = allowed_region_fisheries)
+                                   allowed_fisheries = allowed_region_fisheries,
+                                   x_axis_override = filters$x_axis_label_override)
         group_col <- "Fishery"
         label <- "WF Influence (normalized %)"
       } else {
         data <- build_cal_data(profile_data, names(profile_data), rv$AgeOut_list,
                                rv$FISHERY_MAPS, by = "fishery", all_scales,
-                               allowed_fisheries = allowed_region_fisheries)
+                               allowed_fisheries = allowed_region_fisheries,
+                               x_axis_override = filters$x_axis_label_override)
         group_col <- "fishery"
         label <- "CAL Influence (normalized %)"
       }
@@ -4901,7 +5176,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
         names(profile_data),
         rv$FISHERY_MAPS,
         all_scales,
-        allowed_fisheries = allowed_region_fisheries
+        allowed_fisheries = allowed_region_fisheries,
+        x_axis_override = filters$x_axis_label_override
       )
       data <- data %>% filter(is.finite(value) & is.finite(scalar))
       if (nrow(data) == 0) {
@@ -4925,7 +5201,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (type == "lfs") {
       data <- build_fishery_data(profile_data, names(profile_data), rv$FISHERY_MAPS,
                                  "total_length_fish", "Fishery", all_scales,
-                                 allowed_fisheries = allowed_region_fisheries)
+                                 allowed_fisheries = allowed_region_fisheries,
+                                 x_axis_override = filters$x_axis_label_override)
       data <- data %>% filter(is.finite(value) & is.finite(scalar))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No LF profile data available"))
@@ -4948,7 +5225,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (type == "wfs") {
       data <- build_fishery_data(profile_data, names(profile_data), rv$FISHERY_MAPS,
                                  "total_weight_fish", "Fishery", all_scales,
-                                 allowed_fisheries = allowed_region_fisheries)
+                                 allowed_fisheries = allowed_region_fisheries,
+                                 x_axis_override = filters$x_axis_label_override)
       data <- data %>% filter(is.finite(value) & is.finite(scalar))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No WF profile data available"))
@@ -4976,7 +5254,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
         rv$TagOut_list,
         all_scales,
         view = tagging_view,
-        fishery_maps = rv$FISHERY_MAPS
+        fishery_maps = rv$FISHERY_MAPS,
+        x_axis_override = filters$x_axis_label_override
       )
       data <- data %>% filter(is.finite(value) & is.finite(scalar))
       if (nrow(data) == 0) {
@@ -5065,7 +5344,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (type == "cal_fishery") {
       data <- build_cal_data(profile_data, names(profile_data), rv$AgeOut_list,
                              rv$FISHERY_MAPS, by = "fishery", all_scales,
-                             allowed_fisheries = allowed_region_fisheries)
+                             allowed_fisheries = allowed_region_fisheries,
+                             x_axis_override = filters$x_axis_label_override)
       data <- data %>% filter(is.finite(value) & is.finite(scalar))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No CAL by fishery data available"))
@@ -5087,7 +5367,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     if (type == "cal_year") {
       data <- build_cal_data(profile_data, names(profile_data), rv$AgeOut_list,
-                             rv$FISHERY_MAPS, by = "year", all_scales)
+                             rv$FISHERY_MAPS, by = "year", all_scales,
+                             x_axis_override = filters$x_axis_label_override)
       data <- data %>% filter(is.finite(value) & is.finite(scalar))
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No CAL by year data available"))
@@ -6859,6 +7140,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     )
   })
   observeEvent(list(input$live_update_plots, input$lik_main_tab, input$lik_scenarios, input$lik_profile_type, input$lik_profile_source, input$lik_jitter_type,
+                    input$lik_indepvar_profile_set,
                     input$lik_regions, input$lik_split_by_region, input$lik_facet_ncol,
                     input$lik_jitter_grad_reference, input$lik_jitter_converged_only_diagnostics,
                     input$lik_jitter_rel_diff_threshold,
@@ -6868,7 +7150,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
                     input$lik_jitter_param_metric, input$lik_jitter_show_ref_points, input$lik_jitter_param_range_pct,
                     input$lik_tagging_view, input$lik_tag_legend_mode, input$lik_tag_legend_top_n, input$lik_tag_deemphasize_others,
                     input$lik_legend_mode, input$lik_legend_top_n, input$lik_deemphasize_others,
-                    input$lik_x_axis_label_override), {
+                    lik_x_axis_override_table()), {
     req(rv$data_loaded)
     if (!isTRUE(input$live_update_plots)) return()
     if (length(input$lik_scenarios) == 0) return()

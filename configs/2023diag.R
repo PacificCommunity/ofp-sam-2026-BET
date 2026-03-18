@@ -48,11 +48,42 @@ models <- list(
     
     prof_init_map_rds="",
     init_from_scalar_map="",
-    
-    prof_fix_indepvar="age_pars(5)",
+
+    # Profile launch sets:
+    # - set enabled="TRUE" to launch that set
+    # - standard uses prof_fix_indepvar=""
+    # - each indepvar set can have its own scalar grid / indepvar_reps
+    profile_sets = list(
+      standard = list(
+        enabled = "FALSE",
+        prof_fix_indepvar = "",
+        prof_fix_values = "",
+        prof_fix_indepvar_file = "",
+        scalars = paste0(seq(140, 60, by = -5), collapse = " ")
+      ),
+      age_pars_5 = list(
+        enabled = "TRUE",
+        prof_fix_indepvar = "age_pars(5)",
+        prof_fix_values = "",
+        prof_fix_indepvar_file = "",
+        scalars = paste0(seq(120, 80, by = -2.5), collapse = " "),
+        indepvar_reps = "200"
+      )
+      # ,vb_coff_1 = list(
+      #   enabled = "FALSE",
+      #   prof_fix_indepvar = "vb_coff_1",
+      #   prof_fix_values = "",
+      #   prof_fix_indepvar_file = "",
+      #   scalars = paste0(seq(110, 90, by = -2.5), collapse = " "),
+      #   indepvar_reps = "100"
+      # )
+    ),
+
+    # Backward-compatible top-level defaults (used when a profile set does not override them)
+    prof_fix_indepvar="",
     prof_fix_values="",
     prof_fix_indepvar_file="",
-    indepvar_reps="200",        # Reps per optimizer call for indepvar fixed-parameter profile
+    indepvar_reps="200",        # Default indepvar reps if not overridden in profile_sets
     prof_extra_switch="1 121 0"
     
   )

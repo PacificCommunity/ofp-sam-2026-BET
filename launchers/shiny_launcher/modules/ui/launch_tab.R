@@ -69,7 +69,7 @@ launch_tab_ui <- function() {
                     "Independent (current)" = "independent",
                     "Sequential from anchor (two chains)" = "seq_anchor_bidir"
                   ),
-                  selected = "independent"
+                  selected = "seq_anchor_bidir"
                 ),
                 conditionalPanel(
                   condition = "input.prof_launch_strategy == 'seq_anchor_bidir'",

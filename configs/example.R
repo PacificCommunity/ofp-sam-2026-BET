@@ -139,6 +139,57 @@ models <- list(
 
     ## hessian parallel settings
     nsplit="5"
+  ),
+
+  # Multiple profile sets under one model:
+  # - standard profile
+  # - age_pars(5) indepvar profile with its own scalar grid
+  # - vb_coff_1 indepvar profile with a narrower scalar grid
+  "base_multi_profile" = list(
+
+    "description" = "base + standard and multiple indepvar profile sets",
+
+    mfcl_commands = paste("bet.frq 11.par 12.par",
+                          "-switch 1",
+                          "1 1 1",
+                          sep = " "),
+    program_path = "mfcl/exe/mfclo64_2026_02_04_vsn2278",
+    base_dir = "mfcl/inputs/2023_rep",
+
+    Reps = "2 2 2 2 2 2",
+    scalars = paste0(seq(120, 80, by = -5), collapse = " "),
+    indepvar_reps = "200",
+    prof_extra_switch = "",
+
+    profile_sets = list(
+      standard = list(
+        scalars = paste0(seq(120, 80, by = -5), collapse = " "),
+        prof_fix_indepvar = ""
+      ),
+      age_pars_5 = list(
+        prof_fix_indepvar = "age_pars(5)",
+        prof_fix_values = "",
+        scalars = paste0(seq(120, 80, by = -2.5), collapse = " "),
+        indepvar_reps = "1"
+      ),
+      vb_coff_1 = list(
+        prof_fix_indepvar = "vb_coff_1",
+        prof_fix_values = "",
+        scalars = paste0(seq(110, 90, by = -2.5), collapse = " "),
+        indepvar_reps = "50"
+      )
+    ),
+
+    retro_peels = "1 2 3",
+    n_mixing_periods = "2",
+    min_year = "1952",
+    jitter_seeds = paste0(1:2, collapse = " "),
+    jitter_cv = "0.0001",
+    jitter_hessian = "0",
+    model_hessian = "0",
+    prof_hessian = "0",
+    retro_hessian = "0",
+    nsplit = "5"
   ))
 
 
