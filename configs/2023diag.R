@@ -26,7 +26,7 @@ models <- list(
     min_year= "1952",
     
     ## Jitter settings
-    jitter_seeds = paste0(1:50, collapse = " "),
+    jitter_seeds = paste0(1:30, collapse = " "),
     jitter_cv = "0.2",
     
     ## post-run hessian toggles

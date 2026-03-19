@@ -7019,6 +7019,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         panel_cols = "scenario",
         label_fn = x_axis_labels_fn
       )
+      influence_comp_df$bar_width <- 0.88
 
       top_non_total_groups <- setdiff(unique(as.character(data[[group_col]])), "Total")
       if (length(top_non_total_groups) == 0) {
@@ -7137,6 +7138,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         panel_cols = panel_cols,
         label_fn = x_axis_labels_fn
       )
+      component_df$bar_width <- 0.88
       total_df <- add_panel_bar_position(
         total_df,
         panel_cols = panel_cols,
