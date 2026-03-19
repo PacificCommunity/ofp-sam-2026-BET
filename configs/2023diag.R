@@ -51,8 +51,8 @@ models <- list(
     profile_sets = list(
       standard = list(
         enabled = "TRUE",
-        Reps = "1 1 1 1 1 1",
-        scalars = paste0(seq(110, 80, by = -10), collapse = " "),
+        Reps = "15 25 25 500 500 200",
+        scalars = paste0(seq(140, 60, by = -5), collapse = " "),
         Af172 = "0",
         Af173 = "0",
         Af174 = "0",
@@ -66,8 +66,8 @@ models <- list(
         prof_fix_indepvar = "age_pars(5)",
         prof_fix_values = "",
         prof_fix_indepvar_file = "",
-        scalars = paste0(seq(120, 80, by = -10), collapse = " "),
-        indepvar_reps = "1",
+        scalars = paste0(seq(120, 80, by = -2.5), collapse = " "),
+        indepvar_reps = "1000",
         prof_extra_switch = "1 121 0"
       )
       ,L1 = list(
@@ -75,8 +75,8 @@ models <- list(
         prof_fix_indepvar = "vb_coff(1)",
         prof_fix_values = "",
         prof_fix_indepvar_file = "",
-        scalars = paste0(seq(110, 90, by = -10), collapse = " "),
-        indepvar_reps = "1",
+        scalars = paste0(seq(120, 80, by = -2.5), collapse = " "),
+        indepvar_reps = "1000",
         prof_extra_switch = "1 12 0"
       )
       ,L2 = list(
@@ -84,8 +84,8 @@ models <- list(
         prof_fix_indepvar = "vb_coff(2)",
         prof_fix_values = "",
         prof_fix_indepvar_file = "",
-        scalars = paste0(seq(110, 90, by = -10), collapse = " "),
-        indepvar_reps = "1",
+        scalars = paste0(seq(120, 80, by = -2.5), collapse = " "),
+        indepvar_reps = "1000",
         prof_extra_switch = "1 13 0"
       )
       ,kappa = list(
@@ -93,8 +93,8 @@ models <- list(
         prof_fix_indepvar = "vb_coff(3)",
         prof_fix_values = "",
         prof_fix_indepvar_file = "",
-        scalars = paste0(seq(110, 90, by = -10), collapse = " "),
-        indepvar_reps = "1",
+        scalars = paste0(seq(120, 80, by = -2.5), collapse = " "),
+        indepvar_reps = "1000",
         prof_extra_switch = "1 14 0"
       )
       ,s1 = list(
@@ -102,8 +102,8 @@ models <- list(
         prof_fix_indepvar = "var_coff(1)",
         prof_fix_values = "",
         prof_fix_indepvar_file = "",
-        scalars = paste0(seq(110, 90, by = -10), collapse = " "),
-        indepvar_reps = "1",
+        scalars = paste0(seq(120, 80, by = -2.5), collapse = " "),
+        indepvar_reps = "1000",
         prof_extra_switch = "1 15 0"
       )
       ,s2 = list(
@@ -111,10 +111,29 @@ models <- list(
         prof_fix_indepvar = "var_coff(2)",
         prof_fix_values = "",
         prof_fix_indepvar_file = "",
-        scalars = paste0(seq(110, 90, by = -10), collapse = " "),
-        indepvar_reps = "1",
+        scalars = paste0(seq(120, 80, by = -2.5), collapse = " "),
+        indepvar_reps = "1000",
         prof_extra_switch = "1 16 0"
       )
+      ,totpop = list(
+        enabled = "TRUE",
+        prof_fix_indepvar = "totpop",
+        prof_fix_values = "",
+        prof_fix_indepvar_file = "",
+        scalars = paste0(seq(120, 80, by = -2.5), collapse = " "),
+        indepvar_reps = "1000",
+        prof_extra_switch = "2 32 0"
+      )
+      ,sv = list(
+        enabled = "TRUE",
+        prof_fix_indepvar = "sv(21)",
+        prof_fix_values = "",
+        prof_fix_indepvar_file = "",
+        scalars = paste0(seq(120, 80, by = -2.5), collapse = " "),
+        indepvar_reps = "1000",
+        prof_extra_switch = "1 16 0"
+      )
+      
     )
     # When using profile_sets, all profile-related fields (prof_fix_indepvar,
     # indepvar_reps, prof_extra_switch, etc.) should be specified per set.

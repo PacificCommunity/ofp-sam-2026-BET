@@ -528,6 +528,21 @@
         return(paste0(model_name, "\n  <model config not found>"))
       }
       fields <- names(model_env)
+      has_profile_sets <- !is.null(model_env$profile_sets) && length(model_env$profile_sets) > 0
+      if (has_profile_sets) {
+        fields <- setdiff(
+          fields,
+          c(
+            "Reps",
+            "scalars",
+            "prof_fix_indepvar",
+            "prof_fix_values",
+            "prof_fix_indepvar_file",
+            "indepvar_reps",
+            "prof_extra_switch"
+          )
+        )
+      }
       if (is.null(fields) || length(fields) == 0) {
         return(paste0(model_name, "\n  <empty model config>"))
       }

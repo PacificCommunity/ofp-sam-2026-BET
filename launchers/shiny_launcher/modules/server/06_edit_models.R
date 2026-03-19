@@ -314,9 +314,9 @@
         )
       ),
       div(class = "param-label", "Profile Scalars:"),
-      textInput("edit_scalars", NULL, value = model$scalars, width = "100%"),
+      textInput("edit_scalars", NULL, value = if (!is.null(model$scalars)) model$scalars else "", width = "100%"),
       div(class = "param-label", "Profile Reps:"),
-      textInput("edit_reps", NULL, value = model$Reps, width = "100%"),
+      textInput("edit_reps", NULL, value = if (!is.null(model$Reps)) model$Reps else "", width = "100%"),
       div(class = "param-label", "Profile Init Map RDS (relative to repo/base_dir):"),
       textInput(
         "edit_prof_init_map_rds",

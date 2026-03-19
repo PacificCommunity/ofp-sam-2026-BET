@@ -1,3 +1,22 @@
+profile_sets_all_define <- function(profile_sets, field) {
+  if (is.null(profile_sets) || length(profile_sets) == 0) return(FALSE)
+
+  enabled_sets <- Filter(function(spec) {
+    if (!is.list(spec)) return(FALSE)
+    enabled_raw <- spec$enabled
+    if (is.null(enabled_raw) || length(enabled_raw) == 0) return(TRUE)
+    enabled_chr <- tolower(trimws(as.character(enabled_raw[[1]])))
+    !(identical(enabled_raw[[1]], FALSE) || enabled_chr %in% c("0", "false", "no", "off"))
+  }, profile_sets)
+
+  if (length(enabled_sets) == 0) return(FALSE)
+
+  all(vapply(enabled_sets, function(spec) {
+    val <- spec[[field]]
+    !is.null(val) && length(val) > 0 && nzchar(trimws(paste(as.character(val), collapse = " ")))
+  }, logical(1)))
+}
+
 apply_model_defaults <- function(models, defaults = list()) {
   stopifnot(is.list(models))
 
@@ -77,6 +96,11 @@ apply_model_defaults <- function(models, defaults = list()) {
     model$prof_extra_switch <- prof_extra_switch
     model$retro_hessian <- retro_hessian
     model$nsplit <- nsplit
+
+    if (profile_sets_all_define(profile_sets, "scalars")) {
+      model$scalars <- NULL
+    }
+
     model
   }, models, names(models))
 }
