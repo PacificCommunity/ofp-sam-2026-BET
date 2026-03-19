@@ -97,6 +97,24 @@ models <- list(
         indepvar_reps = "1",
         prof_extra_switch = "1 14 0"
       )
+      ,s1 = list(
+        enabled = "TRUE",
+        prof_fix_indepvar = "var_coff(1)",
+        prof_fix_values = "",
+        prof_fix_indepvar_file = "",
+        scalars = paste0(seq(110, 90, by = -10), collapse = " "),
+        indepvar_reps = "1",
+        prof_extra_switch = "1 15 0"
+      )
+      ,s2 = list(
+        enabled = "TRUE",
+        prof_fix_indepvar = "var_coff(2)",
+        prof_fix_values = "",
+        prof_fix_indepvar_file = "",
+        scalars = paste0(seq(110, 90, by = -10), collapse = " "),
+        indepvar_reps = "1",
+        prof_extra_switch = "1 16 0"
+      )
     )
     # When using profile_sets, all profile-related fields (prof_fix_indepvar,
     # indepvar_reps, prof_extra_switch, etc.) should be specified per set.
