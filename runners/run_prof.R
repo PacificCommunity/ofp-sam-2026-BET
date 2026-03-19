@@ -40,6 +40,9 @@ prof_hessian <- tolower(Sys.getenv("prof_hessian", Sys.getenv("likelihood_hessia
 prof_fix_indepvar <- Sys.getenv("prof_fix_indepvar", "")
 prof_fix_values <- Sys.getenv("prof_fix_values", "")
 prof_extra_switch <- trimws(Sys.getenv("prof_extra_switch", ""))
+profile_set_name_env <- Sys.getenv("profile_set_name", "")
+profile_set_label_env <- Sys.getenv("profile_set_label", "")
+profile_set_tag_env <- Sys.getenv("profile_set_tag", "")
 prof_use_quantity_penalty_raw <- trimws(Sys.getenv("prof_use_quantity_penalty", ""))
 prof_use_quantity_penalty <- if (nzchar(prof_use_quantity_penalty_raw)) {
   tolower(prof_use_quantity_penalty_raw) %in% c("1", "true", "yes", "y")
@@ -196,7 +199,16 @@ sanitize_profile_set_key <- function(x, max_len = 80L) {
   txt
 }
 
-resolve_profile_storage <- function(model_dir, prof_fix_indepvar) {
+first_nonempty_string <- function(...) {
+  vals <- list(...)
+  for (val in vals) {
+    txt <- trimws(paste(as.character(val), collapse = " "))
+    if (nzchar(txt)) return(txt)
+  }
+  ""
+}
+
+resolve_profile_storage <- function(model_dir, prof_fix_indepvar, profile_set_name = "", profile_set_label = "", profile_set_tag = "") {
   prof_fix_indepvar <- trimws(as.character(prof_fix_indepvar))
   if (!nzchar(prof_fix_indepvar)) {
     return(list(
@@ -208,8 +220,16 @@ resolve_profile_storage <- function(model_dir, prof_fix_indepvar) {
     ))
   }
 
-  profile_set_label <- paste(parse_tokens(prof_fix_indepvar), collapse = ", ")
-  profile_set_key <- sanitize_profile_set_key(prof_fix_indepvar)
+  profile_set_label <- first_nonempty_string(
+    profile_set_label,
+    profile_set_name,
+    paste(parse_tokens(prof_fix_indepvar), collapse = ", ")
+  )
+  profile_set_key <- first_nonempty_string(
+    profile_set_tag,
+    sanitize_profile_set_key(profile_set_label),
+    sanitize_profile_set_key(prof_fix_indepvar)
+  )
   profile_root_dir <- file.path(model_dir, "prof_indepvar")
   prof_subdir <- file.path("prof_indepvar", profile_set_key)
 
@@ -383,7 +403,13 @@ apply_indepvar_fix <- function(init_par_file,
 }
 
 ## Create scalar-specific directory inside prof folder
-profile_storage <- resolve_profile_storage(model_dir, prof_fix_indepvar)
+profile_storage <- resolve_profile_storage(
+  model_dir = model_dir,
+  prof_fix_indepvar = prof_fix_indepvar,
+  profile_set_name = profile_set_name_env,
+  profile_set_label = profile_set_label_env,
+  profile_set_tag = profile_set_tag_env
+)
 prof_subdir <- profile_storage$prof_subdir
 prof_dir <- profile_storage$prof_dir
 scalar_dir <- file.path(prof_dir, paste0("scalar_", scalar))
