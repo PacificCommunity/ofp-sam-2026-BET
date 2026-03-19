@@ -1931,6 +1931,10 @@
     }
 
     job_env <- model_env
+    # Profile sets are launch-time metadata only; Condor env vars must be scalar/text.
+    if (!is.null(job_env$profile_sets)) {
+      job_env$profile_sets <- NULL
+    }
     job_env$DOCKER_IMAGE <- input$docker_image
     remote_dir_suffix <- model_name
     batch_suffix <- ""
