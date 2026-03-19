@@ -70,7 +70,7 @@ models <- list(
         indepvar_reps = "1",
         prof_extra_switch = "1 121 0"
       )
-      ,vb_coff_1 = list(
+      ,L1 = list(
         enabled = "TRUE",
         prof_fix_indepvar = "vb_coff(1)",
         prof_fix_values = "",
@@ -78,6 +78,24 @@ models <- list(
         scalars = paste0(seq(110, 90, by = -10), collapse = " "),
         indepvar_reps = "1",
         prof_extra_switch = "1 12 0"
+      )
+      ,L2 = list(
+        enabled = "TRUE",
+        prof_fix_indepvar = "vb_coff(2)",
+        prof_fix_values = "",
+        prof_fix_indepvar_file = "",
+        scalars = paste0(seq(110, 90, by = -10), collapse = " "),
+        indepvar_reps = "1",
+        prof_extra_switch = "1 13 0"
+      )
+      ,kappa = list(
+        enabled = "TRUE",
+        prof_fix_indepvar = "vb_coff(3)",
+        prof_fix_values = "",
+        prof_fix_indepvar_file = "",
+        scalars = paste0(seq(110, 90, by = -10), collapse = " "),
+        indepvar_reps = "1",
+        prof_extra_switch = "1 14 0"
       )
     )
     # When using profile_sets, all profile-related fields (prof_fix_indepvar,
