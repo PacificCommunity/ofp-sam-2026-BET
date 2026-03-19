@@ -2138,7 +2138,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     choices <- setNames(base_tbl$key, base_tbl$label)
     selected <- intersect(current, unname(choices))
     if (length(selected) == 0 && length(choices) > 0) {
-      selected <- unname(choices)[[1]]
+      selected <- unname(choices)
     }
     updatePickerInput(session, "lik_indepvar_profile_set", choices = choices, selected = selected)
   })
@@ -3633,6 +3633,89 @@ mod_likelihood_server <- function(input, output, session, rv) {
       )
 
     bind_rows(component_df, total_line)
+  }
+
+  add_panel_bar_width <- function(df, panel_cols = "scenario", width_frac = 0.8, fallback = 0.8, min_width = 0.05) {
+    if (!is.data.frame(df) || nrow(df) == 0 || !"scalar" %in% names(df)) return(df)
+
+    panel_cols <- intersect(panel_cols, names(df))
+    if (length(panel_cols) == 0) {
+      panel_cols <- character(0)
+    }
+
+    if (!"bar_width" %in% names(df)) {
+      df$bar_width <- NA_real_
+    }
+
+    if (length(panel_cols) == 0) {
+      scalar_vals <- sort(unique(df$scalar[is.finite(df$scalar)]))
+      diffs <- diff(scalar_vals)
+      diffs <- diffs[is.finite(diffs) & diffs > 0]
+      width_val <- if (length(diffs) > 0) {
+        max(min_width, width_frac * min(diffs))
+      } else {
+        fallback
+      }
+      df$bar_width[] <- width_val
+      return(df)
+    }
+
+    df %>%
+      group_by(across(all_of(panel_cols))) %>%
+      mutate(
+        bar_width = {
+          scalar_vals <- sort(unique(scalar[is.finite(scalar)]))
+          diffs <- diff(scalar_vals)
+          diffs <- diffs[is.finite(diffs) & diffs > 0]
+          if (length(diffs) > 0) {
+            max(min_width, width_frac * min(diffs))
+          } else {
+            fallback
+          }
+        }
+      ) %>%
+      ungroup()
+  }
+
+  add_panel_bar_position <- function(df, panel_cols = "scenario", label_fn = function(x) x) {
+    if (!is.data.frame(df) || nrow(df) == 0 || !"scalar" %in% names(df)) return(df)
+
+    panel_cols <- intersect(panel_cols, names(df))
+    if (length(panel_cols) == 0) {
+      panel_cols <- character(0)
+    }
+
+    if (length(panel_cols) == 0) {
+      scalar_tbl <- data.frame(
+        scalar = sort(unique(df$scalar[is.finite(df$scalar)])),
+        stringsAsFactors = FALSE
+      )
+      if (nrow(scalar_tbl) == 0) return(df)
+      scalar_tbl$x_order <- seq_len(nrow(scalar_tbl))
+      scalar_tbl$x_id <- paste0("panel::", scalar_tbl$x_order)
+      scalar_tbl$x_label <- vapply(scalar_tbl$scalar, function(v) {
+        out <- label_fn(v)
+        if (length(out) == 0) "" else as.character(out[[1]])
+      }, character(1))
+      return(df %>% left_join(scalar_tbl, by = "scalar"))
+    }
+
+    scalar_tbl <- df %>%
+      filter(is.finite(scalar)) %>%
+      distinct(across(all_of(panel_cols)), scalar) %>%
+      group_by(across(all_of(panel_cols))) %>%
+      arrange(scalar, .by_group = TRUE) %>%
+      mutate(x_order = row_number()) %>%
+      ungroup()
+
+    panel_key <- apply(as.data.frame(scalar_tbl[panel_cols]), 1, paste, collapse = "::")
+    scalar_tbl$x_id <- paste0(panel_key, "::", scalar_tbl$x_order)
+    scalar_tbl$x_label <- vapply(scalar_tbl$scalar, function(v) {
+      out <- label_fn(v)
+      if (length(out) == 0) "" else as.character(out[[1]])
+    }, character(1))
+
+    df %>% left_join(scalar_tbl, by = c(stats::setNames(panel_cols, panel_cols), scalar = "scalar"))
   }
 
   build_fishery_data <- function(profile_data, scenarios, fishery_maps, slot_name, label, scales,
@@ -5492,14 +5575,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
     facet_ncol <- suppressWarnings(as.integer(filters$facet_ncol))
     if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 2
     facet_ncol <- min(max(facet_ncol, 1), 12)
+    profile_data <- info$profile_data
+    x_axis_label_value <- quantity_axis_label(profile_data, filters$x_axis_label_override)
+    x_axis_labels_fn <- quantity_axis_formatter(profile_data)
+    all_scales <- sort(unique(unlist(lapply(profile_data, function(x) x$scales))))
 
     if (identical(filters$profile_type, "tagging") &&
         identical(filters$tagging_view, "release_group") &&
         !("release_group" %in% names(data))) {
-      all_scales <- sort(unique(unlist(lapply(info$profile_data, function(x) x$scales))))
       data <- build_tagging_data(
-        info$profile_data,
-        names(info$profile_data),
+        profile_data,
+        names(profile_data),
         rv$TagOut_list,
         all_scales,
         view = "release_group",
@@ -5516,10 +5602,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (identical(filters$profile_type, "tagging") &&
         identical(filters$tagging_view, "release_region") &&
         !("release_region" %in% names(data))) {
-      all_scales <- sort(unique(unlist(lapply(info$profile_data, function(x) x$scales))))
       data <- build_tagging_data(
-        info$profile_data,
-        names(info$profile_data),
+        profile_data,
+        names(profile_data),
         rv$TagOut_list,
         all_scales,
         view = "release_region",
@@ -5536,10 +5621,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (identical(filters$profile_type, "tagging") &&
         identical(filters$tagging_view, "recapture_fishery") &&
         !("recapture_fishery" %in% names(data))) {
-      all_scales <- sort(unique(unlist(lapply(info$profile_data, function(x) x$scales))))
       data <- build_tagging_data(
-        info$profile_data,
-        names(info$profile_data),
+        profile_data,
+        names(profile_data),
         rv$TagOut_list,
         all_scales,
         view = "recapture_fishery",
@@ -6872,9 +6956,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
         return(top_plot)
       }
 
-      all_scales <- sort(unique(unlist(lapply(info$profile_data, function(x) x$scales))))
       if (identical(filters$profile_type, "components")) {
-        influence_data <- build_components_signed_data(info$profile_data, names(info$profile_data), all_scales) %>%
+        influence_data <- build_components_signed_data(profile_data, names(profile_data), all_scales) %>%
           filter(Likelihood != "Total", is.finite(change), is.finite(scalar))
       } else {
         influence_base <- data %>%
@@ -6924,18 +7007,18 @@ mod_likelihood_server <- function(input, output, session, rv) {
         return(top_plot)
       }
 
-      scalar_vals <- sort(unique(influence_comp_df$scalar[is.finite(influence_comp_df$scalar)]))
-      bar_width <- if (length(scalar_vals) >= 2) {
-        diffs <- diff(scalar_vals)
-        diffs <- diffs[is.finite(diffs) & diffs > 0]
-        if (length(diffs) == 0) {
-          0.8
-        } else {
-          max(0.05, 0.8 * min(diffs))
-        }
-      } else {
-        0.8
-      }
+      influence_comp_df <- add_panel_bar_width(
+        influence_comp_df,
+        panel_cols = "scenario",
+        width_frac = 0.8,
+        fallback = 0.8,
+        min_width = 0.05
+      )
+      influence_comp_df <- add_panel_bar_position(
+        influence_comp_df,
+        panel_cols = "scenario",
+        label_fn = x_axis_labels_fn
+      )
 
       top_non_total_groups <- setdiff(unique(as.character(data[[group_col]])), "Total")
       if (length(top_non_total_groups) == 0) {
@@ -6970,12 +7053,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
       bottom_legend_spacing_x_pt <- min(50, max(14, round(0.95 * bottom_max_chars + 8)))
       bottom_legend_key_width_pt <- min(32, max(13, round(0.7 * bottom_max_chars + 8)))
       bottom_legend_text_size <- if (bottom_max_chars >= 20) 8.4 else if (bottom_max_chars >= 14) 8.7 else 9
+      bottom_x_labels <- setNames(as.character(influence_comp_df$x_label), as.character(influence_comp_df$x_id))
 
-      bottom_plot <- ggplot(influence_comp_df, aes(x = scalar, y = change, fill = group_val)) +
-        geom_col(width = bar_width, alpha = 0.9, color = "white", linewidth = 0.2, na.rm = TRUE) +
-        scale_x_continuous(
-          labels = quantity_axis_formatter(info$profile_data),
-          name = quantity_axis_label(info$profile_data, filters$x_axis_label_override)
+      bottom_plot <- ggplot(influence_comp_df, aes(x = x_id, y = change, fill = group_val)) +
+        geom_col(aes(width = bar_width), alpha = 0.9, color = "white", linewidth = 0.2, na.rm = TRUE) +
+        scale_x_discrete(
+          labels = bottom_x_labels,
+          name = x_axis_label_value
         ) +
         labs(y = "Normalized influence (%)", fill = NULL) +
         theme_bw(base_size = 12) +
@@ -7013,7 +7097,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       return(cowplot::plot_grid(top_plot, bottom_plot, ncol = 1, rel_heights = c(1, 1), align = "v"))
     }
 
-    x_label <- quantity_axis_label(info$profile_data, filters$x_axis_label_override)
+    x_label <- x_axis_label_value
     influence_types <- c("components_signed", "influence_cpues", "influence_lfs", "influence_wfs", "influence_cal_fishery")
     y_axis_label <- if (isTRUE(filters$profile_type %in% influence_types)) {
       "Normalized influence (%)"
@@ -7037,17 +7121,33 @@ mod_likelihood_server <- function(input, output, session, rv) {
         )
       }
 
-      scalar_vals <- sort(unique(component_df$scalar[is.finite(component_df$scalar)]))
-      bar_width <- if (length(scalar_vals) >= 2) {
-        max(1, 0.8 * min(diff(scalar_vals)))
-      } else {
-        50
+      panel_cols <- "scenario"
+      if (isTRUE(filters$split_by_region) && "region" %in% names(component_df)) {
+        panel_cols <- c(panel_cols, "region")
       }
+      component_df <- add_panel_bar_width(
+        component_df,
+        panel_cols = panel_cols,
+        width_frac = 0.8,
+        fallback = 0.8,
+        min_width = 0.05
+      )
+      component_df <- add_panel_bar_position(
+        component_df,
+        panel_cols = panel_cols,
+        label_fn = x_axis_labels_fn
+      )
+      total_df <- add_panel_bar_position(
+        total_df,
+        panel_cols = panel_cols,
+        label_fn = x_axis_labels_fn
+      )
+      bottom_x_labels <- setNames(as.character(component_df$x_label), as.character(component_df$x_id))
 
-      p <- ggplot(component_df, aes(x = scalar, y = change, fill = group_val)) +
-        geom_col(width = bar_width, alpha = 0.9, color = "white", linewidth = 0.2, na.rm = TRUE) +
-        scale_x_continuous(
-          labels = quantity_axis_formatter(info$profile_data),
+      p <- ggplot(component_df, aes(x = x_id, y = change, fill = group_val)) +
+        geom_col(aes(width = bar_width), alpha = 0.9, color = "white", linewidth = 0.2, na.rm = TRUE) +
+        scale_x_discrete(
+          labels = bottom_x_labels,
           name = x_label
         ) +
         labs(y = y_axis_label, fill = NULL) +
@@ -7074,12 +7174,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
           overall_comp <- component_df %>% filter(as.character(region) == "Overall")
           overall_total <- total_df %>% filter(as.character(region) == "Overall")
 
-          region_plot <- ggplot(region_comp, aes(x = scalar, y = change, fill = group_val)) +
-            geom_col(width = bar_width, alpha = 0.9, color = "white", linewidth = 0.2, na.rm = TRUE) +
+          region_plot <- ggplot(region_comp, aes(x = x_id, y = change, fill = group_val)) +
+            geom_col(aes(width = bar_width), alpha = 0.9, color = "white", linewidth = 0.2, na.rm = TRUE) +
             {
               if (nrow(region_total) > 0) geom_line(
                 data = region_total,
-                aes(x = scalar, y = change, group = interaction(scenario, region)),
+                aes(x = x_id, y = change, group = interaction(scenario, region)),
                 inherit.aes = FALSE,
                 color = "black",
                 linewidth = 1.0,
@@ -7089,14 +7189,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
             {
               if (nrow(region_total) > 0) geom_point(
                 data = region_total,
-                aes(x = scalar, y = change),
+                aes(x = x_id, y = change),
                 inherit.aes = FALSE,
                 color = "black",
                 size = 1.6,
                 alpha = 0.9
               )
             } +
-            scale_x_continuous(labels = quantity_axis_formatter(info$profile_data), name = x_label) +
+            scale_x_discrete(labels = bottom_x_labels, name = x_label) +
             labs(y = y_axis_label, fill = NULL) +
             theme_bw(base_size = 12) +
             theme(
@@ -7113,12 +7213,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
             region_plot <- region_plot + facet_grid(rows = vars(scenario), cols = vars(region), scales = "free_x")
           }
 
-          overall_plot <- ggplot(overall_comp, aes(x = scalar, y = change, fill = group_val)) +
-            geom_col(width = bar_width, alpha = 0.9, color = "white", linewidth = 0.2, na.rm = TRUE) +
+          overall_plot <- ggplot(overall_comp, aes(x = x_id, y = change, fill = group_val)) +
+            geom_col(aes(width = bar_width), alpha = 0.9, color = "white", linewidth = 0.2, na.rm = TRUE) +
             {
               if (nrow(overall_total) > 0) geom_line(
                 data = overall_total,
-                aes(x = scalar, y = change, group = scenario),
+                aes(x = x_id, y = change, group = scenario),
                 inherit.aes = FALSE,
                 color = "black",
                 linewidth = 1.0,
@@ -7128,14 +7228,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
             {
               if (nrow(overall_total) > 0) geom_point(
                 data = overall_total,
-                aes(x = scalar, y = change),
+                aes(x = x_id, y = change),
                 inherit.aes = FALSE,
                 color = "black",
                 size = 1.6,
                 alpha = 0.9
               )
             } +
-            scale_x_continuous(labels = quantity_axis_formatter(info$profile_data), name = x_label) +
+            scale_x_discrete(labels = bottom_x_labels, name = x_label) +
             labs(y = y_axis_label, fill = NULL) +
             theme_bw(base_size = 12) +
             theme(
@@ -7165,7 +7265,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       return(p)
     }
 
-    create_piner_plot(
+      create_piner_plot(
       data,
       group_col,
       x_label,
@@ -7176,7 +7276,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       legend_mode = filters$legend_mode,
       legend_top_n = filters$legend_top_n,
       deemphasize_others = isTRUE(filters$legend_deemphasize_others),
-      x_labels_fn = quantity_axis_formatter(info$profile_data)
+      x_labels_fn = x_axis_labels_fn
     )
   })
   observeEvent(list(input$live_update_plots, input$lik_main_tab, input$lik_scenarios, input$lik_profile_type, input$lik_profile_source, input$lik_jitter_type,

@@ -26,7 +26,7 @@ models <- list(
     min_year= "1952",
     
     ## Jitter settings
-    jitter_seeds = paste0(1:10, collapse = " "),
+    jitter_seeds = paste0(1:50, collapse = " "),
     jitter_cv = "0.2",
     
     ## post-run hessian toggles
@@ -61,7 +61,7 @@ models <- list(
         prof_fix_indepvar_file = "",
         prof_extra_switch = ""
       ),
-      age_pars_5 = list(
+      LorenM = list(
         enabled = "TRUE",
         prof_fix_indepvar = "age_pars(5)",
         prof_fix_values = "",
@@ -124,14 +124,14 @@ models <- list(
         indepvar_reps = "1000",
         prof_extra_switch = "2 32 0"
       )
-      ,sv = list(
+      ,BetaScale = list(
         enabled = "TRUE",
         prof_fix_indepvar = "sv(21)",
         prof_fix_values = "",
         prof_fix_indepvar_file = "",
         scalars = paste0(seq(120, 80, by = -2.5), collapse = " "),
         indepvar_reps = "1000",
-        prof_extra_switch = "1 16 0"
+        prof_extra_switch = "2 146 0"
       )
       
     )
