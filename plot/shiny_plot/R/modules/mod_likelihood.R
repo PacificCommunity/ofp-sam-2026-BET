@@ -232,6 +232,14 @@ mod_likelihood_ui <- function() {
             value = FALSE
           )
         ),
+        conditionalPanel(
+          condition = "input.lik_main_tab == 'likelihood'",
+          checkboxInput(
+            "lik_show_profile_cutoff",
+            "Show 95% profile cutoff (1.92)",
+            value = TRUE
+          )
+        ),
         sliderInput(
           "lik_plot_height",
           "Plot height (px)",
@@ -774,6 +782,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       split_by_region = isTRUE(input$lik_split_by_region),
       facet_ncol = facet_ncol,
       show_influence = isTRUE(input$lik_show_influence),
+      show_profile_cutoff = isTRUE(input$lik_show_profile_cutoff),
       plot_height = plot_height,
       plot_width = plot_width,
       jitter_grad_reference = jitter_grad_reference,
@@ -3251,7 +3260,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
   # Create a standard likelihood profile plot
   create_piner_plot <- function(data, group_var, x_label, label = NULL, facet_ncol = 2, split_by_region = FALSE,
                                 y_label = "Changes in Likelihood", legend_mode = "all", legend_top_n = 12,
-                                deemphasize_others = FALSE, x_labels_fn = function(x) x / 1000) {
+                                deemphasize_others = FALSE, x_labels_fn = function(x) x / 1000,
+                                show_profile_cutoff = TRUE) {
     if (nrow(data) == 0) return(NULL)
 
     if ("region" %in% names(data)) {
@@ -3423,6 +3433,48 @@ mod_likelihood_server <- function(input, output, session, rv) {
           order = 1
         )
       )
+
+    if (isTRUE(show_profile_cutoff) && identical(y_label, "Changes in Likelihood")) {
+      p <- p + geom_hline(
+        yintercept = 1.92,
+        linetype = "dashed",
+        color = "#b22222",
+        linewidth = 0.7,
+        alpha = 0.8
+      )
+
+      cutoff_anno <- data.frame(y = 1.92, label = "95% CI threshold", stringsAsFactors = FALSE)
+      if ("scenario" %in% names(data)) {
+        cutoff_anno$scenario <- unique(as.character(data$scenario))[1]
+      }
+      if (isTRUE(split_by_region) && "region" %in% names(data)) {
+        cutoff_anno <- unique(data[c(intersect(c("scenario", "region"), names(data)))])
+        cutoff_anno$y <- 1.92
+        cutoff_anno$label <- "95% CI threshold"
+      } else if ("program" %in% names(data) && isTRUE(group_var %in% c("release_group", "release_region"))) {
+        cutoff_anno <- unique(data[c(intersect(c("scenario", "program"), names(data)))])
+        cutoff_anno$y <- 1.92
+        cutoff_anno$label <- "95% CI threshold"
+      } else if ("scenario" %in% names(data)) {
+        cutoff_anno <- unique(data["scenario"])
+        cutoff_anno$y <- 1.92
+        cutoff_anno$label <- "95% CI threshold"
+      }
+
+      p <- p + geom_label(
+        data = cutoff_anno,
+        aes(x = Inf, y = y, label = label),
+        inherit.aes = FALSE,
+        hjust = 1.03,
+        vjust = 0.5,
+        size = 3.6,
+        label.size = 0.2,
+        label.padding = unit(0.16, "lines"),
+        fill = "white",
+        color = "#8b1e1e",
+        fontface = "bold"
+      )
+    }
 
     if (isTRUE(group_var %in% c("release_group", "release_region")) && "program" %in% names(data)) {
       program_vals <- if (is.factor(data$program)) levels(data$program) else unique(as.character(data$program))
@@ -6946,7 +6998,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
         legend_mode = legend_mode,
         legend_top_n = legend_top_n,
         deemphasize_others = deemphasize_others,
-        x_labels_fn = quantity_axis_formatter(info$profile_data)
+        x_labels_fn = quantity_axis_formatter(info$profile_data),
+        show_profile_cutoff = isTRUE(filters$show_profile_cutoff)
       )
 
       if (isTRUE(force_hide_influence) || !isTRUE(filters$show_influence)) {
@@ -7278,12 +7331,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
       legend_mode = filters$legend_mode,
       legend_top_n = filters$legend_top_n,
       deemphasize_others = isTRUE(filters$legend_deemphasize_others),
-      x_labels_fn = x_axis_labels_fn
+      x_labels_fn = x_axis_labels_fn,
+      show_profile_cutoff = isTRUE(filters$show_profile_cutoff)
     )
   })
   observeEvent(list(input$live_update_plots, input$lik_main_tab, input$lik_scenarios, input$lik_profile_type, input$lik_profile_source, input$lik_jitter_type,
                     input$lik_indepvar_profile_set,
                     input$lik_regions, input$lik_split_by_region, input$lik_facet_ncol,
+                    input$lik_show_profile_cutoff,
                     input$lik_jitter_grad_reference, input$lik_jitter_converged_only_diagnostics,
                     input$lik_jitter_rel_diff_threshold,
                     input$lik_jitter_param_view, input$lik_jitter_param_display, input$lik_jitter_param_scope, input$lik_jitter_param_window,
