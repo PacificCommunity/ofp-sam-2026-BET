@@ -330,6 +330,10 @@ mod_likelihood_ui <- function() {
 	                  ),
 	                  selected = "rel_diff"
 	                      ),
+                      tags$small(
+                        "Symmetric relative difference = 200 * (after - before) / (|after| + |before|). Plot range is fixed to [-200, 200].",
+                        style = "display:block; margin-top:-6px; margin-bottom:6px; color:#666;"
+                      ),
                       conditionalPanel(
                         condition = "input.lik_jitter_show_advanced",
                         tagList(
@@ -367,6 +371,10 @@ mod_likelihood_ui <- function() {
                   "Change from original" = "delta"
                 ),
                 selected = "rel_diff"
+              ),
+              tags$small(
+                "Symmetric relative difference = 200 * (after - before) / (|after| + |before|). Plot range is fixed to [-200, 200].",
+                style = "display:block; margin-top:-6px; margin-bottom:6px; color:#666;"
               )
             ),
               conditionalPanel(
@@ -465,7 +473,7 @@ mod_likelihood_ui <- function() {
                 "Summary bands" = "summary",
                 "Individual lines" = "lines"
               ),
-              selected = "summary"
+              selected = "lines"
             )
           )
         ),
@@ -739,6 +747,19 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     200 * (a - b) / pmax(abs(a) + abs(b), eps)
   }
+  jitter_pct_or_absolute_one <- function(before,
+                                         after,
+                                         zero_tol = 1e-6,
+                                         eps = 1e-12) {
+    b <- suppressWarnings(as.numeric(before))
+    a <- suppressWarnings(as.numeric(after))
+    if (!is.finite(b) || !is.finite(a)) return(NA_real_)
+    if (!is.finite(zero_tol) || zero_tol <= 0) zero_tol <- 1e-6
+
+    if (abs(b) <= zero_tol) return(a - b)
+
+    100 * (a - b) / ifelse(abs(b) > eps, b, sign(b) * eps)
+  }
   profile_entry_scenario_name <- function(profile_entry, fallback = NA_character_) {
     nm <- sanitize_text_scalar(profile_entry$scenario_name)
     if (is.na(nm) || !nzchar(nm)) fallback else nm
@@ -899,7 +920,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       legend_top_n = legend_top_n,
       legend_deemphasize_others = isTRUE(input$lik_deemphasize_others),
       jitter_derived_view = {
-        view <- sanitize_profile_type(input$lik_jitter_derived_view, allowed = c("summary", "lines", "detail"), default = "summary")
+        view <- sanitize_profile_type(input$lik_jitter_derived_view, allowed = c("summary", "lines", "detail"), default = "lines")
         if (identical(view, "detail")) "lines" else view
       },
       jitter_param_input_scale = sanitize_profile_type(input$lik_jitter_param_input_scale, allowed = c("rel_diff", "sampler_shift", "bound_position", "bound_delta", "pct_change", "value"), default = "rel_diff"),
@@ -6027,6 +6048,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
                 after = after,
                 MoreArgs = list(zero_tol = 1e-6, eps = 1e-12)
               ),
+              metric == "pct_change" ~ mapply(
+                jitter_pct_or_absolute_one,
+                before = before,
+                after = after,
+                MoreArgs = list(zero_tol = 1e-6, eps = 1e-12)
+              ),
               metric == "sampler_shift" ~ mapply(
                 jitter_sampler_relative_shift_one,
                 before = before,
@@ -6140,10 +6167,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
             }
           }
         }
-
         y_label <- case_when(
           metric == "rel_diff" ~ "Relative difference (%) / absolute change near zero",
-          metric == "pct_change" ~ "Standard % change from original",
+          metric == "pct_change" ~ "Standard % change from original / absolute change near zero",
           metric == "sampler_shift" ~ "Original-relative shift (SD units)",
           metric == "bound_position" ~ "Position within indepvar bounds",
           metric == "bound_delta" ~ "Bound-normalised displacement (after - before) / (U - L)",
@@ -6205,7 +6231,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           plot_subtitle <- paste0(plot_subtitle, " Near-zero original values are shown as signed absolute change instead of relative difference, to avoid artificial +/-200% saturation.")
         }
         if (identical(metric, "pct_change")) {
-          plot_subtitle <- paste0(plot_subtitle, " Standard % change uses 100 * (after - before) / before, so near-zero originals can still produce very large values or NA.")
+          plot_subtitle <- paste0(plot_subtitle, " Near-zero original values are shown as signed absolute change instead of standard % change.")
         }
         if (!is.null(jitter_counts)) {
           plot_subtitle <- paste0(plot_subtitle, " Converged/total: ", jitter_counts, ".")
@@ -6262,7 +6288,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
             x = NULL,
             y = y_label,
             title = plot_title,
-            subtitle = plot_subtitle
+            subtitle = NULL
           ) +
           theme_bw(base_size = 11) +
           theme(
@@ -6383,8 +6409,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
           display_key = if (identical(param_scope, "all")) as.character(param_key) else paste0("rank_", plot_rank),
           param_label = dplyr::coalesce(param_label, Var_name),
           rel_diff_mode = case_when(
-            metric == "rel_diff" & is.finite(before) & abs(before) <= 1e-6 ~ "absolute",
-            metric == "rel_diff" ~ "relative",
+            metric %in% c("rel_diff", "pct_change") & is.finite(before) & abs(before) <= 1e-6 ~ "absolute",
+            metric %in% c("rel_diff", "pct_change") ~ "relative",
             TRUE ~ NA_character_
           ),
           is_bound_hit = is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) &
@@ -6403,6 +6429,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
           plot_value = case_when(
             metric == "rel_diff" ~ mapply(
               jitter_relative_or_absolute_one,
+              before = before,
+              after = after,
+              MoreArgs = list(zero_tol = 1e-6, eps = 1e-12)
+            ),
+            metric == "pct_change" ~ mapply(
+              jitter_pct_or_absolute_one,
               before = before,
               after = after,
               MoreArgs = list(zero_tol = 1e-6, eps = 1e-12)
@@ -6437,6 +6469,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           ),
           original_value = case_when(
               metric == "rel_diff" ~ 0,
+              metric == "pct_change" ~ 0,
               metric == "sampler_shift" ~ 0,
           metric == "bound_position" & is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) &
             is.finite(before) ~ {
@@ -6448,6 +6481,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           ),
           adjusted_center_value = case_when(
               metric == "rel_diff" ~ 0,
+              metric == "pct_change" ~ 0,
               metric == "sampler_shift" ~ 0,
             metric == "bound_position" & is.finite(L_bound) & is.finite(U_bound) & (U_bound > L_bound) &
               is.finite(center_value_raw) ~ {
@@ -6516,6 +6550,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
           }
         }
       }
+      if (identical(metric, "rel_diff")) {
+        plot_limit <- c(-200, 200)
+      }
 
       param_levels <- selected_params %>%
         arrange(plot_rank, Var_name, Index) %>%
@@ -6546,7 +6583,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         ) %>%
         mutate(
           param_label = ifelse(
-            identical(metric, "rel_diff") & !is.na(rel_diff_mode) & rel_diff_mode == "absolute",
+            metric %in% c("rel_diff", "pct_change") & !is.na(rel_diff_mode) & rel_diff_mode == "absolute",
             paste0(param_label, " (abs)"),
             param_label
           )
@@ -6563,9 +6600,128 @@ mod_likelihood_server <- function(input, output, session, rv) {
           select(display_key, param_label)
       }
 
+      build_jitter_detail_plot <- function(plot_data,
+                                           original_data,
+                                           label_data,
+                                           axis_label,
+                                           panel_title = NULL,
+                                           panel_limit = NULL,
+                                           show_mode_colors = FALSE) {
+        if (nrow(plot_data) == 0) {
+          return(
+            ggplot() +
+              theme_void()
+          )
+        }
+
+        local_levels <- label_data %>%
+          distinct(display_key) %>%
+          pull(display_key) %>%
+          as.character()
+        plot_data$display_key <- factor(as.character(plot_data$display_key), levels = local_levels)
+        original_data$display_key <- factor(as.character(original_data$display_key), levels = local_levels)
+
+        p_local <- if (show_mode_colors) {
+          ggplot(plot_data, aes(x = display_key, y = plot_value)) +
+            geom_boxplot(
+              aes(fill = rel_diff_mode, color = rel_diff_mode),
+              outlier.shape = NA,
+              linewidth = 0.8,
+              na.rm = TRUE
+            ) +
+            geom_point(
+              aes(group = seed),
+              position = position_jitter(width = 0.18, height = 0),
+              alpha = 0.18,
+              size = 0.9,
+              color = "#1f4e79",
+              na.rm = TRUE
+            ) +
+            scale_fill_manual(
+              values = c(relative = "#9ecae1", absolute = "#fdbb84"),
+              breaks = c("relative", "absolute"),
+              labels = c(relative = "Relative difference", absolute = "Absolute change near zero"),
+              drop = FALSE,
+              na.translate = FALSE
+            ) +
+            scale_color_manual(
+              values = c(relative = "#2b6c8a", absolute = "#e67e22"),
+              breaks = c("relative", "absolute"),
+              labels = c(relative = "Relative difference", absolute = "Absolute change near zero"),
+              drop = FALSE,
+              na.translate = FALSE
+            )
+        } else {
+          ggplot(plot_data, aes(x = display_key, y = plot_value)) +
+            geom_boxplot(
+              fill = "#9ecae1",
+              color = "#2b6c8a",
+              outlier.shape = NA,
+              na.rm = TRUE
+            ) +
+            geom_point(
+              aes(group = seed),
+              position = position_jitter(width = 0.18, height = 0),
+              alpha = 0.18,
+              size = 0.9,
+              color = "#1f4e79",
+              na.rm = TRUE
+            )
+        }
+
+        p_local <- p_local +
+          {
+            if (metric %in% zero_ref_metrics) geom_hline(
+              yintercept = 0,
+              color = "#d62728",
+              linetype = "dashed",
+              linewidth = 0.9,
+              alpha = 0.95
+            )
+          } +
+          {
+            if (show_ref_points_effective && !(metric %in% zero_ref_metrics) && nrow(original_data) > 0) geom_point(
+              data = original_data,
+              aes(x = display_key, y = original_value),
+              inherit.aes = FALSE,
+              color = "#d62728",
+              fill = "#d62728",
+              shape = 23,
+              size = 2.8,
+              stroke = 0.4,
+              na.rm = TRUE
+            )
+          } +
+          facet_wrap(~ scenario, scales = "fixed", ncol = facet_ncol) +
+          scale_x_discrete(drop = TRUE, labels = function(x) {
+            lab_map <- setNames(as.character(label_data$param_label), as.character(label_data$display_key))
+            unname(lab_map[as.character(x)])
+          }) +
+          labs(
+            x = NULL,
+            y = axis_label,
+            title = panel_title,
+            subtitle = NULL
+          ) +
+          theme_bw(base_size = 11) +
+          theme(
+            strip.text = element_text(face = "bold"),
+            strip.background = element_rect(fill = "#d9edf7"),
+            axis.text.x = element_text(size = 8),
+            axis.text.y = element_text(size = 9, face = "bold", colour = "#222222"),
+            axis.title.y = element_text(margin = margin(r = 10)),
+            plot.title = if (is.null(panel_title)) element_blank() else element_text(size = 11, face = "bold"),
+            plot.margin = margin(5.5, 10, 5.5, 14),
+            panel.grid.minor = element_blank(),
+            legend.position = if (show_mode_colors) "right" else "none"
+          )
+
+        p_local + coord_flip(ylim = panel_limit)
+      }
+
       y_label <- case_when(
         metric == "rel_diff" ~ "Relative difference (%) / absolute change near zero",
-        metric == "pct_change" ~ "Standard % change from original",
+        metric == "pct_change" ~ "Standard % change from original / absolute change near zero",
         metric == "sampler_shift" ~ "Original-relative shift (SD units)",
         metric == "bound_position" ~ "Position within indepvar bounds",
         metric == "bound_delta" ~ "Bound-normalised displacement (after - before) / (U - L)",
@@ -6658,7 +6814,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           plot_subtitle <- paste0(plot_subtitle, " Near-zero original values are shown as signed absolute change instead of relative difference, to avoid artificial +/-200% saturation.")
         }
         if (identical(metric, "pct_change")) {
-          plot_subtitle <- paste0(plot_subtitle, " Standard % change uses 100 * (after - before) / before, so near-zero originals can still produce very large values or NA.")
+          plot_subtitle <- paste0(plot_subtitle, " Near-zero original values are shown as signed absolute change instead of standard % change.")
         }
         if (!is.null(jitter_counts)) {
           plot_subtitle <- paste0(plot_subtitle, " Converged/total: ", jitter_counts, ".")
@@ -6672,6 +6828,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
       } else if (show_ref_points_effective && !(metric %in% zero_ref_metrics)) {
         plot_subtitle <- paste0(plot_subtitle, " Red diamond = baseline/original.")
       }
+
+      split_abs_plot <- metric %in% c("rel_diff", "pct_change") &&
+        !identical(param_scope, "all") &&
+        any(plot_df$rel_diff_mode == "absolute", na.rm = TRUE) &&
+        any(plot_df$rel_diff_mode == "relative", na.rm = TRUE)
 
       if (identical(param_scope, "all")) {
         p <- ggplot(summary_df, aes(x = display_key, y = q50)) +
@@ -6730,7 +6891,53 @@ mod_likelihood_server <- function(input, output, session, rv) {
             )
           }
       } else {
-        if (identical(metric, "rel_diff")) {
+        if (split_abs_plot) {
+          abs_plot_df <- plot_df %>% filter(rel_diff_mode == "absolute")
+          rel_plot_df <- plot_df %>% filter(rel_diff_mode == "relative" | is.na(rel_diff_mode))
+          abs_original_df <- original_df %>% semi_join(abs_plot_df %>% distinct(scenario, display_key, param_label), by = c("scenario", "display_key", "param_label"))
+          rel_original_df <- original_df %>% semi_join(rel_plot_df %>% distinct(scenario, display_key, param_label), by = c("scenario", "display_key", "param_label"))
+          abs_label_map <- label_map %>% semi_join(abs_plot_df %>% distinct(display_key), by = "display_key")
+          rel_label_map <- label_map %>% semi_join(rel_plot_df %>% distinct(display_key), by = "display_key")
+
+          rel_vals <- rel_plot_df$plot_value[is.finite(rel_plot_df$plot_value)]
+          abs_vals <- abs_plot_df$plot_value[is.finite(abs_plot_df$plot_value)]
+          rel_limit <- NULL
+          abs_limit <- NULL
+          if (length(rel_vals) > 0) {
+            rel_limit <- suppressWarnings(as.numeric(stats::quantile(abs(rel_vals), probs = if (range_pct < 100) range_pct / 100 else 1, na.rm = TRUE)))
+            if (is.finite(rel_limit) && rel_limit > 0) rel_limit <- c(-1.1 * rel_limit, 1.1 * rel_limit)
+          }
+          if (length(abs_vals) > 0) {
+            abs_limit <- suppressWarnings(as.numeric(stats::quantile(abs(abs_vals), probs = if (range_pct < 100) range_pct / 100 else 1, na.rm = TRUE)))
+            if (is.finite(abs_limit) && abs_limit > 0) abs_limit <- c(-1.1 * abs_limit, 1.1 * abs_limit)
+          }
+
+          relative_panel_label <- if (identical(metric, "rel_diff")) {
+            "Symmetric relative difference"
+          } else {
+            "Standard % change from original"
+          }
+
+          top_abs_plot <- build_jitter_detail_plot(
+            plot_data = abs_plot_df,
+            original_data = abs_original_df,
+            label_data = abs_label_map,
+            axis_label = "Absolute change near zero",
+            panel_title = "Absolute change near zero",
+            panel_limit = abs_limit,
+            show_mode_colors = TRUE
+          )
+          bottom_rel_plot <- build_jitter_detail_plot(
+            plot_data = rel_plot_df,
+            original_data = rel_original_df,
+            label_data = rel_label_map,
+            axis_label = relative_panel_label,
+            panel_title = relative_panel_label,
+            panel_limit = rel_limit,
+            show_mode_colors = FALSE
+          )
+          return(cowplot::plot_grid(top_abs_plot, bottom_rel_plot, ncol = 1, rel_heights = c(0.42, 1), align = "v"))
+        } else if (identical(metric, "rel_diff") || identical(metric, "pct_change")) {
           p <- ggplot(plot_df, aes(x = display_key, y = plot_value)) +
             geom_boxplot(
               aes(fill = rel_diff_mode, color = rel_diff_mode),
@@ -6803,7 +7010,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           }
       }
 
-      if (identical(metric, "rel_diff")) {
+      if (identical(metric, "rel_diff") || identical(metric, "pct_change")) {
         p <- p + scale_fill_manual(
           values = c(relative = "#9ecae1", absolute = "#fdbb84"),
           breaks = c("relative", "absolute"),
@@ -6829,7 +7036,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           x = NULL,
           y = y_label,
           title = plot_title,
-          subtitle = plot_subtitle
+          subtitle = NULL
         ) +
         theme_bw(base_size = 11) +
         theme(
@@ -6863,7 +7070,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (identical(plot_kind, "jitter_derived")) {
       converged_only <- isTRUE(filters$jitter_converged_only)
       converged_max_grad <- sanitize_numeric_scalar(filters$jitter_converged_max_grad, 0.01)
-      derived_view <- if (is.null(filters$jitter_derived_view)) "summary" else filters$jitter_derived_view
+      derived_view <- if (is.null(filters$jitter_derived_view)) "lines" else filters$jitter_derived_view
       jitter_counts <- format_jitter_convergence_counts(
         safe_build_jitter_seed_status_tables(filters$scenarios, cutoff = converged_max_grad, context = "likelihood_plot_jitter_derived")$summary
       )
