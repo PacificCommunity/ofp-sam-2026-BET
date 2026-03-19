@@ -20,6 +20,13 @@ normalize_program <- function(x) {
   toupper(trimws(as.character(x)))
 }
 
+normalize_release_groups <- function(x) {
+  vals <- suppressWarnings(as.integer(x))
+  vals <- vals[!is.na(vals)]
+  vals <- vals[vals > 0L]
+  unique(vals)
+}
+
 # Compress grouping ids to remove holes while preserving 0 as "inactive/no-group".
 # Example: c(1, 1, 3, 7, 0, 7) -> c(1, 1, 2, 3, 0, 3)
 compact_grouping_vector <- function(x, keep_zero = TRUE) {
@@ -135,6 +142,50 @@ exclude_tag_programs <- function(tag.obj, exclude_programs) {
   )
 }
 
+exclude_tag_release_groups <- function(tag.obj, exclude_release_groups) {
+  drop_groups <- normalize_release_groups(exclude_release_groups)
+  if (length(drop_groups) == 0) {
+    stop("No valid release-group ids were supplied.")
+  }
+
+  rel <- tag.obj@releases
+  rec <- tag.obj@recaptures
+  rel$rel.group <- as.numeric(rel$rel.group)
+  rec$rel.group <- as.numeric(rec$rel.group)
+
+  all_groups <- sort(unique(rel$rel.group))
+  missing_groups <- setdiff(drop_groups, all_groups)
+  if (length(missing_groups) > 0) {
+    stop(sprintf(
+      "Requested release-group ids not found in tag releases: %s",
+      paste(missing_groups, collapse = ", ")
+    ))
+  }
+
+  keep_groups <- all_groups[!(all_groups %in% drop_groups)]
+  if (length(keep_groups) == 0) stop("All release groups would be removed.")
+
+  keep_releases <- rel[rel$rel.group %in% keep_groups, , drop = FALSE]
+  keep_recaps   <- rec[rec$rel.group %in% keep_groups, , drop = FALSE]
+
+  new_ids <- setNames(seq_along(keep_groups), as.character(keep_groups))
+  keep_releases$rel.group <- unname(new_ids[as.character(keep_releases$rel.group)])
+  keep_recaps$rel.group   <- unname(new_ids[as.character(keep_recaps$rel.group)])
+
+  tag.obj@releases <- keep_releases
+  tag.obj@recaptures <- keep_recaps
+  tag.obj@release_groups <- length(keep_groups)
+  tag.obj@recoveries <- tabulate(as.numeric(keep_recaps$rel.group), nbins = tag.obj@release_groups)
+
+  list(
+    tag = tag.obj,
+    kept_original_groups = as.numeric(keep_groups),
+    dropped_original_groups = as.numeric(drop_groups),
+    excluded_release_groups = as.numeric(drop_groups),
+    original_release_groups = length(all_groups)
+  )
+}
+
 # -----------------------------
 # INI helper: subset all *_rep_* slots by keep_rows
 # Applies when first dimension / nrow == old_taggrps + 1
@@ -234,6 +285,45 @@ exclude_tag_programs_ini <- function(ini.obj, tag.obj, exclude_programs) {
   )
 }
 
+exclude_tag_release_groups_ini <- function(ini.obj, tag.obj, exclude_release_groups) {
+  tag_res <- exclude_tag_release_groups(tag.obj, exclude_release_groups)
+
+  keep_groups_original <- as.numeric(tag_res$kept_original_groups)
+  old_taggrps <- as.numeric(ini.obj@dimensions["taggrps"])
+
+  n_rows_rate <- nrow(ini.obj@tag_fish_rep_rate)
+  if (!isTRUE(n_rows_rate == old_taggrps + 1)) {
+    stop(sprintf(
+      "Unexpected tag_fish_rep_rate rows: %d (expected %d = taggrps + 1)",
+      n_rows_rate, old_taggrps + 1
+    ))
+  }
+
+  aggregate_row <- n_rows_rate
+  keep_rows <- c(keep_groups_original, aggregate_row)
+
+  ini.obj <- subset_ini_rep_rows(ini.obj, keep_rows = keep_rows, old_taggrps = old_taggrps)
+  ini.obj <- compact_ini_tag_fish_rep_groups(ini.obj)
+  ini.obj@dimensions["taggrps"] <- length(keep_groups_original)
+
+  stopifnot(
+    nrow(ini.obj@tag_fish_rep_rate)   == as.numeric(ini.obj@dimensions["taggrps"]) + 1,
+    nrow(ini.obj@tag_fish_rep_grp)    == as.numeric(ini.obj@dimensions["taggrps"]) + 1,
+    nrow(ini.obj@tag_fish_rep_flags)  == as.numeric(ini.obj@dimensions["taggrps"]) + 1,
+    nrow(ini.obj@tag_fish_rep_target) == as.numeric(ini.obj@dimensions["taggrps"]) + 1,
+    nrow(ini.obj@tag_fish_rep_pen)    == as.numeric(ini.obj@dimensions["taggrps"]) + 1
+  )
+
+  list(
+    ini = ini.obj,
+    tag = tag_res$tag,
+    kept_original_groups = keep_groups_original,
+    dropped_original_groups = as.numeric(tag_res$dropped_original_groups),
+    excluded_release_groups = as.numeric(tag_res$excluded_release_groups),
+    original_release_groups = tag_res$original_release_groups
+  )
+}
+
 # -----------------------------
 # FRQ exclusion (program exclusion version)
 # - Keep frq@freq unchanged
@@ -282,6 +372,33 @@ exclude_one_program_case <- function(ini.obj, tag.obj, frq.obj = NULL, exclude_p
   out
 }
 
+exclude_one_release_group_case <- function(ini.obj, tag.obj, frq.obj = NULL, exclude_release_groups) {
+  res <- exclude_tag_release_groups_ini(
+    ini.obj = ini.obj,
+    tag.obj = tag.obj,
+    exclude_release_groups = exclude_release_groups
+  )
+
+  out <- list(
+    ini = res$ini,
+    tag = res$tag,
+    kept_original_groups = res$kept_original_groups,
+    dropped_original_groups = res$dropped_original_groups,
+    excluded_release_groups = res$excluded_release_groups,
+    original_release_groups = res$original_release_groups
+  )
+
+  if (!is.null(frq.obj)) {
+    out$frq <- exclude.frq(
+      frq.obj = frq.obj,
+      exclude.ini.obj = res$ini,
+      exclude.tag.obj = res$tag
+    )
+  }
+
+  out
+}
+
 # -----------------------------
 # Build multiple exclusion cases
 # -----------------------------
@@ -300,6 +417,23 @@ make_program_exclusion_cases <- function(ini.obj, tag.obj, frq.obj = NULL,
     )
   }
   
+  out
+}
+
+make_release_group_exclusion_case <- function(ini.obj, tag.obj, frq.obj = NULL,
+                                              release_groups) {
+  release_groups <- normalize_release_groups(release_groups)
+  if (length(release_groups) == 0) stop("release_groups is empty")
+
+  nm <- paste0("exclude_rg_", paste(release_groups, collapse = "_"))
+  out <- vector("list", 1L)
+  out[[1]] <- exclude_one_release_group_case(
+    ini.obj = ini.obj,
+    tag.obj = tag.obj,
+    frq.obj = frq.obj,
+    exclude_release_groups = release_groups
+  )
+  names(out) <- nm
   out
 }
 
@@ -358,6 +492,67 @@ summarize_program_exclusion_cases <- function(cases) {
     data.frame(
       case = nm,
       excluded = paste(x$excluded_programs, collapse = ","),
+      original_release_groups = x$original_release_groups,
+      kept_groups = length(x$kept_original_groups),
+      dropped_groups = length(x$dropped_original_groups),
+      tag_release_groups = x$tag@release_groups,
+      ini_taggrps = as.numeric(x$ini@dimensions["taggrps"]),
+      ini_rows_tag_fish_rep_rate = nrow(x$ini@tag_fish_rep_rate),
+      frq_n_tag_groups = if (!is.null(x$frq)) as.numeric(x$frq@n_tag_groups) else NA_real_,
+      stringsAsFactors = FALSE
+    )
+  }))
+}
+
+check_release_group_exclusion <- function(case_obj, excluded_release_groups) {
+  excluded_release_groups <- normalize_release_groups(excluded_release_groups)
+
+  remaining_release_groups <- sort(unique(as.numeric(case_obj$tag@releases$rel.group)))
+  rel_groups_recap <- sort(unique(as.numeric(case_obj$tag@recaptures$rel.group)))
+
+  ini_taggrps <- as.numeric(case_obj$ini@dimensions["taggrps"])
+  ini_rows <- nrow(case_obj$ini@tag_fish_rep_rate)
+  grp_vals <- sort(unique(as.integer(case_obj$ini@tag_fish_rep_grp)))
+  grp_pos <- grp_vals[grp_vals > 0]
+  grp_holes <- if (length(grp_pos)) setdiff(seq_len(max(grp_pos)), grp_pos) else integer(0)
+
+  cat("--------------------------------------------------\n")
+  cat("Excluded release groups:", paste(excluded_release_groups, collapse = ", "), "\n")
+  cat("Original release group count:", case_obj$original_release_groups, "\n")
+  cat("Kept original groups:", length(case_obj$kept_original_groups), "\n")
+  cat("Dropped original groups:", length(case_obj$dropped_original_groups), "\n")
+  cat("Tag release_groups (new count for .tag header):", case_obj$tag@release_groups, "\n")
+  cat("INI taggrps (active count):", ini_taggrps, "\n")
+  cat("INI rows(tag_fish_rep_rate):", ini_rows, "\n")
+  cat("INI tag_fish_rep_grp unique positive ids:", length(grp_pos),
+      if (length(grp_holes)) paste0(" | holes=", paste(grp_holes, collapse = ",")) else " | holes=none",
+      "\n")
+  if (!is.null(case_obj$frq)) cat("FRQ n_tag_groups:", case_obj$frq@n_tag_groups, "\n")
+
+  expected_groups <- seq_len(case_obj$tag@release_groups)
+
+  stopifnot(
+    !any(excluded_release_groups %in% case_obj$kept_original_groups),
+    case_obj$tag@release_groups == length(case_obj$kept_original_groups),
+    length(remaining_release_groups) == 0 || all(as.integer(remaining_release_groups) == expected_groups),
+    length(rel_groups_recap) == 0 || max(rel_groups_recap) <= case_obj$tag@release_groups,
+    ini_rows == ini_taggrps + 1,
+    length(grp_holes) == 0
+  )
+
+  if (!is.null(case_obj$frq)) {
+    stopifnot(as.numeric(case_obj$frq@n_tag_groups) == ini_taggrps)
+  }
+
+  invisible(TRUE)
+}
+
+summarize_release_group_exclusion_cases <- function(cases) {
+  do.call(rbind, lapply(names(cases), function(nm) {
+    x <- cases[[nm]]
+    data.frame(
+      case = nm,
+      excluded = paste(x$excluded_release_groups, collapse = ","),
       original_release_groups = x$original_release_groups,
       kept_groups = length(x$kept_original_groups),
       dropped_groups = length(x$dropped_original_groups),
