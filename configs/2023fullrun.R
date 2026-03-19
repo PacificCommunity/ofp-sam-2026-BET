@@ -1,4 +1,4 @@
-summary <-"replicate the 2023 diagnostic model"
+summary <-"Model exploring the impact of excluding RG21 and RG25 from the 2023 BET diagnostic model"
 
 source("../tools/model_defaults.R")
 
