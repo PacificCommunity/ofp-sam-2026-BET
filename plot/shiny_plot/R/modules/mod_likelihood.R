@@ -257,6 +257,14 @@ mod_likelihood_ui <- function() {
           step = 50
         ),
         conditionalPanel(
+          condition = "input.lik_main_tab == 'jitter'",
+          checkboxInput(
+            "lik_jitter_show_advanced",
+            "Advanced jitter options",
+            value = FALSE
+          )
+        ),
+        conditionalPanel(
           condition = "input.lik_main_tab == 'jitter' && input.lik_jitter_type == 'jitter_params'",
           tagList(
             selectInput(
@@ -268,17 +276,20 @@ mod_likelihood_ui <- function() {
               ),
               selected = "input"
             ),
-            selectInput(
-              "lik_jitter_param_display",
-              "Jitter Param Display:",
-              choices = c(
-                "Family summary (recommended for many parameters)" = "family",
-                "Parameter detail" = "detail"
-              ),
-              selected = "family"
+            conditionalPanel(
+              condition = "input.lik_jitter_show_advanced",
+              selectInput(
+                "lik_jitter_param_display",
+                "Jitter Param Display:",
+                choices = c(
+                  "Family summary (recommended for many parameters)" = "family",
+                  "Parameter detail" = "detail"
+                ),
+                selected = "family"
+              )
             ),
             conditionalPanel(
-              condition = "input.lik_jitter_param_display == 'detail'",
+              condition = "input.lik_jitter_show_advanced && input.lik_jitter_param_display == 'detail'",
               tagList(
                 selectInput(
                   "lik_jitter_param_scope",
@@ -317,21 +328,26 @@ mod_likelihood_ui <- function() {
 	                  ),
 	                  selected = "bound_position"
 	                      ),
-                      tags$small(
-                        "Bound position is computed as (value - L_bound) / (U_bound - L_bound). 0 = lower bound, 1 = upper bound, 0.5 = midpoint.",
-                        style = "display:block; margin-top:-6px; margin-bottom:6px; color:#666;"
-                      ),
-                      tags$small(
-                        "Jitter uses CV-adaptive center shift only: center is moved so the one-tail 99.99% quantile aligns with bounds when needed.",
-                        style = "display:block; margin-top:-4px; margin-bottom:6px; color:#666;"
-                      ),
-                      tags$small(
-                        "No extra near-bound rejection window is applied; bound hits can occur for large CV or tight bounds.",
-                        style = "display:block; margin-top:-4px; margin-bottom:6px; color:#666;"
-                      ),
-                      tags$small(
-                        "All free parameters use hard L/U bounds from indepvar. Sampler choice follows parameter geometry and fit purpose: multiplicative for positive-scale parameters (natural relative/% change), bounded/logit for finite-interval parameters (stable near bounds), additive for location-scale parameters (symmetric absolute movement), and simplex/Dirichlet for region_pars (sum-constrained composition).",
-                        style = "display:block; margin-top:-4px; margin-bottom:6px; color:#666;"
+                      conditionalPanel(
+                        condition = "input.lik_jitter_show_advanced",
+                        tagList(
+                          tags$small(
+                            "Bound position is computed as (value - L_bound) / (U_bound - L_bound). 0 = lower bound, 1 = upper bound, 0.5 = midpoint.",
+                            style = "display:block; margin-top:-6px; margin-bottom:6px; color:#666;"
+                          ),
+                          tags$small(
+                            "Jitter uses CV-adaptive center shift only: center is moved so the one-tail 99.99% quantile aligns with bounds when needed.",
+                            style = "display:block; margin-top:-4px; margin-bottom:6px; color:#666;"
+                          ),
+                          tags$small(
+                            "No extra near-bound rejection window is applied; bound hits can occur for large CV or tight bounds.",
+                            style = "display:block; margin-top:-4px; margin-bottom:6px; color:#666;"
+                          ),
+                          tags$small(
+                            "All free parameters use hard L/U bounds from indepvar. Sampler choice follows parameter geometry and fit purpose: multiplicative for positive-scale parameters (natural relative/% change), bounded/logit for finite-interval parameters (stable near bounds), additive for location-scale parameters (symmetric absolute movement), and simplex/Dirichlet for region_pars (sum-constrained composition).",
+                            style = "display:block; margin-top:-4px; margin-bottom:6px; color:#666;"
+                          )
+                        )
                       )
                     )
                   ),
@@ -349,10 +365,13 @@ mod_likelihood_ui <- function() {
                 selected = "bound_position"
               )
             ),
-              checkboxInput(
-                "lik_jitter_show_ref_points",
-                "Ref points",
-                value = FALSE
+              conditionalPanel(
+                condition = "input.lik_jitter_show_advanced",
+                checkboxInput(
+                  "lik_jitter_show_ref_points",
+                  "Ref points",
+                  value = FALSE
+                )
               ),
               conditionalPanel(
                 condition = "(input.lik_jitter_param_view == 'final' && ['delta', 'pct_change', 'bound_delta'].includes(input.lik_jitter_param_metric)) || (input.lik_jitter_param_view == 'input' && ['pct_change'].includes(input.lik_jitter_param_input_scale))",
@@ -382,25 +401,30 @@ mod_likelihood_ui <- function() {
               "Converged only",
               value = FALSE
             ),
-            selectInput(
-              "lik_jitter_grad_reference",
-              "Jitter max_grad reference line:",
-              choices = c(
-                "0.1" = "0.1",
-                "0.01" = "0.01",
-                "0.001" = "0.001",
-                "0.0001" = "0.0001",
-                "0.00001" = "0.00001"
-              ),
-              selected = "0.001"
-            ),
-            sliderInput(
-              "lik_jitter_rel_diff_threshold",
-              "Relative diff threshold (±%, triangles):",
-              min = 1,
-              max = 100,
-              value = 10,
-              step = 1
+            conditionalPanel(
+              condition = "input.lik_jitter_show_advanced",
+              tagList(
+                selectInput(
+                  "lik_jitter_grad_reference",
+                  "Jitter max_grad reference line:",
+                  choices = c(
+                    "0.1" = "0.1",
+                    "0.01" = "0.01",
+                    "0.001" = "0.001",
+                    "0.0001" = "0.0001",
+                    "0.00001" = "0.00001"
+                  ),
+                  selected = "0.001"
+                ),
+                sliderInput(
+                  "lik_jitter_rel_diff_threshold",
+                  "Relative diff threshold (±%, triangles):",
+                  min = 1,
+                  max = 100,
+                  value = 10,
+                  step = 1
+                )
+              )
             )
           )
         ),
@@ -428,14 +452,17 @@ mod_likelihood_ui <- function() {
         ),
         conditionalPanel(
           condition = "input.lik_main_tab == 'jitter' && input.lik_jitter_type == 'jitter_derived'",
-          selectInput(
-            "lik_jitter_derived_view",
-            "Jitter Derived View:",
-            choices = c(
-              "Summary bands" = "summary",
-              "Individual lines" = "lines"
-            ),
-            selected = "summary"
+          conditionalPanel(
+            condition = "input.lik_jitter_show_advanced",
+            selectInput(
+              "lik_jitter_derived_view",
+              "Jitter Derived View:",
+              choices = c(
+                "Summary bands" = "summary",
+                "Individual lines" = "lines"
+              ),
+              selected = "summary"
+            )
           )
         ),
         actionButton("lik_apply_filters", "Apply", class = "btn-primary", style = "width: 100%;"),
@@ -6009,6 +6036,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
               .groups = "drop"
             )
         }
+        finite_vals <- family_seed_df$plot_value[is.finite(family_seed_df$plot_value)]
         plot_limit <- NULL
         if (metric %in% c("delta", "pct_change", "baseline_minus", "rel_baseline_minus", "bound_delta") && range_pct < 100) {
           if (length(finite_vals) > 0) {
@@ -6292,6 +6320,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
       plot_df <- plot_df_all %>%
         filter(is.finite(plot_value))
+      finite_vals <- plot_df$plot_value[is.finite(plot_df$plot_value)]
 
       if (nrow(plot_df) == 0 && !identical(param_scope, "all")) {
         return(
