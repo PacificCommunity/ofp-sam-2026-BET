@@ -877,7 +877,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
   })
   likelihood_tab_active <- reactive({
-    identical(sanitize_text_scalar(input$lik_main_tab), "likelihood")
+    isTRUE(sanitize_text_scalar(input$lik_main_tab) %in% c("likelihood", "jitter", "retro", "hessian"))
   })
   lik_filters_current <- reactive({
     facet_ncol <- sanitize_integer_scalar(input$lik_facet_ncol, 2L)
