@@ -39,6 +39,7 @@ mod_likelihood_ui <- function() {
               "Diagnostics Type:",
               choices = c(
                 "Likelihood: Components" = "components",
+                "Likelihood: Indepvar 2D" = "indepvar_2d",
                 "Likelihood: CPUE by Fishery" = "cpues",
                 "Likelihood: Length Frequencies" = "lfs",
                 "Likelihood: Weight Frequencies" = "wfs",
@@ -645,7 +646,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
   sanitize_plot_kind <- function(x, default = "piner") {
     sanitize_profile_type(
       x,
-      allowed = c("piner", "jitter", "jitter_params", "jitter_derived", "retro", "hessian"),
+      allowed = c("piner", "profile2d", "jitter", "jitter_params", "jitter_derived", "retro", "hessian"),
       default = default
     )
   }
@@ -848,7 +849,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     } else {
       sanitize_profile_type(
         input$lik_profile_type,
-        allowed = c("components", "components_signed", "cpues", "lfs", "wfs", "tagging", "cal_fishery", "cal_year", "influence_cpues", "influence_lfs", "influence_wfs", "influence_cal_fishery"),
+        allowed = c("components", "indepvar_2d", "components_signed", "cpues", "lfs", "wfs", "tagging", "cal_fishery", "cal_year", "influence_cpues", "influence_lfs", "influence_wfs", "influence_cal_fishery"),
         default = "components"
       )
     }
@@ -1469,6 +1470,77 @@ mod_likelihood_server <- function(input, output, session, rv) {
       return(function(x) x)
     }
     function(x) x / 1000
+  }
+
+  build_indepvar_2d_data <- function(profile_data, scenarios) {
+    if (!length(profile_data) || !length(scenarios)) return(data.frame())
+
+    rows <- lapply(scenarios, function(sc) {
+      pd <- profile_data[[sc]]
+      if (is.null(pd) || !length(pd$scales)) return(NULL)
+
+      scales_chr <- as.character(pd$scales)
+      obj_vals <- suppressWarnings(as.numeric(pd$obj_fun[scales_chr]))
+      x_vals <- suppressWarnings(as.numeric(pd$prof_2d_x_value[scales_chr]))
+      y_vals <- suppressWarnings(as.numeric(pd$prof_2d_y_value[scales_chr]))
+      x_index <- suppressWarnings(as.integer(pd$prof_2d_x_index[scales_chr]))
+      y_index <- suppressWarnings(as.integer(pd$prof_2d_y_index[scales_chr]))
+      point_key <- as.character(pd$prof_2d_point_key[scales_chr])
+      point_label <- as.character(pd$prof_2d_point_label[scales_chr])
+      enabled_vals <- unlist(pd$prof_2d_enabled_by_scalar[scales_chr], use.names = FALSE)
+      enabled_vals <- ifelse(is.na(enabled_vals), FALSE, as.logical(enabled_vals))
+
+      scenario_label <- profile_entry_display_name(pd, fallback = sc)
+      x_param <- sanitize_text_scalar(pd$prof_2d_x_param)
+      y_param <- sanitize_text_scalar(pd$prof_2d_y_param)
+
+      df <- data.frame(
+        scenario = scenario_label,
+        scenario_key = sc,
+        scalar = suppressWarnings(as.numeric(scales_chr)),
+        scalar_key = scales_chr,
+        obj_fun = obj_vals,
+        x_value = x_vals,
+        y_value = y_vals,
+        x_index = x_index,
+        y_index = y_index,
+        point_key = point_key,
+        point_label = point_label,
+        prof_2d_enabled = enabled_vals,
+        x_param = if (is.na(x_param)) NA_character_ else x_param,
+        y_param = if (is.na(y_param)) NA_character_ else y_param,
+        stringsAsFactors = FALSE
+      )
+
+      df <- df %>%
+        filter(
+          prof_2d_enabled %in% TRUE | (!is.na(x_value) & !is.na(y_value)),
+          is.finite(obj_fun),
+          is.finite(x_value),
+          is.finite(y_value)
+        )
+      if (nrow(df) == 0) return(NULL)
+
+      df %>%
+        group_by(scenario, scenario_key) %>%
+        mutate(
+          min_obj_fun = min(obj_fun, na.rm = TRUE),
+          change = obj_fun - min_obj_fun
+        ) %>%
+        ungroup()
+    })
+
+    out <- bind_rows(rows)
+    if (nrow(out) == 0) return(out)
+
+    out %>%
+      mutate(
+        point_label = dplyr::case_when(
+          !is.na(point_label) & nzchar(point_label) ~ point_label,
+          is.finite(x_index) & is.finite(y_index) ~ paste0("x", x_index, ", y", y_index),
+          TRUE ~ paste0(format(signif(x_value, 5), trim = TRUE), ", ", format(signif(y_value, 5), trim = TRUE))
+        )
+      )
   }
 
   scalar_quantity <- function(profile_entry, scl) {
@@ -2426,6 +2498,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
           fixed_indepvar_lower <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
           fixed_indepvar_upper <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
           fixed_indepvar_name <- NA_character_
+          prof_2d_enabled_by_scalar <- setNames(as.list(rep(FALSE, length(existing_scales))), existing_scales)
+          prof_2d_x_param <- NA_character_
+          prof_2d_y_param <- NA_character_
+          prof_2d_x_index <- setNames(rep(NA_integer_, length(existing_scales)), existing_scales)
+          prof_2d_y_index <- setNames(rep(NA_integer_, length(existing_scales)), existing_scales)
+          prof_2d_x_value <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+          prof_2d_y_value <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+          prof_2d_point_key <- setNames(rep(NA_character_, length(existing_scales)), existing_scales)
+          prof_2d_point_label <- setNames(rep(NA_character_, length(existing_scales)), existing_scales)
+          prof_2d_grid_nx <- NA_integer_
+          prof_2d_grid_ny <- NA_integer_
           # Also attempt extraction when indepvar_fix_details is present in the
           # payload even if the indepvar_fix_applied flag is missing/FALSE.
           has_fix_details_in_payloads <- any(vapply(seq_along(payloads), function(i) {
@@ -2471,6 +2554,37 @@ mod_likelihood_server <- function(input, output, session, rv) {
               }
             }
           }
+          prof_2d_enabled_vals <- suppressWarnings(vapply(payloads, function(x) {
+            if (is.null(x$prof_2d_enabled) || length(x$prof_2d_enabled) == 0) return(FALSE)
+            isTRUE(as.logical(x$prof_2d_enabled[[1]]))
+          }, logical(1)))
+          prof_2d_enabled_by_scalar <- setNames(as.list(prof_2d_enabled_vals), existing_scales)
+          prof_2d_x_param_vals <- unlist(map(payloads, "prof_2d_x_param"), use.names = FALSE)
+          prof_2d_x_param_vals <- trimws(as.character(prof_2d_x_param_vals))
+          prof_2d_x_param_vals <- prof_2d_x_param_vals[nzchar(prof_2d_x_param_vals)]
+          if (length(prof_2d_x_param_vals) > 0) prof_2d_x_param <- prof_2d_x_param_vals[[1]]
+          prof_2d_y_param_vals <- unlist(map(payloads, "prof_2d_y_param"), use.names = FALSE)
+          prof_2d_y_param_vals <- trimws(as.character(prof_2d_y_param_vals))
+          prof_2d_y_param_vals <- prof_2d_y_param_vals[nzchar(prof_2d_y_param_vals)]
+          if (length(prof_2d_y_param_vals) > 0) prof_2d_y_param <- prof_2d_y_param_vals[[1]]
+          prof_2d_x_index <- setNames(vapply(payloads, function(x) safe_payload_integer(x, "prof_2d_x_index"), integer(1)), existing_scales)
+          prof_2d_y_index <- setNames(vapply(payloads, function(x) safe_payload_integer(x, "prof_2d_y_index"), integer(1)), existing_scales)
+          prof_2d_x_value <- setNames(vapply(payloads, function(x) safe_payload_numeric(x, "prof_2d_x_value"), numeric(1)), existing_scales)
+          prof_2d_y_value <- setNames(vapply(payloads, function(x) safe_payload_numeric(x, "prof_2d_y_value"), numeric(1)), existing_scales)
+          prof_2d_point_key <- setNames(vapply(payloads, function(x) {
+            val <- sanitize_text_scalar(x$prof_2d_point_key)
+            if (is.na(val)) "" else val
+          }, character(1)), existing_scales)
+          prof_2d_point_label <- setNames(vapply(payloads, function(x) {
+            val <- sanitize_text_scalar(x$prof_2d_point_label)
+            if (is.na(val)) "" else val
+          }, character(1)), existing_scales)
+          prof_2d_grid_nx_vals <- suppressWarnings(vapply(payloads, function(x) safe_payload_integer(x, "prof_2d_grid_nx"), integer(1)))
+          prof_2d_grid_ny_vals <- suppressWarnings(vapply(payloads, function(x) safe_payload_integer(x, "prof_2d_grid_ny"), integer(1)))
+          prof_2d_grid_nx_vals <- prof_2d_grid_nx_vals[is.finite(prof_2d_grid_nx_vals) & prof_2d_grid_nx_vals > 0]
+          prof_2d_grid_ny_vals <- prof_2d_grid_ny_vals[is.finite(prof_2d_grid_ny_vals) & prof_2d_grid_ny_vals > 0]
+          if (length(prof_2d_grid_nx_vals) > 0) prof_2d_grid_nx <- prof_2d_grid_nx_vals[[1]]
+          if (length(prof_2d_grid_ny_vals) > 0) prof_2d_grid_ny <- prof_2d_grid_ny_vals[[1]]
           # If details were found without the explicit flag, update the flag so
           # downstream code (use_quantity_penalty fallback, returned payload)
           # correctly reflects that indepvar fixes were applied.
@@ -2606,6 +2720,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
         fixed_indepvar_lower <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
         fixed_indepvar_upper <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
         fixed_indepvar_name <- NA_character_
+        prof_2d_enabled_by_scalar <- list()
+        prof_2d_x_param <- NA_character_
+        prof_2d_y_param <- NA_character_
+        prof_2d_x_index <- setNames(rep(NA_integer_, length(existing_scales)), existing_scales)
+        prof_2d_y_index <- setNames(rep(NA_integer_, length(existing_scales)), existing_scales)
+        prof_2d_x_value <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+        prof_2d_y_value <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+        prof_2d_point_key <- setNames(rep(NA_character_, length(existing_scales)), existing_scales)
+        prof_2d_point_label <- setNames(rep(NA_character_, length(existing_scales)), existing_scales)
+        prof_2d_grid_nx <- NA_integer_
+        prof_2d_grid_ny <- NA_integer_
         max_year <- NA_real_
         seasons <- NA_real_
         profile_hessian_attempted <- 0L
@@ -2647,12 +2772,23 @@ mod_likelihood_server <- function(input, output, session, rv) {
       profile_set_label <- NA_character_
       fixed_indepvar_names <- character(0)
       fixed_indepvar_n <- 0L
-      fixed_indepvar_value <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
-      fixed_indepvar_lower <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
-      fixed_indepvar_upper <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
-      fixed_indepvar_name <- NA_character_
-      max_year <- NA_real_
-      seasons <- NA_real_
+        fixed_indepvar_value <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+        fixed_indepvar_lower <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+        fixed_indepvar_upper <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+        fixed_indepvar_name <- NA_character_
+        prof_2d_enabled_by_scalar <- list()
+        prof_2d_x_param <- NA_character_
+        prof_2d_y_param <- NA_character_
+        prof_2d_x_index <- setNames(rep(NA_integer_, length(existing_scales)), existing_scales)
+        prof_2d_y_index <- setNames(rep(NA_integer_, length(existing_scales)), existing_scales)
+        prof_2d_x_value <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+        prof_2d_y_value <- setNames(rep(NA_real_, length(existing_scales)), existing_scales)
+        prof_2d_point_key <- setNames(rep(NA_character_, length(existing_scales)), existing_scales)
+        prof_2d_point_label <- setNames(rep(NA_character_, length(existing_scales)), existing_scales)
+        prof_2d_grid_nx <- NA_integer_
+        prof_2d_grid_ny <- NA_integer_
+        max_year <- NA_real_
+        seasons <- NA_real_
       profile_hessian_attempted <- 0L
       profile_hessian_ok <- 0L
       profile_hessian_requested <- 0L
@@ -2688,6 +2824,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
       fixed_indepvar_lower = fixed_indepvar_lower,
       fixed_indepvar_upper = fixed_indepvar_upper,
       fixed_indepvar_name = fixed_indepvar_name,
+      prof_2d_enabled_by_scalar = prof_2d_enabled_by_scalar,
+      prof_2d_x_param = prof_2d_x_param,
+      prof_2d_y_param = prof_2d_y_param,
+      prof_2d_x_index = prof_2d_x_index,
+      prof_2d_y_index = prof_2d_y_index,
+      prof_2d_x_value = prof_2d_x_value,
+      prof_2d_y_value = prof_2d_y_value,
+      prof_2d_point_key = prof_2d_point_key,
+      prof_2d_point_label = prof_2d_point_label,
+      prof_2d_grid_nx = prof_2d_grid_nx,
+      prof_2d_grid_ny = prof_2d_grid_ny,
       max_year = max_year,
       seasons = seasons,
       profile_hessian_attempted = profile_hessian_attempted,
@@ -2803,7 +2950,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     req(filters)
 
     type <- sanitize_profile_type(filters$profile_type,
-                                  allowed = c("components", "components_signed", "cpues", "lfs", "wfs", "tagging", "cal_fishery", "cal_year", "influence_cpues", "influence_lfs", "influence_wfs", "influence_cal_fishery", "jitter", "jitter_params", "jitter_derived", "retro", "hessian"),
+                                  allowed = c("components", "indepvar_2d", "components_signed", "cpues", "lfs", "wfs", "tagging", "cal_fishery", "cal_year", "influence_cpues", "influence_lfs", "influence_wfs", "influence_cal_fishery", "jitter", "jitter_params", "jitter_derived", "retro", "hessian"),
                                   default = "components")
     if (isTRUE(type %in% c("jitter", "jitter_params", "jitter_derived", "retro", "hessian"))) return(NULL)
 
@@ -3155,7 +3302,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     req(filters)
 
     type <- sanitize_profile_type(filters$profile_type,
-                                  allowed = c("jitter", "jitter_params", "jitter_derived", "retro", "hessian", "components", "components_signed", "cpues", "lfs", "wfs", "tagging", "cal_fishery", "cal_year", "influence_cpues", "influence_lfs", "influence_wfs", "influence_cal_fishery"),
+                                  allowed = c("jitter", "jitter_params", "jitter_derived", "retro", "hessian", "components", "indepvar_2d", "components_signed", "cpues", "lfs", "wfs", "tagging", "cal_fishery", "cal_year", "influence_cpues", "influence_lfs", "influence_wfs", "influence_cal_fishery"),
                                   default = "components")
     if (!isTRUE(type %in% c("jitter", "jitter_params", "jitter_derived"))) return(NULL)
 
@@ -3187,7 +3334,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     req(filters)
 
     type <- sanitize_profile_type(filters$profile_type,
-                                  allowed = c("components", "components_signed", "cpues", "lfs", "wfs", "tagging", "cal_fishery", "cal_year", "influence_cpues", "influence_lfs", "influence_wfs", "influence_cal_fishery", "jitter", "jitter_params", "jitter_derived", "retro", "hessian"),
+                                  allowed = c("components", "indepvar_2d", "components_signed", "cpues", "lfs", "wfs", "tagging", "cal_fishery", "cal_year", "influence_cpues", "influence_lfs", "influence_wfs", "influence_cal_fishery", "jitter", "jitter_params", "jitter_derived", "retro", "hessian"),
                                   default = "components")
     if (isTRUE(type %in% c("jitter", "jitter_params", "jitter_derived", "retro", "hessian"))) return(NULL)
 
@@ -5231,7 +5378,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     type <- sanitize_profile_type(filters$profile_type,
-                    allowed = c("jitter", "jitter_params", "jitter_derived", "retro", "hessian", "components", "components_signed", "cpues", "lfs", "wfs", "tagging", "cal_fishery", "cal_year", "influence_cpues", "influence_lfs", "influence_wfs", "influence_cal_fishery"),
+                    allowed = c("jitter", "jitter_params", "jitter_derived", "retro", "hessian", "components", "indepvar_2d", "components_signed", "cpues", "lfs", "wfs", "tagging", "cal_fishery", "cal_year", "influence_cpues", "influence_lfs", "influence_wfs", "influence_cal_fishery"),
                     default = "components")
     selected <- filters$scenarios
 
@@ -5438,6 +5585,27 @@ mod_likelihood_server <- function(input, output, session, rv) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No signed component influence data available"))
       }
       return(list(data = data, group_col = "Likelihood", label = "Component Influence (normalized %)", message = NULL, profile_data = profile_data))
+    }
+
+    if (type == "indepvar_2d") {
+      data <- build_indepvar_2d_data(profile_data, names(profile_data))
+      if (nrow(data) == 0) {
+        return(list(
+          data = data.frame(),
+          group_col = NULL,
+          label = NULL,
+          message = "No 2D indepvar likelihood profile data available",
+          plot_kind = "profile2d"
+        ))
+      }
+      return(list(
+        data = data,
+        group_col = NULL,
+        label = "Indepvar 2D",
+        message = NULL,
+        plot_kind = "profile2d",
+        profile_data = profile_data
+      ))
     }
 
     if (isTRUE(type %in% c("influence_cpues", "influence_lfs", "influence_wfs", "influence_cal_fishery"))) {
@@ -5913,6 +6081,73 @@ mod_likelihood_server <- function(input, output, session, rv) {
           annotate("text", x = 0.5, y = 0.5, label = "No data after filtering", size = 6, color = "#999") +
           theme_void()
       )
+    }
+
+    if (identical(plot_kind, "profile2d")) {
+      contour_df <- data %>%
+        group_by(scenario) %>%
+        mutate(
+          n_x = dplyr::n_distinct(x_value),
+          n_y = dplyr::n_distinct(y_value),
+          n_xy = dplyr::n_distinct(paste(x_value, y_value))
+        ) %>%
+        ungroup() %>%
+        filter(n_x >= 2, n_y >= 2, n_xy >= 4)
+
+      x_param_vals <- unique(na.omit(as.character(data$x_param)))
+      y_param_vals <- unique(na.omit(as.character(data$y_param)))
+      x_lab <- if (length(x_param_vals) > 0) x_param_vals[[1]] else "X parameter"
+      y_lab <- if (length(y_param_vals) > 0) y_param_vals[[1]] else "Y parameter"
+      cutoff_on <- isTRUE(filters$show_profile_cutoff)
+
+      p <- ggplot(data, aes(x = x_value, y = y_value, fill = change)) +
+        geom_tile(color = "white", linewidth = 0.25, na.rm = TRUE) +
+        geom_point(
+          data = data %>% filter(abs(change) < 1e-10),
+          inherit.aes = FALSE,
+          aes(x = x_value, y = y_value),
+          shape = 21,
+          size = 2.8,
+          stroke = 0.5,
+          fill = "white",
+          color = "black",
+          na.rm = TRUE
+        ) +
+        {
+          if (cutoff_on && nrow(contour_df) > 0) geom_contour(
+            data = contour_df,
+            inherit.aes = FALSE,
+            aes(x = x_value, y = y_value, z = change),
+            breaks = 1.92,
+            color = "#b22222",
+            linewidth = 0.8,
+            linetype = "dashed",
+            na.rm = TRUE
+          )
+        } +
+        facet_wrap(~ scenario, scales = "fixed", ncol = facet_ncol) +
+        scale_fill_viridis_c(
+          option = "C",
+          direction = -1,
+          name = expression(Delta * " likelihood"),
+          labels = scales::label_number(accuracy = 0.1)
+        ) +
+        labs(
+          x = x_lab,
+          y = y_lab,
+          title = "Likelihood: Indepvar 2D",
+          subtitle = if (cutoff_on) "Dashed contour shows the 95% profile cutoff (1.92)." else NULL
+        ) +
+        coord_equal() +
+        theme_bw(base_size = 12) +
+        theme(
+          strip.text = element_text(face = "bold"),
+          strip.background = element_rect(fill = "#d9edf7"),
+          panel.grid.minor = element_blank(),
+          legend.position = "bottom"
+        )
+
+      return(p)
     }
 
     if (identical(plot_kind, "jitter")) {

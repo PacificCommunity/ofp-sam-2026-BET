@@ -56,7 +56,8 @@ launch_tab_ui <- function() {
                                            "Jitter" = "jitter",
                                            "Hessian" = "hessian",
                                            "Retrospective" = "retro",
-                                           "Profile" = "prof"),
+                                           "Profile" = "prof",
+                                           "Profile 2D" = "prof_2d"),
                                selected = NULL),
 
             conditionalPanel(

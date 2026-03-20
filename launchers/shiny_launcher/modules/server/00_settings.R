@@ -576,7 +576,8 @@
                  "Jitter" = "jitter",
                  "Hessian" = "hessian",
                  "Retrospective" = "retro",
-                 "Profile" = "prof")
+                 "Profile" = "prof",
+                 "Profile 2D" = "prof_2d")
     selected <- if (!is.null(rv$last_job_type)) {
       intersect(rv$last_job_type, unname(choices))
     } else {

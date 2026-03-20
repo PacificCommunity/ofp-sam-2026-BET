@@ -24,6 +24,7 @@
       retro = "runners/run_retro.R",
       prof = "runners/run_prof.R",
       prof_chain = "runners/run_prof_chain.R",
+      prof_2d = "runners/run_prof_2d.R",
       stop("Unsupported local job type: ", job_type)
     )
   }
@@ -140,6 +141,18 @@
     set_name <- first_scalar_string(profile_env$profile_set_name, default = "")
     if (!nzchar(set_name)) return(model_name)
     paste0(model_name, " [", set_name, "]")
+  }
+
+  has_prof_2d_spec <- function(profile_env) {
+    if (is.null(profile_env) || !is.list(profile_env)) return(FALSE)
+    indepvar_txt <- first_scalar_string(profile_env$prof_2d_indepvar, default = "")
+    x_scalars_txt <- first_scalar_string(profile_env$prof_2d_scalars_x, default = "")
+    y_scalars_txt <- first_scalar_string(profile_env$prof_2d_scalars_y, default = "")
+    x_vals_txt <- first_scalar_string(profile_env$prof_2d_values_x, default = "")
+    y_vals_txt <- first_scalar_string(profile_env$prof_2d_values_y, default = "")
+    has_scalar_grid <- nzchar(x_scalars_txt) && nzchar(y_scalars_txt)
+    has_value_grid <- nzchar(x_vals_txt) && nzchar(y_vals_txt)
+    nzchar(indepvar_txt) && (has_scalar_grid || has_value_grid)
   }
 
   resolve_prof_scalars <- function(model_env) {
@@ -356,7 +369,7 @@
     # Remove to avoid passing large/non-scalar values to env.
     job_env$profile_sets <- NULL
     batch_suffix <- ""
-    profile_tag <- if (identical(spec$job_type, "prof") || identical(spec$job_type, "prof_chain")) {
+    profile_tag <- if (identical(spec$job_type, "prof") || identical(spec$job_type, "prof_chain") || identical(spec$job_type, "prof_2d")) {
       sanitize_profile_job_tag(first_scalar_string(job_env$profile_set_tag, default = first_scalar_string(job_env$profile_set_name, default = "")))
     } else {
       ""
@@ -395,6 +408,8 @@
         job_env$chain_anchor <- as.character(spec$chain_anchor)
       }
       batch_suffix <- paste0(profile_suffix, "-profchain", if (!is.null(spec$chain_name) && nzchar(as.character(spec$chain_name))) paste0("-", as.character(spec$chain_name)) else "")
+    } else if (identical(spec$job_type, "prof_2d")) {
+      batch_suffix <- paste0(profile_suffix, "-prof2d")
     }
 
     batch_name <- paste0(spec$model_name, batch_suffix, "-local-", format(Sys.time(), "%H:%M:%S"), "-", Sys.getpid())
@@ -470,7 +485,7 @@
   }
 
   launch_single_job_local <- function(model_name, model_env, job_type, seed = NULL, part = NULL, peel = NULL, scalar = NULL, log = TRUE) {
-    display_name <- if (identical(job_type, "prof") || identical(job_type, "prof_chain")) profile_launch_name(model_name, model_env) else model_name
+    display_name <- if (identical(job_type, "prof") || identical(job_type, "prof_chain") || identical(job_type, "prof_2d")) profile_launch_name(model_name, model_env) else model_name
     if (isTRUE(log)) {
       rv$launch_log <- paste0(
         rv$launch_log,
@@ -588,6 +603,7 @@
       hessian = c("hessian_part", "nsplit", "model_hessian"),
       prof = c("profile_set_name", "scalar", "scalars", "prof_hessian", "prof_init_map_rds", "init_from_scalar_map", "init_par_override_map", "init_from_scalar", "init_par_override", "prof_fix_indepvar", "prof_fix_values", "prof_fix_indepvar_file", "indepvar_reps", "prof_extra_switch"),
       prof_chain = c("profile_set_name", "chain_name", "chain_anchor", "chain_scalars", "chain_first_init_from", "scalars", "prof_hessian", "prof_init_map_rds", "init_from_scalar_map", "init_par_override_map", "prof_fix_indepvar", "prof_fix_values", "prof_fix_indepvar_file", "indepvar_reps", "prof_extra_switch"),
+      prof_2d = c("profile_set_name", "prof_hessian", "prof_init_map_rds", "init_par_override", "prof_fix_indepvar_file", "indepvar_reps", "prof_extra_switch", "prof_2d_extra_switch", "prof_2d_indepvar", "prof_2d_scalars_x", "prof_2d_scalars_y", "prof_2d_values_x", "prof_2d_values_y", "prof_2d_path", "prof_2d_anchor_x", "prof_2d_anchor_y", "prof_2d_parallel_jobs"),
       character(0)
       )
 
@@ -634,6 +650,7 @@
         hessian = c("hessian_part", "nsplit", "model_hessian"),
         prof = c("profile_set_name", "scalar", "scalars", "prof_hessian", "prof_init_map_rds", "init_from_scalar_map", "init_par_override_map", "init_from_scalar", "init_par_override", "prof_fix_indepvar", "prof_fix_values", "prof_fix_indepvar_file", "indepvar_reps", "prof_extra_switch"),
         prof_chain = c("profile_set_name", "chain_name", "chain_anchor", "chain_scalars", "chain_first_init_from", "scalars", "prof_hessian", "prof_init_map_rds", "init_from_scalar_map", "init_par_override_map", "prof_fix_indepvar", "prof_fix_values", "prof_fix_indepvar_file", "indepvar_reps", "prof_extra_switch"),
+        prof_2d = c("profile_set_name", "prof_hessian", "prof_init_map_rds", "init_par_override", "prof_fix_indepvar_file", "indepvar_reps", "prof_extra_switch", "prof_2d_extra_switch", "prof_2d_indepvar", "prof_2d_scalars_x", "prof_2d_scalars_y", "prof_2d_values_x", "prof_2d_values_y", "prof_2d_path", "prof_2d_anchor_x", "prof_2d_anchor_y", "prof_2d_parallel_jobs"),
         character(0)
       )
     }
@@ -776,6 +793,8 @@
               total_jobs <- total_jobs + length(scalars)
             }
           }
+        } else if (identical(job_type, "prof_2d")) {
+          total_jobs <- total_jobs + sum(vapply(resolve_profile_job_envs(model_env), has_prof_2d_spec, logical(1)))
         } else {
           total_jobs <- total_jobs + 1L
         }
@@ -823,6 +842,13 @@
             } else {
               rows[[length(rows) + 1L]] <- data.frame(model = model_name, item = paste0("prof:", nm), jobs = as.integer(length(scalars)), stringsAsFactors = FALSE)
             }
+          }
+        } else if (identical(job_type, "prof_2d")) {
+          prof_envs <- resolve_profile_job_envs(model_env)
+          for (prof_env in prof_envs) {
+            if (!isTRUE(has_prof_2d_spec(prof_env))) next
+            nm <- first_scalar_string(prof_env$profile_set_name, default = "profile")
+            rows[[length(rows) + 1L]] <- data.frame(model = model_name, item = paste0("prof_2d:", nm), jobs = 1L, stringsAsFactors = FALSE)
           }
         } else if (identical(job_type, "model")) {
           rows[[length(rows) + 1L]] <- data.frame(model = model_name, item = "model", jobs = 1L, stringsAsFactors = FALSE)
@@ -1042,6 +1068,12 @@
                 add_job_spec(model_name, job_type, scalar = sc, profile_env = prof_env)
               }
             }
+          }
+        } else if (job_type == "prof_2d") {
+          for (prof_env in resolve_profile_job_envs(model_env)) {
+            if (!isTRUE(has_prof_2d_spec(prof_env))) next
+            total_jobs <- total_jobs + 1L
+            add_job_spec(model_name, job_type, profile_env = prof_env)
           }
         } else {
           total_jobs <- total_jobs + 1
@@ -1530,6 +1562,44 @@
                 }
               }
               if (cancel_launch()) stop("Launch cancelled")
+            } else if (job_type == "prof_2d") {
+              for (prof_env in resolve_profile_job_envs(model_env)) {
+                if (!isTRUE(has_prof_2d_spec(prof_env))) next
+                profile_name <- profile_launch_name(model_name, prof_env)
+                if (cancel_launch()) stop("Launch cancelled")
+                current_job <- current_job + 1
+
+                update_launch_notification(
+                  sprintf("%s job %d/%d: %s (2D profile)",
+                          progress_prefix,
+                          current_job, total_jobs, profile_name)
+                )
+
+                rv$launch_log <- paste0(
+                  rv$launch_log,
+                  sprintf("[%d/%d] 🔄 %s: %s (2D profile)\n",
+                          current_job, total_jobs, progress_prefix, profile_name)
+                )
+
+                progress_details <- c(
+                  progress_details,
+                  sprintf("[%d/%d] 🔄 %s (2D profile)", current_job, total_jobs, profile_name)
+                )
+
+                result <- launch_single_job(model_name, prof_env, job_type = job_type, exclude_slots = condor_exclude_slots)
+                collect_job_result(result)
+
+                progress_details[length(progress_details)] <- paste0(
+                  progress_details[length(progress_details)], " ✓"
+                )
+                maybe_send_progress_details()
+
+                rv$launch_log <- paste0(
+                  rv$launch_log,
+                  sprintf("  ✓ %s: %s\n\n", tools::toTitleCase(completion_word), result$batch_name)
+                )
+              }
+              if (cancel_launch()) stop("Launch cancelled")
             } else {
               if (cancel_launch()) stop("Launch cancelled")
               current_job <- current_job + 1
@@ -1805,7 +1875,7 @@
     job_env$DOCKER_IMAGE <- common_params$docker_image
     remote_dir_suffix <- spec$model_name
     batch_suffix <- ""
-    profile_tag <- if (identical(spec$job_type, "prof") || identical(spec$job_type, "prof_chain")) {
+    profile_tag <- if (identical(spec$job_type, "prof") || identical(spec$job_type, "prof_chain") || identical(spec$job_type, "prof_2d")) {
       sanitize_profile_job_tag(first_scalar_string(job_env$profile_set_tag, default = first_scalar_string(job_env$profile_set_name, default = "")))
     } else {
       ""
@@ -1858,6 +1928,9 @@
       }
       remote_dir_suffix <- paste0(spec$model_name, profile_suffix, "_profchain_", if (!is.null(spec$chain_name)) as.character(spec$chain_name) else "chain")
       batch_suffix <- paste0(profile_batch_suffix, "-profchain", if (!is.null(spec$chain_name)) paste0("-", as.character(spec$chain_name)) else "")
+    } else if (identical(spec$job_type, "prof_2d")) {
+      remote_dir_suffix <- paste0(spec$model_name, profile_suffix, "_prof2d")
+      batch_suffix <- paste0(profile_batch_suffix, "-prof2d")
     } else {
       # model job only
       remote_dir_suffix <- paste0(spec$model_name, "_model")
@@ -1938,7 +2011,7 @@
     job_env$DOCKER_IMAGE <- input$docker_image
     remote_dir_suffix <- model_name
     batch_suffix <- ""
-    profile_tag <- if (identical(job_type, "prof") || identical(job_type, "prof_chain")) {
+    profile_tag <- if (identical(job_type, "prof") || identical(job_type, "prof_chain") || identical(job_type, "prof_2d")) {
       sanitize_profile_job_tag(first_scalar_string(job_env$profile_set_tag, default = first_scalar_string(job_env$profile_set_name, default = "")))
     } else {
       ""
@@ -1965,6 +2038,9 @@
       }
       remote_dir_suffix <- paste0(model_name, profile_suffix, "_sc", scalar)
       batch_suffix <- paste0(profile_batch_suffix, "-sc", scalar)
+    } else if (identical(job_type, "prof_2d")) {
+      remote_dir_suffix <- paste0(model_name, profile_suffix, "_prof2d")
+      batch_suffix <- paste0(profile_batch_suffix, "-prof2d")
     } else {
       # model job only
       remote_dir_suffix <- paste0(model_name, "_model")

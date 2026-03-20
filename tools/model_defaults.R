@@ -60,6 +60,16 @@ apply_model_defaults <- function(models, defaults = list()) {
       prof_fix_indepvar = "",
       prof_fix_values = "",
       prof_fix_indepvar_file = "",
+      prof_2d_indepvar = "",
+      prof_2d_scalars_x = "",
+      prof_2d_scalars_y = "",
+      prof_2d_values_x = "",
+      prof_2d_values_y = "",
+      prof_2d_extra_switch = "",
+      prof_2d_path = "snake_x",
+      prof_2d_anchor_x = "",
+      prof_2d_anchor_y = "",
+      prof_2d_parallel_jobs = "",
       profile_sets = list(),
       indepvar_reps = "",
       prof_extra_switch = "",
@@ -86,6 +96,16 @@ apply_model_defaults <- function(models, defaults = list()) {
     prof_fix_indepvar <- if (!is.null(model$prof_fix_indepvar)) model$prof_fix_indepvar else defaults$prof_fix_indepvar
     prof_fix_values <- if (!is.null(model$prof_fix_values)) model$prof_fix_values else defaults$prof_fix_values
     prof_fix_indepvar_file <- if (!is.null(model$prof_fix_indepvar_file)) model$prof_fix_indepvar_file else defaults$prof_fix_indepvar_file
+    prof_2d_indepvar <- if (!is.null(model$prof_2d_indepvar)) model$prof_2d_indepvar else defaults$prof_2d_indepvar
+    prof_2d_scalars_x <- if (!is.null(model$prof_2d_scalars_x)) model$prof_2d_scalars_x else defaults$prof_2d_scalars_x
+    prof_2d_scalars_y <- if (!is.null(model$prof_2d_scalars_y)) model$prof_2d_scalars_y else defaults$prof_2d_scalars_y
+    prof_2d_values_x <- if (!is.null(model$prof_2d_values_x)) model$prof_2d_values_x else defaults$prof_2d_values_x
+    prof_2d_values_y <- if (!is.null(model$prof_2d_values_y)) model$prof_2d_values_y else defaults$prof_2d_values_y
+    prof_2d_extra_switch <- if (!is.null(model$prof_2d_extra_switch)) model$prof_2d_extra_switch else defaults$prof_2d_extra_switch
+    prof_2d_path <- if (!is.null(model$prof_2d_path)) model$prof_2d_path else defaults$prof_2d_path
+    prof_2d_anchor_x <- if (!is.null(model$prof_2d_anchor_x)) model$prof_2d_anchor_x else defaults$prof_2d_anchor_x
+    prof_2d_anchor_y <- if (!is.null(model$prof_2d_anchor_y)) model$prof_2d_anchor_y else defaults$prof_2d_anchor_y
+    prof_2d_parallel_jobs <- if (!is.null(model$prof_2d_parallel_jobs)) model$prof_2d_parallel_jobs else defaults$prof_2d_parallel_jobs
     profile_sets <- if (!is.null(model$profile_sets)) model$profile_sets else defaults$profile_sets
     indepvar_reps <- if (!is.null(model$indepvar_reps)) model$indepvar_reps else defaults$indepvar_reps
     prof_extra_switch <- if (!is.null(model$prof_extra_switch)) model$prof_extra_switch else defaults$prof_extra_switch
@@ -113,6 +133,16 @@ apply_model_defaults <- function(models, defaults = list()) {
     model$prof_fix_indepvar <- prof_fix_indepvar
     model$prof_fix_values <- prof_fix_values
     model$prof_fix_indepvar_file <- prof_fix_indepvar_file
+    model$prof_2d_indepvar <- prof_2d_indepvar
+    model$prof_2d_scalars_x <- prof_2d_scalars_x
+    model$prof_2d_scalars_y <- prof_2d_scalars_y
+    model$prof_2d_values_x <- prof_2d_values_x
+    model$prof_2d_values_y <- prof_2d_values_y
+    model$prof_2d_extra_switch <- prof_2d_extra_switch
+    model$prof_2d_path <- prof_2d_path
+    model$prof_2d_anchor_x <- prof_2d_anchor_x
+    model$prof_2d_anchor_y <- prof_2d_anchor_y
+    model$prof_2d_parallel_jobs <- prof_2d_parallel_jobs
     model$profile_sets <- profile_sets
     model$indepvar_reps <- indepvar_reps
     model$prof_extra_switch <- prof_extra_switch

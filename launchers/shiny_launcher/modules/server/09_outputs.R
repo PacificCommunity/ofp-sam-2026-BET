@@ -154,8 +154,8 @@
           if ("jitter" %in% allowed_types) keep <- keep | grepl("_seed\\d+$", base_names)
           if ("hessian" %in% allowed_types) keep <- keep | grepl("_part\\d+$", base_names)
           if ("retro" %in% allowed_types) keep <- keep | grepl("_peel\\d+$", base_names)
-          if ("prof" %in% allowed_types || "profile" %in% allowed_types) {
-            keep <- keep | grepl("_sc\\d+$", base_names) | is_prof_chain
+          if ("prof" %in% allowed_types || "profile" %in% allowed_types || "prof_2d" %in% allowed_types) {
+            keep <- keep | grepl("_sc\\d+$", base_names) | is_prof_chain | grepl("_prof2d$", base_names)
           }
           if (any(keep)) {
             dirs <- dirs[keep]

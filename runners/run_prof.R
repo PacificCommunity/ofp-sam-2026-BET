@@ -43,6 +43,17 @@ prof_extra_switch <- trimws(Sys.getenv("prof_extra_switch", ""))
 profile_set_name_env <- Sys.getenv("profile_set_name", "")
 profile_set_label_env <- Sys.getenv("profile_set_label", "")
 profile_set_tag_env <- Sys.getenv("profile_set_tag", "")
+prof_2d_enabled <- tolower(trimws(Sys.getenv("prof_2d_enabled", "0"))) %in% c("1", "true", "yes", "y")
+prof_2d_x_param <- Sys.getenv("prof_2d_x_param", "")
+prof_2d_y_param <- Sys.getenv("prof_2d_y_param", "")
+prof_2d_x_index <- suppressWarnings(as.integer(Sys.getenv("prof_2d_x_index", "")))
+prof_2d_y_index <- suppressWarnings(as.integer(Sys.getenv("prof_2d_y_index", "")))
+prof_2d_x_value <- suppressWarnings(as.numeric(Sys.getenv("prof_2d_x_value", "")))
+prof_2d_y_value <- suppressWarnings(as.numeric(Sys.getenv("prof_2d_y_value", "")))
+prof_2d_point_key <- Sys.getenv("prof_2d_point_key", "")
+prof_2d_point_label <- Sys.getenv("prof_2d_point_label", "")
+prof_2d_grid_nx <- suppressWarnings(as.integer(Sys.getenv("prof_2d_grid_nx", "")))
+prof_2d_grid_ny <- suppressWarnings(as.integer(Sys.getenv("prof_2d_grid_ny", "")))
 prof_use_quantity_penalty_raw <- trimws(Sys.getenv("prof_use_quantity_penalty", ""))
 prof_use_quantity_penalty <- if (nzchar(prof_use_quantity_penalty_raw)) {
   tolower(prof_use_quantity_penalty_raw) %in% c("1", "true", "yes", "y")
@@ -434,6 +445,11 @@ cat("prof_fix_values:", ifelse(nzchar(prof_fix_values), prof_fix_values, "<none>
 cat("prof_extra_switch:", ifelse(nzchar(prof_extra_switch), prof_extra_switch, "<none>"), "\n")
 cat("prof_use_quantity_penalty:", prof_use_quantity_penalty, "\n")
 cat("Profile post-hessian:", prof_hessian, "\n")
+cat("prof_2d_enabled:", prof_2d_enabled, "\n")
+if (isTRUE(prof_2d_enabled)) {
+  cat("prof_2d_point_key:", ifelse(nzchar(prof_2d_point_key), prof_2d_point_key, "<none>"), "\n")
+  cat("prof_2d_point_label:", ifelse(nzchar(prof_2d_point_label), prof_2d_point_label, "<none>"), "\n")
+}
 
 ## Create scalar directory and copy all files from base_dir (inputs)
 dir.create(scalar_dir, recursive = TRUE, showWarnings = FALSE)
@@ -658,6 +674,17 @@ info_list <- list(
   profile_set_key = if (is.character(profile_storage$profile_set_key) && nzchar(profile_storage$profile_set_key)) profile_storage$profile_set_key else NA_character_,
   profile_set_label = if (is.character(profile_storage$profile_set_label) && nzchar(profile_storage$profile_set_label)) profile_storage$profile_set_label else NA_character_,
   prof_init_map_rds = if (is.character(init_map_obj$path) && length(init_map_obj$path) == 1 && nzchar(init_map_obj$path)) init_map_obj$path else NA_character_,
+  prof_2d_enabled = isTRUE(prof_2d_enabled),
+  prof_2d_x_param = if (nzchar(prof_2d_x_param)) prof_2d_x_param else NA_character_,
+  prof_2d_y_param = if (nzchar(prof_2d_y_param)) prof_2d_y_param else NA_character_,
+  prof_2d_x_index = if (is.finite(prof_2d_x_index)) prof_2d_x_index else NA_integer_,
+  prof_2d_y_index = if (is.finite(prof_2d_y_index)) prof_2d_y_index else NA_integer_,
+  prof_2d_x_value = if (is.finite(prof_2d_x_value)) prof_2d_x_value else NA_real_,
+  prof_2d_y_value = if (is.finite(prof_2d_y_value)) prof_2d_y_value else NA_real_,
+  prof_2d_point_key = if (nzchar(prof_2d_point_key)) prof_2d_point_key else NA_character_,
+  prof_2d_point_label = if (nzchar(prof_2d_point_label)) prof_2d_point_label else NA_character_,
+  prof_2d_grid_nx = if (is.finite(prof_2d_grid_nx)) prof_2d_grid_nx else NA_integer_,
+  prof_2d_grid_ny = if (is.finite(prof_2d_grid_ny)) prof_2d_grid_ny else NA_integer_,
   final_par_lines = final_par_lines,
   hessian = hessian_summary
 )
@@ -676,6 +703,17 @@ if (!is.null(profile_payload) && is.list(profile_payload)) {
   profile_payload$profile_set_key <- if (is.character(profile_storage$profile_set_key) && nzchar(profile_storage$profile_set_key)) profile_storage$profile_set_key else NA_character_
   profile_payload$profile_set_label <- if (is.character(profile_storage$profile_set_label) && nzchar(profile_storage$profile_set_label)) profile_storage$profile_set_label else NA_character_
   profile_payload$prof_init_map_rds <- if (is.character(init_map_obj$path) && length(init_map_obj$path) == 1 && nzchar(init_map_obj$path)) init_map_obj$path else NA_character_
+  profile_payload$prof_2d_enabled <- isTRUE(prof_2d_enabled)
+  profile_payload$prof_2d_x_param <- if (nzchar(prof_2d_x_param)) prof_2d_x_param else NA_character_
+  profile_payload$prof_2d_y_param <- if (nzchar(prof_2d_y_param)) prof_2d_y_param else NA_character_
+  profile_payload$prof_2d_x_index <- if (is.finite(prof_2d_x_index)) prof_2d_x_index else NA_integer_
+  profile_payload$prof_2d_y_index <- if (is.finite(prof_2d_y_index)) prof_2d_y_index else NA_integer_
+  profile_payload$prof_2d_x_value <- if (is.finite(prof_2d_x_value)) prof_2d_x_value else NA_real_
+  profile_payload$prof_2d_y_value <- if (is.finite(prof_2d_y_value)) prof_2d_y_value else NA_real_
+  profile_payload$prof_2d_point_key <- if (nzchar(prof_2d_point_key)) prof_2d_point_key else NA_character_
+  profile_payload$prof_2d_point_label <- if (nzchar(prof_2d_point_label)) prof_2d_point_label else NA_character_
+  profile_payload$prof_2d_grid_nx <- if (is.finite(prof_2d_grid_nx)) prof_2d_grid_nx else NA_integer_
+  profile_payload$prof_2d_grid_ny <- if (is.finite(prof_2d_grid_ny)) prof_2d_grid_ny else NA_integer_
 }
 saveRDS(profile_payload, file = file.path(scalar_dir, "profile_payload.rds"), compress = "xz")
 
