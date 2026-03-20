@@ -846,6 +846,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
     list(default = default_val, map = out_map)
   }
   lik_live_update_nonce <- reactiveVal(0)
+  profile_outputs_cache_env <- new.env(parent = emptyenv())
+  clear_profile_outputs_cache <- function() {
+    cache_keys <- ls(envir = profile_outputs_cache_env, all.names = TRUE)
+    if (length(cache_keys) > 0) {
+      rm(list = cache_keys, envir = profile_outputs_cache_env)
+    }
+    invisible(NULL)
+  }
   fishery_region_types <- c("cpues", "lfs", "wfs", "cal_fishery", "influence_cpues", "influence_lfs", "influence_wfs", "influence_cal_fishery")
   current_profile_type <- reactive({
     if (identical(input$lik_main_tab, "jitter")) {
@@ -1137,6 +1145,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
   })
 
   observeEvent(input$model_dir, {
+    clear_profile_outputs_cache()
     clear_heavy_cache()
     clear_fishery_diag_cache()
     clear_jitter_data_cache()
@@ -1144,6 +1153,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }, ignoreInit = FALSE)
 
   observeEvent(input$load_data, {
+    clear_profile_outputs_cache()
     clear_heavy_cache()
     clear_fishery_diag_cache()
     clear_jitter_data_cache()
@@ -2392,6 +2402,18 @@ mod_likelihood_server <- function(input, output, session, rv) {
     out <- unique(c(root, scalar_dirs, scalar_files, set_info_files))
     out[file.exists(out) | dir.exists(out)]
   }
+  profile_dir_cache_signature <- function(prof_dir) {
+    if (!is.character(prof_dir) || !nzchar(prof_dir) || !dir.exists(prof_dir)) return(NA_character_)
+    files <- collect_profile_cache_targets(prof_dir)
+    files <- files[file.exists(files) | dir.exists(files)]
+    if (length(files) == 0) return(normalizePath(prof_dir, winslash = "/", mustWork = FALSE))
+    info <- file.info(files)
+    paste(
+      normalizePath(prof_dir, winslash = "/", mustWork = FALSE),
+      paste(files, format(info$mtime, "%Y-%m-%d %H:%M:%OS6"), info$size, sep = "::", collapse = "|"),
+      sep = "@@"
+    )
+  }
 
   observe({
     req(input$model_dir)
@@ -2488,6 +2510,23 @@ mod_likelihood_server <- function(input, output, session, rv) {
   load_profile_outputs <- function(model_dir, scenario, profile_subdir = "prof", profile_set = NA_character_) {
     folder <- file.path(model_dir, scenario)
     prof_dir <- resolve_profile_dir(model_dir, scenario, profile_subdir = profile_subdir, profile_set = profile_set)
+    cache_sig <- profile_dir_cache_signature(prof_dir)
+    cache_key <- if (is.character(cache_sig) && !is.na(cache_sig) && nzchar(cache_sig)) {
+      paste(
+        normalizePath(model_dir, winslash = "/", mustWork = FALSE),
+        scenario,
+        profile_subdir,
+        if (is.na(profile_set)) "" else as.character(profile_set),
+        cache_sig,
+        sep = "::"
+      )
+    } else {
+      NA_character_
+    }
+    if (is.character(cache_key) && !is.na(cache_key) &&
+      exists(cache_key, envir = profile_outputs_cache_env, inherits = FALSE)) {
+      return(get(cache_key, envir = profile_outputs_cache_env, inherits = FALSE))
+    }
     scalar_dirs <- list.dirs(prof_dir, full.names = TRUE, recursive = FALSE)
     scalar_dirs <- grep(scalar_dir_pattern, scalar_dirs, value = TRUE)
 
@@ -2907,7 +2946,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       hessian_neg_by_scalar <- list()
     }
 
-    list(
+    out <- list(
       scales = existing_scales,
       lik_out = lik_out,
       lik_raw = lik_raw,
@@ -2956,6 +2995,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
       scenario_name = scenario,
       scenario_label = scenario
     )
+    if (is.character(cache_key) && !is.na(cache_key) && nzchar(cache_key)) {
+      assign(cache_key, out, envir = profile_outputs_cache_env)
+    }
+    out
   }
 
   lik_profile_files_cache_key <- reactive({
