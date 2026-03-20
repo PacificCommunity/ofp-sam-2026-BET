@@ -315,6 +315,7 @@ generate_proflike_script <- function(
     IndepvarLockRds = "",
     IndepvarFile = "",
     LockScript = "",
+    OutputLabelPrefix = NA_character_,
     DistanceBreaks = c(mid = 20, far = 35),
     PenaltyScales = c(near = 1, mid = 2, far = 4),
     RepsScales = c(near = 1, mid = 1.25, far = 1.5),
@@ -322,6 +323,9 @@ generate_proflike_script <- function(
     filename = "ProfLike.sh") {
   
   quantity_label <- ifelse(QuantityType == 1, "relative_depletion", "avg_bio")
+  if (is.character(OutputLabelPrefix) && length(OutputLabelPrefix) == 1 && !is.na(OutputLabelPrefix) && nzchar(trimws(OutputLabelPrefix))) {
+    quantity_label <- trimws(OutputLabelPrefix)
+  }
   indepvar_reps_val <- if (!is.null(IndepvarReps) && is.finite(as.integer(IndepvarReps)) && as.integer(IndepvarReps) >= 1L) {
     as.integer(IndepvarReps)
   } else {

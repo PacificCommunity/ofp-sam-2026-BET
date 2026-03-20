@@ -589,7 +589,7 @@ if (isTRUE(prof_use_quantity_penalty)) {
   reference_quantity <- safe_read_scalar(initial_quantity_info$path)
   target_quantity <- reference_quantity * scalar / 100
 } else {
-  cat("Quantity penalty OFF for this profile run: skip avg_bio/relative_depletion switches.\n")
+  cat("Quantity penalty OFF for indepvar profile run.\n")
 }
 
 generate_proflike_script(
@@ -604,6 +604,7 @@ generate_proflike_script(
   IndepvarLockRds = if (is.character(indepvar_fix_info$lock_rds) && nzchar(indepvar_fix_info$lock_rds)) indepvar_fix_info$lock_rds else "",
   IndepvarFile = if (is.character(indepvar_fix_info$indepvar_file) && nzchar(indepvar_fix_info$indepvar_file)) indepvar_fix_info$indepvar_file else "",
   LockScript = file.path(project_root, "runners", "apply_indepvar_lock.R"),
+  OutputLabelPrefix = if (!isTRUE(prof_use_quantity_penalty)) "indepvar" else NA_character_,
   Frq = frq_file,
   Mults = scalar,
   Initp = basename(init_par_file),
