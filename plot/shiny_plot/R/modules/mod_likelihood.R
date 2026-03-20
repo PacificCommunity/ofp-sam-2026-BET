@@ -77,6 +77,18 @@ mod_likelihood_ui <- function() {
                   )
                 )
               )
+            ),
+            conditionalPanel(
+              condition = "input.lik_profile_source == 'indepvar_2d'",
+              selectInput(
+                "lik_indepvar_2d_view",
+                "2D View:",
+                choices = c(
+                  "Heatmap" = "heatmap",
+                  "3D Wireframe" = "wireframe"
+                ),
+                selected = "heatmap"
+              )
             )
           ),
           tabPanel(
@@ -856,6 +868,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
       )
     }
   })
+  likelihood_tab_active <- reactive({
+    identical(sanitize_text_scalar(input$lik_main_tab), "likelihood")
+  })
   lik_filters_current <- reactive({
     facet_ncol <- sanitize_integer_scalar(input$lik_facet_ncol, 2L)
     if (facet_ncol < 1L) facet_ncol <- 2L
@@ -897,6 +912,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         vals <- vals[vals != "__none__"]
         sort(unique(vals))
       },
+      indepvar_2d_view = sanitize_profile_type(input$lik_indepvar_2d_view, allowed = c("heatmap", "wireframe"), default = "heatmap"),
       x_axis_label_override = character(0),
       groups = input$lik_groups,
       regions = input$lik_regions,
@@ -943,6 +959,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     lik_filters_applied()
   })
   lik_data_filters <- reactive({
+    req(isTRUE(likelihood_tab_active()))
     filters <- lik_filters()
     if (is.null(filters)) return(NULL)
     list(
@@ -950,6 +967,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       profile_type = filters$profile_type,
       profile_source = filters$profile_source,
       indepvar_profile_set = sort(unique(as.character(filters$indepvar_profile_set))),
+      indepvar_2d_view = filters$indepvar_2d_view,
       regions = filters$regions,
       split_by_region = filters$split_by_region,
       jitter_grad_reference = filters$jitter_grad_reference,
@@ -969,6 +987,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     )
   })
   lik_profile_output_filters <- reactive({
+    req(isTRUE(likelihood_tab_active()))
     filters <- lik_data_filters()
     if (is.null(filters)) return(NULL)
     list(
@@ -978,6 +997,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     )
   })
   lik_data_cache_key <- reactive({
+    req(isTRUE(likelihood_tab_active()))
     filters <- lik_data_filters()
     if (is.null(filters)) return(NULL)
 
@@ -1031,6 +1051,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     key
   })
   lik_plot_cache_key <- reactive({
+    req(isTRUE(likelihood_tab_active()))
     filters <- lik_filters()
     if (is.null(filters)) return(NULL)
 
@@ -1040,6 +1061,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       scenarios = sort(filters$scenarios),
       profile_files_cache = lik_profile_files_cache_key(),
       indepvar_profile_set = sort(unique(as.character(filters$indepvar_profile_set))),
+      indepvar_2d_view = filters$indepvar_2d_view,
       x_axis_label_override = filters$x_axis_label_override,
       facet_ncol = filters$facet_ncol,
       show_influence = isTRUE(filters$show_influence),
@@ -2347,6 +2369,30 @@ mod_likelihood_server <- function(input, output, session, rv) {
     sets$path[[1]]
   }
 
+  collect_profile_cache_targets <- function(root) {
+    if (!is.character(root) || !nzchar(root) || !dir.exists(root)) return(character(0))
+
+    scalar_dirs <- list.dirs(root, recursive = FALSE, full.names = TRUE)
+    scalar_dirs <- unique(c(root, scalar_dirs))
+    scalar_dirs <- grep(scalar_dir_pattern, scalar_dirs, value = TRUE)
+
+    scalar_files <- unlist(lapply(scalar_dirs, function(dir_path) {
+      c(
+        file.path(dir_path, "profile_payload.rds"),
+        file.path(dir_path, "info.rds"),
+        file.path(dir_path, "test_plot_output")
+      )
+    }), use.names = FALSE)
+
+    set_info_files <- c(
+      file.path(root, "profile_set_info.rds"),
+      file.path(list.dirs(root, recursive = FALSE, full.names = TRUE), "profile_set_info.rds")
+    )
+
+    out <- unique(c(root, scalar_dirs, scalar_files, set_info_files))
+    out[file.exists(out) | dir.exists(out)]
+  }
+
   observe({
     req(input$model_dir)
     current <- sanitize_text_vector(isolate(input$lik_indepvar_profile_set))
@@ -2913,6 +2959,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }
 
   lik_profile_files_cache_key <- reactive({
+    req(isTRUE(likelihood_tab_active()))
     filters <- lik_profile_output_filters()
     req(input$model_dir, filters)
 
@@ -2934,19 +2981,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     roots <- unique(roots[dir.exists(roots)])
     if (length(roots) == 0) return(NULL)
 
-    files <- unique(unlist(lapply(roots, function(root) {
-      c(
-        root,
-        list.dirs(root, recursive = FALSE, full.names = TRUE),
-        list.files(
-          root,
-          recursive = TRUE,
-          full.names = TRUE,
-          include.dirs = FALSE,
-          pattern = "^(profile_payload\\.rds|profile_set_info\\.rds|info\\.rds|indepvar\\.rpt|test_plot_output(_.+)?)$"
-        )
-      )
-    }), use.names = FALSE))
+    files <- unique(unlist(lapply(roots, collect_profile_cache_targets), use.names = FALSE))
     files <- files[file.exists(files) | dir.exists(files)]
     if (length(files) == 0) return(NULL)
 
@@ -2958,6 +2993,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
   })
 
   profile_outputs_reactive <- reactive({
+    req(isTRUE(likelihood_tab_active()))
     filters <- lik_profile_output_filters()
     req(rv$data_loaded, input$model_dir, filters, filters$scenarios)
 
@@ -6015,6 +6051,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
   }, ignoreInit = TRUE)
 
   likelihood_plot_reactive <- reactive({
+    req(isTRUE(likelihood_tab_active()))
     info <- profile_data_reactive()
     filters <- lik_filters()
     req(filters)
@@ -6057,26 +6094,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
       x_lab <- if (length(x_param_vals) > 0) x_param_vals[[1]] else "X parameter"
       y_lab <- if (length(y_param_vals) > 0) y_param_vals[[1]] else "Y parameter"
       cutoff_on <- isTRUE(filters$show_profile_cutoff)
-      contour_breaks <- numeric(0)
-      if (nrow(contour_df) > 0) {
-        contour_breaks <- pretty(range(contour_df$change, na.rm = TRUE), n = 6)
-        contour_breaks <- contour_breaks[is.finite(contour_breaks) & contour_breaks > 0]
-        contour_breaks <- unique(round(contour_breaks, 6))
-      }
-      contour_ready_df <- contour_df %>%
-        mutate(
-          n_x = as.integer(n_x),
-          n_y = as.integer(n_y)
-        ) %>%
-        filter(n_x >= 5, n_y >= 5)
       surface_palette <- c(
-        "#163b7a",
-        "#2468ac",
-        "#38a6b5",
-        "#7bc87c",
-        "#f6e75a",
-        "#f4a259",
-        "#d94b3d"
+        "#edf8e9",
+        "#c7e9c0",
+        "#a1d99b",
+        "#74c476",
+        "#fee08b",
+        "#fdae61",
+        "#e34a33"
       )
       fill_limits <- range(data$change, na.rm = TRUE)
       fill_breaks <- c(fill_limits[[1]], 1.92, fill_limits[[2]])
@@ -6087,6 +6112,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
       } else {
         NULL
       }
+      legend_breaks <- pretty(fill_limits, n = 4)
+      legend_breaks <- legend_breaks[is.finite(legend_breaks)]
+      legend_breaks <- unique(sort(c(0, legend_breaks)))
+      legend_breaks <- legend_breaks[legend_breaks >= fill_limits[[1]] & legend_breaks <= fill_limits[[2]]]
 
       p <- ggplot(data, aes(x = x_value, y = y_value, fill = change)) +
         geom_tile(color = scales::alpha("white", 0.45), linewidth = 0.5, na.rm = TRUE) +
@@ -6100,17 +6129,6 @@ mod_likelihood_server <- function(input, output, session, rv) {
           color = "#17324d",
           na.rm = TRUE
         ) +
-        {
-          if (length(contour_breaks) > 0 && nrow(contour_ready_df) > 0) geom_contour(
-            data = contour_ready_df,
-            inherit.aes = FALSE,
-            aes(x = x_value, y = y_value, z = change),
-            breaks = contour_breaks,
-            color = scales::alpha("#1f2d3d", 0.45),
-            linewidth = 0.45,
-            na.rm = TRUE
-          )
-        } +
         geom_point(
           data = cutoff_region,
           inherit.aes = FALSE,
@@ -6187,10 +6205,16 @@ mod_likelihood_server <- function(input, output, session, rv) {
           colors = surface_palette,
           values = fill_values,
           name = expression(Delta * " likelihood"),
-          labels = scales::label_number(accuracy = 0.1),
+          breaks = legend_breaks,
+          labels = scales::label_number(
+            accuracy = 0.1,
+            scale_cut = scales::cut_short_scale()
+          ),
+          oob = scales::squish,
+          trans = "sqrt",
           guide = guide_colorbar(
             title.position = "top",
-            barwidth = unit(3.2, "in"),
+            barwidth = unit(4.4, "in"),
             barheight = unit(0.22, "in")
           )
         ) +
@@ -8343,10 +8367,133 @@ mod_likelihood_server <- function(input, output, session, rv) {
     lik_plot_cache_key()
   )
 
-  output$likelihood_plot <- renderPlot({
-    tryCatch(
-      likelihood_plot_reactive(),
-      error = function(e) {
+  likelihood_wireframe_reactive <- reactive({
+    req(isTRUE(likelihood_tab_active()))
+    info <- profile_data_reactive()
+    filters <- lik_filters()
+    req(filters)
+
+    if (!is.null(info$message)) return(NULL)
+    if (!identical(sanitize_plot_kind(info$plot_kind, default = "piner"), "profile2d")) return(NULL)
+
+    data <- info$data
+    if (!is.data.frame(data) || nrow(data) == 0) return(NULL)
+
+    wire_df <- data %>%
+      mutate(
+        scenario = as.character(scenario),
+        x_value = suppressWarnings(as.numeric(x_value)),
+        y_value = suppressWarnings(as.numeric(y_value)),
+        change = suppressWarnings(as.numeric(change))
+      ) %>%
+      filter(is.finite(x_value), is.finite(y_value), is.finite(change)) %>%
+      arrange(scenario, y_value, x_value)
+    if (nrow(wire_df) == 0) return(NULL)
+
+    x_param_vals <- unique(na.omit(as.character(wire_df$x_param)))
+    y_param_vals <- unique(na.omit(as.character(wire_df$y_param)))
+    x_lab <- if (length(x_param_vals) > 0) x_param_vals[[1]] else "X parameter"
+    y_lab <- if (length(y_param_vals) > 0) y_param_vals[[1]] else "Y parameter"
+
+    list(
+      data = wire_df,
+      x_lab = x_lab,
+      y_lab = y_lab,
+      facet_ncol = min(
+        max(suppressWarnings(as.integer(filters$facet_ncol)), 1L),
+        12L,
+        length(unique(as.character(wire_df$scenario)))
+      )
+    )
+  })
+  likelihood_wireframe_reactive <- bindCache(
+    likelihood_wireframe_reactive,
+    rv$data_loaded,
+    input$model_dir,
+    lik_plot_cache_key()
+  )
+
+  likelihood_wireframe_plotly_reactive <- reactive({
+    req(isTRUE(likelihood_tab_active()))
+    wire_info <- likelihood_wireframe_reactive()
+    if (is.null(wire_info) || !is.data.frame(wire_info$data) || nrow(wire_info$data) == 0) return(NULL)
+
+    make_surface_plot <- function(df, x_lab, y_lab) {
+      x_vals <- sort(unique(df$x_value))
+      y_vals <- sort(unique(df$y_value))
+      z_mat <- outer(y_vals, x_vals, Vectorize(function(yv, xv) {
+        hit <- df$change[df$x_value == xv & df$y_value == yv]
+        if (length(hit) == 0) NA_real_ else hit[[1]]
+      }))
+
+      plotly::plot_ly(
+        x = x_vals,
+        y = y_vals,
+        z = z_mat,
+        type = "surface",
+        colors = c("#163b7a", "#2b8cbe", "#7bc87c", "#f6e75a", "#d94b3d"),
+        hovertemplate = paste0(
+          x_lab, ": %{x}<br>",
+          y_lab, ": %{y}<br>",
+          "Delta likelihood: %{z:.2f}<extra></extra>"
+        ),
+        contours = list(
+          x = list(show = TRUE, color = "rgba(28,45,61,0.55)", width = 2, highlight = FALSE),
+          y = list(show = TRUE, color = "rgba(28,45,61,0.55)", width = 2, highlight = FALSE),
+          z = list(show = FALSE)
+        ),
+        showscale = TRUE
+      ) %>%
+        plotly::layout(
+          scene = list(
+            xaxis = list(title = x_lab, showbackground = TRUE, backgroundcolor = "rgb(245,248,250)", gridcolor = "white"),
+            yaxis = list(title = y_lab, showbackground = TRUE, backgroundcolor = "rgb(245,248,250)", gridcolor = "white"),
+            zaxis = list(title = "Delta likelihood", showbackground = TRUE, backgroundcolor = "rgb(245,248,250)", gridcolor = "white"),
+            camera = list(eye = list(x = 1.65, y = -1.6, z = 1.15)),
+            aspectmode = "manual",
+            aspectratio = list(x = 1.15, y = 1, z = 0.7)
+          ),
+          margin = list(l = 10, r = 10, b = 10, t = 50),
+          title = list(text = paste0("<b>", unique(df$scenario)[[1]], "</b>"), x = 0.5),
+          showlegend = FALSE
+        )
+    }
+
+    scenarios <- split(wire_info$data, wire_info$data$scenario)
+    plots <- lapply(scenarios, function(df) make_surface_plot(df, wire_info$x_lab, wire_info$y_lab))
+    if (length(plots) == 1L) return(plots[[1]])
+
+    plotly::subplot(
+      plots,
+      nrows = ceiling(length(plots) / wire_info$facet_ncol),
+      shareX = FALSE,
+      shareY = FALSE,
+      titleX = TRUE,
+      titleY = TRUE,
+      margin = 0.03
+    )
+  })
+  likelihood_wireframe_plotly_reactive <- bindCache(
+    likelihood_wireframe_plotly_reactive,
+    rv$data_loaded,
+    input$model_dir,
+    lik_plot_cache_key()
+  )
+
+  output$likelihood_plot <- shiny::renderCachedPlot(
+    {
+      p <- tryCatch({
+        filters <- lik_filters()
+        use_wireframe <- !is.null(filters) &&
+          identical(filters$profile_source, "indepvar_2d") &&
+          identical(filters$indepvar_2d_view, "wireframe")
+
+        if (isTRUE(use_wireframe)) {
+          ggplot() + theme_void()
+        } else {
+          likelihood_plot_reactive()
+        }
+      }, error = function(e) {
         ggplot() +
           annotate(
             "text",
@@ -8357,8 +8504,34 @@ mod_likelihood_server <- function(input, output, session, rv) {
             color = "#777"
           ) +
           theme_void()
+      })
+
+      if (inherits(p, "ggplot")) {
+        print(p)
+      } else {
+        p
       }
-    )
+    },
+    cacheKeyExpr = {
+      list(
+        rv$data_loaded,
+        input$model_dir,
+        lik_plot_cache_key()
+      )
+    },
+    res = 96
+  )
+
+  output$likelihood_plotly <- plotly::renderPlotly({
+    filters <- lik_filters()
+    use_wireframe <- !is.null(filters) &&
+      identical(filters$profile_source, "indepvar_2d") &&
+      identical(filters$indepvar_2d_view, "wireframe")
+    req(isTRUE(use_wireframe))
+
+    p <- likelihood_wireframe_plotly_reactive()
+    req(!is.null(p))
+    p
   })
 
   output$likelihood_plot_output_ui <- renderUI({
@@ -8367,6 +8540,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
     w <- if (!is.null(filters)) suppressWarnings(as.integer(filters$plot_width)) else suppressWarnings(as.integer(input$lik_plot_width))
     if (!is.finite(h) || h < 300) h <- 900
     if (!is.finite(w) || w < 500) w <- 1200
+    use_wireframe <- !is.null(filters) &&
+      identical(filters$profile_source, "indepvar_2d") &&
+      identical(filters$indepvar_2d_view, "wireframe")
+    if (isTRUE(use_wireframe)) {
+      return(plotly::plotlyOutput("likelihood_plotly", height = paste0(h, "px"), width = paste0(w, "px")))
+    }
     plotOutput("likelihood_plot", height = paste0(h, "px"), width = paste0(w, "px"))
   })
 
