@@ -118,18 +118,49 @@ resolve_indepvar_path <- function(model_dir, base_dir_abs) {
 }
 
 resolve_baseline_par_file <- function(model_dir, base_dir_abs) {
-  candidates <- c(
-    file.path(model_dir, "00.par"),
+  rank_par_candidates <- function(paths) {
+    paths <- unique(paths[file.exists(paths)])
+    if (length(paths) == 0) return(character(0))
+
+    base_names <- basename(paths)
+    numeric_id <- suppressWarnings(as.integer(sub("^([0-9]+)\\.par.*$", "\\1", base_names, perl = TRUE)))
+    exact_par <- grepl("^[0-9]+\\.par$", base_names)
+    info <- file.info(paths)
+    info_mtime <- if (!is.null(info$mtime)) as.numeric(info$mtime) else rep(NA_real_, length(paths))
+
+    ord <- order(
+      !exact_par,
+      -ifelse(is.finite(numeric_id), numeric_id, -1L),
+      -ifelse(is.finite(info_mtime), info_mtime, -Inf),
+      base_names
+    )
+    paths[ord]
+  }
+
+  collect_pars <- function(dir_path) {
+    if (!is.character(dir_path) || !nzchar(dir_path) || !dir.exists(dir_path)) return(character(0))
+    list.files(dir_path, pattern = "\\.par($|[^/]*$)", full.names = TRUE)
+  }
+
+  preferred <- c(
+    file.path(model_dir, "11.par"),
+    file.path(model_dir, "10.par"),
     file.path(model_dir, "01.par"),
+    file.path(model_dir, "00.par"),
     file.path(model_dir, "1.par"),
-    file.path(base_dir_abs, "00.par"),
+    file.path(base_dir_abs, "11.par"),
+    file.path(base_dir_abs, "10.par"),
     file.path(base_dir_abs, "01.par"),
+    file.path(base_dir_abs, "00.par"),
     file.path(base_dir_abs, "1.par")
   )
-  candidates <- unique(candidates[is.character(candidates) & nzchar(candidates)])
-  hit <- candidates[file.exists(candidates)]
-  if (length(hit) == 0) return(NA_character_)
-  hit[[1]]
+  preferred <- preferred[file.exists(preferred)]
+  if (length(preferred) > 0) return(preferred[[1]])
+
+  all_candidates <- c(collect_pars(model_dir), collect_pars(base_dir_abs))
+  ranked <- rank_par_candidates(all_candidates)
+  if (length(ranked) == 0) return(NA_character_)
+  ranked[[1]]
 }
 
 resolve_baseline_indepvar_values <- function(tokens, model_dir, base_dir_abs) {
@@ -139,8 +170,9 @@ resolve_baseline_indepvar_values <- function(tokens, model_dir, base_dir_abs) {
   }
   baseline_par_file <- resolve_baseline_par_file(model_dir, base_dir_abs)
   if (!is.character(baseline_par_file) || !nzchar(baseline_par_file) || !file.exists(baseline_par_file)) {
-    stop("2D scalar mode requires a baseline .par file in model_dir or base_dir (tried 00.par/01.par/1.par).")
+    stop("2D scalar mode requires a baseline .par file in model_dir or base_dir.")
   }
+  cat("2D scalar mode baseline par:", basename(baseline_par_file), "\n")
   base_par <- suppressWarnings(tryCatch(read.MFCLPar(baseline_par_file), error = function(e) NULL))
   if (is.null(base_par)) stop("Failed to read baseline .par for 2D scalar mode: ", baseline_par_file)
   indepvar_map <- build_indepvar_mapping(base_par, indepvar_file = indepvar_path, tol = 1e-14)
