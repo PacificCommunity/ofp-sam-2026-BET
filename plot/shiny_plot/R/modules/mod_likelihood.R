@@ -3556,48 +3556,19 @@ mod_likelihood_server <- function(input, output, session, rv) {
           byrow = TRUE,
           override.aes = list(linewidth = 1.4, size = 3.2, alpha = 1),
           order = 1
-        )
+        ),
+        linetype = "none"
       )
 
-    if (isTRUE(show_profile_cutoff) && identical(y_label, "Changes in Likelihood")) {
+    has_profile_cutoff <- isTRUE(show_profile_cutoff) && identical(y_label, "Changes in Likelihood")
+    if (has_profile_cutoff) {
       p <- p + geom_hline(
         yintercept = 1.92,
         linetype = "dashed",
         color = "#b22222",
         linewidth = 0.7,
-        alpha = 0.8
-      )
-
-      cutoff_anno <- data.frame(y = 1.92, label = "95% CI threshold", stringsAsFactors = FALSE)
-      if ("scenario" %in% names(data)) {
-        cutoff_anno$scenario <- unique(as.character(data$scenario))[1]
-      }
-      if (isTRUE(split_by_region) && "region" %in% names(data)) {
-        cutoff_anno <- unique(data[c(intersect(c("scenario", "region"), names(data)))])
-        cutoff_anno$y <- 1.92
-        cutoff_anno$label <- "95% CI threshold"
-      } else if ("program" %in% names(data) && isTRUE(group_var %in% c("release_group", "release_region"))) {
-        cutoff_anno <- unique(data[c(intersect(c("scenario", "program"), names(data)))])
-        cutoff_anno$y <- 1.92
-        cutoff_anno$label <- "95% CI threshold"
-      } else if ("scenario" %in% names(data)) {
-        cutoff_anno <- unique(data["scenario"])
-        cutoff_anno$y <- 1.92
-        cutoff_anno$label <- "95% CI threshold"
-      }
-
-      p <- p + geom_label(
-        data = cutoff_anno,
-        aes(x = Inf, y = y, label = label),
-        inherit.aes = FALSE,
-        hjust = 1.03,
-        vjust = 0.5,
-        size = 3.6,
-        label.size = 0.2,
-        label.padding = unit(0.16, "lines"),
-        fill = "white",
-        color = "#8b1e1e",
-        fontface = "bold"
+        alpha = 0.8,
+        show.legend = FALSE
       )
     }
 
@@ -3644,7 +3615,29 @@ mod_likelihood_server <- function(input, output, session, rv) {
                         hjust = 1.1, vjust = 1.5, size = 5, fontface = "bold")
     }
 
-    p
+    if (!has_profile_cutoff) {
+      return(p)
+    }
+
+    cutoff_key <- cowplot::ggdraw() +
+      cowplot::draw_line(
+        x = c(0.43, 0.53),
+        y = c(0.5, 0.5),
+        color = "#b22222",
+        linewidth = 1,
+        linetype = "dashed"
+      ) +
+      cowplot::draw_text(
+        "95% CI threshold",
+        x = 0.56,
+        y = 0.5,
+        hjust = 0,
+        vjust = 0.5,
+        size = 9.5,
+        color = "#8b1e1e"
+      )
+
+    cowplot::plot_grid(p, cutoff_key, ncol = 1, rel_heights = c(1, 0.05))
   }
 
   build_components_data <- function(profile_data, scenarios, scales, x_axis_override = NA_character_) {
