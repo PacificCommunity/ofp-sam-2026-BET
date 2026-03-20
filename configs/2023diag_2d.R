@@ -35,7 +35,7 @@ models <- list(
     init_from_scalar_map = "",
     
     profile_sets = list(
-      kappa-LorenM = list(
+      kappa_LorenM = list(
         enabled = "TRUE",
         prof_2d_indepvar = "vb_coff(3) age_pars(5)",
         prof_2d_scalars_x = paste0(seq(120, 80, by = -2.5), collapse = " "),
