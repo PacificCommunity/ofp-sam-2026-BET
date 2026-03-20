@@ -39,7 +39,6 @@ mod_likelihood_ui <- function() {
               "Diagnostics Type:",
               choices = c(
                 "Likelihood: Components" = "components",
-                "Likelihood: Indepvar 2D" = "indepvar_2d",
                 "Likelihood: CPUE by Fishery" = "cpues",
                 "Likelihood: Length Frequencies" = "lfs",
                 "Likelihood: Weight Frequencies" = "wfs",
@@ -54,10 +53,11 @@ mod_likelihood_ui <- function() {
               type = "pills",
               selected = "standard",
               tabPanel("Standard", value = "standard"),
-              tabPanel("Indepvar", value = "indepvar")
+              tabPanel("Indepvar", value = "indepvar"),
+              tabPanel("Indepvar 2D", value = "indepvar_2d")
             ),
             conditionalPanel(
-              condition = "input.lik_profile_source == 'indepvar'",
+              condition = "['indepvar', 'indepvar_2d'].includes(input.lik_profile_source)",
               tagList(
                 pickerInput(
                   "lik_indepvar_profile_set",
@@ -846,6 +846,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       "retro"
     } else if (identical(input$lik_main_tab, "hessian")) {
       "hessian"
+    } else if (identical(input$lik_profile_source, "indepvar_2d")) {
+      "indepvar_2d"
     } else {
       sanitize_profile_type(
         input$lik_profile_type,
@@ -889,7 +891,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     list(
       scenarios = sort(input$lik_scenarios),
       profile_type = current_profile_type(),
-      profile_source = sanitize_profile_type(input$lik_profile_source, allowed = c("standard", "indepvar"), default = "standard"),
+      profile_source = sanitize_profile_type(input$lik_profile_source, allowed = c("standard", "indepvar", "indepvar_2d"), default = "standard"),
       indepvar_profile_set = {
         vals <- sanitize_text_vector(input$lik_indepvar_profile_set)
         vals <- vals[vals != "__none__"]
@@ -1209,6 +1211,16 @@ mod_likelihood_server <- function(input, output, session, rv) {
     },
     ignoreInit = TRUE
   )
+  observeEvent(
+    list(input$lik_scenarios, input$lik_indepvar_profile_set),
+    {
+      req(rv$data_loaded)
+      if (identical(input$lik_main_tab, "likelihood")) {
+        lik_filters_applied(isolate(lik_filters_current()))
+      }
+    },
+    ignoreInit = TRUE
+  )
   observeEvent(input$lik_main_tab, {
     req(rv$data_loaded)
     lik_filters_applied(isolate(lik_filters_current()))
@@ -1227,16 +1239,30 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
   # Update scenario choices when data is loaded
   observeEvent(rv$data_loaded, {
-    req(rv$ParOut_list)
+    req(input$model_dir)
     map_models <- names(rv$FISHERY_MAPS)[!vapply(rv$FISHERY_MAPS, is.null, logical(1))]
+    indepvar_models <- character(0)
+    if (dir.exists(input$model_dir)) {
+      model_children <- list.dirs(input$model_dir, recursive = FALSE, full.names = FALSE)
+      indepvar_models <- model_children[vapply(model_children, function(sc) {
+        dir.exists(file.path(input$model_dir, sc, "prof_indepvar"))
+      }, logical(1))]
+    }
+    all_models <- sort(unique(c(
+      map_models,
+      names(rv$ParOut_list),
+      names(rv$IndepOut_list),
+      indepvar_models
+    )))
+    all_models <- all_models[nzchar(all_models)]
     current_selection <- isolate(input$lik_scenarios)
-    if (is.null(current_selection) || length(current_selection) == 0) current_selection <- map_models
-    current_selection <- intersect(current_selection, map_models)
-    if (length(current_selection) == 0) current_selection <- map_models
+    if (is.null(current_selection) || length(current_selection) == 0) current_selection <- all_models
+    current_selection <- intersect(current_selection, all_models)
+    if (length(current_selection) == 0) current_selection <- all_models
     updatePickerInput(
       session,
       "lik_scenarios",
-      choices = map_models,
+      choices = all_models,
       selected = current_selection
     )
   }, ignoreInit = TRUE)
@@ -1595,6 +1621,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
     value <- x[[field]]
     if (is.null(value) || length(value) == 0) return(NA_real_)
     suppressWarnings(as.numeric(value[[1]]))
+  }
+
+  safe_payload_integer <- function(x, field) {
+    value <- x[[field]]
+    if (is.null(value) || length(value) == 0) return(NA_integer_)
+    suppressWarnings(as.integer(value[[1]]))
   }
 
   profile_target_label <- function(quantity_label) {
@@ -2233,6 +2265,22 @@ mod_likelihood_server <- function(input, output, session, rv) {
     root_dir <- file.path(model_dir, scenario, "prof_indepvar")
     if (!dir.exists(root_dir)) return(data.frame())
 
+    infer_profile_set_is_2d <- function(set_dir) {
+      scalar_dirs <- list.dirs(set_dir, full.names = TRUE, recursive = FALSE)
+      scalar_dirs <- grep(scalar_dir_pattern, scalar_dirs, value = TRUE)
+      if (length(scalar_dirs) == 0) return(FALSE)
+
+      payload_files <- file.path(scalar_dirs, "profile_payload.rds")
+      payload_files <- payload_files[file.exists(payload_files)]
+      if (length(payload_files) == 0) return(FALSE)
+
+      payload_obj <- tryCatch(readRDS(payload_files[[1]]), error = function(e) NULL)
+      if (!is.list(payload_obj) || is.null(payload_obj$prof_2d_enabled) || length(payload_obj$prof_2d_enabled) == 0) {
+        return(FALSE)
+      }
+      isTRUE(as.logical(payload_obj$prof_2d_enabled[[1]]))
+    }
+
     rows <- list()
     root_children <- list.dirs(root_dir, full.names = TRUE, recursive = FALSE)
     root_scalar_dirs <- grep(scalar_dir_pattern, root_children, value = TRUE)
@@ -2241,6 +2289,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         key = "__legacy__",
         label = "Legacy/root",
         path = root_dir,
+        is_2d = infer_profile_set_is_2d(root_dir),
         stringsAsFactors = FALSE
       )
     }
@@ -2266,6 +2315,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         key = key,
         label = label,
         path = child,
+        is_2d = infer_profile_set_is_2d(child),
         stringsAsFactors = FALSE
       )
     }
@@ -2300,6 +2350,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
   observe({
     req(input$model_dir)
     current <- sanitize_text_vector(isolate(input$lik_indepvar_profile_set))
+    current_source <- sanitize_profile_type(
+      input$lik_profile_source,
+      allowed = c("standard", "indepvar", "indepvar_2d"),
+      default = "standard"
+    )
     # React to scenario selection changes (not isolated), and also
     # union with ALL loaded scenarios so indepvar sets are found even
     # when the standard-profile scenarios are currently selected.
@@ -2331,7 +2386,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
     base_tbl <- bind_rows(set_tables) %>%
       filter(key %in% common_keys) %>%
       group_by(key) %>%
-      summarise(label = first(label), .groups = "drop")
+      summarise(label = first(label), is_2d = any(is_2d %in% TRUE), .groups = "drop")
+
+    wants_2d <- identical(current_source, "indepvar_2d")
+    base_tbl <- base_tbl %>%
+      filter((is_2d %in% TRUE) == wants_2d)
+
     lik_indepvar_set_catalog(base_tbl)
 
     choices <- setNames(base_tbl$key, base_tbl$label)
@@ -2860,7 +2920,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     scenarios <- scenarios[nzchar(scenarios)]
     if (length(scenarios) == 0) return(NULL)
 
-    if (identical(filters$profile_source, "indepvar")) {
+    if (filters$profile_source %in% c("indepvar", "indepvar_2d")) {
       profile_sets <- sort(unique(as.character(filters$indepvar_profile_set)))
       if (length(profile_sets) == 0) return(NULL)
       roots <- unique(unlist(lapply(scenarios, function(sc) {
@@ -2906,7 +2966,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     profile_data <- list()
     for (sc in selected) {
-      if (identical(filters$profile_source, "indepvar")) {
+      if (filters$profile_source %in% c("indepvar", "indepvar_2d")) {
         profile_sets <- sort(unique(as.character(filters$indepvar_profile_set)))
         for (set_key in profile_sets) {
           pd <- load_profile_outputs(input$model_dir, sc, profile_subdir = "prof_indepvar", profile_set = set_key)
@@ -2986,7 +3046,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         length(fixed_lower_vals) > 0 ||
         length(fixed_upper_vals) > 0 ||
         nzchar(fixed_param_name)
-      indepvar_mode <- identical(filters$profile_source, "indepvar") ||
+      indepvar_mode <- filters$profile_source %in% c("indepvar", "indepvar_2d") ||
         (isTRUE(pd$indepvar_fix_applied) && has_indepvar_details)
       format_range_or_value <- function(vals) {
         vals <- vals[is.finite(vals)]
@@ -3323,7 +3383,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     list(
       scenarios = sort(input$lik_scenarios),
       profile_type = current_profile_type(),
-      profile_source = sanitize_profile_type(input$lik_profile_source, allowed = c("standard", "indepvar"), default = "standard"),
+      profile_source = sanitize_profile_type(input$lik_profile_source, allowed = c("standard", "indepvar", "indepvar_2d"), default = "standard"),
       grad_reference = input$lik_jitter_grad_reference,
       converged_max_grad = input$lik_jitter_converged_max_grad
     )
@@ -5974,6 +6034,190 @@ mod_likelihood_server <- function(input, output, session, rv) {
     facet_ncol <- suppressWarnings(as.integer(filters$facet_ncol))
     if (!is.finite(facet_ncol) || facet_ncol < 1) facet_ncol <- 2
     facet_ncol <- min(max(facet_ncol, 1), 12)
+
+    if (identical(plot_kind, "profile2d")) {
+      contour_df <- data %>%
+        group_by(scenario) %>%
+        mutate(
+          n_x = dplyr::n_distinct(x_value),
+          n_y = dplyr::n_distinct(y_value),
+          n_xy = dplyr::n_distinct(paste(x_value, y_value))
+        ) %>%
+        ungroup() %>%
+        filter(n_x >= 2, n_y >= 2, n_xy >= 4)
+      min_points <- data %>%
+        group_by(scenario) %>%
+        slice_min(order_by = change, n = 1, with_ties = FALSE) %>%
+        ungroup()
+      cutoff_region <- data %>%
+        filter(is.finite(change), change <= 1.92)
+
+      x_param_vals <- unique(na.omit(as.character(data$x_param)))
+      y_param_vals <- unique(na.omit(as.character(data$y_param)))
+      x_lab <- if (length(x_param_vals) > 0) x_param_vals[[1]] else "X parameter"
+      y_lab <- if (length(y_param_vals) > 0) y_param_vals[[1]] else "Y parameter"
+      cutoff_on <- isTRUE(filters$show_profile_cutoff)
+      contour_breaks <- numeric(0)
+      if (nrow(contour_df) > 0) {
+        contour_breaks <- pretty(range(contour_df$change, na.rm = TRUE), n = 6)
+        contour_breaks <- contour_breaks[is.finite(contour_breaks) & contour_breaks > 0]
+        contour_breaks <- unique(round(contour_breaks, 6))
+      }
+      contour_ready_df <- contour_df %>%
+        mutate(
+          n_x = as.integer(n_x),
+          n_y = as.integer(n_y)
+        ) %>%
+        filter(n_x >= 5, n_y >= 5)
+      surface_palette <- c(
+        "#163b7a",
+        "#2468ac",
+        "#38a6b5",
+        "#7bc87c",
+        "#f6e75a",
+        "#f4a259",
+        "#d94b3d"
+      )
+      fill_limits <- range(data$change, na.rm = TRUE)
+      fill_breaks <- c(fill_limits[[1]], 1.92, fill_limits[[2]])
+      fill_breaks <- fill_breaks[is.finite(fill_breaks)]
+      fill_breaks <- unique(sort(fill_breaks))
+      fill_values <- if (length(fill_breaks) >= 2) {
+        scales::rescale(fill_breaks, from = range(fill_breaks))
+      } else {
+        NULL
+      }
+
+      p <- ggplot(data, aes(x = x_value, y = y_value, fill = change)) +
+        geom_tile(color = scales::alpha("white", 0.45), linewidth = 0.5, na.rm = TRUE) +
+        geom_point(
+          inherit.aes = FALSE,
+          data = data,
+          aes(x = x_value, y = y_value),
+          shape = 16,
+          size = 1.8,
+          alpha = 0.35,
+          color = "#17324d",
+          na.rm = TRUE
+        ) +
+        {
+          if (length(contour_breaks) > 0 && nrow(contour_ready_df) > 0) geom_contour(
+            data = contour_ready_df,
+            inherit.aes = FALSE,
+            aes(x = x_value, y = y_value, z = change),
+            breaks = contour_breaks,
+            color = scales::alpha("#1f2d3d", 0.45),
+            linewidth = 0.45,
+            na.rm = TRUE
+          )
+        } +
+        geom_point(
+          data = cutoff_region,
+          inherit.aes = FALSE,
+          aes(x = x_value, y = y_value),
+          shape = 21,
+          size = 2.6,
+          stroke = 0.55,
+          fill = NA,
+          color = scales::alpha("#b22222", 0.75),
+          na.rm = TRUE
+        ) +
+        geom_vline(
+          data = min_points,
+          inherit.aes = FALSE,
+          aes(xintercept = x_value),
+          color = scales::alpha("#7a0019", 0.6),
+          linewidth = 0.45,
+          linetype = "dotted"
+        ) +
+        geom_hline(
+          data = min_points,
+          inherit.aes = FALSE,
+          aes(yintercept = y_value),
+          color = scales::alpha("#7a0019", 0.6),
+          linewidth = 0.45,
+          linetype = "dotted"
+        ) +
+        geom_point(
+          data = min_points,
+          inherit.aes = FALSE,
+          aes(x = x_value, y = y_value),
+          shape = 23,
+          size = 3.8,
+          stroke = 0.9,
+          fill = "#fff7fb",
+          color = "#7a0019",
+          na.rm = TRUE
+        ) +
+        geom_label(
+          data = min_points,
+          inherit.aes = FALSE,
+          aes(
+            x = x_value,
+            y = y_value,
+            label = paste0(
+              "min\n(",
+              format(signif(x_value, 4), trim = TRUE),
+              ", ",
+              format(signif(y_value, 4), trim = TRUE),
+              ")"
+            )
+          ),
+          size = 3,
+          label.size = 0.25,
+          label.padding = unit(0.12, "lines"),
+          fill = scales::alpha("#fffaf0", 0.94),
+          color = "#5c0013",
+          nudge_y = diff(range(data$y_value, na.rm = TRUE)) * 0.06
+        ) +
+        {
+          if (cutoff_on && nrow(contour_df) > 0) geom_contour(
+            data = contour_df,
+            inherit.aes = FALSE,
+            aes(x = x_value, y = y_value, z = change),
+            breaks = 1.92,
+            color = "#b22222",
+            linewidth = 0.8,
+            linetype = "dashed",
+            na.rm = TRUE
+          )
+        } +
+        facet_wrap(~ scenario, scales = "fixed", ncol = facet_ncol) +
+        scale_fill_gradientn(
+          colors = surface_palette,
+          values = fill_values,
+          name = expression(Delta * " likelihood"),
+          labels = scales::label_number(accuracy = 0.1),
+          guide = guide_colorbar(
+            title.position = "top",
+            barwidth = unit(3.2, "in"),
+            barheight = unit(0.22, "in")
+          )
+        ) +
+        labs(
+          x = x_lab,
+          y = y_lab,
+          title = "Likelihood: Indepvar 2D",
+          subtitle = if (cutoff_on) {
+            "Dashed contour shows the 95% profile cutoff (1.92); circled cells are inside the cutoff."
+          } else {
+            "Circled cells mark the region inside the 95% profile cutoff (1.92)."
+          }
+        ) +
+        theme_bw(base_size = 12) +
+        theme(
+          strip.text = element_text(face = "bold"),
+          strip.background = element_rect(fill = "#d9edf7", color = "#6c8aa3"),
+          panel.background = element_rect(fill = "#fbfcfd", color = NA),
+          panel.grid.major = element_line(color = "#e5ebf0", linewidth = 0.35),
+          panel.grid.minor = element_blank(),
+          legend.position = "bottom",
+          legend.title = element_text(face = "bold")
+        )
+
+      return(p)
+    }
+
     profile_data <- info$profile_data
     x_axis_label_value <- quantity_axis_label(profile_data, filters$x_axis_label_override)
     x_axis_labels_fn <- quantity_axis_formatter(profile_data)
@@ -6081,73 +6325,6 @@ mod_likelihood_server <- function(input, output, session, rv) {
           annotate("text", x = 0.5, y = 0.5, label = "No data after filtering", size = 6, color = "#999") +
           theme_void()
       )
-    }
-
-    if (identical(plot_kind, "profile2d")) {
-      contour_df <- data %>%
-        group_by(scenario) %>%
-        mutate(
-          n_x = dplyr::n_distinct(x_value),
-          n_y = dplyr::n_distinct(y_value),
-          n_xy = dplyr::n_distinct(paste(x_value, y_value))
-        ) %>%
-        ungroup() %>%
-        filter(n_x >= 2, n_y >= 2, n_xy >= 4)
-
-      x_param_vals <- unique(na.omit(as.character(data$x_param)))
-      y_param_vals <- unique(na.omit(as.character(data$y_param)))
-      x_lab <- if (length(x_param_vals) > 0) x_param_vals[[1]] else "X parameter"
-      y_lab <- if (length(y_param_vals) > 0) y_param_vals[[1]] else "Y parameter"
-      cutoff_on <- isTRUE(filters$show_profile_cutoff)
-
-      p <- ggplot(data, aes(x = x_value, y = y_value, fill = change)) +
-        geom_tile(color = "white", linewidth = 0.25, na.rm = TRUE) +
-        geom_point(
-          data = data %>% filter(abs(change) < 1e-10),
-          inherit.aes = FALSE,
-          aes(x = x_value, y = y_value),
-          shape = 21,
-          size = 2.8,
-          stroke = 0.5,
-          fill = "white",
-          color = "black",
-          na.rm = TRUE
-        ) +
-        {
-          if (cutoff_on && nrow(contour_df) > 0) geom_contour(
-            data = contour_df,
-            inherit.aes = FALSE,
-            aes(x = x_value, y = y_value, z = change),
-            breaks = 1.92,
-            color = "#b22222",
-            linewidth = 0.8,
-            linetype = "dashed",
-            na.rm = TRUE
-          )
-        } +
-        facet_wrap(~ scenario, scales = "fixed", ncol = facet_ncol) +
-        scale_fill_viridis_c(
-          option = "C",
-          direction = -1,
-          name = expression(Delta * " likelihood"),
-          labels = scales::label_number(accuracy = 0.1)
-        ) +
-        labs(
-          x = x_lab,
-          y = y_lab,
-          title = "Likelihood: Indepvar 2D",
-          subtitle = if (cutoff_on) "Dashed contour shows the 95% profile cutoff (1.92)." else NULL
-        ) +
-        coord_equal() +
-        theme_bw(base_size = 12) +
-        theme(
-          strip.text = element_text(face = "bold"),
-          strip.background = element_rect(fill = "#d9edf7"),
-          panel.grid.minor = element_blank(),
-          legend.position = "bottom"
-        )
-
-      return(p)
     }
 
     if (identical(plot_kind, "jitter")) {
@@ -8198,7 +8375,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
     target_tbl <- profile_target_info_reactive()
     if (is.null(target_tbl) || nrow(target_tbl) == 0) return(NULL)
 
-    source_label <- if (identical(input$lik_profile_source, "indepvar")) {
+    source_label <- if (identical(input$lik_profile_source, "indepvar_2d")) {
+      "Indepvar 2D"
+    } else if (identical(input$lik_profile_source, "indepvar")) {
       "Indepvar"
     } else {
       "Standard"
@@ -8214,7 +8393,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       div(
         style = "margin-bottom: 10px; padding: 10px 12px; background: #fff8e1; border: 1px solid #f0d98c; border-left: 4px solid #f39c12; border-radius: 4px;",
         tags$div("Shown from the profile setup flags saved with each model.", style = "font-weight: bold; margin-bottom: 4px;"),
-        if (identical(input$lik_profile_source, "indepvar")) {
+        if (input$lik_profile_source %in% c("indepvar", "indepvar_2d")) {
           tags$div("For indepvar profiles, fixed parameter name, realized value range, and indepvar lower/upper bound ranges are read from the saved lock details.", style = "font-size: 12px; color: #333;")
         } else {
           tags$div("Af172 distinguishes adult vs total biomass. Af173 and Af174 define the time-period window, counting backwards from the end of the time series.", style = "font-size: 12px; color: #333;")
