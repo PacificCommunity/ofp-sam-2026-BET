@@ -3463,17 +3463,63 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
     non_total_groups <- setdiff(unique_groups, "Total")
     top_groups <- character(0)
+    panel_top_groups <- data.frame()
+    panel_grouping_vars <- "scenario"
+
+    if (isTRUE(group_var %in% c("release_group", "release_region")) && "program" %in% names(data)) {
+      panel_grouping_vars <- c(panel_grouping_vars, "program")
+    } else if (isTRUE(split_by_region) && "region" %in% names(data)) {
+      panel_grouping_vars <- c(panel_grouping_vars, "region")
+    }
 
     if (identical(legend_mode, "top") && length(non_total_groups) > 0) {
-      top_groups <- data %>%
+      panel_top_groups <- data %>%
         filter(.data[[group_var]] != "Total") %>%
-        group_by(.data[[group_var]]) %>%
+        group_by(across(all_of(panel_grouping_vars)), .data[[group_var]]) %>%
         summarise(score = max(abs(change), na.rm = TRUE), .groups = "drop") %>%
-        arrange(desc(score), .data[[group_var]]) %>%
+        group_by(across(all_of(panel_grouping_vars))) %>%
+        arrange(desc(score), .data[[group_var]], .by_group = TRUE) %>%
         slice_head(n = legend_top_n) %>%
+        ungroup()
+
+      top_groups <- panel_top_groups %>%
+        group_by(.data[[group_var]]) %>%
+        summarise(score = max(score, na.rm = TRUE), .groups = "drop") %>%
+        arrange(desc(score), .data[[group_var]]) %>%
         pull(!!rlang::sym(group_var)) %>%
         as.character()
     }
+
+    if (nrow(panel_top_groups) > 0) {
+      data <- data %>%
+        left_join(
+          panel_top_groups %>%
+            transmute(
+              across(all_of(c(panel_grouping_vars, group_var))),
+              .facet_highlight = TRUE
+            ),
+          by = c(stats::setNames(c(panel_grouping_vars, group_var), c(panel_grouping_vars, group_var)))
+        )
+    } else {
+      data$.facet_highlight <- FALSE
+    }
+
+    use_deemphasized_colour <- identical(legend_mode, "top") && isTRUE(deemphasize_others)
+
+    data <- data %>%
+      mutate(
+        .facet_highlight = (.data[[group_var]] == "Total") | dplyr::coalesce(.facet_highlight, FALSE),
+        .highlight_class = dplyr::case_when(
+          .data[[group_var]] == "Total" ~ "Total",
+          .facet_highlight ~ "FacetTop",
+          TRUE ~ "Other"
+        ),
+        .colour_key = dplyr::case_when(
+          .data[[group_var]] == "Total" ~ "Total",
+          use_deemphasized_colour & !.facet_highlight ~ "..deemphasized..",
+          TRUE ~ as.character(.data[[group_var]])
+        )
+      )
 
     legend_breaks <- if (identical(legend_mode, "top")) {
       c(top_groups, intersect("Total", unique_groups))
@@ -3510,24 +3556,22 @@ mod_likelihood_server <- function(input, output, session, rv) {
     color_values <- c("Total" = "black")
     if (length(non_total_groups) > 0) {
       base_colors <- setNames(viridis::viridis(length(non_total_groups)), non_total_groups)
-      if (identical(legend_mode, "top") && isTRUE(deemphasize_others) && length(top_groups) > 0) {
-        other_groups <- setdiff(non_total_groups, top_groups)
-        if (length(other_groups) > 0) {
-          base_colors[other_groups] <- "#bdbdbd"
-        }
-      }
       color_values <- c(color_values, base_colors)
+    }
+    if (use_deemphasized_colour) {
+      color_values <- c(color_values, "..deemphasized.." = "#bdbdbd")
     }
 
     p <- ggplot(
       data,
-      aes(x = scalar, y = change, colour = .data[[group_var]])
+      aes(x = scalar, y = change, colour = .data[[".colour_key"]], group = .data[[group_var]])
     ) +
-      geom_line(aes(linewidth = .data[[group_var]] == "Total"), alpha = 0.7) +
-      geom_point(aes(size = .data[[group_var]] == "Total"), alpha = 0.8, shape = 16) +
+      geom_line(aes(linewidth = .data[[".highlight_class"]], alpha = .data[[".highlight_class"]])) +
+      geom_point(aes(size = .data[[".highlight_class"]], alpha = .data[[".highlight_class"]]), shape = 16) +
       scale_color_manual(values = color_values, breaks = legend_breaks) +
-      scale_linewidth_manual(values = c("TRUE" = 1.5, "FALSE" = 0.7), guide = "none") +
-      scale_size_manual(values = c("TRUE" = 3.5, "FALSE" = 2), guide = "none") +
+      scale_linewidth_manual(values = c("Total" = 1.5, "FacetTop" = 1.1, "Other" = 0.7), guide = "none") +
+      scale_size_manual(values = c("Total" = 3.5, "FacetTop" = 2.6, "Other" = 2), guide = "none") +
+      scale_alpha_manual(values = c("Total" = 0.9, "FacetTop" = 0.85, "Other" = 0.55), guide = "none") +
       scale_x_continuous(
         labels = x_labels_fn,
         name = x_label
@@ -3850,6 +3894,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
   add_panel_bar_position <- function(df, panel_cols = "scenario", label_fn = function(x) x) {
     if (!is.data.frame(df) || nrow(df) == 0 || !"scalar" %in% names(df)) return(df)
 
+    format_x_order_id <- function(x, width) {
+      sprintf(paste0("%0", width, "d"), as.integer(x))
+    }
+
     panel_cols <- intersect(panel_cols, names(df))
     if (length(panel_cols) == 0) {
       panel_cols <- character(0)
@@ -3862,7 +3910,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       )
       if (nrow(scalar_tbl) == 0) return(df)
       scalar_tbl$x_order <- seq_len(nrow(scalar_tbl))
-      scalar_tbl$x_id <- paste0("panel::", scalar_tbl$x_order)
+      x_width <- max(2L, nchar(as.character(nrow(scalar_tbl))))
+      scalar_tbl$x_id <- paste0("panel::", format_x_order_id(scalar_tbl$x_order, x_width))
       scalar_tbl$x_label <- vapply(scalar_tbl$scalar, function(v) {
         out <- label_fn(v)
         if (length(out) == 0) "" else as.character(out[[1]])
@@ -3879,11 +3928,21 @@ mod_likelihood_server <- function(input, output, session, rv) {
       ungroup()
 
     panel_key <- apply(as.data.frame(scalar_tbl[panel_cols]), 1, paste, collapse = "::")
-    scalar_tbl$x_id <- paste0(panel_key, "::", scalar_tbl$x_order)
+    panel_sizes <- scalar_tbl %>%
+      group_by(across(all_of(panel_cols))) %>%
+      summarise(n_scalar = dplyr::n(), .groups = "drop")
+    scalar_tbl <- scalar_tbl %>%
+      left_join(panel_sizes, by = stats::setNames(panel_cols, panel_cols))
+    scalar_tbl$x_id <- paste0(
+      panel_key,
+      "::",
+      format_x_order_id(scalar_tbl$x_order, pmax(2L, nchar(as.character(scalar_tbl$n_scalar))))
+    )
     scalar_tbl$x_label <- vapply(scalar_tbl$scalar, function(v) {
       out <- label_fn(v)
       if (length(out) == 0) "" else as.character(out[[1]])
     }, character(1))
+    scalar_tbl$n_scalar <- NULL
 
     df %>% left_join(scalar_tbl, by = c(stats::setNames(panel_cols, panel_cols), scalar = "scalar"))
   }
@@ -4498,6 +4557,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
         before = first(before),
         median_abs_pct_change = median(abs_pct_change, na.rm = TRUE),
         mean_abs_pct_change = mean(abs_pct_change, na.rm = TRUE),
+        max_abs_delta = max(abs(after - before), na.rm = TRUE),
+        after_span = diff(range(after, na.rm = TRUE)),
         n_seed = n_distinct(seed),
         .groups = "drop"
       ) %>%
@@ -6304,11 +6365,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
         return(p + coord_flip(ylim = plot_limit))
       }
 
-      ranked_params_all <- data %>%
-        distinct(scenario, param_key, Index, Var_name, param_label, family, median_abs_pct_change, mean_abs_pct_change) %>%
+      data_for_rank <- data
+      if (!("max_abs_delta" %in% names(data_for_rank))) data_for_rank$max_abs_delta <- NA_real_
+      if (!("after_span" %in% names(data_for_rank))) data_for_rank$after_span <- NA_real_
+
+      ranked_params_all <- data_for_rank %>%
+        distinct(scenario, param_key, Index, Var_name, param_label, family, median_abs_pct_change, mean_abs_pct_change, max_abs_delta, after_span) %>%
         mutate(
           median_abs_pct_change = suppressWarnings(as.numeric(median_abs_pct_change)),
-          mean_abs_pct_change = suppressWarnings(as.numeric(mean_abs_pct_change))
+          mean_abs_pct_change = suppressWarnings(as.numeric(mean_abs_pct_change)),
+          max_abs_delta = suppressWarnings(as.numeric(dplyr::coalesce(max_abs_delta, NA_real_))),
+          after_span = suppressWarnings(as.numeric(dplyr::coalesce(after_span, NA_real_)))
         )
 
       ranked_params <- ranked_params_all %>%
@@ -6324,8 +6391,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
         arrange(dplyr::desc(scenario_peak), dplyr::desc(scenario_mean), scenario)
 
       reference_scenario <- if (length(filters$scenarios) > 0) as.character(filters$scenarios[[1]]) else NA_character_
+      if (is.na(reference_scenario) || !nzchar(reference_scenario) || !(reference_scenario %in% ranked_params_all$scenario)) {
+        reference_scenario <- ranked_params_all$scenario[[1]]
+      }
 
-      global_selected_index <- ranked_params_all %>%
+      base_family_selection <- ranked_params_all %>%
+        filter(scenario == reference_scenario) %>%
         group_by(family) %>%
         arrange(
           Var_name,
@@ -6333,7 +6404,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
           Index,
           .by_group = TRUE
         ) %>%
-        distinct(Index, .keep_all = TRUE) %>%
+        distinct(Var_name, .keep_all = TRUE) %>%
         slice_head(n = 3) %>%
         ungroup() %>%
         arrange(
@@ -6342,14 +6413,27 @@ mod_likelihood_server <- function(input, output, session, rv) {
           param_label,
           Index
         ) %>%
-        mutate(global_rank = dplyr::row_number()) %>%
-        dplyr::select(Index, global_rank)
+        mutate(plot_rank = dplyr::row_number()) %>%
+        select(family, Var_name, plot_rank)
 
-      # Apply the common Index set to all scenarios, keeping each scenario's own param_key
+      active_eps <- 1e-8
       selected_params <- ranked_params_all %>%
-        inner_join(global_selected_index, by = "Index") %>%
-        mutate(plot_rank = global_rank) %>%
-        dplyr::select(-global_rank)
+        mutate(
+          is_active_param = dplyr::case_when(
+            is.finite(max_abs_delta) & max_abs_delta > active_eps ~ TRUE,
+            is.finite(after_span) & after_span > active_eps ~ TRUE,
+            is.finite(median_abs_pct_change) & median_abs_pct_change > active_eps ~ TRUE,
+            TRUE ~ FALSE
+          )
+        ) %>%
+        inner_join(base_family_selection, by = c("family", "Var_name")) %>%
+        filter(is_active_param) %>%
+        group_by(scenario) %>%
+        arrange(
+          plot_rank,
+          .by_group = TRUE
+        ) %>%
+        ungroup()
 
       if (identical(param_scope, "all")) {
         window_start <- max(1L, min(param_window[1], 100L))
@@ -6379,8 +6463,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
       global_rank_caption <- NULL
       if (!identical(param_scope, "all") && nrow(selected_params) > 0) {
         global_rank_caption <- paste0(
-          "Common first 3 parameters per family in natural order",
-          if (!is.na(reference_scenario) && nzchar(reference_scenario)) paste0(" (reference ordering from ", reference_scenario, ").") else "."
+          "Reference family ordering from ",
+          reference_scenario,
+          "; fixed or inactive parameters are omitted within each scenario."
         )
       } else if (identical(param_scope, "all") && nrow(selected_params) > 0) {
         rank_span <- selected_params %>%
@@ -6829,10 +6914,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
         plot_subtitle <- paste0(plot_subtitle, " Red diamond = baseline/original.")
       }
 
+      has_absolute_mode <- metric %in% c("rel_diff", "pct_change") &&
+        any(plot_df$rel_diff_mode == "absolute", na.rm = TRUE)
+      has_relative_mode <- metric %in% c("rel_diff", "pct_change") &&
+        any(plot_df$rel_diff_mode == "relative", na.rm = TRUE)
+
       split_abs_plot <- metric %in% c("rel_diff", "pct_change") &&
         !identical(param_scope, "all") &&
-        any(plot_df$rel_diff_mode == "absolute", na.rm = TRUE) &&
-        any(plot_df$rel_diff_mode == "relative", na.rm = TRUE)
+        has_absolute_mode
 
       if (identical(param_scope, "all")) {
         p <- ggplot(summary_df, aes(x = display_key, y = q50)) +
@@ -6927,6 +7016,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
             panel_limit = abs_limit,
             show_mode_colors = TRUE
           )
+          if (!has_relative_mode || nrow(rel_plot_df) == 0) {
+            return(top_abs_plot)
+          }
+
           bottom_rel_plot <- build_jitter_detail_plot(
             plot_data = rel_plot_df,
             original_data = rel_original_df,
@@ -7476,11 +7569,12 @@ mod_likelihood_server <- function(input, output, session, rv) {
       }
 
       if (identical(filters$profile_type, "components")) {
+        component_group_col <- if ("Likelihood" %in% names(data)) "Likelihood" else group_col
         influence_data <- data %>%
-          filter(Likelihood != "Total", is.finite(value), is.finite(scalar)) %>%
-          select(scenario, scalar, Likelihood, value) %>%
-          build_signed_influence_from_base(group_col = "Likelihood", use_region = FALSE) %>%
-          filter(Likelihood != "Total", is.finite(change), is.finite(scalar))
+          filter(is.finite(value), is.finite(scalar)) %>%
+          select(scenario, scalar, !!rlang::sym(component_group_col), value) %>%
+          build_signed_influence_from_base(group_col = component_group_col, use_region = FALSE) %>%
+          filter(.data[[component_group_col]] != "Total", is.finite(change), is.finite(scalar))
       } else {
         influence_base <- data %>%
           filter(is.finite(value), is.finite(scalar))
