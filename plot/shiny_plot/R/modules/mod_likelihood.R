@@ -2730,7 +2730,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
     files <- unique(unlist(lapply(roots, function(root) {
       c(
         root,
-        list.files(root, recursive = TRUE, full.names = TRUE, include.dirs = TRUE)
+        list.dirs(root, recursive = FALSE, full.names = TRUE),
+        list.files(
+          root,
+          recursive = TRUE,
+          full.names = TRUE,
+          include.dirs = FALSE,
+          pattern = "^(profile_payload\\.rds|profile_set_info\\.rds|info\\.rds|indepvar\\.rpt|test_plot_output(_.+)?)$"
+        )
       )
     }), use.names = FALSE))
     files <- files[file.exists(files) | dir.exists(files)]
@@ -7476,7 +7483,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
       }
 
       if (identical(filters$profile_type, "components")) {
-        influence_data <- build_components_signed_data(profile_data, names(profile_data), all_scales) %>%
+        influence_data <- data %>%
+          filter(Likelihood != "Total", is.finite(value), is.finite(scalar)) %>%
+          select(scenario, scalar, Likelihood, value) %>%
+          build_signed_influence_from_base(group_col = "Likelihood", use_region = FALSE) %>%
           filter(Likelihood != "Total", is.finite(change), is.finite(scalar))
       } else {
         influence_base <- data %>%
