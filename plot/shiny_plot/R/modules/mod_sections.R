@@ -808,7 +808,7 @@ mod_harvest_server <- function(input, output, session, rv) {
         group_by(year, scenario) %>% summarise(Quant = sum(inst_F, na.rm = TRUE), .groups = "drop") %>%
         rename(Year = year, Scenario = scenario)
 
-      scenario_levels <- unique(SBdep$Scenario)
+      scenario_levels <- scenarios_name[scenarios_name %in% unique(as.character(SBdep$Scenario))]
       scenario_colors <- get_scenario_colors(scenario_levels)
       SBdep$Scenario <- factor(SBdep$Scenario, levels = scenario_levels)
       Rec$Scenario <- factor(Rec$Scenario, levels = scenario_levels)
@@ -919,7 +919,7 @@ mod_harvest_server <- function(input, output, session, rv) {
       depletion_all <- bioFish_all_areas %>% left_join(bioNoFish_all_areas, by = c("year", "scenario")) %>% mutate(depletion = biomass_fish / biomass_nofish, area = "All")
       depletion_combined <- bind_rows(depletion_area, depletion_all)
 
-      scenario_levels <- unique(depletion_combined$scenario)
+      scenario_levels <- scenarios_name[scenarios_name %in% unique(as.character(depletion_combined$scenario))]
       scenario_colors <- get_scenario_colors(scenario_levels)
       depletion_combined$scenario <- factor(depletion_combined$scenario, levels = scenario_levels)
 
@@ -968,7 +968,7 @@ mod_harvest_server <- function(input, output, session, rv) {
       rec_total <- rec_all %>% group_by(year, scenario) %>% summarise(data = sum(data) / 1e6, .groups = "drop") %>% mutate(area = "All")
       rec_combined <- bind_rows(rec_yearly, rec_total)
 
-      scenario_levels <- unique(rec_combined$scenario)
+      scenario_levels <- scenarios_name[scenarios_name %in% unique(as.character(rec_combined$scenario))]
       scenario_colors <- get_scenario_colors(scenario_levels)
       rec_combined$scenario <- factor(rec_combined$scenario, levels = scenario_levels)
 
@@ -1294,7 +1294,7 @@ mod_harvest_server <- function(input, output, session, rv) {
         pivot_longer(cols = c(F.juv, F.adult), names_to = "type", values_to = "F") %>%
         mutate(type = factor(type, levels = c("F.juv", "F.adult"), labels = c("Juvenile F", "Adult F")))
 
-      scenario_levels <- unique(fm_plot_data$scenario)
+      scenario_levels <- scenarios_name[scenarios_name %in% unique(as.character(fm_plot_data$scenario))]
       scenario_colors <- get_scenario_colors(scenario_levels)
       fm_plot_data$scenario <- factor(fm_plot_data$scenario, levels = scenario_levels)
 
@@ -1392,14 +1392,14 @@ mod_harvest_server <- function(input, output, session, rv) {
       bioFish_combined <- bind_rows(bioFish_yearly, bioFish_total) %>% mutate(type = "Fished")
       bio_combined <- bind_rows(bioNoFish_combined, bioFish_combined)
 
-      scenario_levels <- unique(bio_combined$scenario)
+      scenario_levels <- scenarios_name[scenarios_name %in% unique(as.character(bio_combined$scenario))]
       scenario_colors <- get_scenario_colors(scenario_levels)
       bio_combined$scenario <- factor(bio_combined$scenario, levels = scenario_levels)
       bio_combined$type <- factor(bio_combined$type, levels = c("No fishing", "Fished"))
 
       bio_plot <- ggplot(bio_combined, aes(x = year, y = data, color = scenario, linetype = type)) +
         geom_line(linewidth = config$linewidth, alpha = config$alpha) +
-        scale_color_manual(values = scenario_colors) +
+        scale_color_manual(values = scenario_colors, breaks = scenario_levels, limits = scenario_levels, drop = FALSE) +
         scale_linetype_manual(name = "Status", values = c("No fishing" = "dashed", "Fished" = "solid")) +
         coord_cartesian(ylim = c(0, NA)) +
         facet_wrap(~ area, scales = "free_y", ncol = facet_ncol) +
@@ -1408,7 +1408,7 @@ mod_harvest_server <- function(input, output, session, rv) {
 
       scenario_legend <- cowplot::get_legend(
         ggplot(bio_combined, aes(x = year, y = data, color = scenario)) + geom_line(linewidth = 2) +
-          scale_color_manual(values = scenario_colors) + theme_bw() +
+          scale_color_manual(values = scenario_colors, breaks = scenario_levels, limits = scenario_levels, drop = FALSE) + theme_bw() +
           theme(legend.position = "right", legend.title = element_text(face = "bold"), legend.key.width = unit(1.5, "cm")) +
           labs(color = "Model") + guides(color = guide_legend(override.aes = list(linewidth = 2)))
       )

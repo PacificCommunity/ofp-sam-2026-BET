@@ -1321,7 +1321,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     clear_jitter_param_cache()
   }, ignoreInit = FALSE)
 
-  observeEvent(list(input$lik_profile_source, input$lik_indepvar_profile_set), {
+  observeEvent(input$lik_profile_source, {
     clear_fishery_diag_cache()
   }, ignoreInit = TRUE)
 
@@ -1405,7 +1405,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     ignoreInit = TRUE
   )
   observeEvent(
-    list(input$lik_scenarios, input$lik_indepvar_profile_set),
+    input$lik_scenarios,
     {
       req(rv$data_loaded)
       if (identical(input$lik_main_tab, "likelihood")) {
@@ -4069,7 +4069,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       panel_top_groups <- data %>%
         filter(.data[[group_var]] != "Total") %>%
         group_by(across(all_of(panel_grouping_vars)), .data[[group_var]]) %>%
-        summarise(score = max(abs(change), na.rm = TRUE), .groups = "drop") %>%
+        summarise(score = mean(abs(change), na.rm = TRUE), .groups = "drop") %>%
         group_by(across(all_of(panel_grouping_vars))) %>%
         arrange(desc(score), .data[[group_var]], .by_group = TRUE) %>%
         slice_head(n = legend_top_n) %>%
@@ -4077,7 +4077,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
       top_groups <- panel_top_groups %>%
         group_by(.data[[group_var]]) %>%
-        summarise(score = max(score, na.rm = TRUE), .groups = "drop") %>%
+        summarise(score = mean(score, na.rm = TRUE), .groups = "drop") %>%
         arrange(desc(score), .data[[group_var]]) %>%
         pull(!!rlang::sym(group_var)) %>%
         as.character()
@@ -4383,54 +4383,17 @@ mod_likelihood_server <- function(input, output, session, rv) {
         by = key_cols
       ) %>%
       mutate(
-        influence_pct_raw = dplyr::case_when(
+        contribution_pct = dplyr::case_when(
+          is_ref_scalar ~ 0,
           is.finite(sum_abs_component_delta) & sum_abs_component_delta > eps ~ 100 * abs(component_delta) / sum_abs_component_delta,
-          TRUE ~ NA_real_
-        )
-      ) %>%
-      transmute(
-        !!!rlang::syms(key_cols),
-        !!group_col := .data[[group_col]],
-        influence_pct_raw = influence_pct_raw
-      ) %>%
-      group_by(across(all_of(c(context_cols, group_col)))) %>%
-      arrange(scalar, .by_group = TRUE) %>%
-      mutate(
-        influence_pct = {
-          x <- influence_pct_raw
-          s <- scalar
-          ok <- is.finite(x) & is.finite(s)
-          if (sum(ok) >= 2) {
-            stats::approx(x = s[ok], y = x[ok], xout = s, method = "linear", rule = 2)$y
-          } else if (sum(ok) == 1) {
-            rep(x[ok][1], dplyr::n())
-          } else {
-            rep(0, dplyr::n())
-          }
-        }
-      ) %>%
-      ungroup() %>%
-      group_by(across(all_of(key_cols))) %>%
-      mutate(sum_influence = sum(influence_pct, na.rm = TRUE)) %>%
-      ungroup() %>%
-      mutate(
-        influence_pct = dplyr::case_when(
-          is.finite(sum_influence) & sum_influence > eps ~ 100 * influence_pct / sum_influence,
           TRUE ~ 0
         )
       ) %>%
       transmute(
         !!!rlang::syms(key_cols),
         !!group_col := .data[[group_col]],
-        value = influence_pct,
-        change = influence_pct
-      )
-
-    total_line <- total_shape_df %>%
-      mutate(
-        value = total_shape_pct,
-        change = value,
-        !!group_col := "Total"
+        value = contribution_pct,
+        change = contribution_pct
       ) %>%
       transmute(
         !!!rlang::syms(key_cols),
@@ -4439,7 +4402,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         change = change
       )
 
-    bind_rows(component_df, total_line)
+    component_df
   }
 
   add_panel_bar_width <- function(df, panel_cols = "scenario", width_frac = 0.8, fallback = 0.8, min_width = 0.05) {
@@ -6285,7 +6248,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       if (nrow(data) == 0) {
         return(list(data = data.frame(), group_col = NULL, label = NULL, message = "No signed component influence data available"))
       }
-      return(list(data = data, group_col = "Likelihood", label = "Component Influence (normalized %)", message = NULL, profile_data = profile_data))
+      return(list(data = data, group_col = "Likelihood", label = "Component Contribution to Total Likelihood Change (%)", message = NULL, profile_data = profile_data))
     }
 
     if (type == "indepvar_2d") {
@@ -9099,11 +9062,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
       if (identical(filters$profile_type, "components")) {
         component_group_col <- if ("Likelihood" %in% names(data)) "Likelihood" else group_col
-        influence_data <- data %>%
+        influence_full <- data %>%
           filter(is.finite(value), is.finite(scalar)) %>%
           select(scenario, scalar, !!rlang::sym(component_group_col), value) %>%
           build_signed_influence_from_base(group_col = component_group_col, use_region = FALSE) %>%
-          filter(.data[[component_group_col]] != "Total", is.finite(change), is.finite(scalar))
+          filter(is.finite(change), is.finite(scalar))
+        influence_total_df <- influence_full %>%
+          filter(.data[[component_group_col]] == "Total")
+        influence_data <- influence_full %>%
+          filter(.data[[component_group_col]] != "Total")
       } else {
         influence_base <- data %>%
           filter(is.finite(value), is.finite(scalar))
@@ -9122,11 +9089,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
           influence_base <- bind_rows(influence_non_total, influence_total)
         }
 
-        influence_data <- build_signed_influence_from_base(
+        influence_full <- build_signed_influence_from_base(
           base = influence_base,
           group_col = group_col,
           use_region = FALSE
-        ) %>% filter(.data[[group_col]] != "Total", is.finite(change), is.finite(scalar))
+        ) %>% filter(is.finite(change), is.finite(scalar))
+        influence_total_df <- influence_full %>%
+          filter(.data[[group_col]] == "Total")
+        influence_data <- influence_full %>%
+          filter(.data[[group_col]] != "Total")
       }
 
       selected_groups <- setdiff(filters$groups, "Total")
@@ -9165,6 +9136,19 @@ mod_likelihood_server <- function(input, output, session, rv) {
         label_fn = x_axis_labels_fn
       )
       influence_comp_df$bar_width <- 0.88
+      ref_marker_df <- influence_comp_df %>%
+        group_by(scenario, scalar, x_id) %>%
+        summarise(sum_abs_change = sum(abs(change), na.rm = TRUE), .groups = "drop") %>%
+        group_by(scenario) %>%
+        slice_min(order_by = sum_abs_change, n = 1, with_ties = FALSE) %>%
+        ungroup() %>%
+        transmute(
+          scenario = scenario,
+          x_id = x_id,
+          y0 = 0,
+          y1 = 100,
+          label_y = 97
+        )
 
       top_non_total_groups <- setdiff(unique(as.character(data[[group_col]])), "Total")
       if (length(top_non_total_groups) == 0) {
@@ -9208,7 +9192,25 @@ mod_likelihood_server <- function(input, output, session, rv) {
       bottom_x_labels <- setNames(format_influence_x_labels(influence_comp_df$x_label), as.character(influence_comp_df$x_id))
 
       bottom_plot <- ggplot(influence_comp_df, aes(x = x_id, y = change, fill = group_val)) +
+        geom_segment(
+          data = ref_marker_df,
+          aes(x = x_id, xend = x_id, y = y0, yend = y1),
+          inherit.aes = FALSE,
+          color = "#4d4d4d",
+          linetype = "dashed",
+          linewidth = 0.5,
+          alpha = 0.95
+        ) +
         geom_col(aes(width = bar_width), alpha = 0.9, color = "white", linewidth = 0.2, na.rm = TRUE) +
+        geom_text(
+          data = ref_marker_df,
+          aes(x = x_id, y = label_y, label = "baseline"),
+          inherit.aes = FALSE,
+          color = "#4d4d4d",
+          size = 3,
+          fontface = "bold",
+          vjust = -0.1
+        ) +
         scale_x_discrete(
           labels = bottom_x_labels,
           name = x_axis_label_value
@@ -9261,10 +9263,6 @@ mod_likelihood_server <- function(input, output, session, rv) {
         filter(.data[[group_col]] != "Total") %>%
         mutate(group_val = as.character(.data[[group_col]]))
 
-      total_df <- data %>%
-        filter(.data[[group_col]] == "Total") %>%
-        mutate(group_val = as.character(.data[[group_col]]))
-
       if (nrow(component_df) == 0) {
         return(
           ggplot() +
@@ -9290,15 +9288,41 @@ mod_likelihood_server <- function(input, output, session, rv) {
         label_fn = x_axis_labels_fn
       )
       component_df$bar_width <- 0.88
-      total_df <- add_panel_bar_position(
-        total_df,
-        panel_cols = panel_cols,
-        label_fn = x_axis_labels_fn
-      )
+      ref_marker_df <- component_df %>%
+        group_by(across(all_of(c(panel_cols, "scalar", "x_id")))) %>%
+        summarise(sum_abs_change = sum(abs(change), na.rm = TRUE), .groups = "drop") %>%
+        group_by(across(all_of(panel_cols))) %>%
+        slice_min(order_by = sum_abs_change, n = 1, with_ties = FALSE) %>%
+        ungroup() %>%
+        transmute(
+          !!!rlang::syms(panel_cols),
+          x_id = x_id,
+          y0 = 0,
+          y1 = 100,
+          label_y = 97
+        )
       bottom_x_labels <- setNames(format_influence_x_labels(component_df$x_label), as.character(component_df$x_id))
 
       p <- ggplot(component_df, aes(x = x_id, y = change, fill = group_val)) +
+        geom_segment(
+          data = ref_marker_df,
+          aes(x = x_id, xend = x_id, y = y0, yend = y1),
+          inherit.aes = FALSE,
+          color = "#4d4d4d",
+          linetype = "dashed",
+          linewidth = 0.5,
+          alpha = 0.95
+        ) +
         geom_col(aes(width = bar_width), alpha = 0.9, color = "white", linewidth = 0.2, na.rm = TRUE) +
+        geom_text(
+          data = ref_marker_df,
+          aes(x = x_id, y = label_y, label = "baseline"),
+          inherit.aes = FALSE,
+          color = "#4d4d4d",
+          size = 3,
+          fontface = "bold",
+          vjust = -0.1
+        ) +
         scale_x_discrete(
           labels = bottom_x_labels,
           name = x_label
@@ -9318,37 +9342,34 @@ mod_likelihood_server <- function(input, output, session, rv) {
       if (isTRUE(filters$split_by_region) && "region" %in% names(component_df)) {
         region_levels <- sort(unique(as.character(component_df$region)))
         component_df$region <- factor(as.character(component_df$region), levels = region_levels)
-        total_df$region <- factor(as.character(total_df$region), levels = region_levels)
 
         has_overall <- "Overall" %in% as.character(region_levels)
         if (has_overall) {
           region_comp <- component_df %>% filter(as.character(region) != "Overall")
-          region_total <- total_df %>% filter(as.character(region) != "Overall")
           overall_comp <- component_df %>% filter(as.character(region) == "Overall")
-          overall_total <- total_df %>% filter(as.character(region) == "Overall")
+          ref_marker_region <- ref_marker_df %>% filter(as.character(region) != "Overall")
+          ref_marker_overall <- ref_marker_df %>% filter(as.character(region) == "Overall")
 
           region_plot <- ggplot(region_comp, aes(x = x_id, y = change, fill = group_val)) +
+            geom_segment(
+              data = ref_marker_region,
+              aes(x = x_id, xend = x_id, y = y0, yend = y1),
+              inherit.aes = FALSE,
+              color = "#4d4d4d",
+              linetype = "dashed",
+              linewidth = 0.5,
+              alpha = 0.95
+            ) +
             geom_col(aes(width = bar_width), alpha = 0.9, color = "white", linewidth = 0.2, na.rm = TRUE) +
-            {
-              if (nrow(region_total) > 0) geom_line(
-                data = region_total,
-                aes(x = x_id, y = change, group = interaction(scenario, region)),
-                inherit.aes = FALSE,
-                color = "black",
-                linewidth = 1.0,
-                alpha = 0.9
-              )
-            } +
-            {
-              if (nrow(region_total) > 0) geom_point(
-                data = region_total,
-                aes(x = x_id, y = change),
-                inherit.aes = FALSE,
-                color = "black",
-                size = 1.6,
-                alpha = 0.9
-              )
-            } +
+            geom_text(
+              data = ref_marker_region,
+              aes(x = x_id, y = label_y, label = "baseline"),
+              inherit.aes = FALSE,
+              color = "#4d4d4d",
+              size = 3,
+              fontface = "bold",
+              vjust = -0.1
+            ) +
             scale_x_discrete(labels = bottom_x_labels, name = x_label) +
             labs(y = y_axis_label, fill = NULL) +
             theme_bw(base_size = 12) +
@@ -9367,27 +9388,25 @@ mod_likelihood_server <- function(input, output, session, rv) {
           }
 
           overall_plot <- ggplot(overall_comp, aes(x = x_id, y = change, fill = group_val)) +
+            geom_segment(
+              data = ref_marker_overall,
+              aes(x = x_id, xend = x_id, y = y0, yend = y1),
+              inherit.aes = FALSE,
+              color = "#4d4d4d",
+              linetype = "dashed",
+              linewidth = 0.5,
+              alpha = 0.95
+            ) +
             geom_col(aes(width = bar_width), alpha = 0.9, color = "white", linewidth = 0.2, na.rm = TRUE) +
-            {
-              if (nrow(overall_total) > 0) geom_line(
-                data = overall_total,
-                aes(x = x_id, y = change, group = scenario),
-                inherit.aes = FALSE,
-                color = "black",
-                linewidth = 1.0,
-                alpha = 0.9
-              )
-            } +
-            {
-              if (nrow(overall_total) > 0) geom_point(
-                data = overall_total,
-                aes(x = x_id, y = change),
-                inherit.aes = FALSE,
-                color = "black",
-                size = 1.6,
-                alpha = 0.9
-              )
-            } +
+            geom_text(
+              data = ref_marker_overall,
+              aes(x = x_id, y = label_y, label = "baseline"),
+              inherit.aes = FALSE,
+              color = "#4d4d4d",
+              size = 3,
+              fontface = "bold",
+              vjust = -0.1
+            ) +
             scale_x_discrete(labels = bottom_x_labels, name = x_label) +
             labs(y = y_axis_label, fill = NULL) +
             theme_bw(base_size = 12) +
