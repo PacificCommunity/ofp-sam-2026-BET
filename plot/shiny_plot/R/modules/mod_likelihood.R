@@ -296,9 +296,110 @@ mod_likelihood_ui <- function() {
                 "Jitter Param Display:",
                 choices = c(
                   "Family summary (recommended for many parameters)" = "family",
-                  "Parameter detail" = "detail"
+                  "Parameter detail" = "detail",
+                  "Multi-parameter density compare" = "compare",
+                  "Two-parameter scatter / 2D density" = "pair"
                 ),
                 selected = "detail"
+              )
+            ),
+            conditionalPanel(
+              condition = "input.lik_jitter_param_display == 'compare'",
+              tagList(
+                selectizeInput(
+                  "lik_jitter_param_name",
+                  "Parameter name(s):",
+                  choices = character(0),
+                  selected = NULL,
+                  multiple = TRUE,
+                  options = list(
+                    placeholder = "Type parameter names, e.g. totpop",
+                    create = FALSE,
+                    openOnFocus = TRUE,
+                    closeAfterSelect = TRUE,
+                    maxOptions = 5000
+                  )
+                ),
+                checkboxGroupInput(
+                  "lik_jitter_compare_sections",
+                  "Show sections:",
+                  choices = c(
+                    "Before (jittered input)" = "before",
+                    "After (fitted)" = "after"
+                  ),
+                  selected = c("before", "after"),
+                  inline = TRUE
+                ),
+                checkboxInput(
+                  "lik_jitter_compare_show_original",
+                  "Show original value line",
+                  value = TRUE
+                ),
+                checkboxInput(
+                  "lik_jitter_compare_show_median",
+                  "Show jitter median line",
+                  value = TRUE
+                ),
+                checkboxInput(
+                  "lik_jitter_compare_normalize",
+                  "Normalize density peak to 1",
+                  value = TRUE
+                ),
+                tags$small(
+                  "Shows model-specific density panels by parameter. You can toggle before/after sections, original and jitter-median vertical reference lines, and optionally normalize each panel's density peak to 1.",
+                  style = "display:block; margin-top:-6px; color:#666;"
+                )
+              )
+            ),
+            conditionalPanel(
+              condition = "input.lik_jitter_param_display == 'pair'",
+              tagList(
+                selectInput(
+                  "lik_jitter_pair_style",
+                  "Pair density style:",
+                  choices = c(
+                    "Contour + points" = "contour",
+                    "HDR contours (50/80/95%)" = "hdr",
+                    "Normal ellipse + points" = "ellipse",
+                    "Points only" = "points"
+                  ),
+                  selected = "contour"
+                ),
+                fluidRow(
+                  column(
+                    width = 12,
+                    div(
+                      style = "display:flex; gap:8px; align-items:center; margin-bottom:8px;",
+                      actionButton("lik_jitter_pair_add", "+", class = "btn-success"),
+                      actionButton("lik_jitter_pair_remove", "-", class = "btn-danger")
+                    )
+                  )
+                ),
+                uiOutput("lik_jitter_pair_ui"),
+                tags$small(
+                  "Add multiple parameter pairs with + / -. Each pair gets its own plot column. Red diamond = original model point.",
+                  style = "display:block; margin-top:-6px; color:#666;"
+                )
+              )
+            ),
+            conditionalPanel(
+              condition = "['compare', 'pair'].includes(input.lik_jitter_param_display)",
+              tagList(
+                checkboxInput(
+                  "lik_jitter_exponentiate",
+                  "Exponentiate matching parameter names",
+                  value = FALSE
+                ),
+                textInput(
+                  "lik_jitter_exp_patterns",
+                  "Exponentiate name pattern(s):",
+                  value = "age_pars",
+                  placeholder = "Comma-separated prefixes, e.g. age_pars, ln_q"
+                ),
+                tags$small(
+                  "Applies exp() only in the plot to parameters whose names start with one of these prefixes. Useful for log-scale parameters like age_pars.",
+                  style = "display:block; margin-top:-6px; color:#666;"
+                )
               )
             ),
             conditionalPanel(
@@ -603,6 +704,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
   jitter_param_cache <- reactiveValues(
     rows = list()
   )
+  jitter_pair_ids <- reactiveVal(1L)
+  jitter_pair_change_nonce <- reactiveVal(0L)
   last_group_key <- reactiveVal(NULL)
 
   scenario_cache_key <- function(model_dir, scenario) {
@@ -934,7 +1037,38 @@ mod_likelihood_server <- function(input, output, session, rv) {
       jitter_converged_only_diagnostics = isTRUE(input$lik_jitter_converged_only_diagnostics),
       jitter_rel_diff_threshold = jitter_rel_diff_threshold,
       jitter_param_view = sanitize_profile_type(input$lik_jitter_param_view, allowed = c("input", "final"), default = "input"),
-      jitter_param_display = sanitize_profile_type(input$lik_jitter_param_display, allowed = c("family", "detail"), default = "detail"),
+      jitter_param_display = sanitize_profile_type(input$lik_jitter_param_display, allowed = c("family", "detail", "compare", "pair"), default = "detail"),
+      jitter_param_name = sanitize_text_vector(input$lik_jitter_param_name),
+      jitter_compare_sections = {
+        vals <- sanitize_text_vector(input$lik_jitter_compare_sections)
+        vals <- vals[vals %in% c("before", "after")]
+        if (length(vals) == 0) vals <- c("after")
+        vals
+      },
+      jitter_compare_show_original = isTRUE(input$lik_jitter_compare_show_original),
+      jitter_compare_show_median = isTRUE(input$lik_jitter_compare_show_median),
+      jitter_compare_normalize = isTRUE(input$lik_jitter_compare_normalize),
+      jitter_pair_style = sanitize_profile_type(input$lik_jitter_pair_style, allowed = c("contour", "hdr", "ellipse", "points"), default = "contour"),
+      jitter_exponentiate = isTRUE(input$lik_jitter_exponentiate),
+      jitter_exp_patterns = {
+        raw <- sanitize_text_scalar(input$lik_jitter_exp_patterns)
+        if (is.na(raw) || !nzchar(raw)) {
+          character(0)
+        } else {
+          vals <- trimws(unlist(strsplit(raw, ",", fixed = TRUE), use.names = FALSE))
+          sort(unique(vals[nzchar(vals)]))
+        }
+      },
+      jitter_param_pairs = {
+        ids <- jitter_pair_ids()
+        pairs <- lapply(ids, function(pair_id) {
+          x_val <- sanitize_text_scalar(input[[paste0("lik_jitter_param_x_", pair_id)]])
+          y_val <- sanitize_text_scalar(input[[paste0("lik_jitter_param_y_", pair_id)]])
+          if (is.na(x_val) || is.na(y_val) || !nzchar(x_val) || !nzchar(y_val) || identical(x_val, y_val)) return(NULL)
+          list(id = pair_id, x = x_val, y = y_val)
+        })
+        Filter(Negate(is.null), pairs)
+      },
       jitter_param_scope = sanitize_profile_type(input$lik_jitter_param_scope, allowed = c("top", "all"), default = "top"),
       jitter_param_window = jitter_param_window,
       jitter_converged_only = isTRUE(input$lik_jitter_converged_only),
@@ -982,6 +1116,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
       jitter_converged_only_diagnostics = filters$jitter_converged_only_diagnostics,
       jitter_param_view = filters$jitter_param_view,
       jitter_param_display = filters$jitter_param_display,
+      jitter_param_name = filters$jitter_param_name,
+      jitter_compare_sections = filters$jitter_compare_sections,
+      jitter_compare_show_original = filters$jitter_compare_show_original,
+      jitter_compare_show_median = filters$jitter_compare_show_median,
+      jitter_compare_normalize = filters$jitter_compare_normalize,
+      jitter_pair_style = filters$jitter_pair_style,
+      jitter_exponentiate = isTRUE(filters$jitter_exponentiate),
+      jitter_exp_patterns = filters$jitter_exp_patterns,
+      jitter_param_pairs = filters$jitter_param_pairs,
       jitter_param_scope = filters$jitter_param_scope,
       jitter_param_window = filters$jitter_param_window,
       jitter_converged_only = filters$jitter_converged_only,
@@ -1027,6 +1170,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (identical(filters$profile_type, "jitter_params")) {
       key$jitter_param_view <- filters$jitter_param_view
       key$jitter_param_display <- filters$jitter_param_display
+      key$jitter_param_name <- filters$jitter_param_name
+      key$jitter_compare_sections <- sort(filters$jitter_compare_sections)
+      key$jitter_compare_show_original <- isTRUE(filters$jitter_compare_show_original)
+      key$jitter_compare_show_median <- isTRUE(filters$jitter_compare_show_median)
+      key$jitter_compare_normalize <- isTRUE(filters$jitter_compare_normalize)
+      key$jitter_pair_style <- filters$jitter_pair_style
+      key$jitter_exponentiate <- isTRUE(filters$jitter_exponentiate)
+      key$jitter_exp_patterns <- filters$jitter_exp_patterns
+      key$jitter_param_pairs <- vapply(filters$jitter_param_pairs, function(x) paste(x$x, x$y, sep = "->"), character(1))
       key$jitter_param_scope <- filters$jitter_param_scope
       key$jitter_param_window <- filters$jitter_param_window
       key$jitter_converged_only <- isTRUE(filters$jitter_converged_only)
@@ -1088,6 +1240,15 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (identical(filters$profile_type, "jitter_params")) {
       key$jitter_param_view <- filters$jitter_param_view
       key$jitter_param_display <- filters$jitter_param_display
+      key$jitter_param_name <- filters$jitter_param_name
+      key$jitter_compare_sections <- sort(filters$jitter_compare_sections)
+      key$jitter_compare_show_original <- isTRUE(filters$jitter_compare_show_original)
+      key$jitter_compare_show_median <- isTRUE(filters$jitter_compare_show_median)
+      key$jitter_compare_normalize <- isTRUE(filters$jitter_compare_normalize)
+      key$jitter_pair_style <- filters$jitter_pair_style
+      key$jitter_exponentiate <- isTRUE(filters$jitter_exponentiate)
+      key$jitter_exp_patterns <- filters$jitter_exp_patterns
+      key$jitter_param_pairs <- vapply(filters$jitter_param_pairs, function(x) paste(x$x, x$y, sep = "->"), character(1))
       key$jitter_param_scope <- filters$jitter_param_scope
       key$jitter_param_window <- filters$jitter_param_window
       key$jitter_converged_only <- isTRUE(filters$jitter_converged_only)
@@ -1297,6 +1458,152 @@ mod_likelihood_server <- function(input, output, session, rv) {
       choices = all_models,
       selected = current_selection
     )
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$lik_jitter_pair_add, {
+    ids <- jitter_pair_ids()
+    next_id <- if (length(ids) == 0) 1L else max(ids) + 1L
+    jitter_pair_ids(c(ids, next_id))
+    jitter_pair_change_nonce(jitter_pair_change_nonce() + 1L)
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$lik_jitter_pair_remove, {
+    ids <- jitter_pair_ids()
+    if (length(ids) <= 1) return()
+    jitter_pair_ids(ids[-length(ids)])
+    jitter_pair_change_nonce(jitter_pair_change_nonce() + 1L)
+  }, ignoreInit = TRUE)
+
+  output$lik_jitter_pair_ui <- renderUI({
+    ids <- jitter_pair_ids()
+    scenarios <- sanitize_text_vector(input$lik_scenarios)
+    choices <- build_jitter_param_name_choices(scenarios, rv$JitterPars_list)
+    tagList(lapply(seq_along(ids), function(idx) {
+      pair_id <- ids[[idx]]
+      x_input_id <- paste0("lik_jitter_param_x_", pair_id)
+      y_input_id <- paste0("lik_jitter_param_y_", pair_id)
+      selected_x <- isolate(sanitize_text_scalar(input[[x_input_id]]))
+      if (is.na(selected_x) || !(selected_x %in% choices)) {
+        selected_x <- if (length(choices) > 0) choices[[1]] else character(0)
+      }
+      selected_y <- isolate(sanitize_text_scalar(input[[y_input_id]]))
+      if (is.na(selected_y) || !(selected_y %in% choices) || identical(selected_y, selected_x)) {
+        remaining <- setdiff(choices, selected_x)
+        selected_y <- if (length(remaining) > 0) remaining[[1]] else selected_x
+      }
+      fluidRow(
+        column(
+          width = 6,
+          selectizeInput(
+            inputId = x_input_id,
+            label = paste0("X parameter ", idx, ":"),
+            choices = choices,
+            selected = selected_x,
+            multiple = FALSE,
+            options = list(
+              placeholder = "Choose x parameter (type to search)",
+              create = FALSE,
+              openOnFocus = TRUE,
+              closeAfterSelect = TRUE,
+              maxOptions = 5000
+            )
+          )
+        ),
+        column(
+          width = 6,
+          selectizeInput(
+            inputId = y_input_id,
+            label = paste0("Y parameter ", idx, ":"),
+            choices = choices,
+            selected = selected_y,
+            multiple = FALSE,
+            options = list(
+              placeholder = "Choose y parameter (type to search)",
+              create = FALSE,
+              openOnFocus = TRUE,
+              closeAfterSelect = TRUE,
+              maxOptions = 5000
+            )
+          )
+        )
+      )
+    }))
+  })
+
+  build_jitter_param_name_choices <- function(scenarios, jitter_pars_list) {
+    out <- character(0)
+    if (is.null(scenarios) || length(scenarios) == 0) return(out)
+
+    for (sc in scenarios) {
+      jit_list <- jitter_pars_list[[sc]]
+      if (is.null(jit_list) || length(jit_list) == 0) next
+
+      for (jit in jit_list) {
+        param_sets <- list(
+          if (is.list(jit) && !is.null(jit$parameter_changes)) jit$parameter_changes else NULL,
+          if (is.list(jit) && !is.null(jit$fitted_parameter_changes)) jit$fitted_parameter_changes else NULL
+        )
+
+        for (param_set in param_sets) {
+          labels_df <- if (is.list(param_set) && !is.null(param_set$labels)) param_set$labels else NULL
+          if (is.null(labels_df) || nrow(labels_df) == 0 || !("Var_name" %in% names(labels_df))) next
+          vals <- trimws(as.character(labels_df$Var_name))
+          vals <- vals[!is.na(vals) & nzchar(vals)]
+          out <- c(out, vals)
+        }
+      }
+    }
+
+    sort(unique(out))
+  }
+
+  observeEvent(list(rv$data_loaded, input$lik_scenarios, input$lik_main_tab, input$lik_jitter_type), {
+    req(rv$data_loaded)
+    if (!identical(sanitize_text_scalar(input$lik_main_tab), "jitter")) return()
+    if (!identical(sanitize_text_scalar(input$lik_jitter_type), "jitter_params")) return()
+
+    scenarios <- sanitize_text_vector(input$lik_scenarios)
+    choices <- build_jitter_param_name_choices(scenarios, rv$JitterPars_list)
+    selected_many <- intersect(sanitize_text_vector(input$lik_jitter_param_name), choices)
+    if (length(selected_many) == 0 && length(choices) > 0) selected_many <- choices[[1]]
+
+    updateSelectizeInput(
+      session,
+      "lik_jitter_param_name",
+      choices = choices,
+      selected = selected_many,
+      server = TRUE
+    )
+
+    ids <- jitter_pair_ids()
+    for (pair_id in ids) {
+      x_id <- paste0("lik_jitter_param_x_", pair_id)
+      y_id <- paste0("lik_jitter_param_y_", pair_id)
+      selected_x <- sanitize_text_scalar(input[[x_id]])
+      if (is.na(selected_x) || !(selected_x %in% choices)) {
+        selected_x <- if (length(choices) > 0) choices[[1]] else character(0)
+      }
+      selected_y <- sanitize_text_scalar(input[[y_id]])
+      if (is.na(selected_y) || !(selected_y %in% choices) || identical(selected_y, selected_x)) {
+        remaining <- setdiff(choices, selected_x)
+        selected_y <- if (length(remaining) > 0) remaining[[1]] else selected_x
+      }
+
+      updateSelectizeInput(
+        session,
+        x_id,
+        choices = choices,
+        selected = selected_x,
+        server = TRUE
+      )
+      updateSelectizeInput(
+        session,
+        y_id,
+        choices = choices,
+        selected = selected_y,
+        server = TRUE
+      )
+    }
   }, ignoreInit = TRUE)
 
   observeEvent(list(rv$data_loaded, input$lik_scenarios, input$lik_main_tab, input$lik_profile_type, input$lik_profile_source, input$lik_jitter_type), {
@@ -4881,6 +5188,209 @@ mod_likelihood_server <- function(input, output, session, rv) {
     plot_df
   }
 
+  build_jitter_parameter_compare_data <- function(scenarios, jitter_pars_list, param_names,
+                                                  converged_only = FALSE, converged_max_grad = 0.01) {
+    param_names <- sanitize_text_vector(param_names)
+    if (length(param_names) == 0) return(data.frame())
+
+    resolve_parameter_label <- function(df) {
+      if ("param_label" %in% names(df)) {
+        out <- as.character(df$param_label)
+        out[is.na(out) | !nzchar(trimws(out))] <- as.character(df$Var_name)[is.na(out) | !nzchar(trimws(out))]
+        return(out)
+      }
+      as.character(df$Var_name)
+    }
+
+    rows <- list()
+
+    for (sc in scenarios) {
+      jit_list <- jitter_pars_list[[sc]]
+      if (is.null(jit_list) || length(jit_list) == 0) next
+
+      seeds <- names(jit_list)
+      if (is.null(seeds) || any(is.na(seeds) | seeds == "")) {
+        seeds <- as.character(seq_along(jit_list))
+      }
+
+      for (i in seq_along(jit_list)) {
+        jit <- jit_list[[i]]
+        seed_id <- as.character(seeds[[i]])
+
+        if (!isTRUE(jit$run_completed)) next
+        if (isTRUE(converged_only)) {
+          jit_max_grad <- suppressWarnings(as.numeric(jit$max_grad))
+          if (!is.finite(jit_max_grad) || abs(jit_max_grad) > converged_max_grad) next
+        }
+
+        final_changes <- if (is.list(jit) && !is.null(jit$fitted_parameter_changes)) jit$fitted_parameter_changes else NULL
+        final_labels <- if (is.list(final_changes) && !is.null(final_changes$labels)) final_changes$labels else NULL
+        if (is.null(final_labels) || nrow(final_labels) == 0) next
+
+        input_changes <- if (is.list(jit) && !is.null(jit$parameter_changes)) jit$parameter_changes else NULL
+        input_labels <- if (is.list(input_changes) && !is.null(input_changes$labels)) input_changes$labels else NULL
+        if (!is.null(input_labels) && nrow(input_labels) > 0) {
+          input_labels$parameter <- resolve_parameter_label(input_labels)
+          input_df <- input_labels %>%
+            mutate(
+              Var_name = trimws(as.character(Var_name)),
+              Index = suppressWarnings(as.integer(Index)),
+              original_value = suppressWarnings(as.numeric(before)),
+              value = suppressWarnings(as.numeric(after)),
+              distribution = "Before (jittered input)"
+            ) %>%
+            filter(Var_name %in% param_names, is.finite(value), is.finite(original_value)) %>%
+            transmute(
+              scenario = sc,
+              seed = seed_id,
+              Var_name,
+              Index,
+              parameter,
+              distribution,
+              value,
+              original_value
+          )
+          if (nrow(input_df) > 0) rows[[length(rows) + 1]] <- input_df
+        }
+
+        final_labels$parameter <- resolve_parameter_label(final_labels)
+        final_df <- final_labels %>%
+          mutate(
+            Var_name = trimws(as.character(Var_name)),
+            Index = suppressWarnings(as.integer(Index)),
+            original_value = suppressWarnings(as.numeric(before)),
+            value = suppressWarnings(as.numeric(after)),
+            distribution = "After (fitted)"
+          ) %>%
+          filter(Var_name %in% param_names, is.finite(value), is.finite(original_value)) %>%
+          transmute(
+            scenario = sc,
+            seed = seed_id,
+            Var_name,
+            Index,
+            parameter,
+            distribution,
+            value,
+            original_value
+          )
+        if (nrow(final_df) > 0) rows[[length(rows) + 1]] <- final_df
+      }
+    }
+
+    out <- bind_rows(rows)
+    if (nrow(out) == 0) return(out)
+
+    duplicate_counts <- out %>%
+      distinct(scenario, Var_name, Index, parameter) %>%
+      group_by(scenario, Var_name) %>%
+      summarise(n_parameter = dplyr::n(), .groups = "drop")
+
+    out %>%
+      left_join(duplicate_counts, by = c("scenario", "Var_name")) %>%
+      mutate(
+        parameter = ifelse(
+          is.finite(n_parameter) & n_parameter > 1L,
+          paste0(parameter, " {", Index, "}"),
+          parameter
+        ),
+        distribution = factor(distribution, levels = c("Before (jittered input)", "After (fitted)"))
+      ) %>%
+      select(-n_parameter)
+  }
+
+  build_jitter_parameter_pair_data <- function(scenarios, jitter_pars_list, param_pairs,
+                                               converged_only = FALSE, converged_max_grad = 0.01) {
+    param_pairs <- Filter(function(x) {
+      is.list(x) && !is.null(x$x) && !is.null(x$y) &&
+        nzchar(as.character(x$x)) && nzchar(as.character(x$y)) &&
+        !identical(as.character(x$x), as.character(x$y))
+    }, param_pairs)
+    if (length(param_pairs) == 0) return(data.frame())
+
+    extract_pair_values <- function(labels_df, x_name, y_name, pair_id = NA_integer_) {
+      if (is.null(labels_df) || nrow(labels_df) == 0) return(NULL)
+      labels_df <- labels_df %>%
+        mutate(
+          Var_name = trimws(as.character(Var_name)),
+          Index = suppressWarnings(as.integer(Index)),
+          before = suppressWarnings(as.numeric(before)),
+          after = suppressWarnings(as.numeric(after))
+        )
+
+      x_df <- labels_df %>%
+        filter(Var_name == x_name, is.finite(before), is.finite(after)) %>%
+        arrange(Index) %>%
+        slice_head(n = 1) %>%
+        transmute(
+          x_value = after,
+          x_original = before,
+          x_index = Index
+        )
+      y_df <- labels_df %>%
+        filter(Var_name == y_name, is.finite(before), is.finite(after)) %>%
+        arrange(Index) %>%
+        slice_head(n = 1) %>%
+        transmute(
+          y_value = after,
+          y_original = before,
+          y_index = Index
+        )
+      if (nrow(x_df) == 0 || nrow(y_df) == 0) return(NULL)
+
+      tibble::tibble(
+        pair_id = suppressWarnings(as.integer(pair_id)),
+        x_name = x_name,
+        y_name = y_name,
+        combo = paste0("Pair ", pair_id, ": ", x_name, " vs ", y_name),
+        x_value = x_df$x_value[[1]],
+        y_value = y_df$y_value[[1]],
+        x_original = x_df$x_original[[1]],
+        y_original = y_df$y_original[[1]]
+      )
+    }
+
+    rows <- list()
+    for (sc in scenarios) {
+      jit_list <- jitter_pars_list[[sc]]
+      if (is.null(jit_list) || length(jit_list) == 0) next
+
+      seeds <- names(jit_list)
+      if (is.null(seeds) || any(is.na(seeds) | seeds == "")) {
+        seeds <- as.character(seq_along(jit_list))
+      }
+
+      for (i in seq_along(jit_list)) {
+        jit <- jit_list[[i]]
+        seed_id <- as.character(seeds[[i]])
+
+        if (!isTRUE(jit$run_completed)) next
+        if (isTRUE(converged_only)) {
+          jit_max_grad <- suppressWarnings(as.numeric(jit$max_grad))
+          if (!is.finite(jit_max_grad) || abs(jit_max_grad) > converged_max_grad) next
+        }
+
+        input_changes <- if (is.list(jit) && !is.null(jit$parameter_changes)) jit$parameter_changes else NULL
+        input_labels <- if (is.list(input_changes) && !is.null(input_changes$labels)) input_changes$labels else NULL
+        final_changes <- if (is.list(jit) && !is.null(jit$fitted_parameter_changes)) jit$fitted_parameter_changes else NULL
+        final_labels <- if (is.list(final_changes) && !is.null(final_changes$labels)) final_changes$labels else NULL
+        if (is.null(final_labels) || nrow(final_labels) == 0) next
+
+        for (pair in param_pairs) {
+          final_row <- extract_pair_values(final_labels, pair$x, pair$y, pair_id = pair$id)
+          if (!is.null(final_row)) {
+            final_row$scenario <- sc
+            final_row$seed <- seed_id
+            rows[[length(rows) + 1]] <- final_row
+          }
+        }
+      }
+    }
+
+    out <- bind_rows(rows)
+    if (nrow(out) == 0) return(out)
+    out
+  }
+
   extract_reference_metrics_timeseries <- function(rep_obj, scenario) {
     if (is.null(rep_obj)) return(NULL)
 
@@ -5544,17 +6054,69 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
     if (type == "jitter_params") {
       jitter_param_view <- if (is.null(filters$jitter_param_view)) "input" else filters$jitter_param_view
-      converged_only <- isTRUE(filters$jitter_converged_only) && identical(jitter_param_view, "final")
+      jitter_param_display <- if (is.null(filters$jitter_param_display)) "detail" else filters$jitter_param_display
+      converged_only <- isTRUE(filters$jitter_converged_only) && (identical(jitter_param_view, "final") || identical(jitter_param_display, "compare") || identical(jitter_param_display, "pair"))
       converged_max_grad <- sanitize_numeric_scalar(filters$jitter_converged_max_grad, 0.01)
-      data <- build_jitter_parameter_data(
-        selected,
-        rv$JitterPars_list,
-        view = jitter_param_view,
-        converged_only = converged_only,
-        converged_max_grad = converged_max_grad
-      )
+      if (identical(jitter_param_display, "compare")) {
+        param_names <- sanitize_text_vector(filters$jitter_param_name)
+        if (length(param_names) == 0) {
+          return(list(
+            data = data.frame(),
+            group_col = NULL,
+            label = NULL,
+            message = "Choose one or more parameter names to compare jittered input and fitted distributions",
+            plot_kind = "jitter_params"
+          ))
+        }
+        data <- build_jitter_parameter_compare_data(
+          selected,
+          rv$JitterPars_list,
+          param_names = param_names,
+          converged_only = converged_only,
+          converged_max_grad = converged_max_grad
+        )
+      } else if (identical(jitter_param_display, "pair")) {
+        param_pairs <- filters$jitter_param_pairs
+        if (length(param_pairs) == 0) {
+          return(list(
+            data = data.frame(),
+            group_col = NULL,
+            label = NULL,
+            message = "Choose at least one valid parameter pair for the scatter / 2D view",
+            plot_kind = "jitter_params"
+          ))
+        }
+        data <- build_jitter_parameter_pair_data(
+          selected,
+          rv$JitterPars_list,
+          param_pairs = param_pairs,
+          converged_only = converged_only,
+          converged_max_grad = converged_max_grad
+        )
+      } else {
+        data <- build_jitter_parameter_data(
+          selected,
+          rv$JitterPars_list,
+          view = jitter_param_view,
+          converged_only = converged_only,
+          converged_max_grad = converged_max_grad
+        )
+      }
       if (nrow(data) == 0) {
-        msg <- if (identical(jitter_param_view, "final")) {
+        msg <- if (identical(jitter_param_display, "compare")) {
+          if (isTRUE(converged_only)) {
+            paste0("No matching jitter parameter distributions found for ", paste(filters$jitter_param_name, collapse = ", "), " with converged fitted runs (max_grad <= ", format(converged_max_grad, trim = TRUE), ")")
+          } else {
+            paste0("No matching jitter parameter distributions found for ", paste(filters$jitter_param_name, collapse = ", "))
+          }
+        } else if (identical(jitter_param_display, "pair")) {
+          pair_labels <- vapply(filters$jitter_param_pairs, function(x) paste0(x$x, " vs ", x$y), character(1))
+          if (isTRUE(converged_only)) {
+            paste0("No matching jitter pair distributions found for ", paste(pair_labels, collapse = ", "), " with converged fitted runs (max_grad <= ", format(converged_max_grad, trim = TRUE), ")")
+          } else {
+            paste0("No matching jitter pair distributions found for ", paste(pair_labels, collapse = ", "))
+          }
+        } else if (identical(jitter_param_view, "final")) {
           if (isTRUE(converged_only)) {
             paste0("No converged jitter runs with final parameter distributions found (max_grad <= ", format(converged_max_grad, trim = TRUE), ")")
           } else {
@@ -6540,7 +7102,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       if (length(param_view) != 1 || is.na(param_view) || !nzchar(param_view)) param_view <- "input"
       if (length(param_display) != 1 || is.na(param_display) || !nzchar(param_display)) param_display <- "family"
       if (length(param_scope) != 1 || is.na(param_scope) || !nzchar(param_scope)) param_scope <- "top"
-      converged_only <- isTRUE(filters$jitter_converged_only) && identical(param_view, "final")
+      converged_only <- isTRUE(filters$jitter_converged_only) && (identical(param_view, "final") || identical(param_display, "compare") || identical(param_display, "pair"))
       converged_max_grad <- sanitize_numeric_scalar(filters$jitter_converged_max_grad, 0.01)
       metric <- if (identical(param_view, "input")) {
         if (is.null(filters$jitter_param_input_scale)) "rel_diff" else filters$jitter_param_input_scale
@@ -6556,6 +7118,494 @@ mod_likelihood_server <- function(input, output, session, rv) {
       jitter_counts <- format_jitter_convergence_counts(
         safe_build_jitter_seed_status_tables(filters$scenarios, cutoff = converged_max_grad, context = "likelihood_plot_jitter_params")$summary
       )
+      exp_patterns <- sanitize_text_vector(filters$jitter_exp_patterns)
+      exponentiate_matches <- isTRUE(filters$jitter_exponentiate) && length(exp_patterns) > 0
+      matches_exp_pattern <- function(x) {
+        vals <- trimws(as.character(x))
+        if (!isTRUE(exponentiate_matches) || length(vals) == 0) return(rep(FALSE, length(vals)))
+        families <- sub("\\(.*$", "", vals)
+        vapply(seq_along(vals), function(i) {
+          any(startsWith(vals[[i]], exp_patterns) | startsWith(families[[i]], exp_patterns))
+        }, logical(1))
+      }
+      exp_label <- function(name, flag) {
+        name_chr <- as.character(name)
+        flag_logical <- as.logical(flag)
+        flag_logical[is.na(flag_logical)] <- FALSE
+        ifelse(flag_logical, paste0(name_chr, " [exp]"), name_chr)
+      }
+
+      if (identical(param_display, "pair")) {
+        pair_style <- if (is.null(filters$jitter_pair_style)) "contour" else filters$jitter_pair_style
+        pair_df <- data %>%
+          mutate(
+            scenario = factor(as.character(scenario), levels = unique(as.character(scenario))),
+            pair_id = suppressWarnings(as.integer(pair_id)),
+            x_name = as.character(x_name),
+            y_name = as.character(y_name),
+            x_exp = matches_exp_pattern(x_name),
+            y_exp = matches_exp_pattern(y_name),
+            x_name_plot = exp_label(x_name, x_exp),
+            y_name_plot = exp_label(y_name, y_exp),
+            combo = paste0("Pair ", pair_id, ": ", x_name_plot, " vs ", y_name_plot),
+            x_value = suppressWarnings(as.numeric(x_value)),
+            y_value = suppressWarnings(as.numeric(y_value)),
+            x_original = suppressWarnings(as.numeric(x_original)),
+            y_original = suppressWarnings(as.numeric(y_original)),
+            x_value = ifelse(x_exp & is.finite(x_value), exp(x_value), x_value),
+            y_value = ifelse(y_exp & is.finite(y_value), exp(y_value), y_value),
+            x_original = ifelse(x_exp & is.finite(x_original), exp(x_original), x_original),
+            y_original = ifelse(y_exp & is.finite(y_original), exp(y_original), y_original)
+          ) %>%
+          filter(is.finite(x_value), is.finite(y_value))
+        if (nrow(pair_df) > 0) {
+          combo_levels <- pair_df %>%
+            distinct(pair_id, combo) %>%
+            arrange(pair_id) %>%
+            pull(combo)
+          pair_df$combo <- factor(pair_df$combo, levels = combo_levels)
+          scenario_levels <- unique(as.character(pair_df$scenario))
+          panel_levels <- pair_df %>%
+            distinct(scenario, pair_id, combo) %>%
+            mutate(
+              scenario_chr = as.character(scenario),
+              panel = if (length(scenario_levels) > 1) {
+                paste0(scenario_chr, "\n", as.character(combo))
+              } else {
+                as.character(combo)
+              }
+            ) %>%
+            arrange(factor(scenario_chr, levels = scenario_levels), pair_id) %>%
+            pull(panel)
+          pair_df <- pair_df %>%
+            mutate(
+              panel = if (length(scenario_levels) > 1) {
+                paste0(as.character(scenario), "\n", as.character(combo))
+              } else {
+                as.character(combo)
+              },
+              panel = factor(panel, levels = unique(panel_levels))
+            )
+        }
+
+        if (nrow(pair_df) == 0) {
+          return(
+            ggplot() +
+              annotate("text", x = 0.5, y = 0.5, label = "No finite paired values available for the selected jitter parameters.", size = 6, color = "#999") +
+              theme_void()
+          )
+        }
+
+        original_df <- pair_df %>%
+          group_by(scenario, pair_id, combo, x_name, y_name) %>%
+          summarise(
+            x_original = median(x_original, na.rm = TRUE),
+            y_original = median(y_original, na.rm = TRUE),
+            .groups = "drop"
+          ) %>%
+          mutate(
+            panel = if (dplyr::n_distinct(pair_df$scenario) > 1) {
+              paste0(as.character(scenario), "\n", as.character(combo))
+            } else {
+              as.character(combo)
+            },
+            panel = factor(panel, levels = levels(pair_df$panel))
+          )
+        corr_df <- pair_df %>%
+          group_by(scenario, pair_id, combo) %>%
+          group_modify(~ {
+            df <- .x %>%
+              filter(is.finite(x_value), is.finite(y_value))
+            x_rng <- range(df$x_value, na.rm = TRUE)
+            y_rng <- range(df$y_value, na.rm = TRUE)
+            x_span <- diff(x_rng)
+            y_span <- diff(y_rng)
+            x_pos <- if (is.finite(x_span) && x_span > 0) x_rng[[2]] - 0.02 * x_span else x_rng[[2]]
+            y_pos <- if (is.finite(y_span) && y_span > 0) y_rng[[2]] - 0.03 * y_span else y_rng[[2]]
+
+            if (nrow(df) < 3 || length(unique(df$x_value)) < 2 || length(unique(df$y_value)) < 2) {
+              return(tibble::tibble(
+                corr_label = "r = NA\np = NA",
+                x_pos = x_pos,
+                y_pos = y_pos
+              ))
+            }
+
+            test <- tryCatch(
+              suppressWarnings(stats::cor.test(df$x_value, df$y_value, method = "pearson")),
+              error = function(e) NULL
+            )
+            if (is.null(test) || !is.finite(test$estimate[[1]])) {
+              return(tibble::tibble(
+                corr_label = "r = NA\np = NA",
+                x_pos = x_pos,
+                y_pos = y_pos
+              ))
+            }
+
+            p_txt <- if (is.finite(test$p.value)) {
+              if (test$p.value < 0.001) "< 0.001" else formatC(test$p.value, format = "f", digits = 3)
+            } else {
+              "NA"
+            }
+
+            tibble::tibble(
+              corr_label = paste0("r = ", formatC(unname(test$estimate[[1]]), format = "f", digits = 2), "\np = ", p_txt),
+              x_pos = x_pos,
+              y_pos = y_pos
+            )
+          }) %>%
+          mutate(
+            panel = if (dplyr::n_distinct(pair_df$scenario) > 1) {
+              paste0(as.character(scenario), "\n", as.character(combo))
+            } else {
+              as.character(combo)
+            },
+            panel = factor(panel, levels = levels(pair_df$panel))
+          ) %>%
+          ungroup()
+        x_axis_label <- "X parameter value"
+        y_axis_label <- "Y parameter value"
+        if (dplyr::n_distinct(pair_df$combo) == 1) {
+          single_x <- unique(as.character(pair_df$x_name_plot))
+          single_y <- unique(as.character(pair_df$y_name_plot))
+          if (length(single_x) == 1 && nzchar(single_x)) x_axis_label <- single_x
+          if (length(single_y) == 1 && nzchar(single_y)) y_axis_label <- single_y
+        } else if (isTRUE(exponentiate_matches)) {
+          x_axis_label <- "X parameter value"
+          y_axis_label <- "Y parameter value"
+        }
+
+        build_hdr_paths <- function(df, probs = c(0.5, 0.8, 0.95), grid_n = 80L) {
+          groups <- split(df, interaction(df$scenario, df$combo, drop = TRUE))
+          path_rows <- lapply(groups, function(g) {
+            g <- g[is.finite(g$x_value) & is.finite(g$y_value), , drop = FALSE]
+            if (nrow(g) < 5) return(NULL)
+            if (length(unique(g$x_value)) < 2 || length(unique(g$y_value)) < 2) return(NULL)
+            kde <- tryCatch(
+              MASS::kde2d(g$x_value, g$y_value, n = grid_n),
+              error = function(e) NULL
+            )
+            if (is.null(kde) || !is.matrix(kde$z)) return(NULL)
+            z_vals <- as.vector(kde$z)
+            z_vals <- z_vals[is.finite(z_vals)]
+            if (length(z_vals) == 0 || sum(z_vals) <= 0) return(NULL)
+            z_sorted <- sort(z_vals, decreasing = TRUE)
+            cum_mass <- cumsum(z_sorted) / sum(z_sorted)
+            thresholds <- vapply(probs, function(p) {
+              idx <- which(cum_mass >= p)[1]
+              if (!is.finite(idx)) return(NA_real_)
+              z_sorted[[idx]]
+            }, numeric(1))
+            thresholds <- thresholds[is.finite(thresholds)]
+            if (length(thresholds) == 0) return(NULL)
+            contour_rows <- lapply(seq_along(thresholds), function(i) {
+              cls <- grDevices::contourLines(kde$x, kde$y, kde$z, levels = thresholds[[i]])
+              if (length(cls) == 0) return(NULL)
+              do.call(rbind, lapply(seq_along(cls), function(j) {
+                data.frame(
+                  scenario = g$scenario[[1]],
+                  combo = g$combo[[1]],
+                  panel = g$panel[[1]],
+                  x = cls[[j]]$x,
+                  y = cls[[j]]$y,
+                  hdr_level = paste0(round(probs[[i]] * 100), "% HDR"),
+                  piece = paste0(as.character(g$scenario[[1]]), "::", as.character(g$combo[[1]]), "::", i, "::", j),
+                  stringsAsFactors = FALSE
+                )
+              }))
+            })
+            dplyr::bind_rows(contour_rows)
+          })
+          out <- dplyr::bind_rows(path_rows)
+          if (nrow(out) == 0) return(out)
+          out$hdr_level <- factor(out$hdr_level, levels = c("50% HDR", "80% HDR", "95% HDR"))
+          out
+        }
+
+        hdr_df <- if (identical(pair_style, "hdr")) build_hdr_paths(pair_df) else data.frame()
+
+        p <- ggplot(pair_df, aes(x = x_value, y = y_value))
+        if (identical(pair_style, "contour")) {
+          p <- p +
+            stat_density_2d(color = "#ff7f0e", linewidth = 0.7, alpha = 0.7, na.rm = TRUE) +
+            geom_point(color = "#ff7f0e", alpha = 0.5, size = 1.8, na.rm = TRUE)
+        } else if (identical(pair_style, "hdr")) {
+          p <- p +
+            geom_point(color = "#ff9d4d", alpha = 0.45, size = 1.8, na.rm = TRUE) +
+            geom_path(
+              data = hdr_df,
+              aes(x = x, y = y, color = hdr_level, group = piece),
+              inherit.aes = FALSE,
+              linewidth = 0.9,
+              alpha = 0.95,
+              na.rm = TRUE
+            ) +
+            scale_color_manual(values = c("50% HDR" = "#d95f02", "80% HDR" = "#fe9929", "95% HDR" = "#fec44f"), drop = FALSE)
+        } else if (identical(pair_style, "ellipse")) {
+          p <- p +
+            geom_point(color = "#ff9d4d", alpha = 0.5, size = 1.8, na.rm = TRUE) +
+            stat_ellipse(color = "#ff7f0e", linewidth = 0.9, alpha = 0.9, type = "norm", na.rm = TRUE)
+        } else {
+          p <- p +
+            geom_point(color = "#ff7f0e", alpha = 0.6, size = 1.9, na.rm = TRUE)
+        }
+
+        p <- p +
+          geom_point(
+            data = original_df,
+            aes(x = x_original, y = y_original),
+            inherit.aes = FALSE,
+            color = "#d62728",
+            fill = "#d62728",
+            shape = 23,
+            size = 3.2,
+            stroke = 0.5,
+            na.rm = TRUE
+          ) +
+          geom_text(
+            data = corr_df,
+            aes(x = x_pos, y = y_pos, label = corr_label),
+            inherit.aes = FALSE,
+            hjust = 1,
+            vjust = 1,
+            size = 3.4,
+            color = "#333333",
+            lineheight = 0.95,
+            na.rm = TRUE
+          ) +
+          facet_wrap(~ panel, scales = "free", ncol = max(1, dplyr::n_distinct(pair_df$combo))) +
+          labs(
+            x = x_axis_label,
+            y = y_axis_label,
+            title = "Jitter Parameter Pair Compare",
+            subtitle = NULL
+          ) +
+          theme_bw(base_size = 11) +
+          theme(
+            strip.text = element_text(face = "bold"),
+            strip.background = element_rect(fill = "#d9edf7"),
+            panel.grid.minor = element_blank(),
+            legend.position = if (identical(pair_style, "hdr")) "top" else "none"
+          )
+
+        plot_subtitle <- if (identical(pair_style, "hdr")) {
+          "Orange points = final fitted pairs only. HDR lines show approximate 50/80/95% highest-density regions. Red diamond = original model point."
+        } else if (identical(pair_style, "ellipse")) {
+          "Orange points = final fitted pairs only. Orange ellipse = normal-approximation spread. Red diamond = original model point."
+        } else if (identical(pair_style, "points")) {
+          "Orange points = final fitted pairs only. Red diamond = original model point."
+        } else {
+          "Orange points/contours = final fitted pairs only. Red diamond = original model point."
+        }
+        if (isTRUE(exponentiate_matches)) {
+          plot_subtitle <- paste0(
+            plot_subtitle,
+            " exp() applied to names matching: ",
+            paste(exp_patterns, collapse = ", "),
+            "."
+          )
+        }
+        if (isTRUE(converged_only)) {
+          plot_subtitle <- paste0(plot_subtitle, " Final fitted runs filtered to max_grad <= ", format(converged_max_grad, trim = TRUE), ".")
+        }
+        if (!is.null(jitter_counts)) {
+          plot_subtitle <- paste0(plot_subtitle, " Converged/total: ", jitter_counts, ".")
+        }
+
+        return(
+          cowplot::ggdraw() +
+            cowplot::draw_label(
+              "Jitter Parameter Pair Compare",
+              x = 0.5, y = 0.995, hjust = 0.5, vjust = 1, fontface = "bold", size = 15
+            ) +
+            cowplot::draw_label(
+              plot_subtitle,
+              x = 0.5, y = 0.965, hjust = 0.5, vjust = 1, size = 10
+            ) +
+            cowplot::draw_plot(p, x = 0, y = 0, width = 1, height = 0.93)
+        )
+      }
+
+      if (identical(param_display, "compare")) {
+        compare_sections <- if (is.null(filters$jitter_compare_sections)) c("before", "after") else filters$jitter_compare_sections
+        show_original_line <- isTRUE(filters$jitter_compare_show_original)
+        show_median_line <- isTRUE(filters$jitter_compare_show_median)
+        normalize_density <- isTRUE(filters$jitter_compare_normalize)
+        compare_df <- data %>%
+          mutate(
+            scenario = factor(as.character(scenario), levels = unique(as.character(scenario))),
+            parameter = as.character(parameter),
+            exp_transform = matches_exp_pattern(parameter),
+            parameter = exp_label(parameter, exp_transform),
+            value = suppressWarnings(as.numeric(value)),
+            original_value = suppressWarnings(as.numeric(original_value)),
+            value = ifelse(exp_transform & is.finite(value), exp(value), value),
+            original_value = ifelse(exp_transform & is.finite(original_value), exp(original_value), original_value),
+            distribution = factor(as.character(distribution), levels = c("Before (jittered input)", "After (fitted)"))
+          ) %>%
+          filter(is.finite(value), !is.na(distribution))
+
+        if (nrow(compare_df) == 0) {
+          return(
+            ggplot() +
+              annotate("text", x = 0.5, y = 0.5, label = "No finite values available for the selected jitter parameter.", size = 6, color = "#999") +
+              theme_void()
+          )
+        }
+
+        original_df <- compare_df %>%
+          distinct(scenario, parameter, distribution, original_value)
+        median_df <- compare_df %>%
+          group_by(scenario, parameter, distribution) %>%
+          summarise(median_value = stats::median(value, na.rm = TRUE), .groups = "drop")
+
+        build_density_panel <- function(plot_df, panel_title) {
+          scenario_levels <- unique(as.character(compare_df$scenario))
+          parameter_levels <- unique(as.character(compare_df$parameter))
+          local_key <- unique(as.character(plot_df$distribution))[1]
+          local_original_df <- original_df %>%
+            filter(distribution == local_key) %>%
+            mutate(
+              scenario = factor(as.character(scenario), levels = scenario_levels),
+              parameter = factor(as.character(parameter), levels = parameter_levels)
+            )
+          local_median_df <- median_df %>%
+            filter(distribution == local_key) %>%
+            mutate(
+              scenario = factor(as.character(scenario), levels = scenario_levels),
+              parameter = factor(as.character(parameter), levels = parameter_levels)
+            )
+          local_df <- plot_df %>%
+            mutate(
+              scenario = factor(as.character(scenario), levels = scenario_levels),
+              parameter = factor(as.character(parameter), levels = parameter_levels)
+            )
+
+          ggplot(local_df, aes(x = value)) +
+            geom_density(
+              aes(y = if (isTRUE(normalize_density)) after_stat(scaled) else after_stat(density)),
+              fill = "#9ecae1",
+              color = "#2b6c8a",
+              alpha = 0.35,
+              linewidth = 0.9,
+              adjust = 1.1,
+              na.rm = TRUE
+            ) +
+            geom_rug(
+              sides = "b",
+              color = "#2b6c8a",
+              alpha = 0.45,
+              linewidth = 0.35,
+              na.rm = TRUE
+            ) +
+            {
+              if (show_original_line) geom_vline(
+                data = local_original_df,
+                aes(xintercept = original_value),
+                inherit.aes = FALSE,
+                color = "#d62728",
+                linetype = "dashed",
+                linewidth = 1.0,
+                alpha = 0.9,
+                na.rm = TRUE
+              )
+            } +
+            {
+              if (show_median_line) geom_vline(
+                data = local_median_df,
+                aes(xintercept = median_value),
+                inherit.aes = FALSE,
+                color = "#111111",
+                linetype = "solid",
+                linewidth = 0.95,
+                alpha = 0.95,
+                na.rm = TRUE
+              )
+            } +
+            facet_grid(
+              rows = vars(scenario),
+              cols = vars(parameter),
+              scales = "free"
+            ) +
+            labs(
+              x = if (isTRUE(exponentiate_matches)) "Parameter value (exp for matching names)" else "Parameter value",
+              y = if (isTRUE(normalize_density)) "Scaled density" else "Density",
+              title = panel_title
+            ) +
+            theme_bw(base_size = 11) +
+            theme(
+              strip.text = element_text(face = "bold"),
+              strip.background = element_rect(fill = "#d9edf7"),
+              panel.grid.minor = element_blank(),
+              plot.title = element_text(size = 11, face = "bold")
+            )
+        }
+
+        before_df <- compare_df %>% filter(distribution == "Before (jittered input)")
+        after_df <- compare_df %>% filter(distribution == "After (fitted)")
+        section_plots <- list()
+        if ("before" %in% compare_sections && nrow(before_df) > 0) {
+          section_plots[[length(section_plots) + 1]] <- build_density_panel(before_df, "Before (jittered input)")
+        }
+        if ("after" %in% compare_sections && nrow(after_df) > 0) {
+          section_plots[[length(section_plots) + 1]] <- build_density_panel(after_df, "After (fitted)")
+        }
+        if (length(section_plots) == 0) {
+          return(
+            ggplot() +
+              annotate("text", x = 0.5, y = 0.5, label = "No compare sections selected.", size = 6, color = "#999") +
+              theme_void()
+          )
+        }
+
+        plot_subtitle <- if (isTRUE(normalize_density)) {
+          "Each panel shows one model and one parameter, with panel-specific scales and density peak normalised to 1. Rug marks show individual jitter seeds."
+        } else {
+          "Each panel shows one model and one parameter, with panel-specific x/y scales. Rug marks show individual jitter seeds."
+        }
+        if (show_original_line) {
+          plot_subtitle <- paste0(plot_subtitle, " Red dashed vertical line = original value.")
+        }
+        if (show_median_line) {
+          plot_subtitle <- paste0(plot_subtitle, " Black solid vertical line = jitter median.")
+        }
+        if (isTRUE(exponentiate_matches)) {
+          plot_subtitle <- paste0(
+            plot_subtitle,
+            " exp() applied to names matching: ",
+            paste(exp_patterns, collapse = ", "),
+            "."
+          )
+        }
+        if (isTRUE(converged_only)) {
+          plot_subtitle <- paste0(
+            plot_subtitle,
+            " Final fitted runs filtered to max_grad <= ",
+            format(converged_max_grad, trim = TRUE),
+            "."
+          )
+        }
+        if (!is.null(jitter_counts)) {
+          plot_subtitle <- paste0(plot_subtitle, " Converged/total: ", jitter_counts, ".")
+        }
+
+        return(
+          cowplot::ggdraw() +
+            cowplot::draw_label(
+              paste0("Jitter Parameter Density Compare: ", paste(sanitize_text_vector(filters$jitter_param_name), collapse = ", ")),
+              x = 0.5, y = 0.995, hjust = 0.5, vjust = 1, fontface = "bold", size = 15
+            ) +
+            cowplot::draw_label(
+              plot_subtitle,
+              x = 0.5, y = 0.965, hjust = 0.5, vjust = 1, size = 10
+            ) +
+            cowplot::draw_plot(
+              cowplot::plot_grid(plotlist = section_plots, ncol = 1, align = "v"),
+              x = 0, y = 0, width = 1, height = 0.93
+            )
+        )
+      }
 
       if (identical(param_display, "family")) {
         signed_max_abs <- function(x) {
@@ -7699,7 +8749,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
               linewidth = 0.9,
               na.rm = TRUE
             ) +
-            facet_wrap(~ scenario, ncol = facet_ncol, scales = "free_y") +
+            facet_wrap(~ scenario, ncol = facet_ncol, scales = "fixed") +
             scale_color_viridis_d(option = "D", guide = "none") +
             labs(x = x_lab, y = y_lab) +
             theme_bw(base_size = 11) +
@@ -7734,7 +8784,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
               linewidth = 0.9,
               na.rm = TRUE
             ) +
-            facet_wrap(~ scenario, ncol = facet_ncol, scales = "free_y") +
+            facet_wrap(~ scenario, ncol = facet_ncol, scales = "fixed") +
             labs(x = x_lab, y = y_lab) +
             theme_bw(base_size = 11) +
             theme(
@@ -8149,7 +9199,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
       bottom_legend_spacing_x_pt <- min(50, max(14, round(0.95 * bottom_max_chars + 8)))
       bottom_legend_key_width_pt <- min(32, max(13, round(0.7 * bottom_max_chars + 8)))
       bottom_legend_text_size <- if (bottom_max_chars >= 20) 8.4 else if (bottom_max_chars >= 14) 8.7 else 9
-      bottom_x_labels <- setNames(as.character(influence_comp_df$x_label), as.character(influence_comp_df$x_id))
+      format_influence_x_labels <- function(x) {
+        vals <- as.character(x)
+        nums <- suppressWarnings(as.numeric(vals))
+        out <- ifelse(is.finite(nums), sprintf("%.2f", nums), vals)
+        out
+      }
+      bottom_x_labels <- setNames(format_influence_x_labels(influence_comp_df$x_label), as.character(influence_comp_df$x_id))
 
       bottom_plot <- ggplot(influence_comp_df, aes(x = x_id, y = change, fill = group_val)) +
         geom_col(aes(width = bar_width), alpha = 0.9, color = "white", linewidth = 0.2, na.rm = TRUE) +
@@ -8239,7 +9295,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         panel_cols = panel_cols,
         label_fn = x_axis_labels_fn
       )
-      bottom_x_labels <- setNames(as.character(component_df$x_label), as.character(component_df$x_id))
+      bottom_x_labels <- setNames(format_influence_x_labels(component_df$x_label), as.character(component_df$x_id))
 
       p <- ggplot(component_df, aes(x = x_id, y = change, fill = group_val)) +
         geom_col(aes(width = bar_width), alpha = 0.9, color = "white", linewidth = 0.2, na.rm = TRUE) +
@@ -8383,7 +9439,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
                     input$lik_show_profile_cutoff,
                     input$lik_jitter_grad_reference, input$lik_jitter_converged_only_diagnostics,
                     input$lik_jitter_rel_diff_threshold,
-                    input$lik_jitter_param_view, input$lik_jitter_param_display, input$lik_jitter_param_scope, input$lik_jitter_param_window,
+                    input$lik_jitter_param_view, input$lik_jitter_param_display, input$lik_jitter_param_name, input$lik_jitter_compare_sections, input$lik_jitter_compare_show_original, input$lik_jitter_compare_show_median, input$lik_jitter_compare_normalize, input$lik_jitter_pair_style, input$lik_jitter_exponentiate, input$lik_jitter_exp_patterns, jitter_pair_change_nonce(), input$lik_jitter_param_scope, input$lik_jitter_param_window,
                     input$lik_jitter_converged_only, input$lik_jitter_converged_max_grad,
                     input$lik_jitter_derived_view, input$lik_jitter_param_input_scale,
                     input$lik_jitter_param_metric, input$lik_jitter_show_ref_points, input$lik_jitter_param_range_pct,
