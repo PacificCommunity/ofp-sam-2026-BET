@@ -153,8 +153,26 @@ if (length(phase1_end_rel) == 0) {
   stop("Could not locate PHASE1 terminator in doitall.sh")
 }
 phase1_end_idx <- phase1_cmd_idx + phase1_end_rel[[1]]
+phase1_only_end_idx <- phase1_end_idx
+
+if (phase1_end_idx < length(doitall_lines_for_phase1)) {
+  trailing_lines <- doitall_lines_for_phase1[(phase1_end_idx + 1):length(doitall_lines_for_phase1)]
+  trailing_nonempty_idx <- which(nzchar(trimws(trailing_lines)))
+
+  if (length(trailing_nonempty_idx) > 0) {
+    first_trailing_idx <- phase1_end_idx + trailing_nonempty_idx[[1]]
+    first_trailing_line <- trimws(doitall_lines_for_phase1[[first_trailing_idx]])
+
+    ## Some legacy doitall.sh files wrap phase commands in `if ...; then ... fi`.
+    ## Keep the closing `fi` so the extracted phase1-only script remains valid shell.
+    if (identical(first_trailing_line, "fi")) {
+      phase1_only_end_idx <- first_trailing_idx
+    }
+  }
+}
+
 phase1_only_path <- file.path(seed_dir_abs, "doitall_phase1_only.sh")
-writeLines(doitall_lines_for_phase1[1:phase1_end_idx], con = phase1_only_path)
+writeLines(doitall_lines_for_phase1[1:phase1_only_end_idx], con = phase1_only_path)
 Sys.chmod(phase1_only_path, mode = "0755")
 
 cat("Running phase0+phase1 to build jitter baseline par\n")
