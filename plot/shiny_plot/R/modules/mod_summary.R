@@ -89,6 +89,58 @@ mod_summary_ui <- function() {
 mod_summary_server <- function(input, output, session, rv) {
     # TAB 1: MODEL SUMMARY
     # ===========================================================================
+
+    get_model_year_label <- function(model_name) {
+      year_range <- rv$YearRanges[[model_name]]
+      if (is.null(year_range)) return(NA_character_)
+
+      min_year <- suppressWarnings(as.integer(year_range$minYear))
+      max_year <- suppressWarnings(as.integer(year_range$maxYear))
+      min_year <- if (length(min_year) > 0) min_year[[1]] else NA_integer_
+      max_year <- if (length(max_year) > 0) max_year[[1]] else NA_integer_
+
+      if (!is.finite(min_year) || !is.finite(max_year)) return(NA_character_)
+      paste(min_year, "-", max_year)
+    }
+
+    get_model_summary_details <- function(model_name) {
+      par <- rv$ParOut_list[[model_name]]
+      if (is.null(par) || !methods::is(par, "MFCLPar")) {
+        return(list(
+          valid = FALSE,
+          model_name = model_name,
+          message = "Model summary unavailable because ParOut is missing."
+        ))
+      }
+
+      dims <- tryCatch(as.list(par@dimensions), error = function(e) NULL)
+      if (is.null(dims)) {
+        return(list(
+          valid = FALSE,
+          model_name = model_name,
+          message = "Model summary unavailable because model dimensions could not be read."
+        ))
+      }
+
+      info <- rv$Info_list[[model_name]]
+      description <- if (!is.null(info$description) && nzchar(info$description)) info$description else NA_character_
+      config_summary <- if (!is.null(info$config_summary) && nzchar(info$config_summary)) info$config_summary else NA_character_
+
+      list(
+        valid = TRUE,
+        model_name = model_name,
+        par = par,
+        dims = dims,
+        description = description,
+        config_summary = config_summary,
+        year_label = get_model_year_label(model_name)
+      )
+    }
+
+    get_valid_model_summary_details <- function(model_names) {
+      details <- lapply(model_names, get_model_summary_details)
+      Filter(function(x) isTRUE(x$valid), details)
+    }
   
     parse_prefix <- function(var_name) {
       v <- tolower(trimws(as.character(var_name)))
@@ -318,31 +370,54 @@ mod_summary_server <- function(input, output, session, rv) {
     # Render model summary table
     output$summary_table <- renderDT({
       req(rv$data_loaded, input$scenarios)
-    
-      # Extract parameters from each selected scenario
-      params_df <- imap_dfr(rv$ParOut_list[input$scenarios], function(par, model_name) {
-        dims <- as.list(par@dimensions)
-        year_range <- rv$YearRanges[[model_name]]
-        info <- rv$Info_list[[model_name]]
-        description <- if (!is.null(info$description) && nzchar(info$description)) info$description else NA_character_
-        config_summary <- if (!is.null(info$config_summary) && nzchar(info$config_summary)) info$config_summary else NA_character_
+
+      details <- lapply(input$scenarios, get_model_summary_details)
+      valid_details <- Filter(function(x) isTRUE(x$valid), details)
+      invalid_details <- Filter(function(x) !isTRUE(x$valid), details)
+
+      params_df <- dplyr::bind_rows(lapply(valid_details, function(detail) {
         out <- data.frame(
-          Model = model_name,
-          Model_Description = description,
-          Max_Grad = sprintf("%.6f", as.numeric(par@max_grad)),
-          Obj_Fun = sprintf("%.2f", as.numeric(par@obj_fun)),
-          N_Pars = as.numeric(par@n_pars),
-          Fisheries = dims$fisheries,
-          Years = paste(year_range$minYear, "-", year_range$maxYear),
-          Regions = dims$regions,
-          Seasons = dims$seasons
+          Model = detail$model_name,
+          Model_Description = detail$description,
+          Max_Grad = sprintf("%.6f", as.numeric(detail$par@max_grad)),
+          Obj_Fun = sprintf("%.2f", as.numeric(detail$par@obj_fun)),
+          N_Pars = as.numeric(detail$par@n_pars),
+          Fisheries = detail$dims$fisheries,
+          Years = detail$year_label,
+          Regions = detail$dims$regions,
+          Seasons = detail$dims$seasons,
+          stringsAsFactors = FALSE
         )
         if (isTRUE(input$summary_show_run_description)) {
-          out$Run_Description <- config_summary
+          out$Run_Description <- detail$config_summary
         }
         out
-      })
-    
+      }))
+
+      if (length(invalid_details) > 0) {
+        invalid_rows <- dplyr::bind_rows(lapply(invalid_details, function(detail) {
+          out <- data.frame(
+            Model = detail$model_name,
+            Model_Description = detail$message,
+            Max_Grad = NA_character_,
+            Obj_Fun = NA_character_,
+            N_Pars = NA_real_,
+            Fisheries = NA_real_,
+            Years = NA_character_,
+            Regions = NA_real_,
+            Seasons = NA_real_,
+            stringsAsFactors = FALSE
+          )
+          if (isTRUE(input$summary_show_run_description)) {
+            out$Run_Description <- NA_character_
+          }
+          out
+        }))
+        params_df <- dplyr::bind_rows(params_df, invalid_rows)
+      }
+
+      validate(need(nrow(params_df) > 0, "No selected models have summary information available."))
+
       # Display as interactive table
       datatable(params_df, 
                 options = list(pageLength = 10, scrollX = TRUE, dom = 'tip', deferRender = TRUE),
@@ -372,10 +447,22 @@ mod_summary_server <- function(input, output, session, rv) {
     # Value box: overall year range
     output$overall_year_range <- renderValueBox({
       req(rv$data_loaded)
-      all_years <- range(unlist(lapply(rv$YearRanges[input$scenarios], 
-                                       function(x) c(x$minYear, x$maxYear))))
+      valid_details <- get_valid_model_summary_details(input$scenarios)
+      all_years <- unlist(lapply(valid_details, function(detail) {
+        year_range <- rv$YearRanges[[detail$model_name]]
+        c(
+          suppressWarnings(as.integer(year_range$minYear)),
+          suppressWarnings(as.integer(year_range$maxYear))
+        )
+      }))
+      all_years <- all_years[is.finite(all_years)]
+      year_label <- if (length(all_years) > 0) {
+        paste(min(all_years), "-", max(all_years))
+      } else {
+        "Unavailable"
+      }
       valueBox(
-        paste(all_years[1], "-", all_years[2]), "Overall Year Range", 
+        year_label, "Overall Year Range", 
         icon = icon("calendar"),
         color = "yellow"
       )
@@ -384,24 +471,35 @@ mod_summary_server <- function(input, output, session, rv) {
     # Render model-specific info boxes
     output$model_info_boxes <- renderUI({
       req(rv$data_loaded, input$scenarios)
-    
-      # Create a box for each selected model
+
       boxes <- lapply(input$scenarios, function(model_name) {
-        par <- rv$ParOut_list[[model_name]]
-        dims <- as.list(par@dimensions)
-        year_range <- rv$YearRanges[[model_name]]
-        info <- rv$Info_list[[model_name]]
-        description <- if (!is.null(info$description) && nzchar(info$description)) info$description else "No description available"
-        config_summary <- if (!is.null(info$config_summary) && nzchar(info$config_summary)) info$config_summary else "No config summary available"
-      
-        # Count index fisheries
+        detail <- get_model_summary_details(model_name)
+        if (!isTRUE(detail$valid)) {
+          return(column(
+            width = 4,
+            box(
+              title = model_name,
+              width = NULL,
+              status = "warning",
+              solidHeader = FALSE,
+              collapsible = TRUE,
+              collapsed = FALSE,
+              tags$div(
+                style = "padding: 10px; font-size: 13px;",
+                detail$message
+              )
+            )
+          ))
+        }
+
+        description <- if (!is.na(detail$description) && nzchar(detail$description)) detail$description else "No description available"
+        config_summary <- if (!is.na(detail$config_summary) && nzchar(detail$config_summary)) detail$config_summary else "No config summary available"
         n_index <- length(rv$INDEX_FISHERIES_MAPS[[model_name]])
-      
-        # Create info box
+
         column(
           width = 4,
           box(
-            title = model_name,
+            title = detail$model_name,
             width = NULL,
             status = "primary",
             solidHeader = FALSE,
@@ -425,7 +523,7 @@ mod_summary_server <- function(input, output, session, rv) {
                 style = "width: 100%; font-size: 13px;",
                 tags$tr(
                   tags$td(tags$strong("🎣 Fisheries:"), style = "width: 60%;"),
-                  tags$td(dims$fisheries, style = "text-align: right;")
+                  tags$td(detail$dims$fisheries, style = "text-align: right;")
                 ),
                 tags$tr(
                   tags$td(tags$strong("📊 Index Fisheries:"), style = "padding-top: 5px;"),
@@ -434,33 +532,33 @@ mod_summary_server <- function(input, output, session, rv) {
                 tags$tr(
                   tags$td(tags$strong("📅 Years:"), style = "padding-top: 5px;"),
                   tags$td(
-                    paste(year_range$minYear, "-", year_range$maxYear),
+                    if (!is.na(detail$year_label)) detail$year_label else "Unavailable",
                     style = "text-align: right; padding-top: 5px;"
                   )
                 ),
                 tags$tr(
                   tags$td(tags$strong("🗺️ Regions:"), style = "padding-top: 5px;"),
-                  tags$td(dims$regions, style = "text-align: right; padding-top: 5px;")
+                  tags$td(detail$dims$regions, style = "text-align: right; padding-top: 5px;")
                 ),
                 tags$tr(
                   tags$td(tags$strong("📆 Seasons:"), style = "padding-top: 5px;"),
-                  tags$td(dims$seasons, style = "text-align: right; padding-top: 5px;")
+                  tags$td(detail$dims$seasons, style = "text-align: right; padding-top: 5px;")
                 ),
                 tags$tr(
                   tags$td(tags$strong("📈 Parameters:"), style = "padding-top: 5px;"),
-                  tags$td(par@n_pars, style = "text-align: right; padding-top: 5px;")
+                  tags$td(detail$par@n_pars, style = "text-align: right; padding-top: 5px;")
                 ),
                 tags$tr(
                   tags$td(tags$strong("🎯 Max Gradient:"), style = "padding-top: 5px;"),
                   tags$td(
-                    sprintf("%.2e", as.numeric(par@max_grad)),
+                    sprintf("%.2e", as.numeric(detail$par@max_grad)),
                     style = "text-align: right; padding-top: 5px;"
                   )
                 ),
                 tags$tr(
                   tags$td(tags$strong("💰 Obj Function:"), style = "padding-top: 5px;"),
                   tags$td(
-                    sprintf("%.2f", as.numeric(par@obj_fun)),
+                    sprintf("%.2f", as.numeric(detail$par@obj_fun)),
                     style = "text-align: right; padding-top: 5px;"
                   )
                 )
