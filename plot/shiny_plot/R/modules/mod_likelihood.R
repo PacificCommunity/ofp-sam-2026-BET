@@ -4217,9 +4217,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
       n_scenarios <- dplyr::n_distinct(data$scenario)
       if (n_scenarios == 1) {
-        p <- p + facet_wrap(~program, scales = "free_y", ncol = facet_ncol)
+        p <- p + facet_wrap(~program, scales = "fixed", ncol = facet_ncol)
       } else {
-        p <- p + facet_grid(rows = vars(scenario), cols = vars(program), scales = "free_y")
+        p <- p + facet_grid(rows = vars(scenario), cols = vars(program), scales = "fixed")
       }
     } else if (isTRUE(split_by_region) && "region" %in% names(data)) {
       region_labels <- levels(data$region)
@@ -4231,7 +4231,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         p <- p +
           facet_wrap(
             ~region,
-            scales = "free_y",
+            scales = "fixed",
             ncol = facet_ncol,
             labeller = as_labeller(region_labeller)
           ) +
@@ -4241,10 +4241,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
             plot.margin = margin(8, 8, 10, 8)
           )
       } else {
-        p <- p + facet_grid(rows = vars(scenario), cols = vars(region), scales = "free_y")
+        p <- p + facet_grid(rows = vars(scenario), cols = vars(region), scales = "fixed")
       }
     } else {
-      p <- p + facet_wrap(~scenario, scales = "free", ncol = facet_ncol)
+      p <- p + facet_wrap(~scenario, scales = "free_x", ncol = facet_ncol)
     }
 
     if (!is.null(label) && !(isTRUE(split_by_region) && "region" %in% names(data))) {
