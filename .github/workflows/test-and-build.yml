@@ -1,4 +1,4 @@
-name: Test MFCL Model and Generate Plots
+name: Model CI
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  check-changes:
+  detect-model-changes:
     runs-on: ubuntu-22.04
     outputs:
       model: ${{ steps.changes.outputs.model }}
@@ -19,7 +19,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         
-      - name: Check for file changes
+      - name: Detect model-related changes
         uses: dorny/paths-filter@v2
         id: changes
         with:
@@ -30,24 +30,24 @@ jobs:
               - '!README.md'
               - '!.github/**'
       
-      - name: Debug - Show what changed
+      - name: Summarize detected changes
         run: |
           echo "Model files changed: ${{ steps.changes.outputs.model }}"
 
   test-model:
     runs-on: ubuntu-22.04
-    needs: check-changes
-    if: ${{ needs.check-changes.outputs.model == 'true' }}
+    needs: detect-model-changes
+    if: ${{ needs.detect-model-changes.outputs.model == 'true' }}
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
     
-    - name: Run MFCL model test
+    - name: Run model workflow
       run: make docker-run
       timeout-minutes: 60
     
-    - name: Upload model outputs
+    - name: Upload model artifacts
       if: always()
       uses: actions/upload-artifact@v4
       with:
@@ -56,15 +56,3 @@ jobs:
           model/
         retention-days: 30
     
-    - name: Generate plots
-      if: success()
-      run: make docker-plot
-      timeout-minutes: 30
-    
-    - name: Upload generated plots
-      if: success()
-      uses: actions/upload-artifact@v4
-      with:
-        name: mfcl-plots-${{ github.sha }}
-        path: plot/plots.html
-        retention-days: 90
