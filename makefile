@@ -140,6 +140,31 @@ shiny_launcher_bg:
 
 shiny_bg: shiny_plot_bg shiny_launcher_bg
 
+docker-shiny_plot:
+	docker run --rm -it --user "$(DOCKER_USER)" -p $(SHINY_PLOT_PORT):$(SHINY_PLOT_PORT) -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript -e "shiny::runApp('plot/shiny_plot', host='0.0.0.0', port=$(SHINY_PLOT_PORT), launch.browser=FALSE)"
+
+docker-shiny_launcher:
+	docker run --rm -it --user "$(DOCKER_USER)" -p $(SHINY_LAUNCHER_PORT):$(SHINY_LAUNCHER_PORT) -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript -e "shiny::runApp('launchers/shiny_launcher', host='0.0.0.0', port=$(SHINY_LAUNCHER_PORT), launch.browser=FALSE)"
+
+docker-shiny_plot_bg:
+	-docker rm -f bet2026_shiny_plot >/dev/null 2>&1
+	docker run -d --name bet2026_shiny_plot --user "$(DOCKER_USER)" -p $(SHINY_PLOT_PORT):$(SHINY_PLOT_PORT) -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript -e "shiny::runApp('plot/shiny_plot', host='0.0.0.0', port=$(SHINY_PLOT_PORT), launch.browser=FALSE)"
+	@echo "docker shiny_plot running at http://127.0.0.1:$(SHINY_PLOT_PORT)"
+
+docker-shiny_launcher_bg:
+	-docker rm -f bet2026_shiny_launcher >/dev/null 2>&1
+	docker run -d --name bet2026_shiny_launcher --user "$(DOCKER_USER)" -p $(SHINY_LAUNCHER_PORT):$(SHINY_LAUNCHER_PORT) -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(DOCKER_IMAGE) Rscript -e "shiny::runApp('launchers/shiny_launcher', host='0.0.0.0', port=$(SHINY_LAUNCHER_PORT), launch.browser=FALSE)"
+	@echo "docker shiny_launcher running at http://127.0.0.1:$(SHINY_LAUNCHER_PORT)"
+
+docker-shiny_bg: docker-shiny_plot_bg docker-shiny_launcher_bg
+
+docker-shiny_stop:
+	-docker rm -f bet2026_shiny_plot bet2026_shiny_launcher >/dev/null 2>&1
+	@echo "stopped docker shiny apps (if running)"
+
+docker-shiny_status:
+	-docker ps --filter name=bet2026_shiny_plot --filter name=bet2026_shiny_launcher
+
 shiny_plot_stop:
 	-pkill -f "shiny::runApp\\('plot/shiny_plot'" || true
 	@echo "stopped shiny_plot (if running)"
@@ -153,4 +178,4 @@ shiny_stop: shiny_plot_stop shiny_launcher_stop
 shiny_status:
 	-ps -ef | grep "shiny::runApp" | grep -v grep || true
 
-.PHONY: shiny_launcher shiny_plot shiny_plot_bg shiny_launcher_bg shiny_bg shiny_plot_stop shiny_launcher_stop shiny_stop shiny_status
+.PHONY: shiny_launcher shiny_plot shiny_plot_bg shiny_launcher_bg shiny_bg docker-shiny_plot docker-shiny_launcher docker-shiny_plot_bg docker-shiny_launcher_bg docker-shiny_bg docker-shiny_stop docker-shiny_status shiny_plot_stop shiny_launcher_stop shiny_stop shiny_status
