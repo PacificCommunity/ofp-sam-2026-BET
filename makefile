@@ -1,5 +1,5 @@
 # Docker image and working directory
-DOCKER_IMAGE=ghcr.io/pacificcommunity/bet-2026:v1.5
+DOCKER_IMAGE=ghcr.io/pacificcommunity/bet-2026:v1.6
 WORKDIR=/workspace
 DOCKER_USER=$(shell id -u):$(shell id -g)
 
