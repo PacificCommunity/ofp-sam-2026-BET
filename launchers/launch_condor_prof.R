@@ -7,7 +7,7 @@ github_pat <- Sys.getenv("GIT_PAT")
 github_username <- "kyuhank"
 github_org <- "PacificCommunity"
 github_repo <- "ofp-sam-2026-bet"
-docker_image <- "ghcr.io/pacificcommunity/bet-2026:v1.6"
+docker_image <- "ghcr.io/pacificcommunity/bet-2026:v1.7"
 condor_memory <- "12GB"
 condor_disk <- "10GB"
 condor_cpus <- 2
