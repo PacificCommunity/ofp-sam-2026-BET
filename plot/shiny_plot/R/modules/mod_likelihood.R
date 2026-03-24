@@ -247,10 +247,17 @@ mod_likelihood_ui <- function() {
         ),
         conditionalPanel(
           condition = "input.lik_main_tab == 'likelihood'",
-          checkboxInput(
-            "lik_show_profile_cutoff",
-            "Show 95% profile cutoff (1.92)",
-            value = TRUE
+          tagList(
+            checkboxInput(
+              "lik_show_profile_cutoff",
+              "Show 95% profile cutoff (1.92)",
+              value = TRUE
+            ),
+            checkboxInput(
+              "lik_share_y_axis",
+              "Share y-axis across facets",
+              value = TRUE
+            )
           )
         ),
         sliderInput(
@@ -1031,6 +1038,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
       facet_ncol = facet_ncol,
       show_influence = isTRUE(input$lik_show_influence),
       show_profile_cutoff = isTRUE(input$lik_show_profile_cutoff),
+      share_y_axis = isTRUE(input$lik_share_y_axis),
       plot_height = plot_height,
       plot_width = plot_width,
       jitter_grad_reference = jitter_grad_reference,
@@ -3979,7 +3987,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
   create_piner_plot <- function(data, group_var, x_label, label = NULL, facet_ncol = 2, split_by_region = FALSE,
                                 y_label = "Changes in Likelihood", legend_mode = "all", legend_top_n = 12,
                                 deemphasize_others = FALSE, x_labels_fn = function(x) x / 1000,
-                                show_profile_cutoff = TRUE) {
+                                show_profile_cutoff = TRUE, share_y_axis = TRUE) {
     if (nrow(data) == 0) return(NULL)
 
     if ("region" %in% names(data)) {
@@ -4058,6 +4066,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
     top_groups <- character(0)
     panel_top_groups <- data.frame()
     panel_grouping_vars <- "scenario"
+
+    shared_panel_scales <- if (isTRUE(share_y_axis)) "fixed" else "free_y"
+    scenario_panel_scales <- if (isTRUE(share_y_axis)) "free_x" else "free"
 
     if (isTRUE(group_var %in% c("release_group", "release_region")) && "program" %in% names(data)) {
       panel_grouping_vars <- c(panel_grouping_vars, "program")
@@ -4217,9 +4228,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
 
       n_scenarios <- dplyr::n_distinct(data$scenario)
       if (n_scenarios == 1) {
-        p <- p + facet_wrap(~program, scales = "fixed", ncol = facet_ncol)
+        p <- p + facet_wrap(~program, scales = shared_panel_scales, ncol = facet_ncol)
       } else {
-        p <- p + facet_grid(rows = vars(scenario), cols = vars(program), scales = "fixed")
+        p <- p + facet_grid(rows = vars(scenario), cols = vars(program), scales = shared_panel_scales)
       }
     } else if (isTRUE(split_by_region) && "region" %in% names(data)) {
       region_labels <- levels(data$region)
@@ -4231,7 +4242,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         p <- p +
           facet_wrap(
             ~region,
-            scales = "fixed",
+            scales = shared_panel_scales,
             ncol = facet_ncol,
             labeller = as_labeller(region_labeller)
           ) +
@@ -4241,10 +4252,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
             plot.margin = margin(8, 8, 10, 8)
           )
       } else {
-        p <- p + facet_grid(rows = vars(scenario), cols = vars(region), scales = "fixed")
+        p <- p + facet_grid(rows = vars(scenario), cols = vars(region), scales = shared_panel_scales)
       }
     } else {
-      p <- p + facet_wrap(~scenario, scales = "free_x", ncol = facet_ncol)
+      p <- p + facet_wrap(~scenario, scales = scenario_panel_scales, ncol = facet_ncol)
     }
 
     if (!is.null(label) && !(isTRUE(split_by_region) && "region" %in% names(data))) {
@@ -9050,7 +9061,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
         legend_top_n = legend_top_n,
         deemphasize_others = deemphasize_others,
         x_labels_fn = quantity_axis_formatter(info$profile_data),
-        show_profile_cutoff = isTRUE(filters$show_profile_cutoff)
+        show_profile_cutoff = isTRUE(filters$show_profile_cutoff),
+        share_y_axis = isTRUE(filters$share_y_axis)
       )
 
       if (isTRUE(force_hide_influence) || !isTRUE(filters$show_influence)) {
@@ -9449,13 +9461,14 @@ mod_likelihood_server <- function(input, output, session, rv) {
       legend_top_n = filters$legend_top_n,
       deemphasize_others = isTRUE(filters$legend_deemphasize_others),
       x_labels_fn = x_axis_labels_fn,
-      show_profile_cutoff = isTRUE(filters$show_profile_cutoff)
+      show_profile_cutoff = isTRUE(filters$show_profile_cutoff),
+      share_y_axis = isTRUE(filters$share_y_axis)
     )
   })
   observeEvent(list(input$live_update_plots, input$lik_main_tab, input$lik_scenarios, input$lik_profile_type, input$lik_profile_source, input$lik_jitter_type,
                     input$lik_indepvar_profile_set,
                     input$lik_regions, input$lik_split_by_region, input$lik_facet_ncol,
-                    input$lik_show_profile_cutoff,
+                    input$lik_show_profile_cutoff, input$lik_share_y_axis,
                     input$lik_jitter_grad_reference, input$lik_jitter_converged_only_diagnostics,
                     input$lik_jitter_rel_diff_threshold,
                     input$lik_jitter_param_view, input$lik_jitter_param_display, input$lik_jitter_param_name, input$lik_jitter_compare_sections, input$lik_jitter_compare_show_original, input$lik_jitter_compare_show_median, input$lik_jitter_compare_normalize, input$lik_jitter_pair_style, input$lik_jitter_exponentiate, input$lik_jitter_exp_patterns, jitter_pair_change_nonce(), input$lik_jitter_param_scope, input$lik_jitter_param_window,
