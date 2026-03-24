@@ -8,7 +8,14 @@ This repository is a work in progress for the 2026 Bigeye assessment workflow, i
 
 This setup is still a work in progress and has not yet been widely tested across platforms.
 
-Workshop participants should have Docker installed. R is recommended, and `make` is required for the shortcut commands below.
+Workshop participants should have Docker available and running. On Windows and macOS, this usually means Docker Desktop. On Linux, Docker Engine or Docker Desktop should be installed, and the Docker service should be running. A Docker login is not usually required unless image access is restricted. R is recommended, and `make` is required for the shortcut commands below.
+
+On Linux, if Docker is installed but not running, you may need to start it first:
+
+```bash
+sudo systemctl start docker
+sudo systemctl status docker
+```
 
 Run the model in Docker:
 
@@ -50,4 +57,4 @@ If port `3838` or `3839` is already in use, stop existing apps first or use a di
 make docker-shiny_plot SHINY_PLOT_PORT=38380
 ```
 
-Windows users can run the same commands from Git Bash or another environment that provides `make`.
+Windows users can run the same commands from Git Bash, WSL, or another shell that provides `make`, with Docker Desktop open and running. macOS users should also have Docker Desktop open and running. Linux users should run the commands from a shell with `make` after starting Docker.
