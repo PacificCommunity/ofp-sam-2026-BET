@@ -189,7 +189,7 @@ launch_tab_ui <- function() {
                 conditionalPanel(
                   condition = "input.launch_mode == 'local_docker'",
                   textInput("local_docker_image", "Docker Image:", 
-                            value = "ghcr.io/pacificcommunity/bet-2026:v1.7")
+                            value = "ghcr.io/pacificcommunity/bet-2026:v1.9")
                 )
               )
             ),
@@ -213,7 +213,7 @@ launch_tab_ui <- function() {
                           value = "ofp-sam-2026-bet"),
                 
                 textInput("docker_image", "Docker Image:", 
-                          value = "ghcr.io/pacificcommunity/bet-2026:v1.7"),
+                          value = "ghcr.io/pacificcommunity/bet-2026:v1.9"),
                 
                 checkboxInput("ghcr_login", "GHCR Login (private images)", value = FALSE),
                 
