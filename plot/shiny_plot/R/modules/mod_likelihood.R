@@ -80,14 +80,92 @@ mod_likelihood_ui <- function() {
             ),
             conditionalPanel(
               condition = "input.lik_profile_source == 'indepvar_2d'",
-              selectInput(
-                "lik_indepvar_2d_view",
-                "2D View:",
-                choices = c(
-                  "Heatmap" = "heatmap",
-                  "3D Wireframe" = "wireframe"
+              tagList(
+                selectInput(
+                  "lik_indepvar_2d_view",
+                  "2D View:",
+                  choices = c(
+                    "Heatmap" = "heatmap",
+                    "3D Wireframe" = "wireframe"
+                  ),
+                  selected = "heatmap"
                 ),
-                selected = "heatmap"
+                tags$small(
+                  "Choose axis limits from the available 2D profile grid values. Leave as Auto to use the full range.",
+                  style = "display:block; margin:-6px 0 10px 0; color:#666;"
+                ),
+                fluidRow(
+                  column(
+                    width = 6,
+                    selectizeInput(
+                      "lik_indepvar_2d_xmin",
+                      "X min",
+                      choices = c("Auto" = "__auto__"),
+                      selected = "__auto__",
+                      multiple = FALSE,
+                      options = list(
+                        placeholder = "Auto",
+                        create = FALSE,
+                        openOnFocus = TRUE,
+                        closeAfterSelect = TRUE,
+                        maxOptions = 5000
+                      )
+                    )
+                  ),
+                  column(
+                    width = 6,
+                    selectizeInput(
+                      "lik_indepvar_2d_xmax",
+                      "X max",
+                      choices = c("Auto" = "__auto__"),
+                      selected = "__auto__",
+                      multiple = FALSE,
+                      options = list(
+                        placeholder = "Auto",
+                        create = FALSE,
+                        openOnFocus = TRUE,
+                        closeAfterSelect = TRUE,
+                        maxOptions = 5000
+                      )
+                    )
+                  )
+                ),
+                fluidRow(
+                  column(
+                    width = 6,
+                    selectizeInput(
+                      "lik_indepvar_2d_ymin",
+                      "Y min",
+                      choices = c("Auto" = "__auto__"),
+                      selected = "__auto__",
+                      multiple = FALSE,
+                      options = list(
+                        placeholder = "Auto",
+                        create = FALSE,
+                        openOnFocus = TRUE,
+                        closeAfterSelect = TRUE,
+                        maxOptions = 5000
+                      )
+                    )
+                  ),
+                  column(
+                    width = 6,
+                    selectizeInput(
+                      "lik_indepvar_2d_ymax",
+                      "Y max",
+                      choices = c("Auto" = "__auto__"),
+                      selected = "__auto__",
+                      multiple = FALSE,
+                      options = list(
+                        placeholder = "Auto",
+                        create = FALSE,
+                        openOnFocus = TRUE,
+                        closeAfterSelect = TRUE,
+                        maxOptions = 5000
+                      )
+                    )
+                  )
+                )
               )
             )
           ),
@@ -1021,6 +1099,19 @@ mod_likelihood_server <- function(input, output, session, rv) {
     legend_top_n <- sanitize_integer_scalar(input$lik_legend_top_n, 12L)
     legend_top_n <- pmax(1L, pmin(200L, legend_top_n))
 
+    parse_indepvar_2d_axis_limit <- function(value) {
+      raw <- sanitize_text_scalar(value)
+      if (is.na(raw) || !nzchar(raw) || identical(raw, "__auto__")) return(NA_real_)
+      numeric_value <- suppressWarnings(as.numeric(raw))
+      if (!is.finite(numeric_value)) return(NA_real_)
+      numeric_value
+    }
+
+    indepvar_2d_xmin <- parse_indepvar_2d_axis_limit(input$lik_indepvar_2d_xmin)
+    indepvar_2d_xmax <- parse_indepvar_2d_axis_limit(input$lik_indepvar_2d_xmax)
+    indepvar_2d_ymin <- parse_indepvar_2d_axis_limit(input$lik_indepvar_2d_ymin)
+    indepvar_2d_ymax <- parse_indepvar_2d_axis_limit(input$lik_indepvar_2d_ymax)
+
     list(
       scenarios = sort(input$lik_scenarios),
       profile_type = current_profile_type(),
@@ -1031,6 +1122,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
         sort(unique(vals))
       },
       indepvar_2d_view = sanitize_profile_type(input$lik_indepvar_2d_view, allowed = c("heatmap", "wireframe"), default = "heatmap"),
+      indepvar_2d_xmin = indepvar_2d_xmin,
+      indepvar_2d_xmax = indepvar_2d_xmax,
+      indepvar_2d_ymin = indepvar_2d_ymin,
+      indepvar_2d_ymax = indepvar_2d_ymax,
       x_axis_label_override = character(0),
       groups = input$lik_groups,
       regions = input$lik_regions,
@@ -1230,6 +1325,10 @@ mod_likelihood_server <- function(input, output, session, rv) {
       profile_files_cache = lik_profile_files_cache_key(),
       indepvar_profile_set = sort(unique(as.character(filters$indepvar_profile_set))),
       indepvar_2d_view = filters$indepvar_2d_view,
+      indepvar_2d_xmin = filters$indepvar_2d_xmin,
+      indepvar_2d_xmax = filters$indepvar_2d_xmax,
+      indepvar_2d_ymin = filters$indepvar_2d_ymin,
+      indepvar_2d_ymax = filters$indepvar_2d_ymax,
       x_axis_label_override = filters$x_axis_label_override,
       facet_ncol = filters$facet_ncol,
       show_influence = isTRUE(filters$show_influence),
@@ -2827,7 +2926,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     prof_dir <- resolve_profile_dir(model_dir, scenario, profile_subdir = profile_subdir, profile_set = profile_set)
     cache_sig <- profile_dir_cache_signature(prof_dir)
     cache_key <- if (is.character(cache_sig) && !is.na(cache_sig) && nzchar(cache_sig)) {
-      paste(
+      raw_key <- paste(
         normalizePath(model_dir, winslash = "/", mustWork = FALSE),
         scenario,
         profile_subdir,
@@ -2835,6 +2934,16 @@ mod_likelihood_server <- function(input, output, session, rv) {
         cache_sig,
         sep = "::"
       )
+      key_nbytes <- nchar(raw_key, type = "bytes")
+      if (is.finite(key_nbytes) && key_nbytes > 9000) {
+        paste0(
+          substr(raw_key, 1, 4000),
+          "::len=", key_nbytes, "::",
+          substr(raw_key, max(1, nchar(raw_key, type = "chars") - 3999), nchar(raw_key, type = "chars"))
+        )
+      } else {
+        raw_key
+      }
     } else {
       NA_character_
     }
@@ -3398,6 +3507,63 @@ mod_likelihood_server <- function(input, output, session, rv) {
     lik_profile_output_filters(),
     lik_profile_files_cache_key()
   )
+
+  format_indepvar_2d_axis_choices <- function(values) {
+    values <- suppressWarnings(as.numeric(values))
+    values <- sort(unique(values[is.finite(values)]))
+    if (length(values) == 0) return(c("Auto" = "__auto__"))
+    labels <- vapply(values, function(val) format(signif(val, 8), trim = TRUE, scientific = FALSE), character(1))
+    labels <- make.unique(labels, sep = "_")
+    c("Auto" = "__auto__", stats::setNames(labels, labels))
+  }
+
+  indepvar_2d_axis_choice_data <- reactive({
+    if (!identical(sanitize_text_scalar(input$lik_profile_source), "indepvar_2d")) {
+      return(list(
+        x_choices = c("Auto" = "__auto__"),
+        y_choices = c("Auto" = "__auto__")
+      ))
+    }
+
+    info <- profile_data_reactive()
+    if (!is.list(info) || !identical(sanitize_plot_kind(info$plot_kind, default = "piner"), "profile2d")) {
+      return(list(
+        x_choices = c("Auto" = "__auto__"),
+        y_choices = c("Auto" = "__auto__")
+      ))
+    }
+
+    data <- info$data
+    if (!is.data.frame(data) || nrow(data) == 0) {
+      return(list(
+        x_choices = c("Auto" = "__auto__"),
+        y_choices = c("Auto" = "__auto__")
+      ))
+    }
+
+    list(
+      x_choices = format_indepvar_2d_axis_choices(data$x_value),
+      y_choices = format_indepvar_2d_axis_choices(data$y_value)
+    )
+  })
+
+  observeEvent(indepvar_2d_axis_choice_data(), {
+    axis_choices <- indepvar_2d_axis_choice_data()
+
+    current_xmin <- isolate(sanitize_text_scalar(input$lik_indepvar_2d_xmin))
+    if (is.na(current_xmin) || !(current_xmin %in% unname(axis_choices$x_choices))) current_xmin <- "__auto__"
+    current_xmax <- isolate(sanitize_text_scalar(input$lik_indepvar_2d_xmax))
+    if (is.na(current_xmax) || !(current_xmax %in% unname(axis_choices$x_choices))) current_xmax <- "__auto__"
+    current_ymin <- isolate(sanitize_text_scalar(input$lik_indepvar_2d_ymin))
+    if (is.na(current_ymin) || !(current_ymin %in% unname(axis_choices$y_choices))) current_ymin <- "__auto__"
+    current_ymax <- isolate(sanitize_text_scalar(input$lik_indepvar_2d_ymax))
+    if (is.na(current_ymax) || !(current_ymax %in% unname(axis_choices$y_choices))) current_ymax <- "__auto__"
+
+    updateSelectizeInput(session, "lik_indepvar_2d_xmin", choices = axis_choices$x_choices, selected = current_xmin, server = TRUE)
+    updateSelectizeInput(session, "lik_indepvar_2d_xmax", choices = axis_choices$x_choices, selected = current_xmax, server = TRUE)
+    updateSelectizeInput(session, "lik_indepvar_2d_ymin", choices = axis_choices$y_choices, selected = current_ymin, server = TRUE)
+    updateSelectizeInput(session, "lik_indepvar_2d_ymax", choices = axis_choices$y_choices, selected = current_ymax, server = TRUE)
+  }, ignoreInit = FALSE)
 
   profile_target_info_reactive <- reactive({
     filters <- lik_data_filters()
@@ -6652,22 +6818,6 @@ mod_likelihood_server <- function(input, output, session, rv) {
     facet_ncol <- min(max(facet_ncol, 1), 12)
 
     if (identical(plot_kind, "profile2d")) {
-      contour_df <- data %>%
-        group_by(scenario) %>%
-        mutate(
-          n_x = dplyr::n_distinct(x_value),
-          n_y = dplyr::n_distinct(y_value),
-          n_xy = dplyr::n_distinct(paste(x_value, y_value))
-        ) %>%
-        ungroup() %>%
-        filter(n_x >= 2, n_y >= 2, n_xy >= 4)
-      min_points <- data %>%
-        group_by(scenario) %>%
-        slice_min(order_by = change, n = 1, with_ties = FALSE) %>%
-        ungroup()
-      cutoff_region <- data %>%
-        filter(is.finite(change), change <= 1.92)
-
       x_param_vals <- unique(na.omit(as.character(data$x_param)))
       y_param_vals <- unique(na.omit(as.character(data$y_param)))
       x_lab <- if (length(x_param_vals) > 0) x_param_vals[[1]] else "X parameter"
@@ -6682,7 +6832,66 @@ mod_likelihood_server <- function(input, output, session, rv) {
         "#fdae61",
         "#e34a33"
       )
-      fill_limits <- range(data$change, na.rm = TRUE)
+      x_limits <- suppressWarnings(c(as.numeric(filters$indepvar_2d_xmin), as.numeric(filters$indepvar_2d_xmax)))
+      y_limits <- suppressWarnings(c(as.numeric(filters$indepvar_2d_ymin), as.numeric(filters$indepvar_2d_ymax)))
+      data_x_range <- range(data$x_value, na.rm = TRUE)
+      data_y_range <- range(data$y_value, na.rm = TRUE)
+      if (is.finite(x_limits[[1]]) || is.finite(x_limits[[2]])) {
+        if (!is.finite(x_limits[[1]])) x_limits[[1]] <- data_x_range[[1]]
+        if (!is.finite(x_limits[[2]])) x_limits[[2]] <- data_x_range[[2]]
+        x_limits <- sort(x_limits)
+      } else {
+        x_limits <- NULL
+      }
+      if (is.finite(y_limits[[1]]) || is.finite(y_limits[[2]])) {
+        if (!is.finite(y_limits[[1]])) y_limits[[1]] <- data_y_range[[1]]
+        if (!is.finite(y_limits[[2]])) y_limits[[2]] <- data_y_range[[2]]
+        y_limits <- sort(y_limits)
+      } else {
+        y_limits <- NULL
+      }
+
+      plot_data <- data
+      if (!is.null(x_limits)) {
+        plot_data <- plot_data %>% filter(x_value >= x_limits[[1]], x_value <= x_limits[[2]])
+      }
+      if (!is.null(y_limits)) {
+        plot_data <- plot_data %>% filter(y_value >= y_limits[[1]], y_value <= y_limits[[2]])
+      }
+      if (nrow(plot_data) == 0) {
+        return(
+          ggplot() +
+            annotate("text", x = 0.5, y = 0.5, label = "No 2D profile points inside the selected x/y range.", size = 6, color = "#999") +
+            theme_void()
+        )
+      }
+
+      plot_data <- plot_data %>%
+        group_by(scenario) %>%
+        mutate(change_plot = obj_fun - min(obj_fun, na.rm = TRUE)) %>%
+        ungroup()
+
+      contour_df <- plot_data %>%
+        group_by(scenario) %>%
+        mutate(
+          n_x = dplyr::n_distinct(x_value),
+          n_y = dplyr::n_distinct(y_value),
+          n_xy = dplyr::n_distinct(paste(x_value, y_value))
+        ) %>%
+        ungroup() %>%
+        filter(n_x >= 2, n_y >= 2, n_xy >= 4)
+      min_points <- plot_data %>%
+        group_by(scenario) %>%
+        slice_min(order_by = change_plot, n = 1, with_ties = FALSE) %>%
+        ungroup()
+      cutoff_region <- plot_data %>%
+        filter(is.finite(change_plot), change_plot <= 1.92)
+
+      fill_limits <- range(plot_data$change_plot, na.rm = TRUE)
+      if (!all(is.finite(fill_limits))) fill_limits <- c(0, 1)
+      if (isTRUE(all.equal(fill_limits[[1]], fill_limits[[2]], tolerance = 1e-12))) {
+        fill_limits[[2]] <- fill_limits[[1]] + 1e-6
+      }
       fill_breaks <- c(fill_limits[[1]], 1.92, fill_limits[[2]])
       fill_breaks <- fill_breaks[is.finite(fill_breaks)]
       fill_breaks <- unique(sort(fill_breaks))
@@ -6696,11 +6905,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
       legend_breaks <- unique(sort(c(0, legend_breaks)))
       legend_breaks <- legend_breaks[legend_breaks >= fill_limits[[1]] & legend_breaks <= fill_limits[[2]]]
 
-      p <- ggplot(data, aes(x = x_value, y = y_value, fill = change)) +
+      p <- ggplot(plot_data, aes(x = x_value, y = y_value, fill = change_plot)) +
         geom_tile(color = scales::alpha("white", 0.45), linewidth = 0.5, na.rm = TRUE) +
         geom_point(
           inherit.aes = FALSE,
-          data = data,
+          data = plot_data,
           aes(x = x_value, y = y_value),
           shape = 16,
           size = 1.8,
@@ -6765,13 +6974,13 @@ mod_likelihood_server <- function(input, output, session, rv) {
           label.padding = unit(0.12, "lines"),
           fill = scales::alpha("#fffaf0", 0.94),
           color = "#5c0013",
-          nudge_y = diff(range(data$y_value, na.rm = TRUE)) * 0.06
+          nudge_y = diff(range(plot_data$y_value, na.rm = TRUE)) * 0.06
         ) +
         {
           if (cutoff_on && nrow(contour_df) > 0) geom_contour(
             data = contour_df,
             inherit.aes = FALSE,
-            aes(x = x_value, y = y_value, z = change),
+            aes(x = x_value, y = y_value, z = change_plot),
             breaks = 1.92,
             color = "#b22222",
             linewidth = 0.8,
@@ -6797,6 +7006,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
             barheight = unit(0.22, "in")
           )
         ) +
+        coord_cartesian(xlim = x_limits, ylim = y_limits) +
         labs(
           x = x_lab,
           y = y_lab,
@@ -9466,7 +9676,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     )
   })
   observeEvent(list(input$live_update_plots, input$lik_main_tab, input$lik_scenarios, input$lik_profile_type, input$lik_profile_source, input$lik_jitter_type,
-                    input$lik_indepvar_profile_set,
+                    input$lik_indepvar_profile_set, input$lik_indepvar_2d_xmin, input$lik_indepvar_2d_xmax, input$lik_indepvar_2d_ymin, input$lik_indepvar_2d_ymax,
                     input$lik_regions, input$lik_split_by_region, input$lik_facet_ncol,
                     input$lik_show_profile_cutoff, input$lik_share_y_axis,
                     input$lik_jitter_grad_reference, input$lik_jitter_converged_only_diagnostics,
@@ -9515,9 +9725,9 @@ mod_likelihood_server <- function(input, output, session, rv) {
         scenario = as.character(scenario),
         x_value = suppressWarnings(as.numeric(x_value)),
         y_value = suppressWarnings(as.numeric(y_value)),
-        change = suppressWarnings(as.numeric(change))
+        obj_fun = suppressWarnings(as.numeric(obj_fun))
       ) %>%
-      filter(is.finite(x_value), is.finite(y_value), is.finite(change)) %>%
+      filter(is.finite(x_value), is.finite(y_value), is.finite(obj_fun)) %>%
       arrange(scenario, y_value, x_value)
     if (nrow(wire_df) == 0) return(NULL)
 
@@ -9525,11 +9735,44 @@ mod_likelihood_server <- function(input, output, session, rv) {
     y_param_vals <- unique(na.omit(as.character(wire_df$y_param)))
     x_lab <- if (length(x_param_vals) > 0) x_param_vals[[1]] else "X parameter"
     y_lab <- if (length(y_param_vals) > 0) y_param_vals[[1]] else "Y parameter"
+    x_limits <- suppressWarnings(c(as.numeric(filters$indepvar_2d_xmin), as.numeric(filters$indepvar_2d_xmax)))
+    y_limits <- suppressWarnings(c(as.numeric(filters$indepvar_2d_ymin), as.numeric(filters$indepvar_2d_ymax)))
+    wire_x_range <- range(wire_df$x_value, na.rm = TRUE)
+    wire_y_range <- range(wire_df$y_value, na.rm = TRUE)
+    if (is.finite(x_limits[[1]]) || is.finite(x_limits[[2]])) {
+      if (!is.finite(x_limits[[1]])) x_limits[[1]] <- wire_x_range[[1]]
+      if (!is.finite(x_limits[[2]])) x_limits[[2]] <- wire_x_range[[2]]
+      x_limits <- sort(x_limits)
+    } else {
+      x_limits <- NULL
+    }
+    if (is.finite(y_limits[[1]]) || is.finite(y_limits[[2]])) {
+      if (!is.finite(y_limits[[1]])) y_limits[[1]] <- wire_y_range[[1]]
+      if (!is.finite(y_limits[[2]])) y_limits[[2]] <- wire_y_range[[2]]
+      y_limits <- sort(y_limits)
+    } else {
+      y_limits <- NULL
+    }
+
+    if (!is.null(x_limits)) {
+      wire_df <- wire_df %>% filter(x_value >= x_limits[[1]], x_value <= x_limits[[2]])
+    }
+    if (!is.null(y_limits)) {
+      wire_df <- wire_df %>% filter(y_value >= y_limits[[1]], y_value <= y_limits[[2]])
+    }
+    if (nrow(wire_df) == 0) return(NULL)
+
+    wire_df <- wire_df %>%
+      group_by(scenario) %>%
+      mutate(change_plot = obj_fun - min(obj_fun, na.rm = TRUE)) %>%
+      ungroup()
 
     list(
       data = wire_df,
       x_lab = x_lab,
       y_lab = y_lab,
+      x_limits = x_limits,
+      y_limits = y_limits,
       facet_ncol = min(
         max(suppressWarnings(as.integer(filters$facet_ncol)), 1L),
         12L,
@@ -9549,11 +9792,11 @@ mod_likelihood_server <- function(input, output, session, rv) {
     wire_info <- likelihood_wireframe_reactive()
     if (is.null(wire_info) || !is.data.frame(wire_info$data) || nrow(wire_info$data) == 0) return(NULL)
 
-    make_surface_plot <- function(df, x_lab, y_lab) {
+    make_surface_plot <- function(df, x_lab, y_lab, x_limits = NULL, y_limits = NULL) {
       x_vals <- sort(unique(df$x_value))
       y_vals <- sort(unique(df$y_value))
       z_mat <- outer(y_vals, x_vals, Vectorize(function(yv, xv) {
-        hit <- df$change[df$x_value == xv & df$y_value == yv]
+        hit <- df$change_plot[df$x_value == xv & df$y_value == yv]
         if (length(hit) == 0) NA_real_ else hit[[1]]
       }))
 
@@ -9577,8 +9820,8 @@ mod_likelihood_server <- function(input, output, session, rv) {
       ) %>%
         plotly::layout(
           scene = list(
-            xaxis = list(title = x_lab, showbackground = TRUE, backgroundcolor = "rgb(245,248,250)", gridcolor = "white"),
-            yaxis = list(title = y_lab, showbackground = TRUE, backgroundcolor = "rgb(245,248,250)", gridcolor = "white"),
+            xaxis = c(list(title = x_lab, showbackground = TRUE, backgroundcolor = "rgb(245,248,250)", gridcolor = "white"), if (!is.null(x_limits)) list(range = x_limits) else list()),
+            yaxis = c(list(title = y_lab, showbackground = TRUE, backgroundcolor = "rgb(245,248,250)", gridcolor = "white"), if (!is.null(y_limits)) list(range = y_limits) else list()),
             zaxis = list(title = "Delta likelihood", showbackground = TRUE, backgroundcolor = "rgb(245,248,250)", gridcolor = "white"),
             camera = list(eye = list(x = 1.65, y = -1.6, z = 1.15)),
             aspectmode = "manual",
@@ -9591,7 +9834,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     scenarios <- split(wire_info$data, wire_info$data$scenario)
-    plots <- lapply(scenarios, function(df) make_surface_plot(df, wire_info$x_lab, wire_info$y_lab))
+    plots <- lapply(scenarios, function(df) make_surface_plot(df, wire_info$x_lab, wire_info$y_lab, wire_info$x_limits, wire_info$y_limits))
     if (length(plots) == 1L) return(plots[[1]])
 
     plotly::subplot(
