@@ -42,6 +42,27 @@ In plain language:
 - New region 3 = old regions 3 + 4 + 8
 - New region 4 = old regions 5 + 6 + 9
 
+# Spatial Comparison
+
+The two reference maps below make the 9-region to 4-region collapse easier to explain visually in meetings.
+
+Left: original 9-region layout. Right: final 4-region layout used for the new input set.
+
+```{r spatial-comparison, echo=FALSE, out.width='49%', fig.show='hold', fig.align='center'}
+knitr::include_graphics(c(
+  "../plot/shiny_plot/www/quick_reference/9region.png",
+  "../plot/shiny_plot/www/quick_reference/4region.png"
+))
+```
+
+Visual takeaway:
+
+- The original 9 regions were consolidated into 4 broader areas.
+- New region 1 covers old regions 1 and 2.
+- New region 2 corresponds to old region 7.
+- New region 3 covers old regions 3, 4, and 8.
+- New region 4 covers old regions 5, 6, and 9.
+
 # What Was Changed
 
 ## 1. `bet.frq`
