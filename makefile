@@ -2,7 +2,7 @@
 DOCKER_IMAGE=ghcr.io/pacificcommunity/bet-2026:v1.9
 WORKDIR=/workspace
 DOCKER_USER=$(shell id -u):$(shell id -g)
-INDEX_CSV ?= /home/kyuhank/Downloads/bet.2023.indices.4-region.csv
+INDEX_CSV ?= $(CURDIR)/mfcl/bet.2023.indices.4-region.csv
 MFCL_EXE ?= $(CURDIR)/mfcl/exe/mfclo64_2026
 MFCL_EXE_REL ?= $(patsubst $(CURDIR)/%,%,$(MFCL_EXE))
 REGION4_INPUT_DIR ?= mfcl/inputs/2023_rep

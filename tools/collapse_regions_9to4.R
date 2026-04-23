@@ -76,7 +76,7 @@ print_usage <- function() {
       "    --input-dir mfcl/inputs/2023_rep \\",
       "    --output-dir mfcl/inputs/2023_4region \\",
       "    --index-comp-mode representative \\",
-      "    --index-csv ~/Downloads/bet.2023.indices.4-region.csv",
+      "    --index-csv mfcl/bet.2023.indices.4-region.csv",
       sep = "\n"
     )
   )
@@ -513,55 +513,73 @@ collapse_diff_coffs <- function(diff_coffs, old_move_matrix) {
   out
 }
 
-copy_directory_tree <- function(input_dir, output_dir, overwrite = FALSE) {
-  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
-
-  items <- list.files(
-    input_dir,
-    all.files = TRUE,
-    no.. = TRUE,
-    recursive = TRUE,
-    full.names = TRUE,
-    include.dirs = TRUE
-  )
-
-  if (length(items) == 0L) {
+prepare_output_dir <- function(output_dir, overwrite = FALSE) {
+  if (!dir.exists(output_dir)) {
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
     return(invisible(NULL))
   }
 
-  info <- file.info(items)
-  rel_paths <- substring(items, nchar(input_dir) + 2L)
-
-  dirs <- rel_paths[info$isdir]
-  files <- rel_paths[!info$isdir]
-
-  if (length(dirs) > 0L) {
-    for (dir_rel in dirs) {
-      dir.create(file.path(output_dir, dir_rel), recursive = TRUE, showWarnings = FALSE)
-    }
+  if (!overwrite) {
+    return(invisible(NULL))
   }
 
-  if (length(files) > 0L) {
-    targets <- file.path(output_dir, files)
-    parent_dirs <- unique(dirname(targets))
-    for (parent_dir in parent_dirs) {
-      dir.create(parent_dir, recursive = TRUE, showWarnings = FALSE)
-    }
+  existing <- list.files(output_dir, all.files = TRUE, no.. = TRUE, full.names = TRUE)
+  if (length(existing) == 0L) {
+    return(invisible(NULL))
+  }
 
-    copied <- file.copy(
-      from = file.path(input_dir, files),
-      to = targets,
-      overwrite = overwrite,
-      recursive = FALSE,
-      copy.mode = TRUE,
-      copy.date = TRUE
+  removed <- unlink(existing, recursive = TRUE, force = TRUE)
+  if (removed != 0L) {
+    stopf("Failed to clean output directory before rebuild: %s", output_dir)
+  }
+}
+
+copy_first_existing <- function(input_dir, output_dir, candidates, label, overwrite = FALSE) {
+  candidates <- unique(candidates[nzchar(candidates)])
+  if (length(candidates) == 0L) {
+    return(invisible(FALSE))
+  }
+
+  existing <- candidates[file.exists(file.path(input_dir, candidates))]
+  if (length(existing) == 0L) {
+    return(invisible(FALSE))
+  }
+
+  if (length(existing) > 1L) {
+    stopf(
+      "Found multiple candidate %s files in %s: %s",
+      label,
+      input_dir,
+      paste(existing, collapse = ", ")
     )
-
-    if (!all(copied)) {
-      failed <- files[!copied]
-      stopf("Failed to copy files into %s: %s", output_dir, paste(failed, collapse = ", "))
-    }
   }
+
+  src <- file.path(input_dir, existing[[1L]])
+  dst <- file.path(output_dir, basename(existing[[1L]]))
+  copied <- file.copy(
+    from = src,
+    to = dst,
+    overwrite = overwrite,
+    recursive = FALSE,
+    copy.mode = TRUE,
+    copy.date = TRUE
+  )
+
+  if (!copied) {
+    stopf("Failed to copy %s file into %s: %s", label, output_dir, src)
+  }
+
+  invisible(TRUE)
+}
+
+copy_core_support_files <- function(input_dir, output_dir, frq_name, overwrite = FALSE) {
+  age_length_name <- sub("\\.frq$", ".age_length", frq_name, ignore.case = TRUE)
+
+  copy_first_existing(input_dir, output_dir, c("mfcl.cfg"), "mfcl.cfg", overwrite = overwrite)
+  copy_first_existing(input_dir, output_dir, c(age_length_name), "age_length", overwrite = overwrite)
+  copy_first_existing(input_dir, output_dir, c("fishery_map.R", "fishery_map.r"), "fishery_map", overwrite = overwrite)
+  copy_first_existing(input_dir, output_dir, c("tag_rep_map.R", "tag_rep_map.r"), "tag_rep_map", overwrite = overwrite)
+  copy_first_existing(input_dir, output_dir, c("doitall.sh"), "doitall", overwrite = overwrite)
 }
 
 collapse_frq <- function(frq, region_size_mode, reduce_index_fisheries = FALSE) {
@@ -701,6 +719,26 @@ collapse_tag <- function(tag) {
   tag
 }
 
+rewrite_region_suffix_labels <- function(x) {
+  x <- as.character(x)
+  pattern <- "([.-])([1-9])(\\*?)$"
+
+  vapply(
+    x,
+    function(label) {
+      if (is.na(label) || !grepl(pattern, label)) {
+        return(label)
+      }
+
+      suffix_match <- regmatches(label, regexec(pattern, label))[[1L]]
+      old_region <- as.integer(suffix_match[[3L]])
+      new_region <- map_regions(old_region, sprintf("label suffix in '%s'", label))
+      sub(pattern, sprintf("\\1%d\\3", new_region), label)
+    },
+    character(1)
+  )
+}
+
 rewrite_fishery_map <- function(path, reduce_index_fisheries = FALSE, index_comp_mode = "representative") {
   if (!file.exists(path)) {
     return(invisible(FALSE))
@@ -713,6 +751,18 @@ rewrite_fishery_map <- function(path, reduce_index_fisheries = FALSE, index_comp
   }
 
   fishery_map <- get("fishery_map", envir = env, inherits = FALSE)
+
+  if (!("region" %in% names(fishery_map))) {
+    stopf("fishery_map file does not contain a 'region' column: %s", path)
+  }
+
+  fishery_map$region <- map_regions(fishery_map$region, "fishery_map regions")
+  if ("fishery_name" %in% names(fishery_map)) {
+    fishery_map$fishery_name <- rewrite_region_suffix_labels(fishery_map$fishery_name)
+  }
+  if ("tag_recapture_name" %in% names(fishery_map)) {
+    fishery_map$tag_recapture_name <- rewrite_region_suffix_labels(fishery_map$tag_recapture_name)
+  }
 
   if (reduce_index_fisheries) {
     source_labels <- INDEX_COMP_SOURCE_LABELS[[index_comp_mode]]
@@ -729,13 +779,35 @@ rewrite_fishery_map <- function(path, reduce_index_fisheries = FALSE, index_comp
     if ("tag_recapture_name" %in% names(fishery_map)) {
       fishery_map$tag_recapture_name[NEW_INDEX_FISHERY_IDS] <- fishery_map$fishery_name[NEW_INDEX_FISHERY_IDS]
     }
-  } else {
-    fishery_map$region[OLD_INDEX_FISHERY_IDS] <- c(1, 1, 3, 3, 4, 4, 2, 3, 4)
   }
 
   dump_lines <- capture.output(dput(fishery_map))
   dump_lines[1] <- paste0("fishery_map <- ", dump_lines[1])
   writeLines(c("# Fishery map", "", dump_lines), con = path, useBytes = TRUE)
+  invisible(TRUE)
+}
+
+rewrite_tag_rep_map <- function(path) {
+  if (!file.exists(path)) {
+    return(invisible(FALSE))
+  }
+
+  env <- new.env(parent = baseenv())
+  sys.source(path, envir = env)
+  if (!exists("tag_rep_map", envir = env, inherits = FALSE)) {
+    return(invisible(FALSE))
+  }
+
+  tag_rep_map <- get("tag_rep_map", envir = env, inherits = FALSE)
+  if (!("tag_rep_name" %in% names(tag_rep_map))) {
+    return(invisible(FALSE))
+  }
+
+  tag_rep_map$tag_rep_name <- rewrite_region_suffix_labels(tag_rep_map$tag_rep_name)
+
+  dump_lines <- capture.output(dput(tag_rep_map))
+  dump_lines[1] <- paste0("tag_rep_map <- ", dump_lines[1])
+  writeLines(c("", dump_lines), con = path, useBytes = TRUE)
   invisible(TRUE)
 }
 
@@ -827,7 +899,13 @@ main <- function() {
   ini_in <- file.path(input_dir, ini_name)
   tag_in <- file.path(input_dir, tag_name)
 
-  copy_directory_tree(input_dir, output_dir, overwrite = opts$overwrite)
+  prepare_output_dir(output_dir, overwrite = opts$overwrite)
+  copy_core_support_files(
+    input_dir,
+    output_dir,
+    frq_name = frq_name,
+    overwrite = TRUE
+  )
 
   frq <- read.MFCLFrq(frq_in)
   ini <- read.MFCLIni(ini_in)
@@ -870,6 +948,7 @@ main <- function() {
     reduce_index_fisheries = reduce_index_fisheries,
     index_comp_mode = opts$index_comp_mode
   )
+  rewrite_tag_rep_map(file.path(output_dir, "tag_rep_map.R"))
   rewrite_doitall(
     file.path(output_dir, "doitall.sh"),
     reduce_index_fisheries = reduce_index_fisheries,

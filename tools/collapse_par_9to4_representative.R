@@ -30,7 +30,7 @@ print_usage <- function() {
       "Options:",
       "  --source-par-name <file>    Source par file name inside source-dir (default: 11.par)",
       "  --output-par-name <file>    Output par file name inside target-dir (default: 11.par)",
-      "  --template-par-name <file>  Template makepar output name to write into target-dir (default: 00.par)",
+      "  --template-par-name <file>  Optional template makepar output to keep in target-dir (default: not kept)",
       "  --index-csv <file>          Optional 4-region abundance-index CSV; updates fish flag 92 using mean(CV)*100",
       "  --overwrite                 Allow overwriting an existing output par",
       "  --help                      Show this message",
@@ -48,7 +48,7 @@ parse_args <- function(args) {
     program_path = NULL,
     source_par_name = "11.par",
     output_par_name = "11.par",
-    template_par_name = "00.par",
+    template_par_name = NULL,
     index_csv = NULL,
     overwrite = FALSE
   )
@@ -307,7 +307,7 @@ apply_index_sigma_flags <- function(flag_matrix, index_lookup) {
   flag_matrix
 }
 
-build_template_par <- function(target_dir, program_path, out_template_path) {
+build_template_par <- function(target_dir, program_path, out_template_path = NULL) {
   tmp_dir <- tempfile("mfcl_par_template_")
   dir.create(tmp_dir, recursive = TRUE, showWarnings = FALSE)
   on.exit(unlink(tmp_dir, recursive = TRUE, force = TRUE), add = TRUE)
@@ -347,7 +347,12 @@ build_template_par <- function(target_dir, program_path, out_template_path) {
     stopf_par("Failed to create template 00.par in temporary directory")
   }
 
-  file.copy(template_path, out_template_path, overwrite = TRUE, copy.mode = TRUE, copy.date = TRUE)
+  if (!is.null(out_template_path)) {
+    copied <- file.copy(template_path, out_template_path, overwrite = TRUE, copy.mode = TRUE, copy.date = TRUE)
+    if (!copied) {
+      stopf_par("Failed to copy template par into target directory: %s", out_template_path)
+    }
+  }
   read.MFCLPar(template_path)
 }
 
@@ -364,9 +369,16 @@ main <- function() {
   }
 
   out_par_path <- file.path(target_dir, opts$output_par_name)
-  out_template_path <- file.path(target_dir, opts$template_par_name)
+  out_template_path <- if (!is.null(opts$template_par_name)) {
+    file.path(target_dir, opts$template_par_name)
+  } else {
+    NULL
+  }
   if (file.exists(out_par_path) && !opts$overwrite) {
     stopf_par("Output par already exists: %s. Re-run with --overwrite.", out_par_path)
+  }
+  if (!is.null(out_template_path) && file.exists(out_template_path) && !opts$overwrite) {
+    stopf_par("Template par already exists: %s. Re-run with --overwrite.", out_template_path)
   }
 
   source_frq_name <- detect_single_file(source_dir, NULL, "\\.frq$", "frq")
@@ -467,7 +479,7 @@ main <- function() {
     paste(
       "Created representative-mode 4-region par files:",
       sprintf("  source-par:   %s", source_par_path),
-      sprintf("  template-00:  %s", out_template_path),
+      if (!is.null(out_template_path)) sprintf("  template-par: %s", out_template_path) else "  template-par: <not kept>",
       sprintf("  output-11par: %s", out_par_path),
       sprintf("  regions:      %d", out_par@dimensions["regions"]),
       sprintf("  fisheries:    %d", out_par@dimensions["fisheries"]),
