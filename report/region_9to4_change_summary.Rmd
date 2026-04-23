@@ -9,13 +9,19 @@ output:
 
 # Purpose
 
-This note is a short meeting summary of what was changed to convert the 2023 BET setup from the original 9-region representative configuration to the new 4-region configuration.
+This note records the 9-region to 4-region conversion based on the 2023 diagnostic model in a simple, easy-to-follow format.
 
-Source input (9-region):
+Status note as of April 24, 2026:
+
+- This summary reflects the 4-region draft prepared on April 24, 2026.
+- Extraction fisheries were kept the same as in the 2023 diagnostic model.
+- Detailed fishery definitions and other implementation details may still change in later revisions.
+
+MFCL inputs used for the 9-region model:
 
 - `mfcl/inputs/2023_rep`
 
-Current 4-region output:
+MFCL inputs used for the 4-region model:
 
 - `mfcl/inputs/2023_4region`
 
@@ -44,14 +50,28 @@ In plain language:
 
 # Spatial Comparison
 
-The two reference maps below make the 9-region to 4-region collapse easier to explain visually in meetings.
+The two reference maps below show the original 9-region structure and the final 4-region structure used in the new input set.
 
-Left: original 9-region layout. Right: final 4-region layout used for the new input set.
+```{r spatial-comparison, echo=FALSE, results='asis'}
+img_9 <- knitr::image_uri("../plot/shiny_plot/www/quick_reference/9region.png")
+img_4 <- knitr::image_uri("../plot/shiny_plot/www/quick_reference/4region.png")
 
-```{r spatial-comparison, echo=FALSE, out.width='49%', fig.show='hold', fig.align='center'}
-knitr::include_graphics(c(
-  "../plot/shiny_plot/www/quick_reference/9region.png",
-  "../plot/shiny_plot/www/quick_reference/4region.png"
+cat(sprintf(
+  paste0(
+    "<table style='width:100%%; table-layout:fixed; border-collapse:collapse; margin-top:8px; margin-bottom:16px;'>",
+    "<tr>",
+    "<td style='width:50%%; vertical-align:top; padding-right:10px; text-align:center;'>",
+    "<div style='font-weight:700; margin-bottom:8px;'>Original 9-region layout</div>",
+    "<img src='%s' style='width:100%%; border:1px solid #d9d9d9;'>",
+    "</td>",
+    "<td style='width:50%%; vertical-align:top; padding-left:10px; text-align:center;'>",
+    "<div style='font-weight:700; margin-bottom:8px;'>Final 4-region layout</div>",
+    "<img src='%s' style='width:100%%; border:1px solid #d9d9d9;'>",
+    "</td>",
+    "</tr>",
+    "</table>"
+  ),
+  img_9, img_4
 ))
 ```
 
@@ -71,7 +91,9 @@ The main frequency input was rebuilt to a true 4-region structure.
 
 - Number of regions changed from 9 to 4.
 - Number of fisheries changed from 41 to 36.
+- Number of index fisheries changed from 9 to 4.
 - Region-to-fishery assignments were remapped to the new 4-region numbering.
+- Extraction fisheries were kept the same as in the 2023 diagnostic model.
 - Region movement structure and season flags were collapsed from the 9-region setup.
 - The new 4-region CPUE index series provided by Thom were inserted into the new index fisheries (33 to 36).
 - Important distinction:
