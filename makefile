@@ -13,6 +13,8 @@ REGION4_MERGE_MODEL_DIR ?= model/2023R4_merge
 REGION4_VARIANT_BASE_DIR ?= $(REGION4_OUTPUT_DIR)
 REGION4_FIXVB_INPUT_DIR ?= mfcl/inputs/2023_fixVB
 REGION4_FIXVB_OUTPUT_DIR ?= mfcl/inputs/2023_4region_fixVB
+REGION4_FIXVB_M_INPUT_DIR ?= mfcl/inputs/2023_fixVB_M
+REGION4_FIXVB_M_OUTPUT_DIR ?= mfcl/inputs/2023_4region_fixVB_M
 REGION4_FIXM_INPUT_DIR ?= mfcl/inputs/2023_fixM
 REGION4_FIXM_OUTPUT_DIR ?= mfcl/inputs/2023_4region_fixM
 REGION4_EXJPTP_INPUT_DIR ?= mfcl/inputs/2023_rep_exclude_JPTP
@@ -23,6 +25,7 @@ REGION4_EXRG2125_INPUT_DIR ?= mfcl/inputs/2023_rep_exclude_rg_21_25
 REGION4_EXRG2125_OUTPUT_DIR ?= mfcl/inputs/2023_4region_exclude_rg_21_25
 REGION4_EXRTTP_INPUT_DIR ?= mfcl/inputs/2023_rep_exclude_RTTP
 REGION4_EXRTTP_OUTPUT_DIR ?= mfcl/inputs/2023_4region_exclude_RTTP
+REGION4_FIXVB_M_MODEL_DIR ?= model/2023R4_fixVB_M
 REGION4_FIXM_MODEL_DIR ?= model/2023R4_fixM
 
 build-4region:
@@ -81,6 +84,12 @@ build-4region-fixVB:
 
 build-4region-fixVB-11par:
 	$(MAKE) build-4region-variant-11par SOURCE_DIR=$(REGION4_FIXVB_INPUT_DIR) OUTPUT_DIR=$(REGION4_FIXVB_OUTPUT_DIR)
+
+build-4region-fixVB_M:
+	$(MAKE) build-4region-variant SOURCE_DIR=$(REGION4_FIXVB_M_INPUT_DIR) OUTPUT_DIR=$(REGION4_FIXVB_M_OUTPUT_DIR)
+
+build-4region-fixVB_M-11par:
+	$(MAKE) build-4region-variant-11par SOURCE_DIR=$(REGION4_FIXVB_M_INPUT_DIR) OUTPUT_DIR=$(REGION4_FIXVB_M_OUTPUT_DIR)
 
 build-4region-fixM:
 	$(MAKE) build-4region-variant SOURCE_DIR=$(REGION4_FIXM_INPUT_DIR) OUTPUT_DIR=$(REGION4_FIXM_OUTPUT_DIR)
@@ -141,6 +150,14 @@ run-4region-fixM: build-4region-fixM-11par
 	model_dir=$(REGION4_FIXM_MODEL_DIR) \
 	description="2023 4-region fixM input" \
 	config_summary="9->4 representative; 11.par collapsed from 2023_fixM" \
+	Rscript runners/run_model.R
+
+run-4region-fixVB_M: build-4region-fixVB_M-11par
+	program_path=$(MFCL_EXE_REL) \
+	base_dir=$(REGION4_FIXVB_M_OUTPUT_DIR) \
+	model_dir=$(REGION4_FIXVB_M_MODEL_DIR) \
+	description="2023 4-region fixVB_M input" \
+	config_summary="9->4 representative; 11.par collapsed from 2023_fixVB_M" \
 	Rscript runners/run_model.R
 
 model:
@@ -248,7 +265,7 @@ docker-report:
 	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(stitch-hessian docker-run docker-model docker-prof docker-jitter docker-hessian docker-collate-hessian docker-stitch
 
 	
-.PHONY: build-4region build-4region-merge build-4region-11par build-4region-variant build-4region-variant-11par build-4region-fixVB build-4region-fixVB-11par build-4region-fixM build-4region-fixM-11par build-4region-exclude-JPTP build-4region-exclude-JPTP-11par build-4region-exclude-PTTP build-4region-exclude-PTTP-11par build-4region-exclude-rg2125 build-4region-exclude-rg2125-11par build-4region-exclude-RTTP build-4region-exclude-RTTP-11par makepar-4region makepar-4region-merge run-4region run-4region-merge run-4region-fixM plot run model prof prof_chain prof_2d jitter jitter_smoke jitter_smoke_hessian hessian retro test TagExclusion TagReleaseGroupExclusion collate-hessian stitch-hessian stitch-hessian-all prof-init-map prof-init-map-model docker-run docker-model docker-prof docker-jitter docker-jitter-smoke docker-jitter-smoke-hessian docker-hessian docker-retro docker-collate-hessian docker-stitch-hessian docker-stitch-hessian-all docker-prof-init-map docker-plot prepaw report docker-report
+.PHONY: build-4region build-4region-merge build-4region-11par build-4region-variant build-4region-variant-11par build-4region-fixVB build-4region-fixVB-11par build-4region-fixVB_M build-4region-fixVB_M-11par build-4region-fixM build-4region-fixM-11par build-4region-exclude-JPTP build-4region-exclude-JPTP-11par build-4region-exclude-PTTP build-4region-exclude-PTTP-11par build-4region-exclude-rg2125 build-4region-exclude-rg2125-11par build-4region-exclude-RTTP build-4region-exclude-RTTP-11par makepar-4region makepar-4region-merge run-4region run-4region-merge run-4region-fixM run-4region-fixVB_M plot run model prof prof_chain prof_2d jitter jitter_smoke jitter_smoke_hessian hessian retro test TagExclusion TagReleaseGroupExclusion collate-hessian stitch-hessian stitch-hessian-all prof-init-map prof-init-map-model docker-run docker-model docker-prof docker-jitter docker-jitter-smoke docker-jitter-smoke-hessian docker-hessian docker-retro docker-collate-hessian docker-stitch-hessian docker-stitch-hessian-all docker-prof-init-map docker-plot prepaw report docker-report
 
 
 

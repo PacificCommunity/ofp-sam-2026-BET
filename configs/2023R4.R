@@ -114,6 +114,7 @@ profile_sets_base <- list(
 
 profile_sets_fixM <- drop_profiles(clone_list(profile_sets_base), "LorenM")
 profile_sets_fixVB <- drop_profiles(clone_list(profile_sets_base), c("L1", "L2", "kappa"))
+profile_sets_fixVB_M <- drop_profiles(clone_list(profile_sets_base), c("LorenM", "L1", "L2", "kappa", "BetaScale", "vb2d_example"))
 
 make_model <- function(description, base_dir, profile_sets = profile_sets_base) {
   list(
@@ -146,6 +147,11 @@ models <- list(
     description = "4-region model with growth parameters fixed at the 2023 diagnostic values",
     base_dir = "mfcl/inputs/2023_4region_fixVB",
     profile_sets = profile_sets_fixVB
+  ),
+  "2023R4_fixVB_M" = make_model(
+    description = "4-region model with both M-at-age and growth parameters fixed at the 2023 diagnostic values",
+    base_dir = "mfcl/inputs/2023_4region_fixVB_M",
+    profile_sets = profile_sets_fixVB_M
   ),
   "2023R4_fixM" = make_model(
     description = "4-region model with M-at-age fixed at the 2023 diagnostic values",
