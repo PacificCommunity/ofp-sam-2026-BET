@@ -1,0 +1,100 @@
+---
+title: "9-Region to 4-Region Conversion Summary"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: false
+---
+
+# Purpose
+
+This note is a short meeting summary of what was changed to convert the 2023 BET setup from the original 9-region representative configuration to the new 4-region configuration.
+
+Source input (9-region):
+
+- `mfcl/inputs/2023_rep`
+
+Current 4-region output:
+
+- `mfcl/inputs/2023_4region`
+
+# Core Region Mapping
+
+The 9 original spatial regions were collapsed to 4 regions using the following rule.
+
+```text
+old 1 -> new 1
+old 2 -> new 1
+old 3 -> new 3
+old 4 -> new 3
+old 5 -> new 4
+old 6 -> new 4
+old 7 -> new 2
+old 8 -> new 3
+old 9 -> new 4
+```
+
+In plain language:
+
+- New region 1 = old regions 1 + 2
+- New region 2 = old region 7
+- New region 3 = old regions 3 + 4 + 8
+- New region 4 = old regions 5 + 6 + 9
+
+# What Was Changed
+
+## 1. `bet.frq`
+
+The main frequency input was rebuilt to a true 4-region structure.
+
+- Number of regions changed from 9 to 4.
+- Number of fisheries changed from 41 to 36.
+- Region-to-fishery assignments were remapped to the new 4-region numbering.
+- Region movement structure and season flags were collapsed from the 9-region setup.
+- The new 4-region CPUE index series provided by Thom were inserted into the new index fisheries (33 to 36).
+- Important distinction:
+  - CPUE for the new index fisheries comes from the new 4-region CSV.
+  - Weight-frequency for the new 4-region index fisheries does not reflect the new 4-region structure.
+  - Instead, the existing WF from the old 9-region representative fisheries was carried over directly.
+- New index fishery to represented area mapping:
+  - Fishery 33 = new area 1 = old regions 1 + 2
+  - Fishery 34 = new area 2 = old region 7
+  - Fishery 35 = new area 3 = old regions 3 + 4 + 8
+  - Fishery 36 = new area 4 = old regions 5 + 6 + 9
+- Representative WF mapping used for the new index fisheries:
+  - Fishery 33 uses old fishery 1: old region 1 WF carried into new region 1
+  - Fishery 34 uses old fishery 7: old region 7 WF carried into new region 2
+  - Fishery 35 uses old fishery 4: old region 3 WF carried into new region 3
+  - Fishery 36 uses old fishery 11: old region 5 WF carried into new region 4
+
+## 2. `bet.ini`
+
+The `.ini` file was collapsed to the 4-region structure.
+
+- Region dimension changed from 9 to 4.
+- Regional flags were collapsed to the new region groups.
+- Diffusion structure was collapsed to the new movement graph.
+- Recruitment distribution was summed within each new region and renormalized.
+- Tag reporting arrays were trimmed to 36 fisheries.
+
+## 3. `bet.tag`
+
+Tagging inputs were updated so that both releases and recaptures now use the new 4-region numbering.
+
+## 4. `doitall.sh`
+
+The phase script was updated to match the new 4-region index setup.
+
+- Old index fishery control lines for fisheries 37 to 41 were removed.
+- New index control lines were written for fisheries 33 to 36.
+- Fish flag 92 was set as `round(mean(CV) * 100)` by region.
+
+Applied values:
+
+| New region | Fishery | Mean CV | Fish flag 92 |
+|---|---:|---:|---:|
+| 1 | 33 | 0.4946703 | 49 |
+| 2 | 34 | 0.4825109 | 48 |
+| 3 | 35 | 0.2568809 | 26 |
+| 4 | 36 | 0.3903223 | 39 |
