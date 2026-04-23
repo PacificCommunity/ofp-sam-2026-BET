@@ -367,7 +367,7 @@ PHASE9
 
 $program_path bet.frq 09.par 10.par -file - <<PHASE10
   1 1 10000  # function evaluations
-  1 50 -5    # convergence criteria
+  1 50 -3    # convergence criteria
   1 121 1    # estimate scaling parameter for Lorenzen (age_pars(5,1))
 PHASE10
 
@@ -377,6 +377,6 @@ PHASE10
 
 $program_path bet.frq 10.par 11.par -file - <<PHASE11
   1 1 5000
-  1 50 -5   # convergence criteria
+  1 50 -3   # convergence criteria
   1 246 1   # indepvar.rpt
 PHASE11
