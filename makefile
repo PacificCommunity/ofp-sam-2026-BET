@@ -2,6 +2,61 @@
 DOCKER_IMAGE=ghcr.io/pacificcommunity/bet-2026:v1.9
 WORKDIR=/workspace
 DOCKER_USER=$(shell id -u):$(shell id -g)
+INDEX_CSV ?= /home/kyuhank/Downloads/bet.2023.indices.4-region.csv
+MFCL_EXE ?= $(CURDIR)/mfcl/exe/mfclo64_2026
+MFCL_EXE_REL ?= $(patsubst $(CURDIR)/%,%,$(MFCL_EXE))
+REGION4_INPUT_DIR ?= mfcl/inputs/2023_rep
+REGION4_OUTPUT_DIR ?= mfcl/inputs/2023_4region
+REGION4_MERGE_OUTPUT_DIR ?= mfcl/inputs/2023_4region_merge
+REGION4_MODEL_DIR ?= model/2023R4
+REGION4_MERGE_MODEL_DIR ?= model/2023R4_merge
+
+build-4region:
+	Rscript tools/collapse_regions_9to4.R \
+		--input-dir $(REGION4_INPUT_DIR) \
+		--output-dir $(REGION4_OUTPUT_DIR) \
+		--index-csv $(INDEX_CSV) \
+		--index-comp-mode representative \
+		--overwrite
+
+build-4region-merge:
+	Rscript tools/collapse_regions_9to4.R \
+		--input-dir $(REGION4_INPUT_DIR) \
+		--output-dir $(REGION4_MERGE_OUTPUT_DIR) \
+		--index-csv $(INDEX_CSV) \
+		--index-comp-mode merge \
+		--overwrite
+
+build-4region-11par: build-4region
+	Rscript tools/collapse_par_9to4_representative.R \
+		--source-dir $(REGION4_INPUT_DIR) \
+		--target-dir $(REGION4_OUTPUT_DIR) \
+		--program-path $(MFCL_EXE) \
+		--index-csv $(INDEX_CSV) \
+		--overwrite
+
+makepar-4region: build-4region
+	cd $(REGION4_OUTPUT_DIR) && $(MFCL_EXE) bet.frq bet.ini 00.par -makepar
+
+makepar-4region-merge: build-4region-merge
+	cd $(REGION4_MERGE_OUTPUT_DIR) && $(MFCL_EXE) bet.frq bet.ini 00.par -makepar
+
+run-4region: build-4region-11par
+	program_path=$(MFCL_EXE_REL) \
+	base_dir=$(REGION4_OUTPUT_DIR) \
+	model_dir=$(REGION4_MODEL_DIR) \
+	description="2023 4-region representative quick test" \
+	config_summary="9->4 representative; 11.par collapsed from 2023_rep" \
+	Rscript runners/run_model.R
+
+run-4region-merge: build-4region-merge
+	program_path=$(MFCL_EXE_REL) \
+	base_dir=$(REGION4_MERGE_OUTPUT_DIR) \
+	model_dir=$(REGION4_MERGE_MODEL_DIR) \
+	mfcl_commands="./doitall.sh" \
+	description="2023 4-region merge run" \
+	config_summary="9->4 merge from 2023_rep" \
+	Rscript runners/run_model.R
 
 model:
 	Rscript runners/run_model.R
@@ -108,7 +163,7 @@ docker-report:
 	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(stitch-hessian docker-run docker-model docker-prof docker-jitter docker-hessian docker-collate-hessian docker-stitch
 
 	
-.PHONY: plot run model prof prof_chain prof_2d jitter jitter_smoke jitter_smoke_hessian hessian retro test TagExclusion TagReleaseGroupExclusion collate-hessian stitch-hessian stitch-hessian-all prof-init-map prof-init-map-model docker-run docker-model docker-prof docker-jitter docker-jitter-smoke docker-jitter-smoke-hessian docker-hessian docker-retro docker-collate-hessian docker-stitch-hessian docker-stitch-hessian-all docker-prof-init-map docker-plot prepaw report docker-report
+.PHONY: build-4region build-4region-merge build-4region-11par makepar-4region makepar-4region-merge run-4region run-4region-merge plot run model prof prof_chain prof_2d jitter jitter_smoke jitter_smoke_hessian hessian retro test TagExclusion TagReleaseGroupExclusion collate-hessian stitch-hessian stitch-hessian-all prof-init-map prof-init-map-model docker-run docker-model docker-prof docker-jitter docker-jitter-smoke docker-jitter-smoke-hessian docker-hessian docker-retro docker-collate-hessian docker-stitch-hessian docker-stitch-hessian-all docker-prof-init-map docker-plot prepaw report docker-report
 
 
 

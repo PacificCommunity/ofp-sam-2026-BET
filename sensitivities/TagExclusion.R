@@ -38,6 +38,7 @@ if (!dir.exists(base_dir_abs)) {
   stop("Base inputs directory does not exist: ", base_dir_abs)
 }
 dir.create(out_root_abs, recursive = TRUE, showWarnings = FALSE)
+dir.create(out_root_abs, recursive = TRUE, showWarnings = FALSE)
 
 cat("Base inputs dir :", base_dir_abs, "\n")
 cat("Output root dir :", out_root_abs, "\n")
