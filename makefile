@@ -8,6 +8,7 @@ MFCL_EXE_REL ?= $(patsubst $(CURDIR)/%,%,$(MFCL_EXE))
 REGION4_INPUT_DIR ?= mfcl/inputs/2023_rep
 REGION4_OUTPUT_DIR ?= mfcl/inputs/2023_4region
 REGION4_MERGE_OUTPUT_DIR ?= mfcl/inputs/2023_4region_merge
+REGION4_RELEASE_REGIONS_EXCLUDED ?= 9
 REGION4_MODEL_DIR ?= model/2023R4
 REGION4_MERGE_MODEL_DIR ?= model/2023R4_merge
 REGION4_VARIANT_BASE_DIR ?= $(REGION4_OUTPUT_DIR)
@@ -17,14 +18,6 @@ REGION4_FIXVB_M_INPUT_DIR ?= mfcl/inputs/2023_fixVB_M
 REGION4_FIXVB_M_OUTPUT_DIR ?= mfcl/inputs/2023_4region_fixVB_M
 REGION4_FIXM_INPUT_DIR ?= mfcl/inputs/2023_fixM
 REGION4_FIXM_OUTPUT_DIR ?= mfcl/inputs/2023_4region_fixM
-REGION4_EXJPTP_INPUT_DIR ?= mfcl/inputs/2023_rep_exclude_JPTP
-REGION4_EXJPTP_OUTPUT_DIR ?= mfcl/inputs/2023_4region_exclude_JPTP
-REGION4_EXPTTP_INPUT_DIR ?= mfcl/inputs/2023_rep_exclude_PTTP
-REGION4_EXPTTP_OUTPUT_DIR ?= mfcl/inputs/2023_4region_exclude_PTTP
-REGION4_EXRG2125_INPUT_DIR ?= mfcl/inputs/2023_rep_exclude_rg_21_25
-REGION4_EXRG2125_OUTPUT_DIR ?= mfcl/inputs/2023_4region_exclude_rg_21_25
-REGION4_EXRTTP_INPUT_DIR ?= mfcl/inputs/2023_rep_exclude_RTTP
-REGION4_EXRTTP_OUTPUT_DIR ?= mfcl/inputs/2023_4region_exclude_RTTP
 REGION4_FIXVB_M_MODEL_DIR ?= model/2023R4_fixVB_M
 REGION4_FIXM_MODEL_DIR ?= model/2023R4_fixM
 
@@ -35,6 +28,16 @@ build-4region:
 		--index-csv $(INDEX_CSV) \
 		--index-comp-mode representative \
 		--overwrite
+	tmpdir=$$(mktemp -d); \
+	base_dir=$(REGION4_OUTPUT_DIR) \
+	release_region_source_dir=$(REGION4_INPUT_DIR) \
+	release_regions=$(REGION4_RELEASE_REGIONS_EXCLUDED) \
+	out_dir=$$tmpdir \
+	Rscript tools/apply_release_region_exclusion.R; \
+	rm -rf $(REGION4_OUTPUT_DIR); \
+	mkdir -p $(REGION4_OUTPUT_DIR); \
+	cp -a $$tmpdir/. $(REGION4_OUTPUT_DIR)/; \
+	rm -rf $$tmpdir
 
 build-4region-merge:
 	Rscript tools/collapse_regions_9to4.R \
@@ -43,6 +46,16 @@ build-4region-merge:
 		--index-csv $(INDEX_CSV) \
 		--index-comp-mode merge \
 		--overwrite
+	tmpdir=$$(mktemp -d); \
+	base_dir=$(REGION4_MERGE_OUTPUT_DIR) \
+	release_region_source_dir=$(REGION4_INPUT_DIR) \
+	release_regions=$(REGION4_RELEASE_REGIONS_EXCLUDED) \
+	out_dir=$$tmpdir \
+	Rscript tools/apply_release_region_exclusion.R; \
+	rm -rf $(REGION4_MERGE_OUTPUT_DIR); \
+	mkdir -p $(REGION4_MERGE_OUTPUT_DIR); \
+	cp -a $$tmpdir/. $(REGION4_MERGE_OUTPUT_DIR)/; \
+	rm -rf $$tmpdir
 
 build-4region-11par: build-4region
 	Rscript tools/collapse_par_9to4_representative.R \
@@ -57,15 +70,20 @@ build-4region-variant: build-4region-11par
 	rm -rf $(OUTPUT_DIR)
 	mkdir -p $(OUTPUT_DIR)
 	cp -a $(REGION4_VARIANT_BASE_DIR)/. $(OUTPUT_DIR)/
-	tmpdir=$$(mktemp -d); \
+	tmpdir=$$(mktemp -d); filtered_tmpdir=$$(mktemp -d); \
 	Rscript tools/collapse_regions_9to4.R \
 		--input-dir $(SOURCE_DIR) \
 		--output-dir $$tmpdir \
 		--index-csv $(INDEX_CSV) \
 		--index-comp-mode representative \
 		--overwrite; \
-	cp -a $$tmpdir/. $(OUTPUT_DIR)/; \
-	rm -rf $$tmpdir
+	base_dir=$$tmpdir \
+	release_region_source_dir=$(SOURCE_DIR) \
+	release_regions=$(REGION4_RELEASE_REGIONS_EXCLUDED) \
+	out_dir=$$filtered_tmpdir \
+	Rscript tools/apply_release_region_exclusion.R; \
+	cp -a $$filtered_tmpdir/. $(OUTPUT_DIR)/; \
+	rm -rf $$tmpdir $$filtered_tmpdir
 	@for extra in program_exclusion_info.rds release_group_exclusion_info.rds; do \
 		if [ -f "$(SOURCE_DIR)/$$extra" ]; then cp "$(SOURCE_DIR)/$$extra" "$(OUTPUT_DIR)/$$extra"; else rm -f "$(OUTPUT_DIR)/$$extra"; fi; \
 	done
@@ -96,30 +114,6 @@ build-4region-fixM:
 
 build-4region-fixM-11par:
 	$(MAKE) build-4region-variant-11par SOURCE_DIR=$(REGION4_FIXM_INPUT_DIR) OUTPUT_DIR=$(REGION4_FIXM_OUTPUT_DIR)
-
-build-4region-exclude-JPTP:
-	$(MAKE) build-4region-variant SOURCE_DIR=$(REGION4_EXJPTP_INPUT_DIR) OUTPUT_DIR=$(REGION4_EXJPTP_OUTPUT_DIR)
-
-build-4region-exclude-JPTP-11par:
-	$(MAKE) build-4region-variant-11par SOURCE_DIR=$(REGION4_EXJPTP_INPUT_DIR) OUTPUT_DIR=$(REGION4_EXJPTP_OUTPUT_DIR)
-
-build-4region-exclude-PTTP:
-	$(MAKE) build-4region-variant SOURCE_DIR=$(REGION4_EXPTTP_INPUT_DIR) OUTPUT_DIR=$(REGION4_EXPTTP_OUTPUT_DIR)
-
-build-4region-exclude-PTTP-11par:
-	$(MAKE) build-4region-variant-11par SOURCE_DIR=$(REGION4_EXPTTP_INPUT_DIR) OUTPUT_DIR=$(REGION4_EXPTTP_OUTPUT_DIR)
-
-build-4region-exclude-rg2125:
-	$(MAKE) build-4region-variant SOURCE_DIR=$(REGION4_EXRG2125_INPUT_DIR) OUTPUT_DIR=$(REGION4_EXRG2125_OUTPUT_DIR)
-
-build-4region-exclude-rg2125-11par:
-	$(MAKE) build-4region-variant-11par SOURCE_DIR=$(REGION4_EXRG2125_INPUT_DIR) OUTPUT_DIR=$(REGION4_EXRG2125_OUTPUT_DIR)
-
-build-4region-exclude-RTTP:
-	$(MAKE) build-4region-variant SOURCE_DIR=$(REGION4_EXRTTP_INPUT_DIR) OUTPUT_DIR=$(REGION4_EXRTTP_OUTPUT_DIR)
-
-build-4region-exclude-RTTP-11par:
-	$(MAKE) build-4region-variant-11par SOURCE_DIR=$(REGION4_EXRTTP_INPUT_DIR) OUTPUT_DIR=$(REGION4_EXRTTP_OUTPUT_DIR)
 
 makepar-4region: build-4region
 	cd $(REGION4_OUTPUT_DIR) && $(MFCL_EXE) bet.frq bet.ini 00.par -makepar
@@ -190,14 +184,14 @@ retro:
 test:
 	Rscript tests/run_tests.R
 	
-TagExclusion:
-	Rscript sensitivities/TagExclusion.R
+TagMovementSubset:
+	Rscript sensitivities/TagMovementSubset.R
 
-TagReleaseGroupExclusion:
-	Rscript sensitivities/TagReleaseGroupExclusion.R
+SelectivitySplineNodes:
+	Rscript sensitivities/SelectivitySplineNodes.R
 
-TagReleaseRegionExclusion:
-	Rscript sensitivities/TagReleaseRegionExclusion.R
+IndexCvHalf:
+	Rscript sensitivities/IndexCvHalf.R
 
 collate-hessian:
 	Rscript tools/collate_hessian_mfcl.R
@@ -271,7 +265,7 @@ docker-report:
 	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(stitch-hessian docker-run docker-model docker-prof docker-jitter docker-hessian docker-collate-hessian docker-stitch
 
 	
-.PHONY: build-4region build-4region-merge build-4region-11par build-4region-variant build-4region-variant-11par build-4region-fixVB build-4region-fixVB-11par build-4region-fixVB_M build-4region-fixVB_M-11par build-4region-fixM build-4region-fixM-11par build-4region-exclude-JPTP build-4region-exclude-JPTP-11par build-4region-exclude-PTTP build-4region-exclude-PTTP-11par build-4region-exclude-rg2125 build-4region-exclude-rg2125-11par build-4region-exclude-RTTP build-4region-exclude-RTTP-11par makepar-4region makepar-4region-merge run-4region run-4region-merge run-4region-fixM run-4region-fixVB_M plot run model prof prof_chain prof_2d jitter jitter_smoke jitter_smoke_hessian hessian retro test TagExclusion TagReleaseGroupExclusion collate-hessian stitch-hessian stitch-hessian-all prof-init-map prof-init-map-model docker-run docker-model docker-prof docker-jitter docker-jitter-smoke docker-jitter-smoke-hessian docker-hessian docker-retro docker-collate-hessian docker-stitch-hessian docker-stitch-hessian-all docker-prof-init-map docker-plot prepaw report docker-report
+.PHONY: build-4region build-4region-merge build-4region-11par build-4region-variant build-4region-variant-11par build-4region-fixVB build-4region-fixVB-11par build-4region-fixVB_M build-4region-fixVB_M-11par build-4region-fixM build-4region-fixM-11par makepar-4region makepar-4region-merge run-4region run-4region-merge run-4region-fixM run-4region-fixVB_M plot run model prof prof_chain prof_2d jitter jitter_smoke jitter_smoke_hessian hessian retro test TagMovementSubset SelectivitySplineNodes IndexCvHalf collate-hessian stitch-hessian stitch-hessian-all prof-init-map prof-init-map-model docker-run docker-model docker-prof docker-jitter docker-jitter-smoke docker-jitter-smoke-hessian docker-hessian docker-retro docker-collate-hessian docker-stitch-hessian docker-stitch-hessian-all docker-prof-init-map docker-plot prepaw report docker-report
 
 
 

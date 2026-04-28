@@ -379,69 +379,81 @@ mod_cpue_server <- function(input, output, session, rv) {
             Scenario = factor(as.character(Scenario), levels = panel_spec$scenario_vals),
             fishery_name = factor(as.character(fishery_name), levels = panel_spec$fishery_vals),
             scenario_fishery = paste(as.character(Scenario), as.character(fishery_name), sep = " | "),
-            scenario_fishery = factor(scenario_fishery, levels = panel_spec$panel_levels)
+            scenario_fishery = factor(scenario_fishery, levels = unique(as.character(scenario_fishery)))
           )
+      }
+
+      finite_range <- function(x) {
+        x <- suppressWarnings(as.numeric(x))
+        x <- x[is.finite(x)]
+        if (length(x) == 0) return(NULL)
+        range(x)
       }
 
       if (identical(metric, "residuals") && identical(view_mode, "by_scenario")) {
         plot_df <- cpue_all
         panel_spec <- NULL
         facet_formula <- Scenario ~ fishery_name
-        if (isTRUE(free_y_panel)) {
-          panel_spec <- by_model_panel_spec(plot_df)
-          plot_df <- format_by_model_panel_data(plot_df, panel_spec)
+        panel_spec <- by_model_panel_spec(plot_df)
+        plot_df <- format_by_model_panel_data(plot_df, panel_spec)
 
-          if (requireNamespace("patchwork", quietly = TRUE)) {
-            scenario_plots <- lapply(seq_along(panel_spec$scenario_vals), function(i) {
-              scenario <- panel_spec$scenario_vals[[i]]
-              row_df <- plot_df %>%
-                filter(as.character(Scenario) == scenario) %>%
-                droplevels()
-              row_ncol <- max(1, length(levels(row_df$fishery_name)))
+        if (requireNamespace("patchwork", quietly = TRUE)) {
+          y_limits <- if (isTRUE(free_y_panel)) NULL else finite_range(plot_df$residual)
+          scenario_plots <- lapply(seq_along(panel_spec$scenario_vals), function(i) {
+            scenario <- panel_spec$scenario_vals[[i]]
+            row_df <- plot_df %>%
+              filter(as.character(Scenario) == scenario) %>%
+              droplevels()
+            if (nrow(row_df) == 0) return(NULL)
+            row_ncol <- max(1, dplyr::n_distinct(row_df$fishery_name))
 
-              row_plot <- ggplot(row_df, aes(x = year_season, y = residual, color = Scenario)) +
-                geom_hline(yintercept = 0, linetype = "dashed", color = "#666") +
-                geom_point(size = 1.2, alpha = 0.55) +
-                facet_wrap(~fishery_name, scales = "free_y", ncol = row_ncol) +
-                scale_color_manual(values = scenario_colors) +
-                labs(
-                  x = if (i == length(panel_spec$scenario_vals)) "Year + Season" else NULL,
-                  y = "Residual (obs - fit)",
-                  title = scenario
-                ) +
-                theme_bw(base_size = 12) +
+            row_plot <- ggplot(row_df, aes(x = year_season, y = residual, color = Scenario)) +
+              geom_hline(yintercept = 0, linetype = "dashed", color = "#666") +
+              geom_point(size = 1.2, alpha = 0.55) +
+              facet_wrap(~fishery_name, scales = if (isTRUE(free_y_panel)) "free_y" else "fixed", ncol = row_ncol) +
+              scale_color_manual(values = scenario_colors) +
+              labs(
+                x = if (i == length(panel_spec$scenario_vals)) "Year + Season" else NULL,
+                y = "Residual (obs - fit)",
+                title = scenario
+              ) +
+              theme_bw(base_size = 12) +
+              theme(
+                legend.position = "none",
+                plot.title = element_text(hjust = 0, face = "bold", size = 12),
+                strip.background = element_rect(fill = "grey90"),
+                strip.text = element_text(face = "bold"),
+                panel.grid.minor = element_blank()
+              )
+
+            if (!isTRUE(free_y_panel) && !is.null(y_limits)) {
+              row_plot <- row_plot + coord_cartesian(ylim = y_limits)
+            }
+
+            if (i < length(panel_spec$scenario_vals)) {
+              row_plot <- row_plot +
                 theme(
-                  legend.position = "none",
-                  plot.title = element_text(hjust = 0, face = "bold", size = 12),
-                  strip.background = element_rect(fill = "grey90"),
-                  strip.text = element_text(face = "bold"),
-                  panel.grid.minor = element_blank()
+                  axis.title.x = element_blank(),
+                  axis.text.x = element_blank(),
+                  axis.ticks.x = element_blank()
                 )
+            }
 
-              if (i < length(panel_spec$scenario_vals)) {
-                row_plot <- row_plot +
-                  theme(
-                    axis.title.x = element_blank(),
-                    axis.text.x = element_blank(),
-                    axis.ticks.x = element_blank()
-                  )
-              }
+            row_plot
+          })
+          scenario_plots <- Filter(Negate(is.null), scenario_plots)
 
-              row_plot
-            })
-
-            return(
-              patchwork::wrap_plots(scenario_plots, ncol = 1) +
-                patchwork::plot_annotation(
-                  title = "CPUE Residuals by Model",
-                  theme = theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 15))
-                )
-            )
-          }
-
-          plot_df <- add_by_model_panel(plot_df, panel_spec)
-          facet_formula <- ~ scenario_fishery
+          return(
+            patchwork::wrap_plots(scenario_plots, ncol = 1) +
+              patchwork::plot_annotation(
+                title = "CPUE Residuals by Model",
+                theme = theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 15))
+              )
+          )
         }
+
+        plot_df <- add_by_model_panel(plot_df, panel_spec)
+        facet_formula <- ~ scenario_fishery
 
         p <- ggplot(plot_df, aes(x = year_season, y = residual, color = Scenario)) +
           geom_hline(yintercept = 0, linetype = "dashed", color = "#666") +
@@ -455,7 +467,12 @@ mod_cpue_server <- function(input, output, session, rv) {
             labeller = as_labeller(panel_spec$panel_labels)
           )
         } else {
-          p <- p + facet_grid(facet_formula, scales = "free")
+          p <- p + facet_wrap(
+            facet_formula,
+            scales = "fixed",
+            ncol = facet_ncol,
+            labeller = as_labeller(panel_spec$panel_labels)
+          )
         }
 
         p <- p +
@@ -504,66 +521,71 @@ mod_cpue_server <- function(input, output, session, rv) {
           summarise(obs = first(obs), .groups = "drop")
         panel_spec <- NULL
         facet_formula <- Scenario ~ fishery_name
-        if (isTRUE(free_y_panel)) {
-          panel_spec <- by_model_panel_spec(plot_df)
-          plot_df <- format_by_model_panel_data(plot_df, panel_spec)
-          obs_df <- format_by_model_panel_data(obs_df, panel_spec)
+        panel_spec <- by_model_panel_spec(plot_df)
+        plot_df <- format_by_model_panel_data(plot_df, panel_spec)
+        obs_df <- format_by_model_panel_data(obs_df, panel_spec)
 
-          if (requireNamespace("patchwork", quietly = TRUE)) {
-            scenario_plots <- lapply(seq_along(panel_spec$scenario_vals), function(i) {
-              scenario <- panel_spec$scenario_vals[[i]]
-              row_df <- plot_df %>%
-                filter(as.character(Scenario) == scenario) %>%
-                droplevels()
-              row_obs <- obs_df %>%
-                filter(as.character(Scenario) == scenario) %>%
-                droplevels()
-              row_ncol <- max(1, length(levels(row_df$fishery_name)))
+        if (requireNamespace("patchwork", quietly = TRUE)) {
+          y_limits <- if (isTRUE(free_y_panel)) NULL else finite_range(c(plot_df$fit, obs_df$obs))
+          scenario_plots <- lapply(seq_along(panel_spec$scenario_vals), function(i) {
+            scenario <- panel_spec$scenario_vals[[i]]
+            row_df <- plot_df %>%
+              filter(as.character(Scenario) == scenario) %>%
+              droplevels()
+            row_obs <- obs_df %>%
+              filter(as.character(Scenario) == scenario) %>%
+              droplevels()
+            if (nrow(row_df) == 0) return(NULL)
+            row_ncol <- max(1, dplyr::n_distinct(row_df$fishery_name))
 
-              row_plot <- ggplot(row_df, aes(x = year_season)) +
-                geom_point(data = row_obs, aes(y = obs), size = 1.8, alpha = 0.5, color = "#6b7280") +
-                geom_line(aes(y = fit, color = Scenario), linewidth = 1.1, alpha = 0.9) +
-                facet_wrap(~fishery_name, scales = "free_y", ncol = row_ncol) +
-                scale_color_manual(values = scenario_colors) +
-                labs(
-                  x = if (i == length(panel_spec$scenario_vals)) "Year + Season" else NULL,
-                  y = "CPUE",
-                  title = scenario
-                ) +
-                theme_bw(base_size = 12) +
+            row_plot <- ggplot(row_df, aes(x = year_season)) +
+              geom_point(data = row_obs, aes(y = obs), size = 1.8, alpha = 0.5, color = "#6b7280") +
+              geom_line(aes(y = fit, color = Scenario), linewidth = 1.1, alpha = 0.9) +
+              facet_wrap(~fishery_name, scales = if (isTRUE(free_y_panel)) "free_y" else "fixed", ncol = row_ncol) +
+              scale_color_manual(values = scenario_colors) +
+              labs(
+                x = if (i == length(panel_spec$scenario_vals)) "Year + Season" else NULL,
+                y = "CPUE",
+                title = scenario
+              ) +
+              theme_bw(base_size = 12) +
+              theme(
+                legend.position = "none",
+                plot.title = element_text(hjust = 0, face = "bold", size = 12),
+                strip.background = element_rect(fill = "grey90"),
+                strip.text = element_text(face = "bold"),
+                panel.grid.minor = element_blank()
+              )
+
+            if (!isTRUE(free_y_panel) && !is.null(y_limits)) {
+              row_plot <- row_plot + coord_cartesian(ylim = y_limits)
+            }
+
+            if (i < length(panel_spec$scenario_vals)) {
+              row_plot <- row_plot +
                 theme(
-                  legend.position = "none",
-                  plot.title = element_text(hjust = 0, face = "bold", size = 12),
-                  strip.background = element_rect(fill = "grey90"),
-                  strip.text = element_text(face = "bold"),
-                  panel.grid.minor = element_blank()
+                  axis.title.x = element_blank(),
+                  axis.text.x = element_blank(),
+                  axis.ticks.x = element_blank()
                 )
+            }
 
-              if (i < length(panel_spec$scenario_vals)) {
-                row_plot <- row_plot +
-                  theme(
-                    axis.title.x = element_blank(),
-                    axis.text.x = element_blank(),
-                    axis.ticks.x = element_blank()
-                  )
-              }
+            row_plot
+          })
+          scenario_plots <- Filter(Negate(is.null), scenario_plots)
 
-              row_plot
-            })
-
-            return(
-              patchwork::wrap_plots(scenario_plots, ncol = 1) +
-                patchwork::plot_annotation(
-                  title = "CPUE Fits by Model",
-                  theme = theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 15))
-                )
-            )
-          }
-
-          plot_df <- add_by_model_panel(plot_df, panel_spec)
-          obs_df <- add_by_model_panel(obs_df, panel_spec)
-          facet_formula <- ~ scenario_fishery
+          return(
+            patchwork::wrap_plots(scenario_plots, ncol = 1) +
+              patchwork::plot_annotation(
+                title = "CPUE Fits by Model",
+                theme = theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 15))
+              )
+          )
         }
+
+        plot_df <- add_by_model_panel(plot_df, panel_spec)
+        obs_df <- add_by_model_panel(obs_df, panel_spec)
+        facet_formula <- ~ scenario_fishery
 
         p <- ggplot(plot_df, aes(x = year_season)) +
           geom_point(data = obs_df, aes(y = obs), size = 1.8, alpha = 0.5, color = "#6b7280") +
@@ -577,7 +599,12 @@ mod_cpue_server <- function(input, output, session, rv) {
             labeller = as_labeller(panel_spec$panel_labels)
           )
         } else {
-          p <- p + facet_grid(facet_formula, scales = "free")
+          p <- p + facet_wrap(
+            facet_formula,
+            scales = "fixed",
+            ncol = facet_ncol,
+            labeller = as_labeller(panel_spec$panel_labels)
+          )
         }
 
         p <- p +

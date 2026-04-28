@@ -158,21 +158,94 @@ models <- list(
     base_dir = "mfcl/inputs/2023_4region_fixM",
     profile_sets = profile_sets_fixM
   ),
-  "2023R4_ExJPTP" = make_model(
-    description = "4-region model excluding JPTP tags",
-    base_dir = "mfcl/inputs/2023_4region_exclude_JPTP"
+  "2023R4_sel4" = make_model(
+    description = "4-region model with cubic-spline selectivity reduced from 5 to 4 nodes",
+    base_dir = "mfcl/inputs/2023_4region_sel_spline4"
   ),
-  "2023R4_ExPTTP" = make_model(
-    description = "4-region model excluding PTTP tags",
-    base_dir = "mfcl/inputs/2023_4region_exclude_PTTP"
+  "2023R4_cvH" = make_model(
+    description = "4-region model with index CPUE CV flags halved",
+    base_dir = "mfcl/inputs/2023_4region_index_cv_half"
   ),
-  "2023R4_ExRG21_25" = make_model(
-    description = "4-region model excluding release groups 21 and 25",
-    base_dir = "mfcl/inputs/2023_4region_exclude_rg_21_25"
+  "2023R4_sel4_cvH" = make_model(
+    description = "4-region model with 4-node selectivity splines and index CPUE CV flags halved",
+    base_dir = "mfcl/inputs/2023_4region_sel_spline4_index_cv_half"
   ),
-  "2023R4_ExRTTP" = make_model(
-    description = "4-region model excluding RTTP tags",
-    base_dir = "mfcl/inputs/2023_4region_exclude_RTTP"
+  "2023R4_fixM_sel4" = make_model(
+    description = "4-region fixM model with cubic-spline selectivity reduced from 5 to 4 nodes",
+    base_dir = "mfcl/inputs/2023_4region_fixM_sel_spline4",
+    profile_sets = profile_sets_fixM
+  ),
+  "2023R4_fixM_cvH" = make_model(
+    description = "4-region fixM model with index CPUE CV flags halved",
+    base_dir = "mfcl/inputs/2023_4region_fixM_index_cv_half",
+    profile_sets = profile_sets_fixM
+  ),
+  "2023R4_fixM_sel4_cvH" = make_model(
+    description = "4-region fixM model with 4-node selectivity splines and index CPUE CV flags halved",
+    base_dir = "mfcl/inputs/2023_4region_fixM_sel_spline4_index_cv_half",
+    profile_sets = profile_sets_fixM
+  ),
+  "2023R4_fixVB_sel4" = make_model(
+    description = "4-region fixVB model with cubic-spline selectivity reduced from 5 to 4 nodes",
+    base_dir = "mfcl/inputs/2023_4region_fixVB_sel_spline4",
+    profile_sets = profile_sets_fixVB
+  ),
+  "2023R4_fixVB_cvH" = make_model(
+    description = "4-region fixVB model with index CPUE CV flags halved",
+    base_dir = "mfcl/inputs/2023_4region_fixVB_index_cv_half",
+    profile_sets = profile_sets_fixVB
+  ),
+  "2023R4_fixVB_sel4_cvH" = make_model(
+    description = "4-region fixVB model with 4-node selectivity splines and index CPUE CV flags halved",
+    base_dir = "mfcl/inputs/2023_4region_fixVB_sel_spline4_index_cv_half",
+    profile_sets = profile_sets_fixVB
+  ),
+  "2023R4_fixVBM_sel4" = make_model(
+    description = "4-region fixVB_M model with cubic-spline selectivity reduced from 5 to 4 nodes",
+    base_dir = "mfcl/inputs/2023_4region_fixVB_M_sel_spline4",
+    profile_sets = profile_sets_fixVB_M
+  ),
+  "2023R4_fixVBM_cvH" = make_model(
+    description = "4-region fixVB_M model with index CPUE CV flags halved",
+    base_dir = "mfcl/inputs/2023_4region_fixVB_M_index_cv_half",
+    profile_sets = profile_sets_fixVB_M
+  ),
+  "2023R4_fixVBM_sel4_cvH" = make_model(
+    description = "4-region fixVB_M model with 4-node selectivity splines and index CPUE CV flags halved",
+    base_dir = "mfcl/inputs/2023_4region_fixVB_M_sel_spline4_index_cv_half",
+    profile_sets = profile_sets_fixVB_M
+  ),
+  "2023R4_m23" = make_model(
+    description = "4-region model with movement only between regions 2 and 3",
+    base_dir = "mfcl/inputs/2023_4region_movement_R2_R3"
+  ),
+  "2023R4_m23_sel4" = make_model(
+    description = "4-region R2-R3 movement model with cubic-spline selectivity reduced from 5 to 4 nodes",
+    base_dir = "mfcl/inputs/2023_4region_movement_R2_R3_sel_spline4"
+  ),
+  "2023R4_m23_cvH" = make_model(
+    description = "4-region R2-R3 movement model with index CPUE CV flags halved",
+    base_dir = "mfcl/inputs/2023_4region_movement_R2_R3_index_cv_half"
+  ),
+  "2023R4_m23_sel4_cvH" = make_model(
+    description = "4-region R2-R3 movement model with 4-node selectivity splines and index CPUE CV flags halved",
+    base_dir = "mfcl/inputs/2023_4region_movement_R2_R3_sel_spline4_index_cv_half"
+  ),
+  "2023R4_m123" = make_model(
+    description = "4-region model with movement among regions 1, 2 and 3 only",
+    base_dir = "mfcl/inputs/2023_4region_movement_R1_R2_R1_R3_R2_R3"
+  ),
+  "2023R4_m123_sel4" = make_model(
+    description = "4-region R1-R2/R1-R3/R2-R3 movement model with cubic-spline selectivity reduced from 5 to 4 nodes",
+    base_dir = "mfcl/inputs/2023_4region_movement_R1_R2_R1_R3_R2_R3_sel_spline4"
+  ),
+  "2023R4_m123_cvH" = make_model(
+    description = "4-region R1-R2/R1-R3/R2-R3 movement model with index CPUE CV flags halved",
+    base_dir = "mfcl/inputs/2023_4region_movement_R1_R2_R1_R3_R2_R3_index_cv_half"
+  ),
+  "2023R4_m123_sel4_cvH" = make_model(
+    description = "4-region R1-R2/R1-R3/R2-R3 movement model with 4-node selectivity splines and index CPUE CV flags halved",
+    base_dir = "mfcl/inputs/2023_4region_movement_R1_R2_R1_R3_R2_R3_sel_spline4_index_cv_half"
   )
 )
 
