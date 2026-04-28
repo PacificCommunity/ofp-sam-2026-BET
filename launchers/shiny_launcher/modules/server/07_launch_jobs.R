@@ -334,6 +334,31 @@
     )
   }
 
+  condor_target_label <- function(run_target) {
+    target <- if (!is.null(run_target) && nzchar(run_target)) run_target else "all"
+    switch(
+      target,
+      all = "all (no extra filtering)",
+      nouofp = "nouofp",
+      suvofp = "suvofp",
+      target
+    )
+  }
+
+  format_selected_condor_nodes <- function(launch_mode, condor_target_info) {
+    if (!identical(launch_mode, "condor")) {
+      return("NA")
+    }
+    target_mode <- if (!is.null(condor_target_info$target_mode)) condor_target_info$target_mode else "all"
+    label <- condor_target_label(target_mode)
+    matched_n <- length(condor_target_info$matched_slots)
+    exclude_n <- length(condor_target_info$exclude_slots)
+    if (identical(target_mode, "all")) {
+      return(label)
+    }
+    paste0(label, " (matched slots: ", matched_n, "; excluded slots: ", exclude_n, ")")
+  }
+
   build_condor_exclude_slots <- function(remote_user, remote_host, run_target) {
     base_exclude <- default_condor_exclude_slots()
     patterns <- condor_target_patterns(run_target = run_target)
@@ -1689,6 +1714,10 @@
         model_names = as.character(job_record$model_names),
         total_jobs = as.integer(total_jobs),
         launch_mode = as.character(job_record$launch_mode),
+        selected_condor_nodes = format_selected_condor_nodes(
+          launch_mode = launch_mode,
+          condor_target_info = condor_target_info
+        ),
         status = as.character(job_record$status),
         branch = as.character(job_record$branch),
         batch_names = as.character(job_record$batch_names),

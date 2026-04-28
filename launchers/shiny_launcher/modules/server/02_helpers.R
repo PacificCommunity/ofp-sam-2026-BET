@@ -68,8 +68,8 @@
   load_launcher_job_log <- function() {
     required_cols <- c(
       "run_at", "output_dir", "summary", "run_description", "config_file",
-      "job_types", "model_names", "total_jobs", "launch_mode", "status", "branch",
-      "selected_condor_nodes", "batch_names", "local_pid_files", "local_log_files",
+      "job_types", "model_names", "total_jobs", "launch_mode", "selected_condor_nodes",
+      "status", "branch", "batch_names", "local_pid_files", "local_log_files",
       "config_details", "remote_dirs"
     )
 

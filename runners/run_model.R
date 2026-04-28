@@ -1,7 +1,7 @@
 ## ============================================================
 ## MFCL run script (tidied) 
 ## - auto-detect .frq
-## - auto-detect latest .par and write +1 .par
+## - auto-detect .ini/.par start state
 ## - copy base inputs -> model_dir
 ## - run MFCL
 ## - save model_info + payload
@@ -55,33 +55,42 @@ frq_file <- frq_files[1]
 cat("Found .frq file:", frq_file, "\n")
 
 ## -------------------------
-## 3) Auto-detect latest .par and set output as +1
+## 3) Auto-detect optional .ini and latest .par
 ## -------------------------
+ini_files <- list.files(base_dir_abs, pattern = "\\.ini$", full.names = FALSE)
+if (length(ini_files) > 1) {
+  warning("Multiple .ini files found; using first: ", ini_files[1])
+}
+ini_file <- if (length(ini_files) > 0) ini_files[1] else NA_character_
+if (!is.na(ini_file)) {
+  cat("Found .ini file:", ini_file, "\n")
+}
+
 par_files <- list.files(base_dir_abs, pattern = "\\.par$", full.names = FALSE)
 
-if (length(par_files) == 0) {
-  stop("No .par files found in ", base_dir_abs)
-}
+par_in <- NA_character_
+par_out <- "01.par"
+if (length(par_files) > 0) {
+  par_stems <- sub("\\.par$", "", par_files)
+  par_nums <- suppressWarnings(as.integer(par_stems))
+  numeric_idx <- which(!is.na(par_nums) & grepl("^[0-9]+$", par_stems))
 
-par_nums <- suppressWarnings(as.numeric(gsub("\\.par$", "", par_files)))
-if (any(is.na(par_nums))) {
-  stop(
-    "Some .par files do not follow '<number>.par': ",
-    paste(par_files[is.na(par_nums)], collapse = ", ")
-  )
-}
+  if (length(numeric_idx) > 0) {
+    last_idx <- numeric_idx[which.max(par_nums[numeric_idx])]
+    last_par_num <- par_nums[[last_idx]]
+    par_in <- par_files[[last_idx]]
+    out_width <- max(nchar(par_stems[[last_idx]]), 2L)
+    par_out <- paste0(sprintf(paste0("%0", out_width, "d"), last_par_num + 1L), ".par")
+  } else {
+    par_info <- file.info(file.path(base_dir_abs, par_files))
+    par_in <- par_files[[which.max(par_info$mtime)]]
+    par_out <- "01.par"
+  }
 
-last_par_num <- max(par_nums, na.rm = TRUE)
-par_in  <- paste0(last_par_num, ".par")
-par_out <- paste0(last_par_num + 1, ".par")
-
-cat("Using input .par :", par_in,  "\n")
-cat("Writing output .par:", par_out, "\n")
-
-## Optional safety: refuse to overwrite output if it already exists in base inputs
-par_out_abs <- file.path(base_dir_abs, par_out)
-if (file.exists(par_out_abs)) {
-  stop("Output .par already exists in base inputs: ", par_out_abs)
+  cat("Using input .par :", par_in, "\n")
+  cat("Writing output .par:", par_out, "\n")
+} else {
+  cat("No .par file found in base inputs; run must start from .ini/doitall makepar.\n")
 }
 
 ## -------------------------
@@ -105,10 +114,27 @@ defaultswitch <- paste(
 ## -------------------------
 mfcl_commands_raw <- Sys.getenv(
   "mfcl_commands",
-  paste(program_path, frq_file, par_in, par_out, defaultswitch)
+  if (!is.na(par_in)) paste(program_path, frq_file, par_in, par_out, defaultswitch) else "./doitall.sh"
 )
 
-mfcl_commands <- if (identical(mfcl_commands_raw, "./doitall.sh")) {
+is_doitall_command <- function(x) identical(trimws(as.character(x)), "./doitall.sh")
+if (is_doitall_command(mfcl_commands_raw)) {
+  mfcl_commands_raw <- "./doitall.sh"
+}
+
+if (is_doitall_command(mfcl_commands_raw) && is.na(ini_file)) {
+  if (is.na(par_in)) {
+    stop("doitall.sh requires a .ini file when no .par is available in ", base_dir_abs)
+  }
+  mfcl_commands_raw <- paste(program_path, frq_file, par_in, par_out, defaultswitch)
+  cat("No .ini file found; using .par-based MFCL command instead of ./doitall.sh\n")
+}
+
+if (!is_doitall_command(mfcl_commands_raw) && is.na(par_in)) {
+  stop("No .par files found in ", base_dir_abs, " for MFCL command: ", mfcl_commands_raw)
+}
+
+mfcl_commands <- if (is_doitall_command(mfcl_commands_raw)) {
   mfcl_commands_raw
 } else {
   paste0("../../", mfcl_commands_raw)
@@ -131,7 +157,7 @@ cat("Model directory      :", model_dir, "\n")
 ## When using phase-based legacy scripts (doitall.sh), copied .par files
 ## can short-circuit phases and silently skip optimization. Remove all copied
 ## .par variants to force a fresh run from bet.ini in the model directory.
-if (identical(mfcl_commands_raw, "./doitall.sh")) {
+if (is_doitall_command(mfcl_commands_raw)) {
   copied_pars <- list.files(model_dir, pattern = "\\.par([0-9]+)?$", full.names = TRUE)
   if (length(copied_pars) > 0) {
     unlink(copied_pars, force = TRUE)

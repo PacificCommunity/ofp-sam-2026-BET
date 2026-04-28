@@ -355,6 +355,7 @@
     run_at_vals <- if ("run_at" %in% names(log_df)) as.character(log_df$run_at) else rep("", nrow(log_df))
     run_desc_vals <- if ("run_description" %in% names(log_df)) as.character(log_df$run_description) else rep("NA", nrow(log_df))
     summary_vals <- if ("summary" %in% names(log_df)) as.character(log_df$summary) else rep("NA", nrow(log_df))
+    selected_condor_vals <- if ("selected_condor_nodes" %in% names(log_df)) as.character(log_df$selected_condor_nodes) else rep("NA", nrow(log_df))
     details_vals <- as.character(log_df$config_details)
     details_vals[is.na(details_vals) | !nzchar(trimws(details_vals))] <- "NA"
 
@@ -373,6 +374,7 @@
       run_title <- if (!is.na(run_at_vals[i]) && nzchar(trimws(run_at_vals[i]))) run_at_vals[i] else "Unknown run time"
       run_desc <- if (!is.na(run_desc_vals[i]) && nzchar(trimws(run_desc_vals[i])) && run_desc_vals[i] != "NA") run_desc_vals[i] else "NA"
       run_summary <- if (!is.na(summary_vals[i]) && nzchar(trimws(summary_vals[i])) && summary_vals[i] != "NA") summary_vals[i] else "NA"
+      selected_condor <- if (!is.na(selected_condor_vals[i]) && nzchar(trimws(selected_condor_vals[i])) && selected_condor_vals[i] != "NA") selected_condor_vals[i] else "NA"
       tags$details(
         style = "margin-top:6px; border:1px solid #e1e1e1; border-radius:4px; padding:6px 8px; background:#fafafa;",
         tags$summary(
@@ -382,6 +384,7 @@
         tags$div(
           style = "margin-top:6px; font-size:12px;",
           tags$div(tags$b("Summary: "), run_summary),
+          tags$div(tags$b("Selected Condor Nodes: "), selected_condor),
           tags$pre(
             style = "white-space: pre-wrap; max-height: 220px; overflow: auto; margin-top: 6px; background: #fff; border:1px solid #ddd; padding:8px;",
             details_vals[i]

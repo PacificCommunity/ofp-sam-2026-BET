@@ -59,6 +59,12 @@
     if ("output_dir" %in% names(log_df)) {
       log_df$output_dir[is.na(log_df$output_dir) | !nzchar(trimws(as.character(log_df$output_dir)))] <- "NA"
     }
+    if ("selected_condor_nodes" %in% names(log_df)) {
+      log_df$selected_condor_nodes[
+        is.na(log_df$selected_condor_nodes) |
+          !nzchar(trimws(as.character(log_df$selected_condor_nodes)))
+      ] <- "NA"
+    }
 
     details_raw <- if ("config_details" %in% names(log_df)) {
       as.character(log_df$config_details)
@@ -77,7 +83,11 @@
     }
 
     show_cols <- intersect(
-      c("run_at", "output_dir", "summary", "run_description", "config_file", "job_types", "model_names", "total_jobs", "launch_mode", "status", "branch"),
+      c(
+        "run_at", "output_dir", "summary", "run_description", "config_file",
+        "job_types", "model_names", "total_jobs", "launch_mode",
+        "selected_condor_nodes", "status", "branch"
+      ),
       names(log_df)
     )
     if (length(show_cols) == 0) {
@@ -102,6 +112,7 @@
       model_names = "Models",
       total_jobs = "Total Jobs",
       launch_mode = "Mode",
+      selected_condor_nodes = "Selected Condor Nodes",
       status = "Status",
       branch = "Branch"
     )
