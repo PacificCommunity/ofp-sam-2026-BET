@@ -22,7 +22,7 @@ mod_fishery_names_ui <- function() {
 
     fluidRow(
       box(
-        title = "Fishery Map Table (from fishery_map.R)",
+        title = uiOutput("fishery_map_table_title"),
         width = 12,
         solidHeader = TRUE,
         status = "primary",
@@ -61,7 +61,7 @@ mod_fishery_names_ui <- function() {
 
     fluidRow(
       box(
-        title = "Tag Reporting Map Table (from tag_rep_map.R)",
+        title = uiOutput("tag_rep_map_table_title"),
         width = 12,
         solidHeader = TRUE,
         status = "info",
@@ -79,6 +79,49 @@ mod_fishery_names_ui <- function() {
 }
 
 mod_fishery_names_server <- function(input, output, session, rv) {
+  selected_model_dir <- reactive({
+    req(input$model_dir, input$fishery_names_model)
+    file.path(input$model_dir, input$fishery_names_model)
+  })
+
+  output$fishery_map_table_title <- renderUI({
+    if (is.null(input$fishery_names_model) || !nzchar(input$fishery_names_model)) {
+      return(tags$span("Fishery Map Table (select a model)"))
+    }
+
+    model_dir <- selected_model_dir()
+    map_path <- find_fishery_map_script(model_dir)
+    source_label <- if (!is.null(map_path) && file.exists(map_path)) {
+      file.path(input$fishery_names_model, basename(map_path))
+    } else {
+      file.path(input$fishery_names_model, "fishery_map.R")
+    }
+
+    tags$span(
+      "Fishery Map Table ",
+      tags$small(paste0("(from ", source_label, ")"))
+    )
+  })
+
+  output$tag_rep_map_table_title <- renderUI({
+    if (is.null(input$fishery_names_model) || !nzchar(input$fishery_names_model)) {
+      return(tags$span("Tag Reporting Map Table (select a model)"))
+    }
+
+    model_dir <- selected_model_dir()
+    map_path <- find_tag_rep_map_script(model_dir)
+    source_label <- if (!is.null(map_path) && file.exists(map_path)) {
+      file.path(input$fishery_names_model, basename(map_path))
+    } else {
+      file.path(input$fishery_names_model, "tag_rep_map.R")
+    }
+
+    tags$span(
+      "Tag Reporting Map Table ",
+      tags$small(paste0("(from ", source_label, ")"))
+    )
+  })
+
   fishery_map_missing_for_selected <- reactive({
     req(rv$data_loaded, input$fishery_names_model)
     missing <- if (!is.null(rv$fishery_map_missing_models)) rv$fishery_map_missing_models else character(0)
@@ -137,7 +180,7 @@ mod_fishery_names_server <- function(input, output, session, rv) {
 
   output$tag_rep_map_warning <- renderUI({
     req(rv$data_loaded, input$fishery_names_model, input$model_dir)
-    model_dir <- file.path(input$model_dir, input$fishery_names_model)
+    model_dir <- selected_model_dir()
     tag_map_path <- find_tag_rep_map_script(model_dir)
     if (!is.null(tag_map_path) && file.exists(tag_map_path)) return(NULL)
     tags$div(
