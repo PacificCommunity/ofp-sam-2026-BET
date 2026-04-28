@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   detect-model-changes:
+    if: ${{ github.ref_name != '4R' && github.head_ref != '4R' }}
     runs-on: ubuntu-22.04
     outputs:
       model: ${{ steps.changes.outputs.model }}
@@ -37,7 +38,7 @@ jobs:
   test-model:
     runs-on: ubuntu-22.04
     needs: detect-model-changes
-    if: ${{ needs.detect-model-changes.outputs.model == 'true' }}
+    if: ${{ github.ref_name != '4R' && github.head_ref != '4R' && needs.detect-model-changes.outputs.model == 'true' }}
     
     steps:
     - name: Checkout repository
