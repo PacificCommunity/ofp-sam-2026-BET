@@ -217,6 +217,9 @@ run: model prof
 plot:
 	Rscript -e "rmarkdown::render('plot/plots.rmd')"
 
+shiny-plot-4region-shape:
+	Rscript plot/shiny_plot/tools/4region_shape.R
+
 prepaw:
 	quarto render presentation/prepaw/presentation.qmd
 	

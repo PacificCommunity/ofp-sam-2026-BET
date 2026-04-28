@@ -5,6 +5,14 @@ library(patchwork)
 
 suppressMessages(sf::sf_use_s2(FALSE))
 
+script_path <- normalizePath(
+  sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE)[1]),
+  winslash = "/",
+  mustWork = TRUE
+)
+REPO_ROOT <- normalizePath(file.path(dirname(script_path), "..", "..", ".."), winslash = "/", mustWork = TRUE)
+OUTPUT_DIR <- file.path(REPO_ROOT, "plot", "shiny_plot", "www", "quick_reference")
+REGION_SHAPE_FILE <- file.path(REPO_ROOT, "regions.bet.RData")
 SOURCE_REGION_IDS <- c("1", "2", "3", "4", "5")
 PLOT_XLIM <- c(105, 214)
 PLOT_YLIM <- c(-45, 55)
@@ -198,7 +206,7 @@ plot_region_map <- function(polys, label_df, point_df, id_col, title_text) {
 # ------------------------------------------------------------
 # 1. Load region shapes
 # ------------------------------------------------------------
-loaded_names <- load("regions.bet.RData")
+loaded_names <- load(REGION_SHAPE_FILE)
 cat("Loaded object name(s):\n")
 print(loaded_names)
 
@@ -331,12 +339,14 @@ print(final_plot)
 # ------------------------------------------------------------
 # 6. Save outputs
 # ------------------------------------------------------------
-save(regions4, file = "regions.bet.4region.RData")
-write.csv(source_coords, "regions.bet.5region.coordinates.csv", row.names = FALSE)
-write.csv(region4_coords, "regions.bet.4region.coordinates.csv", row.names = FALSE)
+dir.create(OUTPUT_DIR, recursive = TRUE, showWarnings = FALSE)
+
+save(regions4, file = file.path(OUTPUT_DIR, "regions.bet.4region.RData"))
+write.csv(source_coords, file.path(OUTPUT_DIR, "regions.bet.5region.coordinates.csv"), row.names = FALSE)
+write.csv(region4_coords, file.path(OUTPUT_DIR, "regions.bet.4region.coordinates.csv"), row.names = FALSE)
 
 ggsave(
-  filename = "region_map_with_4region_shape.png",
+  filename = file.path(OUTPUT_DIR, "region_map_with_4region_shape.png"),
   plot = final_plot,
   width = 15.5,
   height = 7,
@@ -344,7 +354,7 @@ ggsave(
 )
 
 ggsave(
-  filename = "region_map_4region_only.png",
+  filename = file.path(OUTPUT_DIR, "region_map_4region_only.png"),
   plot = p_region4,
   width = 8,
   height = 7,
@@ -352,7 +362,7 @@ ggsave(
 )
 
 ggsave(
-  filename = "region_map_alternative_5region_only.png",
+  filename = file.path(OUTPUT_DIR, "region_map_alternative_5region_only.png"),
   plot = p_source,
   width = 8,
   height = 7,

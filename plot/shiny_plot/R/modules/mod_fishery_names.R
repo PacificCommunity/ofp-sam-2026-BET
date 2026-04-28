@@ -22,7 +22,7 @@ mod_fishery_names_ui <- function() {
 
     fluidRow(
       box(
-        title = "Fishery Map Table",
+        title = "Fishery Map Table (from fishery_map.R)",
         width = 12,
         solidHeader = TRUE,
         status = "primary",
@@ -127,6 +127,13 @@ mod_fishery_names_server <- function(input, output, session, rv) {
     }
     tag_map_df
   })
+
+  display_tag_rep_map_df <- function(df) {
+    display_df <- df
+    names(display_df) <- sub("^tag_recapture_group$", "tag_reporting_group", names(display_df))
+    names(display_df) <- sub("^tag_recapture_name$", "tag_reporting_name", names(display_df))
+    display_df
+  }
 
   output$tag_rep_map_warning <- renderUI({
     req(rv$data_loaded, input$fishery_names_model, input$model_dir)
@@ -258,6 +265,7 @@ mod_fishery_names_server <- function(input, output, session, rv) {
         )
       )
     }
+    df <- display_tag_rep_map_df(df)
 
     datatable(
       df,

@@ -101,8 +101,9 @@ load_fishery_map_from_r <- function(map_r_path) {
 # Safely load tag reporting labels from tag_rep_map.R.
 # Expected object name is `tag_rep_map`.
 # Accepted column names:
-# - preferred internal names: tag_recapture_group, tag_recapture_name
-# - aliases from user files:   tag_rep_group, tag_rep_name
+# - internal names: tag_recapture_group, tag_recapture_name
+# - user-facing names: tag_reporting_group, tag_reporting_name
+# - aliases from user files: tag_rep_group, tag_rep_name
 load_tag_rep_map_from_r <- function(map_r_path) {
   if (is.null(map_r_path) || !file.exists(map_r_path)) return(NULL)
 
@@ -119,8 +120,26 @@ load_tag_rep_map_from_r <- function(map_r_path) {
   if (!is.data.frame(map_df)) return(NULL)
 
   nm <- names(map_df)
-  grp_col <- if ("tag_recapture_group" %in% nm) "tag_recapture_group" else if ("tag_rep_group" %in% nm) "tag_rep_group" else NULL
-  name_col <- if ("tag_recapture_name" %in% nm) "tag_recapture_name" else if ("tag_rep_name" %in% nm) "tag_rep_name" else NULL
+  grp_col <- if ("tag_recapture_group" %in% nm) {
+    "tag_recapture_group"
+  } else if ("tag_reporting_group" %in% nm) {
+    "tag_reporting_group"
+  } else if ("tag_rep_group" %in% nm) {
+    "tag_rep_group"
+  } else {
+    NULL
+  }
+  name_col <- if ("tag_recapture_name" %in% nm) {
+    "tag_recapture_name"
+  } else if ("tag_reporting_name" %in% nm) {
+    "tag_reporting_name"
+  } else if ("tage_reporting_name" %in% nm) {
+    "tage_reporting_name"
+  } else if ("tag_rep_name" %in% nm) {
+    "tag_rep_name"
+  } else {
+    NULL
+  }
   if (is.null(grp_col) || is.null(name_col)) return(NULL)
 
   out <- map_df[, c(grp_col, name_col), drop = FALSE]
