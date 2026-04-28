@@ -196,6 +196,9 @@ TagExclusion:
 TagReleaseGroupExclusion:
 	Rscript sensitivities/TagReleaseGroupExclusion.R
 
+TagReleaseRegionExclusion:
+	Rscript sensitivities/TagReleaseRegionExclusion.R
+
 collate-hessian:
 	Rscript tools/collate_hessian_mfcl.R
 

@@ -22,12 +22,11 @@ mod_fishery_names_ui <- function() {
 
     fluidRow(
       box(
-        title = uiOutput("fishery_map_table_title"),
+        title = "Model",
         width = 12,
         solidHeader = TRUE,
         status = "primary",
-        collapsible = TRUE,
-
+        collapsible = FALSE,
         fluidRow(
           column(
             4,
@@ -44,9 +43,17 @@ mod_fishery_names_ui <- function() {
               )
             )
           )
-        ),
+        )
+      )
+    ),
 
-        shiny::hr(),
+    fluidRow(
+      box(
+        title = uiOutput("fishery_map_table_title"),
+        width = 12,
+        solidHeader = TRUE,
+        status = "primary",
+        collapsible = TRUE,
 
         uiOutput("fishery_map_warning"),
 

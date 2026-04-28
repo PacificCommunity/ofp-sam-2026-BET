@@ -2050,9 +2050,12 @@ mod_tagging_server <- function(input, output, session, rv) {
           mutate(
             scenario = model_name,
             upper_bound = upper.bound,
-            names = group_name
+            names = if_else(
+              is.na(group_name) | !nzchar(group_name),
+              paste0("Group ", group),
+              group_name
+            )
           ) %>%
-          filter(!is.na(names), nzchar(names)) %>%
           select(-group_name)
         tag_rr_list[[model_name]] <- tag_dt
       }
