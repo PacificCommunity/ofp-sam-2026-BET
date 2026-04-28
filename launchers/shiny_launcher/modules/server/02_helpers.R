@@ -53,6 +53,7 @@
       model_names = character(),
       total_jobs = integer(),
       launch_mode = character(),
+      selected_condor_nodes = character(),
       status = character(),
       branch = character(),
       batch_names = character(),
@@ -68,7 +69,8 @@
     required_cols <- c(
       "run_at", "output_dir", "summary", "run_description", "config_file",
       "job_types", "model_names", "total_jobs", "launch_mode", "status", "branch",
-      "batch_names", "local_pid_files", "local_log_files", "config_details", "remote_dirs"
+      "selected_condor_nodes", "batch_names", "local_pid_files", "local_log_files",
+      "config_details", "remote_dirs"
     )
 
     log_file <- get_launcher_job_log_file()
