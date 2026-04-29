@@ -58,8 +58,11 @@ mod_cpue_ui <- function() {
               "Observed CPUE" = "obs",
               "Fitted CPUE" = "fit"
             ),
-            selected = "fit"
-          ),
+            selected = "obs"
+          )
+        ),
+        conditionalPanel(
+          condition = "input.cpue_metric == 'relative_scale'",
           selectInput(
             "cpue_relative_biomass_basis",
             "Biomass basis:",
@@ -160,7 +163,7 @@ mod_cpue_server <- function(input, output, session, rv) {
       fisheries = input$cpue_fisheries,
       view_mode = if (is.null(input$cpue_view_mode)) "overlay" else input$cpue_view_mode,
       metric = if (is.null(input$cpue_metric)) "fits" else input$cpue_metric,
-      relative_cpue_series = if (is.null(input$cpue_relative_cpue_series)) "fit" else input$cpue_relative_cpue_series,
+      relative_cpue_series = if (is.null(input$cpue_relative_cpue_series)) "obs" else input$cpue_relative_cpue_series,
       relative_biomass_basis = if (is.null(input$cpue_relative_biomass_basis)) "total" else input$cpue_relative_biomass_basis,
       free_y_panel = isTRUE(input$cpue_free_y_panel),
       facet_ncol = input$cpue_facet_ncol,
@@ -286,6 +289,14 @@ mod_cpue_server <- function(input, output, session, rv) {
     }
   }
 
+  biomass_basis_label <- function(biomass_basis) {
+    dplyr::case_when(
+      biomass_basis == "vuln" ~ "Vulnerable biomass",
+      biomass_basis == "total" ~ "Total biomass",
+      TRUE ~ "Adult biomass"
+    )
+  }
+
   build_cpue_biomass_relative_df <- function(cpue_all, filters) {
     if (is.null(cpue_all) || nrow(cpue_all) == 0) return(data.frame())
 
@@ -333,11 +344,7 @@ mod_cpue_server <- function(input, output, session, rv) {
           biomass_scale = biomass / biomass_total,
           region_label = paste("Region", region),
           cpue_series = if (identical(cpue_series, "fit")) "Fitted CPUE" else "Observed CPUE",
-          biomass_basis = dplyr::case_when(
-            biomass_basis == "vuln" ~ "Vulnerable biomass",
-            biomass_basis == "total" ~ "Total biomass",
-            TRUE ~ "Adult biomass"
-          )
+          biomass_basis = biomass_basis_label(biomass_basis)
         ) %>%
         filter(is.finite(cpue_scale), is.finite(biomass_scale))
     })

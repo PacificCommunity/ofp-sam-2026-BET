@@ -1801,13 +1801,50 @@ mod_tagging_ui <- function() {
           condition = "input.tag_plot == 'report'",
           checkboxInput("tag_rr_nonneg_only", "Tag RR filter: exclude rr <= 0", value = FALSE)
         ),
+        conditionalPanel(
+          condition = "input.tag_plot == 'recap_pressure'",
+          selectInput(
+            "tag_pressure_release_dim",
+            "Release grouping:",
+            choices = c(
+              "Release group" = "rel_group",
+              "Release region" = "rel_region"
+            ),
+            selected = "rel_group"
+          ),
+          selectInput(
+            "tag_pressure_recap_dim",
+            "Recapture grouping:",
+            choices = c(
+              "Recapture fishery/group" = "recap_fishery",
+              "Recapture region" = "recap_region"
+            ),
+            selected = "recap_fishery"
+          ),
+          numericInput(
+            "tag_pressure_correction",
+            "Continuity correction:",
+            value = 1e-4,
+            min = 0,
+            step = 1e-4
+          ),
+          sliderInput(
+            "tag_pressure_cap",
+            "Colour cap: |log2(O/E)|",
+            min = 1,
+            max = 6,
+            value = 3,
+            step = 0.5
+          )
+        ),
         selectInput("tag_plot", "Plot:", choices = c(
           "Tag Reporting Rates by Group" = "report",
           "Tag Returns Over Time (All Combined)" = "returns_all",
           "Tag Returns by Recapture Group" = "returns_group",
           "Tag Attrition (All Fisheries Combined)" = "attr_all",
           "Tag Attrition (By Program)" = "attr_program",
-          "Tag Attrition (By Region)" = "attr_region"
+          "Tag Attrition (By Region)" = "attr_region",
+          "Observed / Expected Recapture Pressure" = "recap_pressure"
         )),
         actionButton("tag_apply_filters", "Apply", class = "btn-info", style = "width: 100%;"),
         tags$small("Selections update the plot when you click Apply.",
@@ -1848,6 +1885,10 @@ mod_tagging_server <- function(input, output, session, rv) {
       years = input$tag_years,
       facet_ncol = input$tag_facet_ncol,
       rr_nonneg_only = isTRUE(input$tag_rr_nonneg_only),
+      pressure_release_dim = if (is.null(input$tag_pressure_release_dim)) "rel_group" else input$tag_pressure_release_dim,
+      pressure_recap_dim = if (is.null(input$tag_pressure_recap_dim)) "recap_fishery" else input$tag_pressure_recap_dim,
+      pressure_correction = if (is.null(input$tag_pressure_correction)) 1e-4 else suppressWarnings(as.numeric(input$tag_pressure_correction)),
+      pressure_cap = if (is.null(input$tag_pressure_cap)) 3 else suppressWarnings(as.numeric(input$tag_pressure_cap)),
       plot = if (is.null(input$tag_plot)) "report" else input$tag_plot,
       plot_height = if (is.null(input$tag_plot_height)) 900 else suppressWarnings(as.integer(input$tag_plot_height)),
       plot_width = if (is.null(input$tag_plot_width)) 1200 else suppressWarnings(as.integer(input$tag_plot_width))
@@ -1910,7 +1951,7 @@ mod_tagging_server <- function(input, output, session, rv) {
       selected_models <- intersect(selected_models, candidate)
     }
 
-    if (mode %in% c("attr_all", "attr_program", "attr_region")) {
+    if (mode %in% c("attr_all", "attr_program", "attr_region", "recap_pressure")) {
       candidate <- intersect(in_scope, intersect(has_tagtemp, has_tagout))
       selected_models <- intersect(selected_models, candidate)
     }
@@ -1947,7 +1988,7 @@ mod_tagging_server <- function(input, output, session, rv) {
       if (nrow(df) == 0) return(df)
       if (identical(time_mode, "step")) {
         df$x <- df[[x_col]]
-        df$x_label <- if (identical(x_col, "recap_ts")) "Time (model steps)" else "Periods at liberty (model steps)"
+        df$x_label <- if (identical(x_col, "recap_ts")) "Time (model steps)" else "Time at liberty (model steps; usually quarters)"
         return(df)
       }
 
@@ -1964,7 +2005,7 @@ mod_tagging_server <- function(input, output, session, rv) {
       df$x <- floor(as.numeric(df$period_at_liberty) / as.numeric(spm))
       out <- df %>% group_by(Model, x, across(any_of(c("program", "recap.region")))) %>%
         summarise(recap_obs = sum(recap_obs, na.rm = TRUE), recap_pred = sum(recap_pred, na.rm = TRUE), .groups = "drop")
-      out$x_label <- "Years at liberty"
+      out$x_label <- "Time at liberty (years)"
       out
     }
 
@@ -2421,6 +2462,146 @@ mod_tagging_server <- function(input, output, session, rv) {
       )
     }
 
+    if (mode == "recap_pressure") {
+      release_dim <- if (is.null(input$tag_pressure_release_dim)) "rel_group" else input$tag_pressure_release_dim
+      recap_dim <- if (is.null(input$tag_pressure_recap_dim)) "recap_fishery" else input$tag_pressure_recap_dim
+      correction <- suppressWarnings(as.numeric(input$tag_pressure_correction))
+      if (!is.finite(correction) || correction < 0) correction <- 1e-4
+      cap <- suppressWarnings(as.numeric(input$tag_pressure_cap))
+      if (!is.finite(cap) || cap <= 0) cap <- 3
+
+      tag_all <- bind_rows(tagtemp_nonnull, .id = "Model")
+      region_map <- bind_rows(lapply(scenarios_name, function(m) {
+        rv$FISHERY_MAPS[[m]][, c("fishery", "region")] %>% mutate(Model = m)
+      }))
+      tag_recapture_map <- bind_rows(lapply(scenarios_name, function(m) {
+        pm_build_tag_recapture_map(rv$FISHERY_MAPS[[m]], include_index = FALSE) %>% mutate(Model = m)
+      }))
+
+      tag_all <- tag_all %>%
+        left_join(region_map, by = c("Model", "recap.fishery" = "fishery")) %>%
+        rename(recap.region = region) %>%
+        left_join(tag_recapture_map, by = c("Model", "recap.fishery" = "fishery")) %>%
+        pm_add_period_at_liberty(tag_releases = tag_releases, seasons_per_model = seasons_per_model) %>%
+        mutate(
+          release_panel = if (identical(release_dim, "rel_region")) {
+            paste0("Release region ", rel.region)
+          } else {
+            paste0("Release group ", rel.group, " | R", rel.region)
+          },
+          recap_panel = if (identical(recap_dim, "recap_region")) {
+            paste0("Recap region ", recap.region)
+          } else {
+            dplyr::if_else(
+              is.na(tag_recapture_name) | !nzchar(tag_recapture_name),
+              paste0("Fishery ", recap.fishery),
+              as.character(tag_recapture_name)
+            )
+          },
+          recap_order = if (identical(recap_dim, "recap_region")) as.numeric(recap.region) else as.numeric(tag_recapture_group),
+          period_x = as.numeric(period_at_liberty)
+        )
+
+      if (identical(time_mode, "year")) {
+        spm <- seasons_per_model[as.character(tag_all$Model)]
+        spm[!is.finite(spm) | spm <= 0] <- 4
+        tag_all <- tag_all %>%
+          mutate(period_x = floor(as.numeric(period_at_liberty) / as.numeric(spm)))
+        x_label <- "Time at liberty (years)"
+      } else {
+        x_label <- "Time at liberty (model steps; usually quarters)"
+      }
+
+      pressure <- tag_all %>%
+        filter(!is.na(release_panel), !is.na(recap_panel), is.finite(period_x)) %>%
+        group_by(Model, release_panel, recap_panel, recap_order, period_x) %>%
+        summarise(
+          recap_obs = sum(recap.obs, na.rm = TRUE),
+          recap_pred = sum(recap.pred, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        filter(recap_obs > 0 | recap_pred > 0) %>%
+        mutate(
+          ratio = (recap_obs + correction) / (recap_pred + correction),
+          log2_ratio = log2(ratio),
+          log2_ratio_capped = pmax(pmin(log2_ratio, cap), -cap),
+          tooltip_label = sprintf("O %.1f / E %.1f", recap_obs, recap_pred)
+        )
+
+      if (nrow(pressure) == 0) {
+        return(ggplot() + theme_void() + annotate("text", x = 0.5, y = 0.5, label = "No recapture pressure data after filtering"))
+      }
+
+      release_levels <- pressure %>%
+        distinct(Model, release_panel) %>%
+        arrange(factor(Model, levels = scenarios_name), release_panel) %>%
+        pull(release_panel) %>%
+        unique()
+      recap_levels <- pressure %>%
+        distinct(recap_panel, recap_order) %>%
+        arrange(recap_order, recap_panel) %>%
+        pull(recap_panel) %>%
+        unique()
+
+      pressure <- pressure %>%
+        mutate(
+          Model = factor(Model, levels = scenarios_name),
+          release_panel = factor(release_panel, levels = release_levels),
+          recap_panel = factor(recap_panel, levels = rev(recap_levels))
+        )
+
+      legend_breaks <- unique(c(-cap, -1, 0, 1, cap))
+      legend_labels <- vapply(legend_breaks, function(b) {
+        if (identical(b, -cap)) return(paste0("<= ", round(2^-cap, 2), "x"))
+        if (identical(b, cap)) return(paste0(">= ", round(2^cap, 1), "x"))
+        paste0(format(round(2^b, 2), trim = TRUE), "x")
+      }, character(1))
+
+      facet_formula <- if (overlay) {
+        Model ~ release_panel
+      } else {
+        ~ release_panel
+      }
+
+      return(
+        ggplot(pressure, aes(x = period_x, y = recap_panel, fill = log2_ratio_capped)) +
+          geom_tile(color = "white", linewidth = 0.15) +
+          geom_text(
+            data = pressure %>% filter(abs(log2_ratio) >= 1, recap_obs >= 1),
+            aes(label = round(ratio, 1)),
+            size = 2.4,
+            color = "black",
+            na.rm = TRUE
+          ) +
+          facet_wrap(facet_formula, ncol = if (overlay) NULL else facet_ncol, scales = "free_y") +
+          scale_fill_gradient2(
+            "Observed /\nexpected",
+            low = "#2166ac",
+            mid = "white",
+            high = "#b2182b",
+            midpoint = 0,
+            limits = c(-cap, cap),
+            breaks = legend_breaks,
+            labels = legend_labels
+          ) +
+          scale_x_continuous(breaks = scales::pretty_breaks(n = 8), expand = expansion(add = 0.1)) +
+          labs(
+            x = x_label,
+            y = if (identical(recap_dim, "recap_region")) "Recapture region" else "Recapture fishery/group",
+            title = if (overlay) "Observed / Expected Recapture Pressure (Overlay)" else paste("Observed / Expected Recapture Pressure -", selected_models[1]),
+            subtitle = paste0("R = (observed + ", correction, ") / (expected + ", correction, "); red = under-predicted recaptures, blue = over-predicted")
+          ) +
+          theme_bw() +
+          theme(
+            panel.grid = element_blank(),
+            strip.background = element_rect(fill = "gray90"),
+            strip.text = element_text(face = "bold", size = 8),
+            axis.text.y = element_text(size = 7),
+            legend.position = "bottom"
+          )
+      )
+    }
+
     ggplot() + theme_void() +
       annotate("text", x = 0.5, y = 0.5, label = paste("Unknown tag plot mode:", mode))
   })
@@ -2433,11 +2614,17 @@ mod_tagging_server <- function(input, output, session, rv) {
     input$tag_time_mode,
     input$tag_years,
     input$tag_facet_ncol,
-    input$tag_rr_nonneg_only
+    input$tag_rr_nonneg_only,
+    input$tag_pressure_release_dim,
+    input$tag_pressure_recap_dim,
+    input$tag_pressure_correction,
+    input$tag_pressure_cap
   )
   observeEvent(list(input$live_update_plots, input$tag_scenarios, input$tag_plot,
                     input$tag_time_mode, input$tag_years, input$tag_facet_ncol,
                     input$tag_rr_nonneg_only,
+                    input$tag_pressure_release_dim, input$tag_pressure_recap_dim,
+                    input$tag_pressure_correction, input$tag_pressure_cap,
                     input$tag_plot_height, input$tag_plot_width), {
     req(rv$data_loaded)
     if (!isTRUE(input$live_update_plots)) return()
@@ -2722,6 +2909,190 @@ mod_fishery_process_server <- function(input, output, session, rv) {
           labs(x = "Weight (kg)", y = "Selectivity", title = "Estimated Selectivity by Fishery (Weight-based)") +
           theme_bw() +
           theme(panel.grid.minor = element_blank(), panel.grid.major = element_line(linewidth = 0.25, color = "gray85"), legend.position = "bottom", legend.title = element_text(face = "bold"), strip.background = element_rect(fill = "gray90"), strip.text = element_text(face = "bold", size = 9))
+      )
+    }
+
+    if (mode == "regional_sharing") {
+      selected_specs <- parse_fishery_picker_values(input$fishery_process_fisheries)
+
+      sharing_data <- bind_rows(lapply(names(ParOut_list), function(model_name) {
+        par_obj <- ParOut_list[[model_name]]
+        rep_obj <- RepOut_list[[model_name]]
+        fmap <- rv$FISHERY_MAPS[[model_name]]
+        if (is.null(par_obj) || is.null(rep_obj) || is.null(fmap)) return(NULL)
+
+        fish_ids <- sort(unique(suppressWarnings(as.numeric(fmap$fishery))))
+        fish_ids <- fish_ids[is.finite(fish_ids)]
+        if (length(fish_ids) == 0) return(NULL)
+
+        sel_obj <- tryCatch(sel(rep_obj), error = function(e) tryCatch(sel(par_obj), error = function(e2) NULL))
+        sel_df <- if (!is.null(sel_obj)) {
+          as.data.frame(sel_obj, drop = TRUE) %>%
+            mutate(
+              fishery = suppressWarnings(as.numeric(as.character(unit))),
+              age = suppressWarnings(as.numeric(as.character(age))),
+              selectivity = as.numeric(data)
+            ) %>%
+            filter(is.finite(fishery), is.finite(age), is.finite(selectivity)) %>%
+            group_by(fishery) %>%
+            arrange(age, .by_group = TRUE) %>%
+            summarise(sel_signature = paste(round(selectivity, 4), collapse = "|"), .groups = "drop") %>%
+            mutate(selectivity_group = as.integer(factor(sel_signature, levels = unique(sel_signature))))
+        } else {
+          tibble(fishery = fish_ids, selectivity_group = NA_integer_)
+        }
+
+        q_vals <- tryCatch(as.numeric(av_q_coffs(par_obj)), error = function(e) rep(NA_real_, length(fish_ids)))
+        if (length(q_vals) < max(fish_ids, na.rm = TRUE)) {
+          q_lookup <- rep(NA_real_, max(fish_ids, na.rm = TRUE))
+          q_lookup[seq_along(q_vals)] <- q_vals
+        } else {
+          q_lookup <- q_vals
+        }
+
+        tag_grp_mat <- tryCatch(tag_fish_rep_grp(par_obj), error = function(e) NULL)
+        tag_rate_mat <- tryCatch(tag_fish_rep_rate(par_obj), error = function(e) NULL)
+        tag_summary <- lapply(fish_ids, function(fid) {
+          grp_vals <- if (!is.null(tag_grp_mat) && ncol(tag_grp_mat) >= fid) {
+            suppressWarnings(as.numeric(tag_grp_mat[, fid]))
+          } else {
+            NA_real_
+          }
+          grp_vals <- sort(unique(grp_vals[is.finite(grp_vals) & grp_vals > 0]))
+          grp_label <- if (length(grp_vals) == 0) {
+            NA_character_
+          } else if (length(grp_vals) <= 3) {
+            paste(grp_vals, collapse = ",")
+          } else {
+            paste0("multi:", length(grp_vals))
+          }
+
+          rr_vals <- if (!is.null(tag_rate_mat) && ncol(tag_rate_mat) >= fid) {
+            suppressWarnings(as.numeric(tag_rate_mat[, fid]))
+          } else {
+            NA_real_
+          }
+          rr_vals <- rr_vals[is.finite(rr_vals) & rr_vals > 0]
+          tibble(
+            fishery = fid,
+            tag_reporting_group = grp_label,
+            tag_reporting_rate = if (length(rr_vals) > 0) median(rr_vals, na.rm = TRUE) else NA_real_
+          )
+        }) %>% bind_rows()
+
+        fmap %>%
+          transmute(
+            Model = model_name,
+            fishery = suppressWarnings(as.numeric(fishery)),
+            region = suppressWarnings(as.numeric(region)),
+            fishery_name = as.character(fishery_name)
+          ) %>%
+          filter(fishery %in% fish_ids, is.finite(region)) %>%
+          left_join(sel_df %>% select(fishery, selectivity_group), by = "fishery") %>%
+          left_join(tag_summary, by = "fishery") %>%
+          mutate(
+            avg_q = q_lookup[fishery],
+            log10_q = log10(avg_q),
+            fishery_label = if_else(is.na(fishery_name) | !nzchar(fishery_name), paste0("F", fishery), fishery_name)
+          )
+      }))
+
+      if (nrow(sharing_data) == 0) {
+        return(ggplot() + theme_void() + annotate("text", x = 0.5, y = 0.5, label = "No sharing-footprint data available"))
+      }
+
+      if (nrow(selected_specs) > 0) {
+        any_model_specific <- any(!is.na(selected_specs$Model) & nzchar(selected_specs$Model))
+        if (any_model_specific) {
+          plain_ids <- selected_specs$fishery[is.na(selected_specs$Model) | !nzchar(selected_specs$Model)]
+          model_specs <- selected_specs[!is.na(selected_specs$Model) & nzchar(selected_specs$Model), , drop = FALSE]
+          sharing_data <- sharing_data %>% mutate(.keep_selected = fishery %in% plain_ids)
+          if (nrow(model_specs) > 0) {
+            key_df <- unique(model_specs[, c("Model", "fishery"), drop = FALSE])
+            key_df$.keep_pair <- TRUE
+            sharing_data <- sharing_data %>%
+              left_join(key_df, by = c("Model", "fishery")) %>%
+              mutate(.keep_selected = .keep_selected | (!is.na(.keep_pair) & .keep_pair))
+          }
+          sharing_data <- sharing_data %>%
+            filter(.keep_selected) %>%
+            select(-any_of(c(".keep_selected", ".keep_pair")))
+        } else {
+          sharing_data <- sharing_data %>% filter(fishery %in% selected_specs$fishery)
+        }
+      }
+
+      if (nrow(sharing_data) == 0) {
+        return(ggplot() + theme_void() + annotate("text", x = 0.5, y = 0.5, label = "No selected fisheries for sharing footprint"))
+      }
+
+      sharing_data <- build_overlay_fishery_panel_labels(
+        sharing_data,
+        scenario_col = "Model",
+        id_col = "fishery",
+        label_col = "fishery_label",
+        out_col = "fishery_panel"
+      ) %>%
+        mutate(
+          Model = factor(Model, levels = scenarios_name),
+          region_label = paste0("R", region),
+          fishery_panel = paste0(region_label, " | ", fishery_panel),
+          fishery_panel = factor(fishery_panel, levels = rev(unique(fishery_panel[order(region, fishery)]))),
+          tag_reporting_group = factor(if_else(is.na(tag_reporting_group), "NA", tag_reporting_group)),
+          selectivity_group = factor(if_else(is.na(selectivity_group), "NA", paste0("S", selectivity_group)))
+        )
+
+      p_tag <- ggplot(sharing_data, aes(x = region_label, y = fishery_panel, fill = tag_reporting_group)) +
+        geom_tile(color = "white", linewidth = 0.25) +
+        geom_text(aes(label = tag_reporting_group), size = 2.4) +
+        facet_wrap(~ Model, ncol = min(length(scenarios_name), facet_ncol)) +
+        scale_fill_viridis_d("Tag reporting\ngroup", option = "D", na.value = "gray90") +
+        labs(x = NULL, y = NULL, title = "Tag Reporting Group Footprint") +
+        theme_bw() +
+        theme(panel.grid = element_blank(), axis.text.x = element_text(angle = 0), axis.text.y = element_text(size = 7),
+              strip.background = element_rect(fill = "gray90"), strip.text = element_text(face = "bold", size = 8),
+              legend.position = "right")
+
+      p_sel <- ggplot(sharing_data, aes(x = region_label, y = fishery_panel, fill = selectivity_group)) +
+        geom_tile(color = "white", linewidth = 0.25) +
+        geom_text(aes(label = selectivity_group), size = 2.4) +
+        facet_wrap(~ Model, ncol = min(length(scenarios_name), facet_ncol)) +
+        scale_fill_viridis_d("Selectivity\nshape group", option = "C", na.value = "gray90") +
+        labs(x = NULL, y = NULL, title = "Selectivity Shape Footprint") +
+        theme_bw() +
+        theme(panel.grid = element_blank(), axis.text.x = element_text(angle = 0), axis.text.y = element_text(size = 7),
+              strip.background = element_rect(fill = "gray90"), strip.text = element_text(face = "bold", size = 8),
+              legend.position = "right")
+
+      p_q <- ggplot(sharing_data, aes(x = region_label, y = fishery_panel, fill = log10_q)) +
+        geom_tile(color = "white", linewidth = 0.25) +
+        geom_text(aes(label = if_else(is.finite(log10_q), sprintf("%.2f", log10_q), "")), size = 2.3) +
+        facet_wrap(~ Model, ncol = min(length(scenarios_name), facet_ncol)) +
+        scale_fill_viridis_c("log10(avg q)", option = "B", na.value = "gray90") +
+        labs(x = "Fishery region", y = NULL, title = "Catchability Level Footprint") +
+        theme_bw() +
+        theme(panel.grid = element_blank(), axis.text.x = element_text(angle = 0), axis.text.y = element_text(size = 7),
+              strip.background = element_rect(fill = "gray90"), strip.text = element_text(face = "bold", size = 8),
+              legend.position = "right")
+
+      title <- ggdraw() +
+        draw_label(
+          "Regional Sharing Footprint: repeated colours across regions indicate shared or indistinguishable fishery-process structure",
+          fontface = "bold",
+          x = 0,
+          hjust = 0,
+          size = 12
+        )
+
+      return(
+        plot_grid(
+          title,
+          p_tag,
+          p_sel,
+          p_q,
+          ncol = 1,
+          rel_heights = c(0.08, 1, 1, 1)
+        )
       )
     }
 
