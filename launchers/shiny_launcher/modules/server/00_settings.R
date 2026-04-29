@@ -67,6 +67,61 @@
     NULL
   }
 
+  current_git_branch <- function(root_dir = repo_root_val()) {
+    out <- tryCatch(
+      system2("git", c("-C", root_dir, "branch", "--show-current"), stdout = TRUE, stderr = FALSE),
+      error = function(e) character(0)
+    )
+    out <- trimws(out)
+    out <- out[nzchar(out)]
+    if (length(out) == 0) "" else out[[1]]
+  }
+
+  preferred_branch_value <- function(saved = NULL, root_dir = repo_root_val()) {
+    saved <- if (is.null(saved) || length(saved) == 0) "" else as.character(saved[[1]])
+    current <- current_git_branch(root_dir)
+    if (nzchar(saved)) saved else current
+  }
+
+  nonempty_first <- function(...) {
+    vals <- list(...)
+    for (v in vals) {
+      if (is.null(v) || length(v) == 0) next
+      v <- as.character(v[[1]])
+      if (!is.na(v) && nzchar(v)) return(v)
+    }
+    NULL
+  }
+
+  update_branch_selectize <- function(selected = NULL, launcher_obj = list(), root_obj = list(), root_dir = repo_root_val()) {
+    branch_choices <- unique(c(
+      current_git_branch(root_dir),
+      "main",
+      "develop",
+      "develop_lik",
+      launcher_obj[["branch"]],
+      root_obj[["branch"]],
+      selected,
+      tryCatch(input$branch, error = function(e) NULL)
+    ))
+    branch_choices <- branch_choices[!is.na(branch_choices) & nzchar(branch_choices)]
+    if (is.null(selected) || !nzchar(selected)) {
+      selected <- if (current_git_branch(root_dir) %in% branch_choices && nzchar(current_git_branch(root_dir))) {
+        current_git_branch(root_dir)
+      } else {
+        branch_choices[[1]]
+      }
+    }
+    updateSelectizeInput(
+      session,
+      "branch",
+      choices = branch_choices,
+      selected = selected,
+      options = list(create = TRUE, persist = TRUE, placeholder = "Select or type a branch"),
+      server = FALSE
+    )
+  }
+
   resource_choice_fields <- c(
     "remote_user",
     "remote_host",
@@ -78,7 +133,13 @@
 
   resource_choice_defaults <- list(
     remote_user = unique(c(Sys.getenv("USER", "kyuhank"), "kyuhank")),
-    remote_host = Sys.getenv("NOU_CONDOR", ""),
+    remote_host = unique(c(
+      Sys.getenv("NOU_CONDOR", ""),
+      "nouofpsubmit.corp.spc.int",
+      "suvofpsubmit.corp.spc.int",
+      "nouofpsubmit",
+      "suvofpsubmit"
+    )),
     github_username = "kyuhank",
     github_org = "PacificCommunity",
     github_repo = "ofp-sam-2026-bet",
@@ -143,8 +204,54 @@
     }
     NULL
   }
+
+  job_type_choices <- function() {
+    c("Model" = "model",
+      "Jitter" = "jitter",
+      "Hessian" = "hessian",
+      "Retrospective" = "retro",
+      "Profile" = "prof")
+  }
+
+  normalize_saved_job_types <- function(x, fallback = NULL) {
+    choices <- job_type_choices()
+    vals <- as.character(x)
+    vals <- vals[!is.na(vals) & nzchar(vals)]
+    if ("prof_2d" %in% vals) vals <- unique(c(vals, "prof"))
+    vals <- intersect(vals, unname(choices))
+    if (length(vals) == 0 && !is.null(fallback)) {
+      vals <- intersect(as.character(fallback), unname(choices))
+    }
+    vals
+  }
+
+  update_job_type_choices <- function(selected = NULL) {
+    choices <- job_type_choices()
+    selected <- normalize_saved_job_types(selected, fallback = tryCatch(input$job_types, error = function(e) NULL))
+    if (length(selected) == 0) selected <- "model"
+    rv$last_job_type <- selected
+    updateCheckboxGroupInput(session, "job_types", choices = choices, selected = selected)
+  }
   
   load_launcher_settings <- function() {
+    rv$settings_loading <- TRUE
+    rv$settings_ready <- FALSE
+    on.exit({
+      session$onFlushed(function() {
+        rv$settings_loading <- FALSE
+        rv$settings_ready <- TRUE
+      }, once = TRUE)
+      tryCatch({
+        later::later(function() {
+          rv$settings_loading <- FALSE
+          rv$settings_ready <- TRUE
+        }, delay = 0.5)
+      }, error = function(e) {
+        rv$settings_loading <- FALSE
+        rv$settings_ready <- TRUE
+      })
+    }, add = TRUE)
+
     launcher_file <- launcher_settings_path()
 
     launcher_obj <- ensure_named_list(read_rds_safe(launcher_file))
@@ -176,6 +283,27 @@
       updateTextInput(session, "download_location", value = latest_download)
     }
 
+    branch_value <- preferred_branch_value(
+      latest_setting_value("branch", launcher_obj, root_obj, launcher_mtime, root_mtime),
+      startup_repo_root
+    )
+    update_branch_selectize(branch_value, launcher_obj = launcher_obj, root_obj = root_obj, root_dir = startup_repo_root)
+
+    output_dir_value <- latest_setting_value("output_dir", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (!is.null(output_dir_value)) {
+      updateTextInput(session, "output_dir", value = output_dir_value)
+    }
+
+    run_description_value <- latest_setting_value("run_description", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (!is.null(run_description_value)) {
+      updateTextAreaInput(session, "run_description", value = run_description_value)
+    }
+
+    job_types_value <- latest_setting_value("job_types", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (!is.null(job_types_value)) {
+      update_job_type_choices(job_types_value)
+    }
+
     for (k in c("remote_user", "remote_host", "github_username", "github_org", "github_repo")) {
       v <- latest_setting_value(k, launcher_obj, root_obj, launcher_mtime, root_mtime)
       if (!is.null(v)) {
@@ -188,6 +316,41 @@
     launch_mode_value <- latest_setting_value("launch_mode", launcher_obj, root_obj, launcher_mtime, root_mtime)
     if (!is.null(launch_mode_value)) {
       updateRadioButtons(session, "launch_mode", selected = launch_mode_value)
+    }
+
+    profile_components_value <- latest_setting_value("profile_components", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (!is.null(profile_components_value)) {
+      updateCheckboxGroupInput(session, "profile_components", selected = as.character(profile_components_value))
+    }
+
+    prof_launch_strategy_value <- latest_setting_value("prof_launch_strategy", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (!is.null(prof_launch_strategy_value)) {
+      updateSelectInput(session, "prof_launch_strategy", selected = prof_launch_strategy_value)
+    }
+
+    prof_anchor_scalar_value <- latest_setting_value("prof_anchor_scalar", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (!is.null(prof_anchor_scalar_value)) {
+      updateNumericInput(session, "prof_anchor_scalar", value = prof_anchor_scalar_value)
+    }
+
+    parallel_launch_value <- latest_setting_value("parallel_launch", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (!is.null(parallel_launch_value)) {
+      updateCheckboxInput(session, "parallel_launch", value = isTRUE(parallel_launch_value))
+    }
+
+    launch_parallel_cores_value <- latest_setting_value("launch_parallel_cores", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (!is.null(launch_parallel_cores_value)) {
+      updateSelectInput(session, "launch_parallel_cores", selected = as.character(launch_parallel_cores_value))
+    }
+
+    ghcr_login_value <- latest_setting_value("ghcr_login", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (!is.null(ghcr_login_value)) {
+      updateCheckboxInput(session, "ghcr_login", value = isTRUE(ghcr_login_value))
+    }
+
+    condor_run_target_value <- latest_setting_value("condor_run_target", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (!is.null(condor_run_target_value)) {
+      updateSelectInput(session, "condor_run_target", selected = condor_run_target_value)
     }
 
     docker_from_makefile <- read_makefile_docker_image(startup_repo_root)
@@ -213,7 +376,12 @@
     }
   }
   
-  save_launcher_settings <- function() {
+  save_launcher_settings <- function(force = FALSE) {
+    if ((isTRUE(rv$settings_loading) || !isTRUE(rv$settings_ready)) && !isTRUE(force)) return(invisible(FALSE))
+
+    existing <- ensure_named_list(read_rds_safe(launcher_settings_path()))
+    last_config_file <- nonempty_first(rv$config_path, existing$last_config_file, existing$config_path)
+
     resource_choices <- setNames(vector("list", length(resource_choice_fields)), resource_choice_fields)
     for (k in resource_choice_fields) {
       resource_choices[[k]] <- current_resource_choices(k)
@@ -228,12 +396,26 @@
       github_username = input$github_username,
       github_org = input$github_org,
       github_repo = input$github_repo,
+      branch = input$branch,
+      output_dir = input$output_dir,
+      run_description = input$run_description,
+      job_types = input$job_types,
+      profile_components = input$profile_components,
+      prof_launch_strategy = input$prof_launch_strategy,
+      prof_anchor_scalar = input$prof_anchor_scalar,
+      last_config_file = last_config_file,
+      base_config_name = rv$base_config_name,
+      current_config_file = rv$current_config_file,
       launch_mode = input$launch_mode,
+      parallel_launch = input$parallel_launch,
+      launch_parallel_cores = input$launch_parallel_cores,
       docker_image = input$docker_image,
       local_docker_image = input$local_docker_image,
+      ghcr_login = input$ghcr_login,
       condor_cpus = input$condor_cpus,
       condor_memory = input$condor_memory,
       condor_disk = input$condor_disk,
+      condor_run_target = input$condor_run_target,
       resource_choices = resource_choices,
       timestamp = Sys.time()
     )
@@ -306,6 +488,7 @@
   
   # Load saved settings on startup
   observeEvent(repo_root_val(), {
+    if (isTRUE(rv$settings_loading)) return()
     settings_file <- settings_path()
     if (file.exists(settings_file)) {
       tryCatch({
@@ -335,28 +518,45 @@
         if (!is.null(saved_settings$output_dir)) {
           updateTextInput(session, "output_dir", value = saved_settings$output_dir)
         }
-        
-        if (!is.null(saved_settings$branch)) {
-          branch_choices <- unique(c("main", "develop", "develop_lik", saved_settings$branch))
-          updateSelectizeInput(
-            session,
-            "branch",
-            choices = branch_choices,
-            selected = saved_settings$branch,
-            server = FALSE
-          )
+
+        if (!is.null(saved_settings$run_description)) {
+          updateTextAreaInput(session, "run_description", value = saved_settings$run_description)
         }
+
+        branch_selected <- preferred_branch_value(saved_settings$branch, repo_root_val())
+        update_branch_selectize(branch_selected, root_obj = saved_settings, root_dir = repo_root_val())
 
         if (!is.null(saved_settings$launch_mode)) {
           updateRadioButtons(session, "launch_mode", selected = saved_settings$launch_mode)
         }
 
+        if (!is.null(saved_settings$profile_components)) {
+          updateCheckboxGroupInput(session, "profile_components", selected = as.character(saved_settings$profile_components))
+        }
+
+        if (!is.null(saved_settings$prof_launch_strategy)) {
+          updateSelectInput(session, "prof_launch_strategy", selected = saved_settings$prof_launch_strategy)
+        }
+
+        if (!is.null(saved_settings$prof_anchor_scalar)) {
+          updateNumericInput(session, "prof_anchor_scalar", value = saved_settings$prof_anchor_scalar)
+        }
+
+        if (!is.null(saved_settings$parallel_launch)) {
+          updateCheckboxInput(session, "parallel_launch", value = isTRUE(saved_settings$parallel_launch))
+        }
+
         if (!is.null(saved_settings$local_docker_image)) {
           updateTextInput(session, "local_docker_image", value = saved_settings$local_docker_image)
+        }
+
+        if (!is.null(saved_settings$ghcr_login)) {
+          updateCheckboxInput(session, "ghcr_login", value = isTRUE(saved_settings$ghcr_login))
         }
         
         if (!is.null(saved_settings$job_types)) {
           rv$last_job_type <- saved_settings$job_types
+          update_job_type_choices(saved_settings$job_types)
         }
         
         if (!is.null(saved_settings$last_browse_path)) {
@@ -378,6 +578,10 @@
         if (!is.null(saved_settings$condor_disk)) {
           updateNumericInput(session, "condor_disk", value = saved_settings$condor_disk)
         }
+
+        if (!is.null(saved_settings$condor_run_target)) {
+          updateSelectInput(session, "condor_run_target", selected = saved_settings$condor_run_target)
+        }
         
         if (!is.null(saved_settings$launch_parallel_cores)) {
           updateSelectInput(session, "launch_parallel_cores", selected = as.character(saved_settings$launch_parallel_cores))
@@ -396,7 +600,18 @@
   
   
   # Function to save settings
-  save_settings <- function() {
+  save_settings <- function(force = FALSE) {
+    if ((isTRUE(rv$settings_loading) || !isTRUE(rv$settings_ready)) && !isTRUE(force)) return(invisible(FALSE))
+
+    existing <- ensure_named_list(read_rds_safe(settings_path()))
+    last_config_file <- nonempty_first(rv$config_path, existing$last_config_file, existing$config_path)
+
+    resource_choices <- setNames(vector("list", length(resource_choice_fields)), resource_choice_fields)
+    for (k in resource_choice_fields) {
+      resource_choices[[k]] <- current_resource_choices(k)
+    }
+    resource_choice_state$choices <- resource_choices
+
     settings <- list(
       repo_root = repo_root_val(),
       scan_output_dir = input$scan_output_dir,
@@ -404,19 +619,33 @@
       extract_repo_name = input$extract_repo_name,
       extract_path_manual = input$extract_path_manual,
       output_dir = input$output_dir,
+      run_description = input$run_description,
       branch = input$branch,
+      remote_user = input$remote_user,
+      remote_host = input$remote_host,
+      github_username = input$github_username,
+      github_org = input$github_org,
+      github_repo = input$github_repo,
       job_types = input$job_types,
+      profile_components = input$profile_components,
+      prof_launch_strategy = input$prof_launch_strategy,
+      prof_anchor_scalar = input$prof_anchor_scalar,
       launch_mode = input$launch_mode,
+      parallel_launch = input$parallel_launch,
       last_browse_path = rv$last_browse_path,
-      last_config_file = rv$config_path,
+      last_config_file = last_config_file,
+      base_config_name = rv$base_config_name,
+      current_config_file = rv$current_config_file,
       local_docker_image = input$local_docker_image,
       condor_cpus = input$condor_cpus,
       condor_memory = input$condor_memory,
       condor_disk = input$condor_disk,
       docker_image = input$docker_image,
+      ghcr_login = input$ghcr_login,
+      condor_run_target = input$condor_run_target,
       launch_parallel_cores = input$launch_parallel_cores,
       retrieve_parallel_cores = input$retrieve_parallel_cores,
-      resource_choices = resource_choice_state$choices,
+      resource_choices = resource_choices,
       timestamp = Sys.time()
     )
     
@@ -428,8 +657,14 @@
       # Silently fail if can't save
     })
     
-    save_launcher_settings()
+    save_launcher_settings(force = force)
   }
+
+  session$onSessionEnded(function() {
+    if (isTRUE(rv$settings_ready)) {
+      try(save_settings(force = TRUE), silent = TRUE)
+    }
+  })
   
   # Auto-save settings when they change
   observeEvent(input$scan_output_dir, {
@@ -455,6 +690,10 @@
   observeEvent(input$output_dir, {
     save_settings()
   }, ignoreInit = TRUE)
+
+  observeEvent(input$run_description, {
+    save_settings()
+  }, ignoreInit = TRUE)
   
   observeEvent(input$branch, {
     save_settings()
@@ -467,8 +706,28 @@
   observeEvent(input$local_docker_image, {
     save_settings()
   }, ignoreInit = TRUE)
+
+  observeEvent(input$parallel_launch, {
+    save_settings()
+  }, ignoreInit = TRUE)
   
   observeEvent(input$job_types, {
+    save_settings()
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$profile_components, {
+    save_settings()
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$prof_launch_strategy, {
+    save_settings()
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$prof_anchor_scalar, {
+    save_settings()
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$ghcr_login, {
     save_settings()
   }, ignoreInit = TRUE)
   
@@ -481,6 +740,10 @@
   }, ignoreInit = TRUE)
   
   observeEvent(input$condor_disk, {
+    save_settings()
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$condor_run_target, {
     save_settings()
   }, ignoreInit = TRUE)
   
@@ -499,7 +762,24 @@
       input$remote_host,
       input$github_username,
       input$github_org,
-      input$github_repo
+      input$github_repo,
+      input$branch,
+      input$output_dir,
+      input$run_description,
+      input$job_types,
+      input$profile_components,
+      input$prof_launch_strategy,
+      input$prof_anchor_scalar,
+      input$launch_mode,
+      input$parallel_launch,
+      input$launch_parallel_cores,
+      input$local_docker_image,
+      input$ghcr_login,
+      input$docker_image,
+      input$condor_cpus,
+      input$condor_memory,
+      input$condor_disk,
+      input$condor_run_target
     ),
     {
       save_launcher_settings()
@@ -700,23 +980,16 @@
     pending_config_file = NULL,
     launcher_settings_loaded = FALSE
     ,
+    settings_loading = TRUE
+    ,
+    settings_ready = FALSE
+    ,
     launcher_job_log_trigger = 0
   )
 
   observeEvent(repo_root_val(), {
-    choices <- c("Model" = "model",
-                 "Jitter" = "jitter",
-                 "Hessian" = "hessian",
-                 "Retrospective" = "retro",
-                 "Profile" = "prof",
-                 "Profile 2D" = "prof_2d")
-    selected <- if (!is.null(rv$last_job_type)) {
-      intersect(rv$last_job_type, unname(choices))
-    } else {
-      "model"
-    }
-    if (length(selected) == 0) selected <- "model"
-    updateCheckboxGroupInput(session, "job_types", choices = choices, selected = selected)
+    if (isTRUE(rv$settings_loading)) return()
+    update_job_type_choices(rv$last_job_type)
   }, ignoreInit = FALSE)
   
   # Directories are created lazily only when needed (save/download actions).

@@ -76,7 +76,7 @@
           checkboxInput(
             checkbox_id,
             label = NULL,
-            value = model_name %in% rv$selected_models
+            value = model_name %in% isolate(rv$selected_models)
           )
         ),
         div(

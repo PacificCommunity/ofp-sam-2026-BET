@@ -48,13 +48,31 @@ monitor_tab_ui <- function() {
                 )
               ),
               column(
-                8,
+                4,
+                checkboxGroupInput(
+                  "monitor_remote_hosts",
+                  "Remote Hosts:",
+                  choices = c(
+                    "Current" = "current",
+                    "NOU" = "nouofpsubmit.corp.spc.int",
+                    "SUV" = "suvofpsubmit.corp.spc.int"
+                  ),
+                  selected = c("current", "nouofpsubmit.corp.spc.int", "suvofpsubmit.corp.spc.int"),
+                  inline = TRUE
+                )
+              ),
+              column(
+                4,
                 div(
                   style = "padding-top: 24px;",
                   htmlOutput("monitor_run_description"),
                   tags$div(
                     style = "margin-top: 4px;",
                     htmlOutput("monitor_progress_summary")
+                  ),
+                  tags$div(
+                    style = "margin-top: 6px;",
+                    uiOutput("monitor_capacity_summary")
                   ),
                   tags$div(
                     style = "margin-top: 6px;",

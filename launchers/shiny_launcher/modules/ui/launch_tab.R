@@ -82,13 +82,22 @@ launch_tab_ui <- function() {
                                            "Jitter" = "jitter",
                                            "Hessian" = "hessian",
                                            "Retrospective" = "retro",
-                                           "Profile" = "prof",
-                                           "Profile 2D" = "prof_2d"),
+                                           "Profile" = "prof"),
                                selected = NULL),
 
             conditionalPanel(
               condition = "input.job_types && input.job_types.indexOf('prof') !== -1",
               tagList(
+                checkboxGroupInput(
+                  "profile_components",
+                  "Profile Components:",
+                  choices = c(
+                    "Standard scalar profile" = "standard",
+                    "Individual parameter profiles" = "individual",
+                    "2D profile" = "prof_2d"
+                  ),
+                  selected = "standard"
+                ),
                 selectInput(
                   "prof_launch_strategy",
                   "Profile Launch Strategy:",
@@ -174,6 +183,19 @@ launch_tab_ui <- function() {
               textOutput("estimated_jobs_text", inline = TRUE),
               br(),
               tags$small(textOutput("estimated_jobs_breakdown_text", inline = TRUE), style = "color:#666;")
+            ),
+
+            div(
+              style = "margin-top: 10px; padding: 8px 10px; background: #fffaf0; border-left: 4px solid #f39c12;",
+              div(
+                style = "display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;",
+                div(
+                  strong("Input Readiness: "),
+                  textOutput("launch_preflight_summary", inline = TRUE)
+                ),
+                actionButton("refresh_launch_preflight", "Scan Inputs", class = "btn-default btn-xs", icon = icon("search"))
+              ),
+              div(style = "margin-top:6px;", DT::DTOutput("launch_preflight_table"))
             ),
             
             actionButton("launch_btn", "Launch Job(s)", 

@@ -327,35 +327,52 @@
   }
   
   observe({
+    if (!isTRUE(rv$settings_ready)) return()
+
     if (!rv$config_loaded) {
       # Check if we have a saved last config path
-      if (file.exists(settings_path())) {
-        tryCatch({
-          saved_settings <- readRDS(settings_path())
-          
-          # If we have a saved config file, try to load it
-          if (!is.null(saved_settings$last_config_file) && 
-              saved_settings$last_config_file != "") {
-            
-            # Try to find the file
-            possible_paths <- c(
-              saved_settings$last_config_file,
-              file.path(resolve_repo_path(".launcher_configs"), saved_settings$last_config_file),
-              file.path(resolve_repo_path(".launcher_configs"), basename(saved_settings$last_config_file))
-            )
-            
-            for (path in possible_paths) {
-              if (file.exists(path)) {
-                load_models(config_path = path,
-                            original_filename = basename(path))
-                return()
-              }
+      tryCatch({
+        root_settings <- ensure_named_list(read_rds_safe(settings_path()))
+        launcher_settings <- ensure_named_list(read_rds_safe(launcher_settings_path()))
+        saved_config <- latest_setting_value(
+          "last_config_file",
+          launcher_settings,
+          root_settings,
+          file_mtime_safe(launcher_settings_path()),
+          file_mtime_safe(settings_path())
+        )
+        if (is.null(saved_config) || !nzchar(as.character(saved_config))) {
+          saved_config <- latest_setting_value(
+            "config_path",
+            launcher_settings,
+            root_settings,
+            file_mtime_safe(launcher_settings_path()),
+            file_mtime_safe(settings_path())
+          )
+        }
+
+        # If we have a saved config file, try to load it
+        if (!is.null(saved_config) && nzchar(as.character(saved_config))) {
+          saved_config <- as.character(saved_config)
+
+          # Try to find the file
+          possible_paths <- c(
+            saved_config,
+            file.path(resolve_repo_path(".launcher_configs"), saved_config),
+            file.path(resolve_repo_path(".launcher_configs"), basename(saved_config))
+          )
+
+          for (path in possible_paths) {
+            if (file.exists(path)) {
+              load_models(config_path = path,
+                          original_filename = basename(path))
+              return()
             }
           }
-        }, error = function(e) {
-          # Silently ignore errors
-        })
-      }
+        }
+      }, error = function(e) {
+        # Silently ignore errors
+      })
       
       # Don't load anything by default - user must choose
       # This prevents auto-loading set_model.R every time

@@ -15,4 +15,7 @@ server <- function(input, output, session) {
   source(file.path(server_dir, "08_add_delete_model.R"), local = TRUE)
   source(file.path(server_dir, "09_outputs.R"), local = TRUE)
   source(file.path(server_dir, "10_monitor.R"), local = TRUE)
+  source(file.path(server_dir, "12_promote_outputs.R"), local = TRUE)
+  source(file.path(server_dir, "13_condor_completed.R"), local = TRUE)
+  source(file.path(server_dir, "14_launch_preflight.R"), local = TRUE)
 }

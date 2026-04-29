@@ -155,6 +155,58 @@
     nzchar(indepvar_txt) && (has_scalar_grid || has_value_grid)
   }
 
+  profile_env_components <- function(profile_env) {
+    components <- character(0)
+    has_2d <- isTRUE(has_prof_2d_spec(profile_env))
+    if (has_2d) components <- c(components, "prof_2d")
+    fix_txt <- first_scalar_string(profile_env$prof_fix_indepvar, default = "")
+    one_d_text <- vapply(
+      list(profile_env$scalars, profile_env$scalar, profile_env$prof_scalars, profile_env$profile_scalars),
+      first_scalar_string,
+      character(1),
+      default = ""
+    )
+    has_1d_spec <- nzchar(fix_txt) || any(nzchar(one_d_text))
+    if (!has_2d || has_1d_spec) {
+      components <- c(components, if (nzchar(fix_txt)) "individual" else "standard")
+    }
+    unique(components)
+  }
+
+  selected_profile_components <- function() {
+    comps <- tryCatch(input$profile_components, error = function(e) NULL)
+    if (is.null(comps) || length(comps) == 0) return("standard")
+    unique(as.character(comps))
+  }
+
+  effective_selected_job_types <- function(selected_job_types) {
+    selected_job_types <- unique(as.character(selected_job_types))
+    if ("prof" %in% selected_job_types) {
+      profile_components <- selected_profile_components()
+      if (!any(profile_components %in% c("standard", "individual"))) {
+        selected_job_types <- setdiff(selected_job_types, "prof")
+      }
+      if ("prof_2d" %in% profile_components) {
+        selected_job_types <- unique(c(selected_job_types, "prof_2d"))
+      }
+    }
+    selected_job_types
+  }
+
+  selected_profile_envs <- function(model_env, components = selected_profile_components()) {
+    envs <- resolve_profile_job_envs(model_env)
+    keep <- vapply(envs, function(env) any(profile_env_components(env) %in% components), logical(1))
+    envs[keep]
+  }
+
+  selected_profile_1d_envs <- function(model_env) {
+    selected_profile_envs(model_env, intersect(selected_profile_components(), c("standard", "individual")))
+  }
+
+  selected_profile_2d_envs <- function(model_env) {
+    selected_profile_envs(model_env, "prof_2d")
+  }
+
   resolve_prof_scalars <- function(model_env) {
     default_scalars <- parse_first_nonempty_numeric(
       model_env$scalars,
@@ -791,6 +843,7 @@
 
   estimate_total_jobs <- function(selected_models, selected_job_types, prof_chain_mode = FALSE, is_local_mode = FALSE, prof_anchor_requested = 100, local_prof_chain_parallel = FALSE) {
     total_jobs <- 0L
+    selected_job_types <- effective_selected_job_types(selected_job_types)
     if (length(selected_models) == 0 || length(selected_job_types) == 0) return(total_jobs)
 
     for (model_name in selected_models) {
@@ -806,7 +859,7 @@
         } else if (identical(job_type, "retro")) {
           total_jobs <- total_jobs + length(parse_numeric_tokens(model_env$retro_peels))
         } else if (identical(job_type, "prof")) {
-          for (prof_env in resolve_profile_job_envs(model_env)) {
+          for (prof_env in selected_profile_1d_envs(model_env)) {
             scalars <- resolve_prof_scalars_for_mode(prof_env, prof_chain_mode = prof_chain_mode)
             if (isTRUE(prof_chain_mode) && (!isTRUE(is_local_mode) || isTRUE(local_prof_chain_parallel))) {
               plan <- resolve_prof_anchor_and_chains(scalars, prof_anchor_requested)
@@ -819,7 +872,7 @@
             }
           }
         } else if (identical(job_type, "prof_2d")) {
-          total_jobs <- total_jobs + sum(vapply(resolve_profile_job_envs(model_env), has_prof_2d_spec, logical(1)))
+          total_jobs <- total_jobs + length(selected_profile_2d_envs(model_env))
         } else {
           total_jobs <- total_jobs + 1L
         }
@@ -834,6 +887,7 @@
                                       prof_anchor_requested = 100,
                                       local_prof_chain_parallel = FALSE) {
     rows <- list()
+    selected_job_types <- effective_selected_job_types(selected_job_types)
     if (length(selected_models) == 0 || length(selected_job_types) == 0) {
       return(data.frame(model = character(0), item = character(0), jobs = integer(0), stringsAsFactors = FALSE))
     }
@@ -854,7 +908,7 @@
           jobs <- length(parse_numeric_tokens(model_env$retro_peels))
           rows[[length(rows) + 1L]] <- data.frame(model = model_name, item = "retro", jobs = as.integer(jobs), stringsAsFactors = FALSE)
         } else if (identical(job_type, "prof")) {
-          prof_envs <- resolve_profile_job_envs(model_env)
+          prof_envs <- selected_profile_1d_envs(model_env)
           for (prof_env in prof_envs) {
             nm <- first_scalar_string(prof_env$profile_set_name, default = "profile")
             scalars <- resolve_prof_scalars_for_mode(prof_env, prof_chain_mode = prof_chain_mode)
@@ -869,9 +923,8 @@
             }
           }
         } else if (identical(job_type, "prof_2d")) {
-          prof_envs <- resolve_profile_job_envs(model_env)
+          prof_envs <- selected_profile_2d_envs(model_env)
           for (prof_env in prof_envs) {
-            if (!isTRUE(has_prof_2d_spec(prof_env))) next
             nm <- first_scalar_string(prof_env$profile_set_name, default = "profile")
             rows[[length(rows) + 1L]] <- data.frame(model = model_name, item = paste0("prof_2d:", nm), jobs = 1L, stringsAsFactors = FALSE)
           }
@@ -891,6 +944,7 @@
     if (length(rv$models) == 0) return("")
     selected_job_types <- input$job_types
     if (is.null(selected_job_types) || length(selected_job_types) == 0) return("")
+    selected_job_types <- effective_selected_job_types(selected_job_types)
     selected_models <- selected_models_from_checkboxes()
     if (length(selected_models) == 0) return("")
 
@@ -923,6 +977,7 @@
     if (length(rv$models) == 0) return("0 (load config first)")
     selected_job_types <- input$job_types
     if (is.null(selected_job_types) || length(selected_job_types) == 0) return("0 (select job type)")
+    selected_job_types <- effective_selected_job_types(selected_job_types)
     selected_models <- selected_models_from_checkboxes()
     if (length(selected_models) == 0) return("0 (select model)")
     launch_mode <- if (!is.null(input$launch_mode) && nzchar(input$launch_mode)) input$launch_mode else "condor"
@@ -943,7 +998,7 @@
     if (isTRUE(prof_chain_mode) && !isTRUE(is_local_mode) && length(selected_models) == 1 && "prof" %in% selected_job_types) {
       m <- selected_models[[1]]
       me <- rv$models[[m]]
-      prof_envs <- resolve_profile_job_envs(me)
+      prof_envs <- selected_profile_1d_envs(me)
       if (length(prof_envs) == 1) {
         sc <- resolve_prof_scalars_for_mode(prof_envs[[1]], prof_chain_mode = TRUE)
         plan <- resolve_prof_anchor_and_chains(sc, prof_anchor_requested)
@@ -1005,6 +1060,7 @@
       shinyjs::removeClass("launch_btn", "loading")
       return()
     }
+    selected_job_types <- effective_selected_job_types(selected_job_types)
 
     launch_mode <- if (!is.null(input$launch_mode) && nzchar(input$launch_mode)) input$launch_mode else "condor"
     is_local_mode <- launch_mode %in% c("local_native", "local_docker")
@@ -1057,7 +1113,7 @@
             add_job_spec(model_name, job_type, peel = peel)
           }
         } else if (job_type == "prof") {
-          for (prof_env in resolve_profile_job_envs(model_env)) {
+          for (prof_env in selected_profile_1d_envs(model_env)) {
             scalars <- resolve_prof_scalars_for_mode(prof_env, prof_chain_mode = prof_chain_mode)
             if (isTRUE(prof_chain_mode) && (!is_local_mode || isTRUE(allow_local_prof_chain_parallel))) {
               plan <- resolve_prof_anchor_and_chains(scalars, prof_anchor_requested)
@@ -1095,8 +1151,7 @@
             }
           }
         } else if (job_type == "prof_2d") {
-          for (prof_env in resolve_profile_job_envs(model_env)) {
-            if (!isTRUE(has_prof_2d_spec(prof_env))) next
+          for (prof_env in selected_profile_2d_envs(model_env)) {
             total_jobs <- total_jobs + 1L
             add_job_spec(model_name, job_type, profile_env = prof_env)
           }
@@ -1447,7 +1502,7 @@
               }
               if (cancel_launch()) stop("Launch cancelled")
             } else if (job_type == "prof") {
-              for (prof_env in resolve_profile_job_envs(model_env)) {
+              for (prof_env in selected_profile_1d_envs(model_env)) {
                 profile_name <- profile_launch_name(model_name, prof_env)
                 scalars <- resolve_prof_scalars_for_mode(prof_env, prof_chain_mode = prof_chain_mode)
                 if (isTRUE(prof_chain_mode) && is_local_mode && length(scalars) > 0) {
@@ -1588,8 +1643,7 @@
               }
               if (cancel_launch()) stop("Launch cancelled")
             } else if (job_type == "prof_2d") {
-              for (prof_env in resolve_profile_job_envs(model_env)) {
-                if (!isTRUE(has_prof_2d_spec(prof_env))) next
+              for (prof_env in selected_profile_2d_envs(model_env)) {
                 profile_name <- profile_launch_name(model_name, prof_env)
                 if (cancel_launch()) stop("Launch cancelled")
                 current_job <- current_job + 1
