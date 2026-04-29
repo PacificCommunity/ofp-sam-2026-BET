@@ -1,4 +1,30 @@
 launch_tab_ui <- function() {
+  resource_selectize <- function(input_id, label, choices, selected, remove_id, remove_title) {
+    fluidRow(
+      column(
+        10,
+        selectizeInput(
+          input_id,
+          label,
+          choices = choices,
+          selected = selected,
+          options = list(create = TRUE, persist = TRUE)
+        )
+      ),
+      column(
+        2,
+        tags$label(HTML("&nbsp;")),
+        actionButton(
+          remove_id,
+          NULL,
+          icon = icon("trash"),
+          title = remove_title,
+          class = "btn-default btn-block"
+        )
+      )
+    )
+  }
+
   tabItem(
     tabName = "launch",
     
@@ -197,23 +223,59 @@ launch_tab_ui <- function() {
             conditionalPanel(
               condition = "input.launch_mode == 'condor'",
               tagList(
-                textInput("remote_user", "Remote User:", 
-                          value = Sys.getenv("USER", "kyuhank")),
+                resource_selectize(
+                  "remote_user",
+                  "Remote User:",
+                  choices = unique(c(Sys.getenv("USER", "kyuhank"), "kyuhank")),
+                  selected = Sys.getenv("USER", "kyuhank"),
+                  remove_id = "remove_remote_user_choice",
+                  remove_title = "Remove selected remote user from dropdown"
+                ),
                 
-                textInput("remote_host", "Remote Host:", 
-                          value = Sys.getenv("NOU_CONDOR", "")),
+                resource_selectize(
+                  "remote_host",
+                  "Remote Host:",
+                  choices = unique(c(Sys.getenv("NOU_CONDOR", ""))),
+                  selected = Sys.getenv("NOU_CONDOR", ""),
+                  remove_id = "remove_remote_host_choice",
+                  remove_title = "Remove selected remote host from dropdown"
+                ),
                 
-                textInput("github_username", "GitHub Username:", 
-                          value = "kyuhank"),
+                resource_selectize(
+                  "github_username",
+                  "GitHub Username:",
+                  choices = "kyuhank",
+                  selected = "kyuhank",
+                  remove_id = "remove_github_username_choice",
+                  remove_title = "Remove selected GitHub username from dropdown"
+                ),
                 
-                textInput("github_org", "GitHub Organization:", 
-                          value = "PacificCommunity"),
+                resource_selectize(
+                  "github_org",
+                  "GitHub Organization:",
+                  choices = "PacificCommunity",
+                  selected = "PacificCommunity",
+                  remove_id = "remove_github_org_choice",
+                  remove_title = "Remove selected GitHub organization from dropdown"
+                ),
                 
-                textInput("github_repo", "GitHub Repository:", 
-                          value = "ofp-sam-2026-bet"),
+                resource_selectize(
+                  "github_repo",
+                  "GitHub Repository:",
+                  choices = "ofp-sam-2026-bet",
+                  selected = "ofp-sam-2026-bet",
+                  remove_id = "remove_github_repo_choice",
+                  remove_title = "Remove selected GitHub repository from dropdown"
+                ),
                 
-                textInput("docker_image", "Docker Image:", 
-                          value = "ghcr.io/pacificcommunity/bet-2026:v1.9"),
+                resource_selectize(
+                  "docker_image",
+                  "Docker Image:",
+                  choices = "ghcr.io/pacificcommunity/bet-2026:v1.9",
+                  selected = "ghcr.io/pacificcommunity/bet-2026:v1.9",
+                  remove_id = "remove_docker_image_choice",
+                  remove_title = "Remove selected Docker image from dropdown"
+                ),
                 
                 checkboxInput("ghcr_login", "GHCR Login (private images)", value = FALSE),
                 

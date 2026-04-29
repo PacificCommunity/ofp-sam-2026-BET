@@ -67,6 +67,66 @@
     NULL
   }
 
+  resource_choice_fields <- c(
+    "remote_user",
+    "remote_host",
+    "github_username",
+    "github_org",
+    "github_repo",
+    "docker_image"
+  )
+
+  resource_choice_defaults <- list(
+    remote_user = unique(c(Sys.getenv("USER", "kyuhank"), "kyuhank")),
+    remote_host = Sys.getenv("NOU_CONDOR", ""),
+    github_username = "kyuhank",
+    github_org = "PacificCommunity",
+    github_repo = "ofp-sam-2026-bet",
+    docker_image = "ghcr.io/pacificcommunity/bet-2026:v1.9"
+  )
+
+  resource_choice_state <- new.env(parent = emptyenv())
+  resource_choice_state$choices <- setNames(vector("list", length(resource_choice_fields)), resource_choice_fields)
+
+  normalize_resource_choices <- function(x) {
+    x <- unique(trimws(as.character(unlist(x, use.names = FALSE))))
+    x[!is.na(x) & nzchar(x)]
+  }
+
+  saved_resource_choices <- function(key, launcher_obj, root_obj) {
+    normalize_resource_choices(c(
+      resource_choice_defaults[[key]],
+      launcher_obj[["resource_choices"]][[key]],
+      root_obj[["resource_choices"]][[key]],
+      launcher_obj[[paste0(key, "_choices")]],
+      root_obj[[paste0(key, "_choices")]],
+      launcher_obj[[key]],
+      root_obj[[key]]
+    ))
+  }
+
+  current_resource_choices <- function(key) {
+    input_value <- tryCatch(input[[key]], error = function(e) NULL)
+    normalize_resource_choices(c(
+      resource_choice_defaults[[key]],
+      resource_choice_state$choices[[key]],
+      input_value
+    ))
+  }
+
+  update_resource_selectize <- function(key, selected = NULL) {
+    choices <- normalize_resource_choices(c(current_resource_choices(key), selected))
+    resource_choice_state$choices[[key]] <- choices
+    updateSelectizeInput(
+      session,
+      key,
+      choices = choices,
+      selected = selected,
+      options = list(create = TRUE, persist = TRUE),
+      server = FALSE
+    )
+  }
+
   latest_setting_value <- function(key, launcher_obj, root_obj, launcher_mtime, root_mtime) {
     ordered <- character(0)
     if (!is.na(launcher_mtime) && !is.na(root_mtime)) {
@@ -99,6 +159,11 @@
 
     rv$launcher_settings_loaded <- TRUE
 
+    resource_choice_state$choices <- setNames(vector("list", length(resource_choice_fields)), resource_choice_fields)
+    for (k in resource_choice_fields) {
+      resource_choice_state$choices[[k]] <- saved_resource_choices(k, launcher_obj, root_obj)
+    }
+
     latest_repo_root <- latest_setting_value("last_repo_root", launcher_obj, root_obj, launcher_mtime, root_mtime)
     if (is.null(latest_repo_root)) latest_repo_root <- latest_setting_value("repo_root", launcher_obj, root_obj, launcher_mtime, root_mtime)
     if (!is.null(latest_repo_root) && nzchar(latest_repo_root)) {
@@ -113,7 +178,11 @@
 
     for (k in c("remote_user", "remote_host", "github_username", "github_org", "github_repo")) {
       v <- latest_setting_value(k, launcher_obj, root_obj, launcher_mtime, root_mtime)
-      if (!is.null(v)) updateTextInput(session, k, value = v)
+      if (!is.null(v)) {
+        update_resource_selectize(k, selected = v)
+      } else {
+        update_resource_selectize(k, selected = resource_choice_defaults[[k]][1])
+      }
     }
 
     launch_mode_value <- latest_setting_value("launch_mode", launcher_obj, root_obj, launcher_mtime, root_mtime)
@@ -125,7 +194,9 @@
     docker_from_settings <- latest_setting_value("docker_image", launcher_obj, root_obj, launcher_mtime, root_mtime)
     docker_value <- if (!is.null(docker_from_makefile) && nzchar(docker_from_makefile)) docker_from_makefile else docker_from_settings
     if (!is.null(docker_value) && nzchar(docker_value)) {
-      updateTextInput(session, "docker_image", value = docker_value)
+      update_resource_selectize("docker_image", selected = docker_value)
+    } else {
+      update_resource_selectize("docker_image", selected = resource_choice_defaults$docker_image[1])
     }
 
     local_docker_value <- latest_setting_value("local_docker_image", launcher_obj, root_obj, launcher_mtime, root_mtime)
@@ -143,6 +214,12 @@
   }
   
   save_launcher_settings <- function() {
+    resource_choices <- setNames(vector("list", length(resource_choice_fields)), resource_choice_fields)
+    for (k in resource_choice_fields) {
+      resource_choices[[k]] <- current_resource_choices(k)
+    }
+    resource_choice_state$choices <- resource_choices
+
     ls <- list(
       last_repo_root = repo_root_val(),
       last_download_location = input$download_location,
@@ -157,12 +234,66 @@
       condor_cpus = input$condor_cpus,
       condor_memory = input$condor_memory,
       condor_disk = input$condor_disk,
+      resource_choices = resource_choices,
       timestamp = Sys.time()
     )
     tryCatch({
       saveRDS(ls, launcher_settings_path())
     }, error = function(e) {
       # ignore
+    })
+  }
+
+  save_resource_choices_after_delete <- function(key, selected) {
+    launcher_obj <- ensure_named_list(read_rds_safe(launcher_settings_path()))
+    launcher_obj$resource_choices <- resource_choice_state$choices
+    launcher_obj[[key]] <- selected
+    launcher_obj$timestamp <- Sys.time()
+    tryCatch({
+      saveRDS(launcher_obj, launcher_settings_path())
+    }, error = function(e) {
+      # ignore
+    })
+
+    root_file <- settings_path()
+    root_obj <- ensure_named_list(read_rds_safe(root_file))
+    root_obj$resource_choices <- resource_choice_state$choices
+    root_obj[[key]] <- selected
+    root_obj$timestamp <- Sys.time()
+    tryCatch({
+      saveRDS(root_obj, root_file)
+    }, error = function(e) {
+      # ignore
+    })
+  }
+
+  remove_resource_choice <- function(key) {
+    selected <- trimws(as.character(if (is.null(input[[key]])) "" else input[[key]]))
+    if (!nzchar(selected)) return(invisible(FALSE))
+
+    choices <- setdiff(current_resource_choices(key), selected)
+    resource_choice_state$choices[[key]] <- choices
+    next_selected <- if (length(choices) > 0) choices[[1]] else NULL
+
+    updateSelectizeInput(
+      session,
+      key,
+      choices = choices,
+      selected = next_selected,
+      options = list(create = TRUE, persist = TRUE),
+      server = FALSE
+    )
+    save_resource_choices_after_delete(key, next_selected)
+    showNotification(sprintf("Removed '%s' from %s dropdown", selected, key), type = "message")
+    invisible(TRUE)
+  }
+
+  for (key in resource_choice_fields) {
+    local({
+      key_local <- key
+      observeEvent(input[[paste0("remove_", key_local, "_choice")]], {
+        remove_resource_choice(key_local)
+      }, ignoreInit = TRUE)
     })
   }
   
@@ -285,6 +416,7 @@
       docker_image = input$docker_image,
       launch_parallel_cores = input$launch_parallel_cores,
       retrieve_parallel_cores = input$retrieve_parallel_cores,
+      resource_choices = resource_choice_state$choices,
       timestamp = Sys.time()
     )
     
