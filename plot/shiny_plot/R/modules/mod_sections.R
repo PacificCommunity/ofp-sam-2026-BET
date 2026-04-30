@@ -1755,8 +1755,8 @@ mod_tagging_ui <- function() {
             "tag_time_mode",
             "Time axis:",
             choices = c(
-              "By year" = "year",
-              "By model step" = "step"
+              "By model year (from steps)" = "year",
+              "By model step (quarter if seasons=4)" = "step"
             ),
             selected = "year"
           )
@@ -1810,7 +1810,26 @@ mod_tagging_ui <- function() {
               "Release group" = "rel_group",
               "Release region" = "rel_region"
             ),
-            selected = "rel_group"
+            selected = "rel_region"
+          ),
+          conditionalPanel(
+            condition = "input.tag_plot == 'recap_pressure' && input.tag_pressure_release_dim == 'rel_group'",
+            pickerInput(
+              "tag_pressure_release_groups",
+              "Release group filter:",
+              choices = NULL,
+              selected = NULL,
+              multiple = TRUE,
+              options = pickerOptions(
+                actionsBox = TRUE,
+                selectAllText = "Select All",
+                deselectAllText = "Deselect All",
+                selectedTextFormat = "count > 3",
+                countSelectedText = "{0} groups selected",
+                liveSearch = TRUE,
+                liveSearchPlaceholder = "Search groups..."
+              )
+            )
           ),
           selectInput(
             "tag_pressure_recap_dim",
@@ -1819,7 +1838,7 @@ mod_tagging_ui <- function() {
               "Recapture fishery/group" = "recap_fishery",
               "Recapture region" = "recap_region"
             ),
-            selected = "recap_fishery"
+            selected = "recap_region"
           ),
           numericInput(
             "tag_pressure_correction",
@@ -1885,8 +1904,9 @@ mod_tagging_server <- function(input, output, session, rv) {
       years = input$tag_years,
       facet_ncol = input$tag_facet_ncol,
       rr_nonneg_only = isTRUE(input$tag_rr_nonneg_only),
-      pressure_release_dim = if (is.null(input$tag_pressure_release_dim)) "rel_group" else input$tag_pressure_release_dim,
-      pressure_recap_dim = if (is.null(input$tag_pressure_recap_dim)) "recap_fishery" else input$tag_pressure_recap_dim,
+      pressure_release_dim = if (is.null(input$tag_pressure_release_dim)) "rel_region" else input$tag_pressure_release_dim,
+      pressure_release_groups = input$tag_pressure_release_groups,
+      pressure_recap_dim = if (is.null(input$tag_pressure_recap_dim)) "recap_region" else input$tag_pressure_recap_dim,
       pressure_correction = if (is.null(input$tag_pressure_correction)) 1e-4 else suppressWarnings(as.numeric(input$tag_pressure_correction)),
       pressure_cap = if (is.null(input$tag_pressure_cap)) 3 else suppressWarnings(as.numeric(input$tag_pressure_cap)),
       plot = if (is.null(input$tag_plot)) "report" else input$tag_plot,
@@ -1926,6 +1946,42 @@ mod_tagging_server <- function(input, output, session, rv) {
     cur <- intersect(cur, choices)
     if (length(cur) == 0) cur <- choices
     updatePickerInput(session, "tag_years", choices = choices, selected = cur)
+  })
+
+  observe({
+    req(rv$data_loaded)
+    if (!identical(input$tag_plot, "recap_pressure")) return()
+    if (!identical(input$tag_pressure_release_dim, "rel_group")) {
+      updatePickerInput(session, "tag_pressure_release_groups", choices = character(0), selected = character(0))
+      return()
+    }
+
+    sc <- input$tag_scenarios
+    if (is.null(sc) || length(sc) == 0) {
+      updatePickerInput(session, "tag_pressure_release_groups", choices = character(0), selected = character(0))
+      return()
+    }
+
+    has_tagout <- names(rv$TagOut_list)[!sapply(rv$TagOut_list, is.null)]
+    chosen <- intersect(sc, has_tagout)
+    if (length(chosen) == 0) {
+      updatePickerInput(session, "tag_pressure_release_groups", choices = character(0), selected = character(0))
+      return()
+    }
+
+    tag_releases <- pm_get_tag_releases(subset_named(rv$TagOut_list, chosen))
+    release_groups <- sort(unique(as.numeric(tag_releases$rel.group)))
+    release_groups <- release_groups[is.finite(release_groups)]
+    choice_vals <- as.character(release_groups)
+    current <- isolate(input$tag_pressure_release_groups)
+    selected <- if (is.null(current) || length(current) == 0) choice_vals else intersect(as.character(current), choice_vals)
+
+    updatePickerInput(
+      session,
+      "tag_pressure_release_groups",
+      choices = stats::setNames(choice_vals, paste0("Group ", choice_vals)),
+      selected = selected
+    )
   })
 
   tagging_plot_reactive <- reactive({
@@ -1988,7 +2044,7 @@ mod_tagging_server <- function(input, output, session, rv) {
       if (nrow(df) == 0) return(df)
       if (identical(time_mode, "step")) {
         df$x <- df[[x_col]]
-        df$x_label <- if (identical(x_col, "recap_ts")) "Time (model steps)" else "Time at liberty (model steps; usually quarters)"
+        df$x_label <- if (identical(x_col, "recap_ts")) "Time" else "Time at liberty"
         return(df)
       }
 
@@ -1996,7 +2052,7 @@ mod_tagging_server <- function(input, output, session, rv) {
         df$x <- floor(as.numeric(df$recap_ts))
         out <- df %>% group_by(Model, x, across(any_of(c("tag_recapture_name")))) %>%
           summarise(recap_obs = sum(recap_obs, na.rm = TRUE), recap_pred = sum(recap_pred, na.rm = TRUE), .groups = "drop")
-        out$x_label <- "Time (year)"
+        out$x_label <- "Calendar year"
         return(out)
       }
 
@@ -2005,14 +2061,14 @@ mod_tagging_server <- function(input, output, session, rv) {
       df$x <- floor(as.numeric(df$period_at_liberty) / as.numeric(spm))
       out <- df %>% group_by(Model, x, across(any_of(c("program", "recap.region")))) %>%
         summarise(recap_obs = sum(recap_obs, na.rm = TRUE), recap_pred = sum(recap_pred, na.rm = TRUE), .groups = "drop")
-      out$x_label <- "Time at liberty (years)"
+      out$x_label <- "Time at liberty"
       out
     }
 
     apply_year_filter <- function(df) {
       if (!identical(time_mode, "year")) return(df)
       # Apply year filter only for calendar-time series (not years-at-liberty).
-      if (!("x_label" %in% names(df)) || !all(df$x_label == "Time (year)")) return(df)
+      if (!("x_label" %in% names(df)) || !all(df$x_label == "Calendar year")) return(df)
       yrs <- suppressWarnings(as.numeric(input$tag_years))
       if (is.null(yrs) || length(yrs) == 0 || all(!is.finite(yrs))) return(df)
       df %>% filter(x %in% yrs)
@@ -2463,8 +2519,9 @@ mod_tagging_server <- function(input, output, session, rv) {
     }
 
     if (mode == "recap_pressure") {
-      release_dim <- if (is.null(input$tag_pressure_release_dim)) "rel_group" else input$tag_pressure_release_dim
-      recap_dim <- if (is.null(input$tag_pressure_recap_dim)) "recap_fishery" else input$tag_pressure_recap_dim
+      release_dim <- if (is.null(input$tag_pressure_release_dim)) "rel_region" else input$tag_pressure_release_dim
+      release_groups_filter <- input$tag_pressure_release_groups
+      recap_dim <- if (is.null(input$tag_pressure_recap_dim)) "recap_region" else input$tag_pressure_recap_dim
       correction <- suppressWarnings(as.numeric(input$tag_pressure_correction))
       if (!is.finite(correction) || correction < 0) correction <- 1e-4
       cap <- suppressWarnings(as.numeric(input$tag_pressure_cap))
@@ -2485,12 +2542,12 @@ mod_tagging_server <- function(input, output, session, rv) {
         pm_add_period_at_liberty(tag_releases = tag_releases, seasons_per_model = seasons_per_model) %>%
         mutate(
           release_panel = if (identical(release_dim, "rel_region")) {
-            paste0("Release region ", rel.region)
+            paste0("Release ", rel.region)
           } else {
             paste0("Release group ", rel.group, " | R", rel.region)
           },
           recap_panel = if (identical(recap_dim, "recap_region")) {
-            paste0("Recap region ", recap.region)
+            as.character(recap.region)
           } else {
             dplyr::if_else(
               is.na(tag_recapture_name) | !nzchar(tag_recapture_name),
@@ -2502,14 +2559,22 @@ mod_tagging_server <- function(input, output, session, rv) {
           period_x = as.numeric(period_at_liberty)
         )
 
+      if (identical(release_dim, "rel_group") && !is.null(release_groups_filter) && length(release_groups_filter) > 0) {
+        selected_groups <- suppressWarnings(as.numeric(release_groups_filter))
+        selected_groups <- selected_groups[is.finite(selected_groups)]
+        if (length(selected_groups) > 0) {
+          tag_all <- tag_all %>% filter(as.numeric(rel.group) %in% selected_groups)
+        }
+      }
+
       if (identical(time_mode, "year")) {
         spm <- seasons_per_model[as.character(tag_all$Model)]
         spm[!is.finite(spm) | spm <= 0] <- 4
         tag_all <- tag_all %>%
           mutate(period_x = floor(as.numeric(period_at_liberty) / as.numeric(spm)))
-        x_label <- "Time at liberty (years)"
+        x_label <- "Time at liberty"
       } else {
-        x_label <- "Time at liberty (model steps; usually quarters)"
+        x_label <- "Time at liberty"
       }
 
       pressure <- tag_all %>%
@@ -2550,32 +2615,22 @@ mod_tagging_server <- function(input, output, session, rv) {
           recap_panel = factor(recap_panel, levels = rev(recap_levels))
         )
 
-      legend_breaks <- unique(c(-cap, -1, 0, 1, cap))
-      legend_labels <- vapply(legend_breaks, function(b) {
-        if (identical(b, -cap)) return(paste0("<= ", round(2^-cap, 2), "x"))
-        if (identical(b, cap)) return(paste0(">= ", round(2^cap, 1), "x"))
-        paste0(format(round(2^b, 2), trim = TRUE), "x")
-      }, character(1))
+      legend_breaks <- c(-cap, cap)
+      legend_labels <- c("Over", "Under")
 
-      facet_formula <- if (overlay) {
-        Model ~ release_panel
+      p <- ggplot(pressure, aes(x = period_x, y = recap_panel, fill = log2_ratio_capped)) +
+        geom_tile(color = "white", linewidth = 0.15)
+
+      p <- if (overlay) {
+        p + facet_grid(rows = vars(Model), cols = vars(release_panel), scales = "fixed")
       } else {
-        ~ release_panel
+        p + facet_wrap(~ release_panel, ncol = facet_ncol, scales = "fixed")
       }
 
       return(
-        ggplot(pressure, aes(x = period_x, y = recap_panel, fill = log2_ratio_capped)) +
-          geom_tile(color = "white", linewidth = 0.15) +
-          geom_text(
-            data = pressure %>% filter(abs(log2_ratio) >= 1, recap_obs >= 1),
-            aes(label = round(ratio, 1)),
-            size = 2.4,
-            color = "black",
-            na.rm = TRUE
-          ) +
-          facet_wrap(facet_formula, ncol = if (overlay) NULL else facet_ncol, scales = "free_y") +
+        p +
           scale_fill_gradient2(
-            "Observed /\nexpected",
+            "Recapture prediction",
             low = "#2166ac",
             mid = "white",
             high = "#b2182b",
@@ -2588,16 +2643,23 @@ mod_tagging_server <- function(input, output, session, rv) {
           labs(
             x = x_label,
             y = if (identical(recap_dim, "recap_region")) "Recapture region" else "Recapture fishery/group",
-            title = if (overlay) "Observed / Expected Recapture Pressure (Overlay)" else paste("Observed / Expected Recapture Pressure -", selected_models[1]),
-            subtitle = paste0("R = (observed + ", correction, ") / (expected + ", correction, "); red = under-predicted recaptures, blue = over-predicted")
+            title = if (overlay) paste("Obs/Exp Recapture Pressure (Overlay)") else paste("Obs/Exp Recapture Pressure -", selected_models[1]),
+            caption = paste0("Red = under-predicted, Blue = over-predicted | correction = ", correction)
           ) +
           theme_bw() +
           theme(
             panel.grid = element_blank(),
-            strip.background = element_rect(fill = "gray90"),
-            strip.text = element_text(face = "bold", size = 8),
-            axis.text.y = element_text(size = 7),
-            legend.position = "bottom"
+            strip.background = element_rect(fill = "gray92"),
+            strip.text = element_text(face = "bold", size = 13),
+            axis.text.x = element_text(size = 13),
+            axis.text.y = element_text(size = 13),
+            axis.title.x = element_text(size = 15),
+            axis.title.y = element_text(size = 15),
+            legend.title = element_text(size = 14),
+            legend.text = element_text(size = 13),
+            legend.position = "bottom",
+            plot.title = element_text(size = 17, face = "bold"),
+            plot.caption = element_text(size = 12, color = "gray40")
           )
       )
     }
@@ -2616,6 +2678,7 @@ mod_tagging_server <- function(input, output, session, rv) {
     input$tag_facet_ncol,
     input$tag_rr_nonneg_only,
     input$tag_pressure_release_dim,
+    input$tag_pressure_release_groups,
     input$tag_pressure_recap_dim,
     input$tag_pressure_correction,
     input$tag_pressure_cap
@@ -2623,7 +2686,7 @@ mod_tagging_server <- function(input, output, session, rv) {
   observeEvent(list(input$live_update_plots, input$tag_scenarios, input$tag_plot,
                     input$tag_time_mode, input$tag_years, input$tag_facet_ncol,
                     input$tag_rr_nonneg_only,
-                    input$tag_pressure_release_dim, input$tag_pressure_recap_dim,
+                    input$tag_pressure_release_dim, input$tag_pressure_release_groups, input$tag_pressure_recap_dim,
                     input$tag_pressure_correction, input$tag_pressure_cap,
                     input$tag_plot_height, input$tag_plot_width), {
     req(rv$data_loaded)

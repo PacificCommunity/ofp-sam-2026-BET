@@ -743,7 +743,8 @@ mod_likelihood_ui <- function() {
           )
         ),
         uiOutput("profile_gradient_table_ui"),
-        uiOutput("component_influence_table_ui")
+        uiOutput("component_influence_table_ui"),
+        uiOutput("profile_conflict_table_ui")
       ),
       conditionalPanel(
         condition = "input.lik_main_tab == 'jitter'",
@@ -4125,6 +4126,1765 @@ mod_likelihood_server <- function(input, output, session, rv) {
     if (nrow(tbl) == 0) return(NULL)
     tbl
   })
+
+  profile_conflict_tables_reactive <- reactive({
+    filters <- lik_filters()
+    conflict_types <- c("components", "cpues", "lfs", "wfs", "tagging", "cal_fishery", "cal_year")
+    if (is.null(filters) || !isTRUE(filters$profile_type %in% conflict_types)) return(NULL)
+
+    info <- profile_data_reactive()
+    if (is.null(info) || is.null(info$data) || nrow(info$data) == 0) return(NULL)
+    group_col <- info$group_col
+    if (is.null(group_col) || !(group_col %in% names(info$data))) return(NULL)
+
+    data <- info$data %>%
+      mutate(
+        scenario = as.character(scenario),
+        scalar = suppressWarnings(as.numeric(scalar)),
+        value = suppressWarnings(as.numeric(value)),
+        group_value = as.character(.data[[group_col]])
+      ) %>%
+      filter(is.finite(scalar), is.finite(value), !is.na(group_value), nzchar(group_value))
+
+    if (nrow(data) == 0 || !any(data$group_value == "Total")) return(NULL)
+
+    selected_groups <- filters$groups
+    selected_groups <- selected_groups[!is.na(selected_groups)]
+    if (!is.null(selected_groups) && length(selected_groups) > 0) {
+      keep_groups <- unique(c("Total", as.character(selected_groups)))
+      data <- data %>% filter(group_value %in% keep_groups)
+    } else if (!is.null(selected_groups) && length(selected_groups) == 0) {
+      return(NULL)
+    }
+
+    context_cols <- "scenario"
+    if (isTRUE(group_col %in% c("release_group", "release_region")) && "program" %in% names(data)) {
+      data <- data %>%
+        mutate(program = ifelse(is.na(program) | !nzchar(trimws(as.character(program))), "Unknown", as.character(program)))
+      context_cols <- c(context_cols, "program")
+    } else if (isTRUE(filters$split_by_region) && "region" %in% names(data)) {
+      data <- data %>%
+        mutate(region = ifelse(is.na(region) | !nzchar(trimws(as.character(region))), "Unknown", as.character(region)))
+      context_cols <- c(context_cols, "region")
+    } else if ("region" %in% names(data)) {
+      data <- data %>%
+        group_by(scenario, scalar, group_value) %>%
+        summarise(value = sum(value, na.rm = TRUE), .groups = "drop")
+    }
+
+    data <- data %>%
+      group_by(across(all_of(c(context_cols, "group_value")))) %>%
+      mutate(change = value - min(value, na.rm = TRUE)) %>%
+      ungroup()
+
+    total_df <- data %>% filter(group_value == "Total")
+    comp_df <- data %>% filter(group_value != "Total")
+    if (nrow(total_df) == 0 || nrow(comp_df) == 0) return(NULL)
+
+    total_opt <- total_df %>%
+      group_by(across(all_of(context_cols))) %>%
+      arrange(change, scalar, .by_group = TRUE) %>%
+      slice_head(n = 1) %>%
+      ungroup() %>%
+      transmute(
+        !!!rlang::syms(context_cols),
+        total_opt_scalar = scalar,
+        total_min_change = change
+      )
+
+    total_ci <- total_df %>%
+      group_by(across(all_of(context_cols))) %>%
+      summarise(
+        ci_min = {
+          vals <- scalar[is.finite(change) & change <= 1.92]
+          if (length(vals) > 0) min(vals, na.rm = TRUE) else NA_real_
+        },
+        ci_max = {
+          vals <- scalar[is.finite(change) & change <= 1.92]
+          if (length(vals) > 0) max(vals, na.rm = TRUE) else NA_real_
+        },
+        range_min = min(scalar, na.rm = TRUE),
+        range_max = max(scalar, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        ci_width = ci_max - ci_min,
+        range_width = range_max - range_min,
+        ci_width = dplyr::case_when(
+          is.finite(ci_width) & ci_width > 0 ~ ci_width,
+          is.finite(range_width) & range_width > 0 ~ range_width,
+          TRUE ~ NA_real_
+        )
+      )
+
+    total_qc <- total_df %>%
+      arrange(across(all_of(context_cols)), scalar) %>%
+      group_by(across(all_of(context_cols))) %>%
+      summarise(
+        total_points = sum(is.finite(scalar) & is.finite(change)),
+        total_min_scalar = {
+          vals <- change
+          if (all(!is.finite(vals))) NA_real_ else scalar[which.min(vals)]
+        },
+        total_delta_range = {
+          vals <- change[is.finite(change)]
+          if (length(vals) == 0) NA_real_ else max(vals, na.rm = TRUE) - min(vals, na.rm = TRUE)
+        },
+        ci_closed_left = {
+          vals <- change
+          vals <- vals[is.finite(vals)]
+          if (length(vals) < 2 || all(!is.finite(vals))) FALSE else {
+            min_idx <- which.min(vals)
+            min_idx > 1L && vals[[1L]] > 1.92
+          }
+        },
+        ci_closed_right = {
+          vals <- change
+          vals <- vals[is.finite(vals)]
+          if (length(vals) < 2 || all(!is.finite(vals))) FALSE else {
+            min_idx <- which.min(vals)
+            min_idx < length(vals) && vals[[length(vals)]] > 1.92
+          }
+        },
+        left_points = {
+          vals <- change
+          if (all(!is.finite(vals))) 0L else which.min(vals) - 1L
+        },
+        right_points = {
+          vals <- change
+          if (all(!is.finite(vals))) 0L else length(vals) - which.min(vals)
+        },
+        min_at_boundary = {
+          vals <- change
+          if (all(!is.finite(vals))) TRUE else which.min(vals) %in% c(1L, length(vals))
+        },
+        shape_defect_pct = {
+          vals <- change
+          vals <- vals[is.finite(vals)]
+          if (length(vals) < 3) {
+            NA_real_
+          } else {
+            min_idx <- which.min(vals)
+            wrong_magnitude <- 0
+            total_magnitude <- sum(abs(diff(vals)), na.rm = TRUE)
+            if (min_idx > 1L) {
+              left_d <- diff(vals[seq_len(min_idx)])
+              wrong_magnitude <- wrong_magnitude + sum(pmax(left_d, 0), na.rm = TRUE)
+            }
+            if (min_idx < length(vals)) {
+              right_d <- diff(vals[min_idx:length(vals)])
+              wrong_magnitude <- wrong_magnitude + sum(pmax(-right_d, 0), na.rm = TRUE)
+            }
+            if (!is.finite(total_magnitude) || total_magnitude <= 0) NA_real_ else 100 * wrong_magnitude / total_magnitude
+          }
+        },
+        .groups = "drop"
+      ) %>%
+      mutate(
+        ci_closed = ci_closed_left & ci_closed_right,
+        total_profile_qc = dplyr::case_when(
+          total_points < 4 ~ "Bad",
+          min_at_boundary ~ "Bad",
+          !is.finite(total_delta_range) | total_delta_range < 0.5 ~ "Bad",
+          is.finite(shape_defect_pct) & shape_defect_pct > 50 ~ "Bad",
+          total_delta_range < 1.92 ~ "Bad",
+          !ci_closed ~ "Bad",
+          left_points < 2 | right_points < 2 ~ "Bad",
+          is.finite(shape_defect_pct) & shape_defect_pct > 30 ~ "Bad",
+          TRUE ~ "Good"
+        ),
+        total_profile_qc_reason = dplyr::case_when(
+          total_points < 4 ~ "Too few total profile points",
+          min_at_boundary ~ "Total minimum at profile boundary",
+          !is.finite(total_delta_range) | total_delta_range < 0.5 ~ "Total profile nearly flat",
+          is.finite(shape_defect_pct) & shape_defect_pct > 50 ~ "Total profile not U-shaped",
+          total_delta_range < 1.92 ~ "Total profile weakly informative",
+          !ci_closed ~ "Total 95% profile interval not closed in scanned range",
+          left_points < 2 | right_points < 2 ~ "Too few points on one side of total minimum",
+          is.finite(shape_defect_pct) & shape_defect_pct > 30 ~ "Total profile somewhat noisy",
+          TRUE ~ "OK"
+        )
+      )
+
+    comp_opt <- comp_df %>%
+      group_by(across(all_of(c(context_cols, "group_value")))) %>%
+      arrange(change, scalar, .by_group = TRUE) %>%
+      slice_head(n = 1) %>%
+      ungroup() %>%
+      transmute(
+        !!!rlang::syms(context_cols),
+        group_value,
+        preferred_scalar = scalar,
+        preferred_change = change
+      )
+
+    comp_near_total <- comp_df %>%
+      inner_join(total_opt, by = context_cols) %>%
+      mutate(total_distance = abs(scalar - total_opt_scalar)) %>%
+      group_by(across(all_of(c(context_cols, "group_value")))) %>%
+      arrange(total_distance, scalar, .by_group = TRUE) %>%
+      slice_head(n = 1) %>%
+      ungroup() %>%
+      transmute(
+        !!!rlang::syms(context_cols),
+        group_value,
+        penalty_at_total = change,
+        scalar_at_total = scalar
+      )
+
+    influence_at_total <- comp_df %>%
+      inner_join(total_opt, by = context_cols) %>%
+      mutate(total_distance = abs(scalar - total_opt_scalar)) %>%
+      group_by(across(all_of(c(context_cols, "group_value")))) %>%
+      arrange(total_distance, scalar, .by_group = TRUE) %>%
+      slice_head(n = 1) %>%
+      ungroup() %>%
+      group_by(across(all_of(context_cols))) %>%
+      mutate(
+        sum_abs_change = sum(abs(change), na.rm = TRUE),
+        influence_at_total_pct = dplyr::case_when(
+          sum_abs_change > 0 ~ 100 * abs(change) / sum_abs_change,
+          TRUE ~ NA_real_
+        )
+      ) %>%
+      ungroup() %>%
+      transmute(
+        !!!rlang::syms(context_cols),
+        group_value,
+        influence_at_total_pct
+      )
+
+    detail <- comp_opt %>%
+      left_join(total_opt, by = context_cols) %>%
+      left_join(total_ci, by = context_cols) %>%
+      left_join(comp_near_total, by = c(context_cols, "group_value")) %>%
+      left_join(influence_at_total, by = c(context_cols, "group_value")) %>%
+      mutate(
+        distance = preferred_scalar - total_opt_scalar,
+        distance_ci_widths = dplyr::case_when(
+          is.finite(distance) & distance < 0 & is.finite(total_opt_scalar - ci_min) & (total_opt_scalar - ci_min) > 0 ~
+            abs(distance) / (total_opt_scalar - ci_min),
+          is.finite(distance) & distance > 0 & is.finite(ci_max - total_opt_scalar) & (ci_max - total_opt_scalar) > 0 ~
+            abs(distance) / (ci_max - total_opt_scalar),
+          is.finite(distance) & distance == 0 ~ 0,
+          is.finite(ci_width) & ci_width > 0 ~ abs(distance) / ci_width,
+          TRUE ~ NA_real_
+        ),
+        direction = dplyr::case_when(
+          is.finite(distance) & distance < 0 ~ "Lower biomass",
+          is.finite(distance) & distance > 0 ~ "Higher biomass",
+          is.finite(distance) ~ "Aligned",
+          TRUE ~ NA_character_
+        ),
+        outside_95 = is.finite(penalty_at_total) & penalty_at_total >= 1.92,
+        excess_conflict = dplyr::case_when(
+          is.finite(penalty_at_total) ~ pmax(penalty_at_total - 1.92, 0),
+          TRUE ~ NA_real_
+        ),
+        influence_weight = dplyr::coalesce(influence_at_total_pct / 100, 0),
+        influence_weighted_distance = influence_weight * dplyr::coalesce(distance_ci_widths, 0),
+        influence_weighted_conflict = influence_weight * dplyr::coalesce(excess_conflict, 0) *
+          (1 + dplyr::coalesce(distance_ci_widths, 0))
+      ) %>%
+      group_by(across(all_of(context_cols))) %>%
+      arrange(desc(influence_weighted_conflict), desc(excess_conflict), desc(influence_weight), desc(distance_ci_widths), group_value, .by_group = TRUE) %>%
+      mutate(Rank = dplyr::row_number()) %>%
+      ungroup()
+
+    context_keys <- comp_df %>%
+      distinct(across(all_of(context_cols)))
+
+    pairwise_raw <- bind_rows(lapply(seq_len(nrow(context_keys)), function(i) {
+      key <- context_keys[i, , drop = FALSE]
+      df <- comp_df
+      ci_row <- total_ci
+      for (col in context_cols) {
+        df <- df[df[[col]] == key[[col]], , drop = FALSE]
+        ci_row <- ci_row[ci_row[[col]] == key[[col]], , drop = FALSE]
+      }
+      if (nrow(df) == 0) return(data.frame())
+
+      opt_df <- df %>%
+        group_by(group_value) %>%
+        arrange(change, scalar, .by_group = TRUE) %>%
+        slice_head(n = 1) %>%
+        ungroup() %>%
+        transmute(group_value = as.character(group_value), opt_scalar = scalar)
+      groups <- sort(unique(as.character(opt_df$group_value)))
+      if (length(groups) < 2) return(data.frame())
+
+      ci_width <- if (nrow(ci_row) > 0) suppressWarnings(as.numeric(ci_row$ci_width[[1]])) else NA_real_
+      pair_mat <- utils::combn(groups, 2)
+      rows <- lapply(seq_len(ncol(pair_mat)), function(j) {
+        line_a <- pair_mat[1, j]
+        line_b <- pair_mat[2, j]
+        opt_a <- opt_df$opt_scalar[match(line_a, opt_df$group_value)]
+        opt_b <- opt_df$opt_scalar[match(line_b, opt_df$group_value)]
+        if (!is.finite(opt_a) || !is.finite(opt_b)) return(NULL)
+
+        a_at_b <- df %>%
+          filter(group_value == line_a) %>%
+          mutate(.dist = abs(scalar - opt_b)) %>%
+          arrange(.dist, scalar) %>%
+          slice_head(n = 1)
+        b_at_a <- df %>%
+          filter(group_value == line_b) %>%
+          mutate(.dist = abs(scalar - opt_a)) %>%
+          arrange(.dist, scalar) %>%
+          slice_head(n = 1)
+        if (nrow(a_at_b) == 0 || nrow(b_at_a) == 0) return(NULL)
+
+        penalty_a_at_b <- suppressWarnings(as.numeric(a_at_b$change[[1]]))
+        penalty_b_at_a <- suppressWarnings(as.numeric(b_at_a$change[[1]]))
+        excess_a_at_b <- if (is.finite(penalty_a_at_b)) pmax(penalty_a_at_b - 1.92, 0) else NA_real_
+        excess_b_at_a <- if (is.finite(penalty_b_at_a)) pmax(penalty_b_at_a - 1.92, 0) else NA_real_
+        pair_excess <- mean(c(excess_a_at_b, excess_b_at_a), na.rm = TRUE)
+        if (!is.finite(pair_excess)) pair_excess <- NA_real_
+
+        lower_line <- if (opt_a <= opt_b) line_a else line_b
+        higher_line <- if (opt_a <= opt_b) line_b else line_a
+
+        data.frame(
+          Line_A = line_a,
+          Line_B = line_b,
+          Lower_line = lower_line,
+          Higher_line = higher_line,
+          Opt_A = opt_a,
+          Opt_B = opt_b,
+          Pair_distance = abs(opt_a - opt_b),
+          Pair_distance_CI_widths = if (is.finite(ci_width) && ci_width > 0) abs(opt_a - opt_b) / ci_width else NA_real_,
+          DeltaL_A_at_B_optimum = penalty_a_at_b,
+          DeltaL_B_at_A_optimum = penalty_b_at_a,
+          Excess_A_at_B_optimum = excess_a_at_b,
+          Excess_B_at_A_optimum = excess_b_at_a,
+          Pairwise_excess_conflict = pair_excess,
+          stringsAsFactors = FALSE
+        )
+      })
+      out <- bind_rows(rows)
+      if (nrow(out) == 0) return(data.frame())
+      bind_cols(key[rep(1, nrow(out)), , drop = FALSE], out)
+    }))
+
+    if (nrow(pairwise_raw) > 0) {
+      pairwise_raw <- pairwise_raw %>%
+        group_by(across(all_of(context_cols))) %>%
+        arrange(desc(Pairwise_excess_conflict), desc(Pair_distance_CI_widths), Line_A, Line_B, .by_group = TRUE) %>%
+        mutate(`Pair rank` = dplyr::row_number()) %>%
+        ungroup()
+    }
+
+    pairwise_conflict_raw <- if (nrow(pairwise_raw) > 0 && "Pairwise_excess_conflict" %in% names(pairwise_raw)) {
+      pairwise_raw %>%
+        filter(is.finite(Pairwise_excess_conflict), Pairwise_excess_conflict > 0) %>%
+        group_by(across(all_of(context_cols))) %>%
+        arrange(desc(Pairwise_excess_conflict), desc(Pair_distance_CI_widths), Line_A, Line_B, .by_group = TRUE) %>%
+        mutate(`Pair rank` = dplyr::row_number()) %>%
+        ungroup()
+    } else {
+      data.frame()
+    }
+
+    if ("program" %in% context_cols) {
+      detail_out <- detail %>%
+        transmute(
+          Model = scenario,
+          Program = program,
+          Rank,
+          Line = group_value,
+          Direction = direction,
+          `Preferred scalar` = preferred_scalar,
+          `Total optimum` = total_opt_scalar,
+          `Distance (CI widths)` = distance_ci_widths,
+          `ΔL at total optimum` = penalty_at_total,
+          `Excess conflict` = excess_conflict,
+          `Influence weight (%)` = influence_at_total_pct,
+          `Influence-weighted distance` = influence_weighted_distance,
+          `Influence-weighted conflict` = influence_weighted_conflict,
+          `Outside 95%` = outside_95
+        ) %>%
+        arrange(Model, Program, Rank)
+    } else if ("region" %in% context_cols) {
+      detail_out <- detail %>%
+        transmute(
+          Model = scenario,
+          Region = region,
+          Rank,
+          Line = group_value,
+          Direction = direction,
+          `Preferred scalar` = preferred_scalar,
+          `Total optimum` = total_opt_scalar,
+          `Distance (CI widths)` = distance_ci_widths,
+          `ΔL at total optimum` = penalty_at_total,
+          `Excess conflict` = excess_conflict,
+          `Influence weight (%)` = influence_at_total_pct,
+          `Influence-weighted distance` = influence_weighted_distance,
+          `Influence-weighted conflict` = influence_weighted_conflict,
+          `Outside 95%` = outside_95
+        ) %>%
+        arrange(Model, Region, Rank)
+    } else {
+      detail_out <- detail %>%
+        transmute(
+          Model = scenario,
+          Rank,
+          Line = group_value,
+          Direction = direction,
+          `Preferred scalar` = preferred_scalar,
+          `Total optimum` = total_opt_scalar,
+          `Distance (CI widths)` = distance_ci_widths,
+          `ΔL at total optimum` = penalty_at_total,
+          `Excess conflict` = excess_conflict,
+          `Influence weight (%)` = influence_at_total_pct,
+          `Influence-weighted distance` = influence_weighted_distance,
+          `Influence-weighted conflict` = influence_weighted_conflict,
+          `Outside 95%` = outside_95
+        ) %>%
+        arrange(Model, Rank)
+    }
+
+    summary_base <- detail %>%
+      group_by(across(all_of(context_cols))) %>%
+      summarise(
+        `Total lines` = dplyr::n_distinct(group_value),
+        `Conflict lines >=1.92` = sum(outside_95, na.rm = TRUE),
+        `Total excess conflict` = sum(excess_conflict, na.rm = TRUE),
+        IWCBI = sum(influence_weighted_conflict, na.rm = TRUE),
+        `Influence-weighted distance` = sum(influence_weighted_distance, na.rm = TRUE),
+        ECBI = mean(excess_conflict, na.rm = TRUE),
+        MEC = if (any(is.finite(excess_conflict))) max(excess_conflict, na.rm = TRUE) else NA_real_,
+        `Lower conflict burden` = sum(excess_conflict[direction == "Lower biomass"], na.rm = TRUE),
+        `Higher conflict burden` = sum(excess_conflict[direction == "Higher biomass"], na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        `Conflict prevalence (%)` = dplyr::case_when(
+          `Total lines` > 0 ~ 100 * `Conflict lines >=1.92` / `Total lines`,
+          TRUE ~ NA_real_
+        ),
+        `Directional balance` = dplyr::case_when(
+          `Total excess conflict` > 0 ~ (`Higher conflict burden` - `Lower conflict burden`) / `Total excess conflict`,
+          TRUE ~ NA_real_
+        ),
+        `Dominant direction` = dplyr::case_when(
+          `Lower conflict burden` > `Higher conflict burden` ~ "Lower biomass",
+          `Higher conflict burden` > `Lower conflict burden` ~ "Higher biomass",
+          TRUE ~ "Balanced"
+        )
+      )
+
+    hhi_base <- detail %>%
+      group_by(across(all_of(context_cols))) %>%
+      summarise(
+        HHI = {
+          vals <- excess_conflict[is.finite(excess_conflict) & excess_conflict > 0]
+          total <- sum(vals, na.rm = TRUE)
+          if (length(vals) == 0 || total <= 0) 0 else sum((vals / total)^2)
+        },
+        .groups = "drop"
+      )
+
+    pairwise_summary <- if (nrow(pairwise_raw) > 0) {
+      pairwise_raw %>%
+        group_by(across(all_of(context_cols))) %>%
+        summarise(
+          `Total pairs` = dplyr::n(),
+          `Pairwise conflict pairs >0` = sum(Pairwise_excess_conflict > 0, na.rm = TRUE),
+          `Pairwise conflict prevalence (%)` = dplyr::case_when(
+            dplyr::n() > 0 ~ 100 * sum(Pairwise_excess_conflict > 0, na.rm = TRUE) / dplyr::n(),
+            TRUE ~ NA_real_
+          ),
+          PCBI = mean(Pairwise_excess_conflict, na.rm = TRUE),
+          MPC = if (any(is.finite(Pairwise_excess_conflict))) max(Pairwise_excess_conflict, na.rm = TRUE) else NA_real_,
+          `Top pair` = {
+            vals <- Pairwise_excess_conflict
+            vals[!is.finite(vals)] <- NA_real_
+            if (all(is.na(vals)) || max(vals, na.rm = TRUE) <= 0) {
+              NA_character_
+            } else {
+              idx <- which.max(vals)
+              paste(Line_A[[idx]], "vs", Line_B[[idx]])
+            }
+          },
+          `Top pair lower-biomass line` = {
+            vals <- Pairwise_excess_conflict
+            vals[!is.finite(vals)] <- NA_real_
+            if (all(is.na(vals)) || max(vals, na.rm = TRUE) <= 0) NA_character_ else Lower_line[[which.max(vals)]]
+          },
+          `Top pair higher-biomass line` = {
+            vals <- Pairwise_excess_conflict
+            vals[!is.finite(vals)] <- NA_real_
+            if (all(is.na(vals)) || max(vals, na.rm = TRUE) <= 0) NA_character_ else Higher_line[[which.max(vals)]]
+          },
+          `Top pair distance (CI widths)` = {
+            vals <- Pairwise_excess_conflict
+            vals[!is.finite(vals)] <- NA_real_
+            if (all(is.na(vals)) || max(vals, na.rm = TRUE) <= 0) NA_real_ else Pair_distance_CI_widths[[which.max(vals)]]
+          },
+          .groups = "drop"
+        )
+    } else {
+      context_keys %>%
+        mutate(
+          `Total pairs` = 0L,
+          `Pairwise conflict pairs >0` = 0L,
+          `Pairwise conflict prevalence (%)` = NA_real_,
+          PCBI = NA_real_,
+          MPC = NA_real_,
+          `Top pair` = NA_character_,
+          `Top pair lower-biomass line` = NA_character_,
+          `Top pair higher-biomass line` = NA_character_,
+          `Top pair distance (CI widths)` = NA_real_
+        )
+    }
+
+    summary_base <- summary_base %>%
+      left_join(hhi_base, by = context_cols)
+    summary_base <- summary_base %>%
+      left_join(pairwise_summary, by = context_cols)
+
+    scalar_hessian_lgl <- function(x) {
+      if (is.null(x) || length(x) == 0) return(NA)
+      out <- suppressWarnings(as.logical(x[[1]]))
+      if (length(out) == 0 || is.na(out)) return(NA)
+      isTRUE(out)
+    }
+
+    scalar_hessian_chr <- function(x) {
+      if (is.null(x) || length(x) == 0) return(NA_character_)
+      out <- as.character(x[[1]])
+      if (length(out) == 0 || is.na(out) || !nzchar(trimws(out))) return(NA_character_)
+      trimws(out)
+    }
+
+    status_hessian_ok <- function(status) {
+      if (is.na(status) || !nzchar(trimws(status))) return(NA)
+      s <- tolower(status)
+      if (grepl("non|not|near|fail|bad|indef|negative", s)) return(FALSE)
+      if (grepl("pdh|positive definite|ok|success", s)) return(TRUE)
+      NA
+    }
+
+    hessian_rank_rows <- lapply(unique(summary_base$scenario), function(sc) {
+      hs <- if (!is.null(rv$Info_list[[sc]]) && is.list(rv$Info_list[[sc]]$hessian)) rv$Info_list[[sc]]$hessian else NULL
+      requested <- scalar_hessian_lgl(if (!is.null(hs)) hs$requested else NULL)
+      attempted <- scalar_hessian_lgl(if (!is.null(hs)) hs$attempted else NULL)
+      ok <- scalar_hessian_lgl(if (!is.null(hs)) hs$hessian_ok else NULL)
+      if (is.na(ok)) ok <- scalar_hessian_lgl(if (!is.null(hs)) hs$is_pdh else NULL)
+      if (is.na(ok)) ok <- scalar_hessian_lgl(if (!is.null(hs)) hs$pdh else NULL)
+      status <- scalar_hessian_chr(if (!is.null(hs)) hs$hessian_status else NULL)
+      if (is.na(ok)) ok <- status_hessian_ok(status)
+      neg <- suppressWarnings(as.numeric(if (!is.null(hs)) hs$n_negative_eigenvalues else NA_real_))
+      total_eigen <- suppressWarnings(as.numeric(if (!is.null(hs)) hs$n_total_eigenvalues else NA_real_))
+      if (is.na(ok) && is.finite(neg)) ok <- isTRUE(neg == 0)
+      neg_label <- if (is.finite(neg) && is.finite(total_eigen)) {
+        sprintf("%d / %d", as.integer(neg), as.integer(total_eigen))
+      } else {
+        NA_character_
+      }
+      has_info <- !is.na(requested) || !is.na(attempted) || !is.na(ok) || !is.na(status) || !is.na(neg_label)
+      data.frame(
+        scenario = sc,
+        hessian_has_info = has_info,
+        hessian_ok = ok,
+        hessian_requested = requested,
+        hessian_attempted = attempted,
+        hessian_status = status,
+        hessian_neg_eigen = neg_label,
+        stringsAsFactors = FALSE
+      )
+    })
+    hessian_rank_tbl <- bind_rows(hessian_rank_rows)
+    hessian_filter_active <- isTRUE(any(hessian_rank_tbl$hessian_has_info, na.rm = TRUE))
+
+    summary_base <- summary_base %>%
+      left_join(hessian_rank_tbl, by = "scenario") %>%
+      left_join(total_qc, by = context_cols) %>%
+      mutate(
+        change_set_raw = dplyr::case_when(
+          grepl("_", scenario) ~ sub("^[^_]+_", "", scenario),
+          TRUE ~ "None"
+        ),
+        change_set_raw = dplyr::case_when(
+          is.na(change_set_raw) | !nzchar(change_set_raw) ~ "Changed",
+          TRUE ~ change_set_raw
+        ),
+        change_set_label = dplyr::case_when(
+          change_set_raw == "None" ~ "None",
+          TRUE ~ gsub("_", " + ", change_set_raw, fixed = TRUE)
+        ),
+        `Hessian rank filter` = dplyr::case_when(
+          !hessian_filter_active ~ "Ignored (not available)",
+          !isTRUE(hessian_has_info) ~ "Ignored (not available)",
+          hessian_ok %in% TRUE ~ "Yes",
+          TRUE ~ "No/unknown"
+        ),
+        `Hessian status` = dplyr::case_when(
+          !is.na(hessian_status) & nzchar(hessian_status) & !is.na(hessian_neg_eigen) ~ paste0(hessian_status, " (", hessian_neg_eigen, ")"),
+          !is.na(hessian_status) & nzchar(hessian_status) ~ hessian_status,
+          !is.na(hessian_neg_eigen) ~ hessian_neg_eigen,
+          TRUE ~ NA_character_
+        ),
+        .hessian_rankable = dplyr::case_when(
+          !hessian_filter_active ~ TRUE,
+          !isTRUE(hessian_has_info) ~ TRUE,
+          hessian_ok %in% TRUE ~ TRUE,
+          TRUE ~ FALSE
+        ),
+        .rankable = !is.na(total_profile_qc) & total_profile_qc == "Good" & .hessian_rankable,
+        .rank_key = dplyr::case_when(
+          total_profile_qc == "Good" ~ 0L,
+          TRUE ~ 2L
+        ),
+        .rank_sort = dplyr::if_else(.rankable, .rank_key, 99L)
+      )
+    rank_tie_cols <- intersect(c("scenario", "program", "region"), names(summary_base))
+    summary_base <- summary_base %>%
+      arrange(.rank_sort, IWCBI, across(all_of(rank_tie_cols))) %>%
+      mutate(.overall_rank = dplyr::if_else(.rankable, cumsum(.rankable), NA_integer_))
+
+    if ("program" %in% context_cols) {
+      summary_out <- summary_base %>%
+        arrange(.rank_sort, IWCBI, scenario, program) %>%
+        transmute(
+          `Overall rank` = .overall_rank,
+          Model = scenario,
+          `Change tokens` = change_set_label,
+          Program = program,
+          `Total profile QC` = total_profile_qc,
+          `QC reason` = total_profile_qc_reason,
+          `Hessian rank filter`,
+          `Hessian status`,
+          `Total lines`,
+          `Conflict lines >=1.92`,
+          `Conflict prevalence (%)`,
+          IWCBI
+        )
+    } else if ("region" %in% context_cols) {
+      summary_out <- summary_base %>%
+        arrange(.rank_sort, IWCBI, scenario, region) %>%
+        transmute(
+          `Overall rank` = .overall_rank,
+          Model = scenario,
+          `Change tokens` = change_set_label,
+          Region = region,
+          `Total profile QC` = total_profile_qc,
+          `QC reason` = total_profile_qc_reason,
+          `Hessian rank filter`,
+          `Hessian status`,
+          `Total lines`,
+          `Conflict lines >=1.92`,
+          `Conflict prevalence (%)`,
+          IWCBI
+        )
+    } else {
+      summary_out <- summary_base %>%
+        arrange(.rank_sort, IWCBI, scenario) %>%
+        transmute(
+          `Overall rank` = .overall_rank,
+          Model = scenario,
+          `Change tokens` = change_set_label,
+          `Total profile QC` = total_profile_qc,
+          `QC reason` = total_profile_qc_reason,
+          `Hessian rank filter`,
+          `Hessian status`,
+          `Total lines`,
+          `Conflict lines >=1.92`,
+          `Conflict prevalence (%)`,
+          IWCBI
+        )
+    }
+
+    if (!hessian_filter_active) {
+      summary_out <- summary_out %>%
+        select(-`Hessian rank filter`, -`Hessian status`)
+    }
+
+    split_change_tokens <- function(x) {
+      parts <- strsplit(as.character(x), "_", fixed = TRUE)
+      lapply(parts, function(part) {
+        part <- part[!is.na(part) & nzchar(part) & !part %in% c("None", "Changed")]
+        unique(part)
+      })
+    }
+
+    token_present <- function(x, token) {
+      vapply(split_change_tokens(x), function(part) token %in% part, logical(1))
+    }
+
+    change_tokens <- sort(unique(unlist(split_change_tokens(summary_base$change_set_raw), use.names = FALSE)))
+    change_tokens <- change_tokens[!is.na(change_tokens) & nzchar(change_tokens)]
+
+    rankable_summary <- summary_base %>%
+      filter(.rankable, is.finite(IWCBI))
+
+    metric_mean <- function(df, col) {
+      vals <- df[[col]]
+      vals <- vals[is.finite(vals)]
+      if (length(vals) == 0) NA_real_ else mean(vals, na.rm = TRUE)
+    }
+
+    best_model <- function(df) {
+      vals <- df$IWCBI
+      vals[!is.finite(vals)] <- NA_real_
+      if (nrow(df) == 0 || all(is.na(vals))) NA_character_ else as.character(df$scenario[[which.min(vals)]])
+    }
+
+    change_effect_out <- if (length(change_tokens) > 0 && nrow(rankable_summary) > 1) {
+      bind_rows(lapply(change_tokens, function(token) {
+        present <- token_present(rankable_summary$change_set_raw, token)
+        with_df <- rankable_summary[present, , drop = FALSE]
+        without_df <- rankable_summary[!present, , drop = FALSE]
+        mean_iwc_with <- metric_mean(with_df, "IWCBI")
+        mean_iwc_without <- metric_mean(without_df, "IWCBI")
+        mean_ecbi_with <- metric_mean(with_df, "ECBI")
+        mean_ecbi_without <- metric_mean(without_df, "ECBI")
+        mean_cp_with <- metric_mean(with_df, "Conflict prevalence (%)")
+        mean_cp_without <- metric_mean(without_df, "Conflict prevalence (%)")
+        mean_mec_with <- metric_mean(with_df, "MEC")
+        mean_mec_without <- metric_mean(without_df, "MEC")
+        delta_iwc <- mean_iwc_with - mean_iwc_without
+        data.frame(
+          `Change token` = token,
+          `Rows with token` = nrow(with_df),
+          `Rows without token` = nrow(without_df),
+          `Mean IWCBI with token` = mean_iwc_with,
+          `Mean IWCBI without token` = mean_iwc_without,
+          `Δ mean IWCBI` = delta_iwc,
+          `Mean ECBI with token` = mean_ecbi_with,
+          `Mean ECBI without token` = mean_ecbi_without,
+          `Δ mean ECBI` = mean_ecbi_with - mean_ecbi_without,
+          `Mean conflict prevalence with token (%)` = mean_cp_with,
+          `Mean conflict prevalence without token (%)` = mean_cp_without,
+          `Δ mean conflict prevalence (%)` = mean_cp_with - mean_cp_without,
+          `Mean MEC with token` = mean_mec_with,
+          `Mean MEC without token` = mean_mec_without,
+          `Δ mean MEC` = mean_mec_with - mean_mec_without,
+          `Best model with token` = best_model(with_df),
+          `Interpretation` = dplyr::case_when(
+            is.finite(delta_iwc) & delta_iwc < -1e-9 ~ "Lower conflict when present",
+            is.finite(delta_iwc) & delta_iwc > 1e-9 ~ "Higher conflict when present",
+            is.finite(delta_iwc) ~ "Similar",
+            TRUE ~ "Insufficient contrast"
+          ),
+          check.names = FALSE,
+          stringsAsFactors = FALSE
+        )
+      })) %>%
+        arrange(`Δ mean IWCBI`, `Δ mean ECBI`, `Change token`) %>%
+        mutate(`Effect rank` = dplyr::row_number()) %>%
+        select(`Effect rank`, everything())
+    } else {
+      data.frame()
+    }
+
+    build_rule_search <- function(df, tokens, max_terms = 3L, min_leaf = 2L) {
+      df <- df[is.finite(df$IWCBI), , drop = FALSE]
+      if (nrow(df) < (2L * min_leaf) || length(tokens) == 0) return(data.frame())
+
+      overall_mean <- metric_mean(df, "IWCBI")
+      max_terms <- min(max_terms, length(tokens))
+      rows <- list()
+
+      for (n_terms in seq_len(max_terms)) {
+        token_sets <- utils::combn(tokens, n_terms, simplify = FALSE)
+        for (token_set in token_sets) {
+          patterns <- expand.grid(
+            rep(list(c(FALSE, TRUE)), length(token_set)),
+            KEEP.OUT.ATTRS = FALSE,
+            stringsAsFactors = FALSE
+          )
+          for (p_idx in seq_len(nrow(patterns))) {
+            present <- rep(TRUE, nrow(df))
+            rule_parts <- character(length(token_set))
+            for (t_idx in seq_along(token_set)) {
+              token <- token_set[[t_idx]]
+              want_present <- isTRUE(patterns[[t_idx]][[p_idx]])
+              present <- present & (token_present(df$change_set_raw, token) == want_present)
+              rule_parts[[t_idx]] <- if (want_present) paste0("with ", token) else paste0("without ", token)
+            }
+
+            n_rule <- sum(present)
+            n_rest <- sum(!present)
+            if (n_rule < min_leaf || n_rest < min_leaf) next
+
+            rule_df <- df[present, , drop = FALSE]
+            rest_df <- df[!present, , drop = FALSE]
+            rule_mean <- metric_mean(rule_df, "IWCBI")
+            rest_mean <- metric_mean(rest_df, "IWCBI")
+            delta_rest <- rule_mean - rest_mean
+
+            rows[[length(rows) + 1L]] <- data.frame(
+              Rule = paste(rule_parts, collapse = " + "),
+              Terms = n_terms,
+              N = n_rule,
+              `Coverage (%)` = 100 * n_rule / nrow(df),
+              `Mean IWCBI` = rule_mean,
+              `Rest mean IWCBI` = rest_mean,
+              `Δ mean IWCBI vs rest` = delta_rest,
+              `Δ mean IWCBI vs all` = rule_mean - overall_mean,
+              `Mean ECBI` = metric_mean(rule_df, "ECBI"),
+              `Mean conflict prevalence (%)` = metric_mean(rule_df, "Conflict prevalence (%)"),
+              `Mean MEC` = metric_mean(rule_df, "MEC"),
+              `Best model` = best_model(rule_df),
+              `Best IWCBI` = {
+                vals <- rule_df$IWCBI
+                vals <- vals[is.finite(vals)]
+                if (length(vals) == 0) NA_real_ else min(vals, na.rm = TRUE)
+              },
+              Recommendation = dplyr::case_when(
+                is.finite(delta_rest) & delta_rest < -1e-9 ~ "Promising lower-conflict rule",
+                is.finite(delta_rest) & delta_rest > 1e-9 ~ "Higher-conflict rule",
+                is.finite(delta_rest) ~ "Similar to rest",
+                TRUE ~ "Insufficient contrast"
+              ),
+              check.names = FALSE,
+              stringsAsFactors = FALSE
+            )
+          }
+        }
+      }
+
+      if (length(rows) == 0) return(data.frame())
+
+      bind_rows(rows) %>%
+        arrange(`Mean IWCBI`, `Δ mean IWCBI vs rest`, `Terms`, dplyr::desc(N), Rule) %>%
+        mutate(`Rule rank` = dplyr::row_number()) %>%
+        select(`Rule rank`, everything())
+    }
+
+    change_rules_out <- build_rule_search(rankable_summary, change_tokens)
+
+    build_classification_tree <- function(df, tokens, min_leaf = 1L, max_depth = 4L) {
+      df <- df[is.finite(df$IWCBI), , drop = FALSE]
+      tokens <- tokens[!is.na(tokens) & nzchar(tokens)]
+      if (nrow(df) < (2L * min_leaf) || length(tokens) == 0 || !requireNamespace("rpart", quietly = TRUE)) {
+        return(list(nodes = data.frame(), edges = data.frame(), threshold = NA_real_))
+      }
+
+      threshold <- stats::median(df$IWCBI, na.rm = TRUE)
+      feature_cols <- make.names(tokens, unique = TRUE)
+      feature_df <- data.frame(
+        conflict_class = factor(ifelse(df$IWCBI <= threshold, "LOW", "HIGH"), levels = c("LOW", "HIGH")),
+        stringsAsFactors = FALSE
+      )
+      for (idx in seq_along(tokens)) {
+        feature_df[[feature_cols[[idx]]]] <- as.integer(token_present(df$change_set_raw, tokens[[idx]]))
+      }
+
+      valid_cols <- feature_cols[vapply(feature_df[feature_cols], function(x) length(unique(x[is.finite(x)])) > 1, logical(1))]
+      if (length(valid_cols) == 0 || length(unique(feature_df$conflict_class)) < 2) {
+        return(list(nodes = data.frame(), edges = data.frame(), threshold = threshold))
+      }
+
+      token_lookup <- setNames(tokens[match(valid_cols, feature_cols)], valid_cols)
+      fit_df <- feature_df[, c("conflict_class", valid_cols), drop = FALSE]
+      fit <- try(
+        rpart::rpart(
+          conflict_class ~ .,
+          data = fit_df,
+          method = "class",
+          control = rpart::rpart.control(
+            minsplit = max(2L, 2L * min_leaf),
+            minbucket = max(1L, min_leaf),
+            cp = 0,
+            maxdepth = max_depth,
+            xval = 0
+          )
+        ),
+        silent = TRUE
+      )
+      if (inherits(fit, "try-error") || is.null(fit$frame) || nrow(fit$frame) == 0) {
+        return(list(nodes = data.frame(), edges = data.frame(), threshold = threshold))
+      }
+
+      frame <- fit$frame
+      node_ids <- as.integer(row.names(frame))
+      node_chars <- as.character(node_ids)
+
+      split_info <- list()
+      split_cursor <- 1L
+      if (!is.null(fit$splits) && nrow(fit$splits) > 0) {
+        for (row_idx in seq_len(nrow(frame))) {
+          node_id <- node_chars[[row_idx]]
+          if (!identical(as.character(frame$var[[row_idx]]), "<leaf>")) {
+            split_row <- fit$splits[split_cursor, , drop = FALSE]
+            split_info[[node_id]] <- list(
+              var = as.character(frame$var[[row_idx]]),
+              token = unname(token_lookup[[as.character(frame$var[[row_idx]])]]),
+              ncat = as.numeric(split_row[, "ncat"]),
+              index = as.numeric(split_row[, "index"])
+            )
+            split_cursor <- split_cursor + 1L + as.integer(frame$ncompete[[row_idx]]) + as.integer(frame$nsurrogate[[row_idx]])
+          }
+        }
+      }
+
+      x_lookup <- new.env(parent = emptyenv())
+      leaf_counter <- 0L
+      assign_x <- function(id) {
+        id <- as.character(id)
+        if (exists(id, envir = x_lookup, inherits = FALSE)) return(get(id, envir = x_lookup))
+        children <- c(as.character(as.integer(id) * 2L), as.character(as.integer(id) * 2L + 1L))
+        children <- children[children %in% node_chars]
+        if (length(children) == 0) {
+          leaf_counter <<- leaf_counter + 1L
+          x_val <- leaf_counter
+        } else {
+          x_val <- mean(vapply(children, assign_x, numeric(1)), na.rm = TRUE)
+        }
+        assign(id, x_val, envir = x_lookup)
+        x_val
+      }
+      invisible(assign_x("1"))
+
+      ylevels <- attr(fit, "ylevels")
+      if (is.null(ylevels) || length(ylevels) == 0) ylevels <- levels(feature_df$conflict_class)
+      yval2 <- as.matrix(frame$yval2)
+      nclass <- length(ylevels)
+      low_idx <- match("LOW", ylevels)
+      high_idx <- match("HIGH", ylevels)
+      pred_idx <- as.integer(yval2[, 1])
+      prob_start <- 1L + nclass
+      p_low <- yval2[, prob_start + low_idx]
+      p_high <- yval2[, prob_start + high_idx]
+      pred_class <- ylevels[pred_idx]
+      root_n <- max(frame$n[[1]], 1)
+
+      nodes <- data.frame(
+        Node = node_chars,
+        Depth = floor(log2(node_ids)),
+        x = vapply(node_chars, function(id) get(id, envir = x_lookup), numeric(1)),
+        y = -floor(log2(node_ids)),
+        N = as.integer(frame$n),
+        Percent = 100 * as.numeric(frame$n) / root_n,
+        `Mean IWCBI threshold` = threshold,
+        `Predicted class` = pred_class,
+        `P(LOW)` = p_low,
+        `P(HIGH)` = p_high,
+        `Split token` = vapply(node_chars, function(id) {
+          if (!is.null(split_info[[id]]) && !is.na(split_info[[id]]$token)) split_info[[id]]$token else NA_character_
+        }, character(1)),
+        IsLeaf = as.character(frame$var) == "<leaf>",
+        check.names = FALSE,
+        stringsAsFactors = FALSE
+      ) %>%
+        mutate(
+          label = paste0(
+            `Predicted class`, "\n",
+            "LOW ", format(round(`P(LOW)`, 2), nsmall = 2), " | HIGH ", format(round(`P(HIGH)`, 2), nsmall = 2), "\n",
+            format(round(Percent, 0), trim = TRUE), "% (n=", N, ")"
+          ),
+          split_label = ifelse(!IsLeaf & !is.na(`Split token`), paste0(`Split token`, "?"), NA_character_)
+        )
+
+      edge_rows <- lapply(node_chars, function(id) {
+        info <- split_info[[id]]
+        if (is.null(info)) return(NULL)
+        children <- c(as.character(as.integer(id) * 2L), as.character(as.integer(id) * 2L + 1L))
+        children <- children[children %in% node_chars]
+        if (length(children) == 0) return(NULL)
+        parent <- nodes[nodes$Node == id, , drop = FALSE]
+        bind_rows(lapply(children, function(child) {
+          child_row <- nodes[nodes$Node == child, , drop = FALSE]
+          is_left <- as.integer(child) == as.integer(id) * 2L
+          left_is_yes <- is.finite(info$ncat) && info$ncat > 0
+          branch_yes <- if (is_left) left_is_yes else !left_is_yes
+          data.frame(
+            x = parent$x[[1]],
+            y = parent$y[[1]],
+            xend = child_row$x[[1]],
+            yend = child_row$y[[1]],
+            `Split token` = info$token,
+            Branch = if (branch_yes) "yes" else "no",
+            check.names = FALSE,
+            stringsAsFactors = FALSE
+          )
+        }))
+      })
+      edges <- bind_rows(edge_rows)
+      list(nodes = nodes, edges = edges, threshold = threshold)
+    }
+
+    class_tree_out <- build_classification_tree(rankable_summary, change_tokens)
+
+    build_regression_tree <- function(df, tokens, min_leaf = 1L, max_depth = 4L) {
+      df <- df[is.finite(df$IWCBI), , drop = FALSE]
+      tokens <- tokens[!is.na(tokens) & nzchar(tokens)]
+      if (nrow(df) < (2L * min_leaf) || length(tokens) == 0 || !requireNamespace("rpart", quietly = TRUE)) {
+        return(list(nodes = data.frame(), edges = data.frame()))
+      }
+
+      feature_cols <- make.names(tokens, unique = TRUE)
+      feature_df <- data.frame(IWCBI = df$IWCBI, stringsAsFactors = FALSE)
+      for (idx in seq_along(tokens)) {
+        feature_df[[feature_cols[[idx]]]] <- as.integer(token_present(df$change_set_raw, tokens[[idx]]))
+      }
+
+      valid_cols <- feature_cols[vapply(feature_df[feature_cols], function(x) length(unique(x[is.finite(x)])) > 1, logical(1))]
+      if (length(valid_cols) == 0 || length(unique(feature_df$IWCBI[is.finite(feature_df$IWCBI)])) < 2) {
+        return(list(nodes = data.frame(), edges = data.frame()))
+      }
+
+      token_lookup <- setNames(tokens[match(valid_cols, feature_cols)], valid_cols)
+      fit_df <- feature_df[, c("IWCBI", valid_cols), drop = FALSE]
+      fit <- try(
+        rpart::rpart(
+          IWCBI ~ .,
+          data = fit_df,
+          method = "anova",
+          control = rpart::rpart.control(
+            minsplit = max(2L, 2L * min_leaf),
+            minbucket = max(1L, min_leaf),
+            cp = 0,
+            maxdepth = max_depth,
+            xval = 0
+          )
+        ),
+        silent = TRUE
+      )
+      if (inherits(fit, "try-error") || is.null(fit$frame) || nrow(fit$frame) == 0) {
+        return(list(nodes = data.frame(), edges = data.frame()))
+      }
+
+      collapse_rank_label <- function(x, max_show = 5L) {
+        vals <- suppressWarnings(as.integer(x))
+        vals <- sort(unique(vals[!is.na(vals)]))
+        vals <- vals[!is.na(vals)]
+        if (length(vals) == 0) return(NA_character_)
+        shown <- vals[seq_len(min(length(vals), max_show))]
+        out <- paste0("#", shown, collapse = ", ")
+        if (length(vals) > max_show) out <- paste0(out, ", ...")
+        out
+      }
+
+      collapse_model_label <- function(model, rank, iwcbi, max_show = 3L) {
+        model <- as.character(model)
+        rank <- suppressWarnings(as.integer(rank))
+        iwcbi <- suppressWarnings(as.numeric(iwcbi))
+        ok <- !is.na(model) & nzchar(model)
+        if (!any(ok)) return(NA_character_)
+        model <- model[ok]
+        rank <- rank[ok]
+        iwcbi <- iwcbi[ok]
+        ord <- order(ifelse(is.na(rank), Inf, rank), ifelse(is.finite(iwcbi), iwcbi, Inf), model)
+        model <- model[ord]
+        rank <- rank[ord]
+        keep <- !duplicated(model)
+        model <- model[keep]
+        rank <- rank[keep]
+        iwcbi <- iwcbi[keep]
+        show_n <- min(length(model), max_show)
+        labels <- paste0(
+          ifelse(!is.na(rank[seq_len(show_n)]), paste0("#", rank[seq_len(show_n)], " "), ""),
+          model[seq_len(show_n)],
+          ifelse(is.finite(iwcbi[seq_len(show_n)]), paste0(" (IWCBI ", format(round(iwcbi[seq_len(show_n)], 1), trim = TRUE), ")"), "")
+        )
+        out <- paste(labels, collapse = "\n")
+        if (length(model) > max_show) out <- paste0(out, "\n+ ", length(model) - max_show, " more")
+        out
+      }
+
+      frame <- fit$frame
+      node_ids <- as.integer(row.names(frame))
+      node_chars <- as.character(node_ids)
+
+      overall_rank_values <- if (".overall_rank" %in% names(df)) df$.overall_rank else rep(NA_integer_, nrow(df))
+      model_display_values <- if ("program" %in% names(df)) {
+        paste0(df$scenario, " [", df$program, "]")
+      } else if ("region" %in% names(df)) {
+        paste0(df$scenario, " [", df$region, "]")
+      } else if ("scenario" %in% names(df)) {
+        as.character(df$scenario)
+      } else {
+        rep(NA_character_, nrow(df))
+      }
+      where <- try({
+        if (!is.null(fit$where) && length(fit$where) == nrow(df)) {
+          row.names(frame)[fit$where]
+        } else {
+          rep(NA_character_, nrow(df))
+        }
+      }, silent = TRUE)
+      rank_labels <- setNames(rep(NA_character_, length(node_chars)), node_chars)
+      best_ranks <- setNames(rep(NA_real_, length(node_chars)), node_chars)
+      best_model_labels <- setNames(rep(NA_character_, length(node_chars)), node_chars)
+      if (!inherits(where, "try-error") && length(where) == nrow(df)) {
+        rows_by_node <- split(seq_len(nrow(df)), as.character(where))
+        for (node_name in intersect(names(rows_by_node), node_chars)) {
+          idx <- rows_by_node[[node_name]]
+          vals <- suppressWarnings(as.integer(overall_rank_values[idx]))
+          vals <- vals[is.finite(vals)]
+          rank_labels[[node_name]] <- collapse_rank_label(vals)
+          best_ranks[[node_name]] <- if (length(vals) == 0) NA_integer_ else min(vals, na.rm = TRUE)
+          best_model_labels[[node_name]] <- collapse_model_label(model_display_values[idx], overall_rank_values[idx], df$IWCBI[idx])
+        }
+      }
+
+      split_info <- list()
+      split_cursor <- 1L
+      if (!is.null(fit$splits) && nrow(fit$splits) > 0) {
+        for (row_idx in seq_len(nrow(frame))) {
+          node_id <- node_chars[[row_idx]]
+          if (!identical(as.character(frame$var[[row_idx]]), "<leaf>")) {
+            split_row <- fit$splits[split_cursor, , drop = FALSE]
+            split_info[[node_id]] <- list(
+              var = as.character(frame$var[[row_idx]]),
+              token = unname(token_lookup[[as.character(frame$var[[row_idx]])]]),
+              ncat = as.numeric(split_row[, "ncat"])
+            )
+            split_cursor <- split_cursor + 1L + as.integer(frame$ncompete[[row_idx]]) + as.integer(frame$nsurrogate[[row_idx]])
+          }
+        }
+      }
+
+      x_lookup <- new.env(parent = emptyenv())
+      leaf_counter <- 0L
+      assign_x <- function(id) {
+        id <- as.character(id)
+        if (exists(id, envir = x_lookup, inherits = FALSE)) return(get(id, envir = x_lookup))
+        children <- c(as.character(as.integer(id) * 2L), as.character(as.integer(id) * 2L + 1L))
+        children <- children[children %in% node_chars]
+        if (length(children) == 0) {
+          leaf_counter <<- leaf_counter + 1L
+          x_val <- leaf_counter
+        } else {
+          x_val <- mean(vapply(children, assign_x, numeric(1)), na.rm = TRUE)
+        }
+        assign(id, x_val, envir = x_lookup)
+        x_val
+      }
+      invisible(assign_x("1"))
+
+      root_n <- max(frame$n[[1]], 1)
+      nodes <- data.frame(
+        Node = node_chars,
+        Depth = floor(log2(node_ids)),
+        x = vapply(node_chars, function(id) get(id, envir = x_lookup), numeric(1)),
+        y = -floor(log2(node_ids)),
+        N = as.integer(frame$n),
+        Percent = 100 * as.numeric(frame$n) / root_n,
+        `Mean IWCBI` = as.numeric(frame$yval),
+        `Overall ranks` = vapply(node_chars, function(id) rank_labels[[id]], character(1)),
+        `Best overall rank` = as.integer(vapply(node_chars, function(id) best_ranks[[id]], numeric(1))),
+        `Best model` = vapply(node_chars, function(id) best_model_labels[[id]], character(1)),
+        `Split token` = vapply(node_chars, function(id) {
+          if (!is.null(split_info[[id]]) && !is.na(split_info[[id]]$token)) split_info[[id]]$token else NA_character_
+        }, character(1)),
+        IsLeaf = as.character(frame$var) == "<leaf>",
+        check.names = FALSE,
+        stringsAsFactors = FALSE
+      ) %>%
+        mutate(
+          label = paste0(
+            "mean IWCBI\n",
+            format(round(`Mean IWCBI`, 1), trim = TRUE), "\n",
+            format(round(Percent, 0), trim = TRUE), "% (n=", N, ")"
+          ),
+          split_label = ifelse(!IsLeaf & !is.na(`Split token`), paste0(`Split token`, "?"), NA_character_)
+        )
+
+      edge_rows <- lapply(node_chars, function(id) {
+        info <- split_info[[id]]
+        if (is.null(info)) return(NULL)
+        children <- c(as.character(as.integer(id) * 2L), as.character(as.integer(id) * 2L + 1L))
+        children <- children[children %in% node_chars]
+        if (length(children) == 0) return(NULL)
+        parent <- nodes[nodes$Node == id, , drop = FALSE]
+        bind_rows(lapply(children, function(child) {
+          child_row <- nodes[nodes$Node == child, , drop = FALSE]
+          is_left <- as.integer(child) == as.integer(id) * 2L
+          left_is_yes <- is.finite(info$ncat) && info$ncat > 0
+          branch_yes <- if (is_left) left_is_yes else !left_is_yes
+          data.frame(
+            x = parent$x[[1]],
+            y = parent$y[[1]],
+            xend = child_row$x[[1]],
+            yend = child_row$y[[1]],
+            `Split token` = info$token,
+            Branch = if (branch_yes) "yes" else "no",
+            check.names = FALSE,
+            stringsAsFactors = FALSE
+          )
+        }))
+      })
+      edges <- bind_rows(edge_rows)
+      list(nodes = nodes, edges = edges)
+    }
+
+    reg_tree_out <- build_regression_tree(rankable_summary, change_tokens)
+
+    build_rf_style_importance <- function(df, tokens, n_trees = 250L, max_depth = 4L) {
+      df <- df[is.finite(df$IWCBI), , drop = FALSE]
+      tokens <- tokens[!is.na(tokens) & nzchar(tokens)]
+      if (nrow(df) < 6 || length(tokens) == 0 || !requireNamespace("rpart", quietly = TRUE)) return(data.frame())
+
+      token_cols <- make.names(tokens, unique = TRUE)
+      feature_df <- data.frame(y = df$IWCBI, stringsAsFactors = FALSE)
+      for (idx in seq_along(tokens)) {
+        feature_df[[token_cols[[idx]]]] <- as.integer(token_present(df$change_set_raw, tokens[[idx]]))
+      }
+
+      valid_cols <- token_cols[vapply(feature_df[token_cols], function(x) length(unique(x[is.finite(x)])) > 1, logical(1))]
+      if (length(valid_cols) == 0) return(data.frame())
+
+      token_lookup <- setNames(tokens[match(valid_cols, token_cols)], valid_cols)
+      n <- nrow(feature_df)
+      p <- length(valid_cols)
+      mtry <- max(1L, floor(sqrt(p)))
+      n_trees <- as.integer(max(50L, n_trees))
+      old_seed <- if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) get(".Random.seed", envir = .GlobalEnv) else NULL
+      on.exit({
+        if (is.null(old_seed)) {
+          if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) rm(".Random.seed", envir = .GlobalEnv)
+        } else {
+          assign(".Random.seed", old_seed, envir = .GlobalEnv)
+        }
+      }, add = TRUE)
+      set.seed(20260430)
+
+      importance <- setNames(rep(0, p), valid_cols)
+      used_count <- setNames(rep(0L, p), valid_cols)
+      pred_yes_sum <- setNames(rep(0, p), valid_cols)
+      pred_no_sum <- setNames(rep(0, p), valid_cols)
+      tree_count <- 0L
+
+      for (tree_idx in seq_len(n_trees)) {
+        sampled_cols <- sample(valid_cols, size = min(mtry, p), replace = FALSE)
+        boot_idx <- sample(seq_len(n), size = n, replace = TRUE)
+        train <- feature_df[boot_idx, c("y", sampled_cols), drop = FALSE]
+        if (length(unique(train$y[is.finite(train$y)])) < 2) next
+
+        fit <- try(
+          rpart::rpart(
+            y ~ .,
+            data = train,
+            method = "anova",
+            control = rpart::rpart.control(
+              minsplit = 2,
+              minbucket = 1,
+              cp = 0,
+              maxdepth = max_depth,
+              xval = 0
+            )
+          ),
+          silent = TRUE
+        )
+        if (inherits(fit, "try-error")) next
+
+        newdata <- feature_df[, sampled_cols, drop = FALSE]
+        base_pred <- try(stats::predict(fit, newdata = newdata), silent = TRUE)
+        if (inherits(base_pred, "try-error") || !any(is.finite(base_pred))) next
+
+        tree_count <- tree_count + 1L
+        base_mse <- mean((feature_df$y - base_pred)^2, na.rm = TRUE)
+
+        for (col in valid_cols) {
+          yes_data <- newdata
+          no_data <- newdata
+          if (col %in% sampled_cols) {
+            used_count[[col]] <- used_count[[col]] + 1L
+            perm_data <- newdata
+            perm_data[[col]] <- sample(perm_data[[col]])
+            perm_pred <- try(stats::predict(fit, newdata = perm_data), silent = TRUE)
+            if (!inherits(perm_pred, "try-error") && any(is.finite(perm_pred))) {
+              perm_mse <- mean((feature_df$y - perm_pred)^2, na.rm = TRUE)
+              importance[[col]] <- importance[[col]] + (perm_mse - base_mse)
+            }
+            yes_data[[col]] <- 1
+            no_data[[col]] <- 0
+          }
+          pred_yes <- try(stats::predict(fit, newdata = yes_data), silent = TRUE)
+          pred_no <- try(stats::predict(fit, newdata = no_data), silent = TRUE)
+          if (!inherits(pred_yes, "try-error") && any(is.finite(pred_yes))) pred_yes_sum[[col]] <- pred_yes_sum[[col]] + mean(pred_yes, na.rm = TRUE)
+          if (!inherits(pred_no, "try-error") && any(is.finite(pred_no))) pred_no_sum[[col]] <- pred_no_sum[[col]] + mean(pred_no, na.rm = TRUE)
+        }
+      }
+
+      if (tree_count == 0L) return(data.frame())
+
+      raw_importance <- importance / tree_count
+      plot_importance <- pmax(raw_importance, 0)
+      importance_total <- sum(plot_importance, na.rm = TRUE)
+      effect_lookup <- if (nrow(change_effect_out) > 0) {
+        setNames(change_effect_out$`Δ mean IWCBI`, change_effect_out$`Change token`)
+      } else {
+        numeric(0)
+      }
+
+      out <- data.frame(
+        `Change token` = unname(token_lookup),
+        `RF-style importance (ΔMSE)` = as.numeric(plot_importance),
+        `RF-style raw importance (ΔMSE)` = as.numeric(raw_importance),
+        `Importance (%)` = if (is.finite(importance_total) && importance_total > 0) 100 * as.numeric(plot_importance) / importance_total else NA_real_,
+        `Trees used token` = as.integer(used_count),
+        `Trees fitted` = tree_count,
+        `ML predicted IWCBI yes` = as.numeric(pred_yes_sum / tree_count),
+        `ML predicted IWCBI no` = as.numeric(pred_no_sum / tree_count),
+        `ML predicted Δ yes-no` = as.numeric((pred_yes_sum - pred_no_sum) / tree_count),
+        check.names = FALSE,
+        stringsAsFactors = FALSE
+      )
+      out$`Observed Δ yes-no` <- unname(effect_lookup[out$`Change token`])
+      out %>%
+        arrange(desc(`RF-style importance (ΔMSE)`), `ML predicted Δ yes-no`, `Change token`) %>%
+        mutate(`ML rank` = dplyr::row_number()) %>%
+        select(`ML rank`, everything())
+    }
+
+    rf_importance_out <- build_rf_style_importance(rankable_summary, change_tokens)
+
+    detail_rankable <- detail %>%
+      inner_join(
+        summary_base %>%
+          select(!!!rlang::syms(context_cols), .rankable, total_profile_qc, change_set_raw),
+        by = context_cols
+      ) %>%
+      filter(.rankable, is.finite(influence_weighted_conflict))
+
+    if ("program" %in% context_cols) {
+      detail_rankable <- detail_rankable %>%
+        mutate(line_context = paste(program, group_value, sep = ": "))
+    } else if ("region" %in% context_cols) {
+      detail_rankable <- detail_rankable %>%
+        mutate(line_context = paste(region, group_value, sep = ": "))
+    } else {
+      detail_rankable <- detail_rankable %>%
+        mutate(line_context = group_value)
+    }
+
+    line_resolution_out <- if (length(change_tokens) > 0 && nrow(detail_rankable) > 0) {
+      bind_rows(lapply(change_tokens, function(token) {
+        token_df <- detail_rankable %>%
+          mutate(.token_present = token_present(change_set_raw, token))
+
+        token_df %>%
+          group_by(line_context) %>%
+          summarise(
+            `Rows yes` = sum(.token_present, na.rm = TRUE),
+            `Rows no` = sum(!.token_present, na.rm = TRUE),
+            `Mean IWC yes` = {
+              vals <- influence_weighted_conflict[.token_present]
+              vals <- vals[is.finite(vals)]
+              if (length(vals) == 0) NA_real_ else mean(vals, na.rm = TRUE)
+            },
+            `Mean IWC no` = {
+              vals <- influence_weighted_conflict[!.token_present]
+              vals <- vals[is.finite(vals)]
+              if (length(vals) == 0) NA_real_ else mean(vals, na.rm = TRUE)
+            },
+            `Mean excess yes` = {
+              vals <- excess_conflict[.token_present]
+              vals <- vals[is.finite(vals)]
+              if (length(vals) == 0) NA_real_ else mean(vals, na.rm = TRUE)
+            },
+            `Mean excess no` = {
+              vals <- excess_conflict[!.token_present]
+              vals <- vals[is.finite(vals)]
+              if (length(vals) == 0) NA_real_ else mean(vals, na.rm = TRUE)
+            },
+            .groups = "drop"
+          ) %>%
+          mutate(
+            `Change token` = token,
+            `Line` = line_context,
+            `Δ mean IWC (yes - no)` = `Mean IWC yes` - `Mean IWC no`,
+            `Δ mean excess (yes - no)` = `Mean excess yes` - `Mean excess no`,
+            `Conflict resolution` = dplyr::case_when(
+              is.finite(`Δ mean IWC (yes - no)`) & `Δ mean IWC (yes - no)` < -1e-9 ~ "Reduced when yes",
+              is.finite(`Δ mean IWC (yes - no)`) & `Δ mean IWC (yes - no)` > 1e-9 ~ "Worse when yes",
+              is.finite(`Δ mean IWC (yes - no)`) ~ "Similar",
+              TRUE ~ "Insufficient contrast"
+            )
+          ) %>%
+          select(
+            `Change token`,
+            `Line`,
+            `Rows yes`,
+            `Rows no`,
+            `Mean IWC yes`,
+            `Mean IWC no`,
+            `Δ mean IWC (yes - no)`,
+            `Mean excess yes`,
+            `Mean excess no`,
+            `Δ mean excess (yes - no)`,
+            `Conflict resolution`
+          )
+      })) %>%
+        filter(`Rows yes` >= 2, `Rows no` >= 2, is.finite(`Δ mean IWC (yes - no)`)) %>%
+        arrange(`Δ mean IWC (yes - no)`, `Change token`, `Line`) %>%
+        mutate(`Resolution rank` = dplyr::row_number()) %>%
+        select(`Resolution rank`, everything())
+    } else {
+      data.frame()
+    }
+
+    pairwise_rankable <- if (nrow(pairwise_raw) > 0) {
+      pairwise_raw %>%
+        inner_join(
+          summary_base %>%
+            select(!!!rlang::syms(context_cols), .rankable, change_set_raw),
+          by = context_cols
+        ) %>%
+        filter(.rankable, is.finite(Pairwise_excess_conflict))
+    } else {
+      data.frame()
+    }
+
+    if (nrow(pairwise_rankable) > 0) {
+      if ("program" %in% context_cols) {
+        pairwise_rankable <- pairwise_rankable %>%
+          mutate(pair_context = paste(program, paste(Line_A, Line_B, sep = " vs "), sep = ": "))
+      } else if ("region" %in% context_cols) {
+        pairwise_rankable <- pairwise_rankable %>%
+          mutate(pair_context = paste(region, paste(Line_A, Line_B, sep = " vs "), sep = ": "))
+      } else {
+        pairwise_rankable <- pairwise_rankable %>%
+          mutate(pair_context = paste(Line_A, Line_B, sep = " vs "))
+      }
+    }
+
+    pairwise_resolution_out <- if (length(change_tokens) > 0 && nrow(pairwise_rankable) > 0) {
+      bind_rows(lapply(change_tokens, function(token) {
+        token_df <- pairwise_rankable %>%
+          mutate(.token_present = token_present(change_set_raw, token))
+
+        token_df %>%
+          group_by(pair_context) %>%
+          summarise(
+            `Rows yes` = sum(.token_present, na.rm = TRUE),
+            `Rows no` = sum(!.token_present, na.rm = TRUE),
+            `Mean pairwise conflict yes` = {
+              vals <- Pairwise_excess_conflict[.token_present]
+              vals <- vals[is.finite(vals)]
+              if (length(vals) == 0) NA_real_ else mean(vals, na.rm = TRUE)
+            },
+            `Mean pairwise conflict no` = {
+              vals <- Pairwise_excess_conflict[!.token_present]
+              vals <- vals[is.finite(vals)]
+              if (length(vals) == 0) NA_real_ else mean(vals, na.rm = TRUE)
+            },
+            `Mean pair distance yes` = {
+              vals <- Pair_distance_CI_widths[.token_present]
+              vals <- vals[is.finite(vals)]
+              if (length(vals) == 0) NA_real_ else mean(vals, na.rm = TRUE)
+            },
+            `Mean pair distance no` = {
+              vals <- Pair_distance_CI_widths[!.token_present]
+              vals <- vals[is.finite(vals)]
+              if (length(vals) == 0) NA_real_ else mean(vals, na.rm = TRUE)
+            },
+            .groups = "drop"
+          ) %>%
+          mutate(
+            `Change token` = token,
+            `Relationship` = pair_context,
+            `Δ mean pairwise conflict (yes - no)` = `Mean pairwise conflict yes` - `Mean pairwise conflict no`,
+            `Δ mean pair distance (yes - no)` = `Mean pair distance yes` - `Mean pair distance no`,
+            `Relationship change` = dplyr::case_when(
+              is.finite(`Δ mean pairwise conflict (yes - no)`) & `Δ mean pairwise conflict (yes - no)` < -1e-9 ~ "Reduced when yes",
+              is.finite(`Δ mean pairwise conflict (yes - no)`) & `Δ mean pairwise conflict (yes - no)` > 1e-9 ~ "Worse when yes",
+              is.finite(`Δ mean pairwise conflict (yes - no)`) ~ "Similar",
+              TRUE ~ "Insufficient contrast"
+            )
+          ) %>%
+          select(
+            `Change token`,
+            `Relationship`,
+            `Rows yes`,
+            `Rows no`,
+            `Mean pairwise conflict yes`,
+            `Mean pairwise conflict no`,
+            `Δ mean pairwise conflict (yes - no)`,
+            `Mean pair distance yes`,
+            `Mean pair distance no`,
+            `Δ mean pair distance (yes - no)`,
+            `Relationship change`
+          )
+      })) %>%
+        filter(`Rows yes` >= 2, `Rows no` >= 2, is.finite(`Δ mean pairwise conflict (yes - no)`)) %>%
+        arrange(`Δ mean pairwise conflict (yes - no)`, `Change token`, `Relationship`) %>%
+        mutate(`Relationship rank` = dplyr::row_number()) %>%
+        select(`Relationship rank`, everything())
+    } else {
+      data.frame()
+    }
+
+    format_top_contrasts <- function(df, token, label_col, delta_col, yes_col, no_col, direction = -1L, n = 3L) {
+      if (is.null(df) || nrow(df) == 0 || !(label_col %in% names(df)) || !(delta_col %in% names(df))) return(NA_character_)
+      sub <- df[df$`Change token` == token & is.finite(df[[delta_col]]), , drop = FALSE]
+      if (nrow(sub) == 0) return(NA_character_)
+      if (direction < 0) {
+        sub <- sub[sub[[delta_col]] < 0, , drop = FALSE]
+        sub <- sub[order(sub[[delta_col]], sub[[label_col]]), , drop = FALSE]
+      } else {
+        sub <- sub[sub[[delta_col]] > 0, , drop = FALSE]
+        sub <- sub[order(-sub[[delta_col]], sub[[label_col]]), , drop = FALSE]
+      }
+      if (nrow(sub) == 0) return(NA_character_)
+      sub <- utils::head(sub, n)
+      yes_vals <- if (yes_col %in% names(sub)) sub[[yes_col]] else rep(NA_real_, nrow(sub))
+      no_vals <- if (no_col %in% names(sub)) sub[[no_col]] else rep(NA_real_, nrow(sub))
+      paste0(
+        sub[[label_col]],
+        " (Δ=", format(round(sub[[delta_col]], 2), trim = TRUE),
+        "; yes=", format(round(yes_vals, 2), trim = TRUE),
+        ", no=", format(round(no_vals, 2), trim = TRUE),
+        ")",
+        collapse = "; "
+      )
+    }
+
+    change_explanation_out <- if (length(change_tokens) > 0 && nrow(change_effect_out) > 0) {
+      bind_rows(lapply(change_tokens, function(token) {
+        effect_row <- change_effect_out %>%
+          filter(`Change token` == token) %>%
+          slice_head(n = 1)
+        if (nrow(effect_row) == 0) return(NULL)
+        data.frame(
+          `Change token` = token,
+          `Rows yes` = effect_row$`Rows with token`[[1]],
+          `Rows no` = effect_row$`Rows without token`[[1]],
+          `Mean IWCBI yes` = effect_row$`Mean IWCBI with token`[[1]],
+          `Mean IWCBI no` = effect_row$`Mean IWCBI without token`[[1]],
+          `Δ IWCBI yes-no` = effect_row$`Δ mean IWCBI`[[1]],
+          `Top lines reduced` = format_top_contrasts(
+            line_resolution_out,
+            token,
+            "Line",
+            "Δ mean IWC (yes - no)",
+            "Mean IWC yes",
+            "Mean IWC no",
+            direction = -1L
+          ),
+          `Top lines worsened` = format_top_contrasts(
+            line_resolution_out,
+            token,
+            "Line",
+            "Δ mean IWC (yes - no)",
+            "Mean IWC yes",
+            "Mean IWC no",
+            direction = 1L
+          ),
+          `Top relationships reduced` = format_top_contrasts(
+            pairwise_resolution_out,
+            token,
+            "Relationship",
+            "Δ mean pairwise conflict (yes - no)",
+            "Mean pairwise conflict yes",
+            "Mean pairwise conflict no",
+            direction = -1L
+          ),
+          `Top relationships worsened` = format_top_contrasts(
+            pairwise_resolution_out,
+            token,
+            "Relationship",
+            "Δ mean pairwise conflict (yes - no)",
+            "Mean pairwise conflict yes",
+            "Mean pairwise conflict no",
+            direction = 1L
+          ),
+          check.names = FALSE,
+          stringsAsFactors = FALSE
+        )
+      })) %>%
+        arrange(`Δ IWCBI yes-no`, `Change token`)
+    } else {
+      data.frame()
+    }
+
+    build_change_tree <- function(df, tokens, max_depth = 3L, min_leaf = 2L) {
+      rows <- list()
+
+      add_node <- function(node_df, available_tokens, rule, node_id, depth) {
+        node_df <- node_df[is.finite(node_df$IWCBI), , drop = FALSE]
+        node_mean <- metric_mean(node_df, "IWCBI")
+        node_best <- best_model(node_df)
+        terminal_row <- function(reason) {
+          data.frame(
+            Node = node_id,
+            Depth = depth,
+            Rule = rule,
+            N = nrow(node_df),
+            `Mean IWCBI` = node_mean,
+            `Best model` = node_best,
+            `Split change` = NA_character_,
+            `Rows without split` = NA_integer_,
+            `Mean IWCBI without split` = NA_real_,
+            `Rows with split` = NA_integer_,
+            `Mean IWCBI with split` = NA_real_,
+            `Δ mean IWCBI (with - without)` = NA_real_,
+            `SSE reduction (%)` = NA_real_,
+            Recommendation = reason,
+            check.names = FALSE,
+            stringsAsFactors = FALSE
+          )
+        }
+
+        if (nrow(node_df) < (2L * min_leaf) || depth >= max_depth || length(available_tokens) == 0) {
+          rows[[length(rows) + 1L]] <<- terminal_row("Terminal")
+          return(invisible(NULL))
+        }
+
+        parent_sse <- sum((node_df$IWCBI - node_mean)^2, na.rm = TRUE)
+        candidates <- bind_rows(lapply(available_tokens, function(token) {
+          present <- token_present(node_df$change_set_raw, token)
+          n_yes <- sum(present)
+          n_no <- sum(!present)
+          if (n_yes < min_leaf || n_no < min_leaf) return(NULL)
+          yes_vals <- node_df$IWCBI[present]
+          no_vals <- node_df$IWCBI[!present]
+          mean_yes <- mean(yes_vals, na.rm = TRUE)
+          mean_no <- mean(no_vals, na.rm = TRUE)
+          child_sse <- sum((yes_vals - mean_yes)^2, na.rm = TRUE) + sum((no_vals - mean_no)^2, na.rm = TRUE)
+          data.frame(
+            token = token,
+            n_yes = n_yes,
+            n_no = n_no,
+            mean_yes = mean_yes,
+            mean_no = mean_no,
+            delta = mean_yes - mean_no,
+            gain = parent_sse - child_sse,
+            gain_pct = if (is.finite(parent_sse) && parent_sse > 0) 100 * (parent_sse - child_sse) / parent_sse else NA_real_,
+            stringsAsFactors = FALSE
+          )
+        }))
+
+        if (nrow(candidates) == 0 || !any(is.finite(candidates$gain) & candidates$gain > 0)) {
+          rows[[length(rows) + 1L]] <<- terminal_row("No informative split")
+          return(invisible(NULL))
+        }
+
+        best <- candidates %>%
+          arrange(dplyr::desc(gain), dplyr::desc(abs(delta)), token) %>%
+          slice_head(n = 1)
+        best_token <- best$token[[1]]
+        present <- token_present(node_df$change_set_raw, best_token)
+        recommendation <- if (is.finite(best$delta[[1]]) && best$delta[[1]] < 0) {
+          paste0("Prefer models with ", best_token)
+        } else {
+          paste0("Prefer models without ", best_token)
+        }
+
+        rows[[length(rows) + 1L]] <<- data.frame(
+          Node = node_id,
+          Depth = depth,
+          Rule = rule,
+          N = nrow(node_df),
+          `Mean IWCBI` = node_mean,
+          `Best model` = node_best,
+          `Split change` = best_token,
+          `Rows without split` = best$n_no[[1]],
+          `Mean IWCBI without split` = best$mean_no[[1]],
+          `Rows with split` = best$n_yes[[1]],
+          `Mean IWCBI with split` = best$mean_yes[[1]],
+          `Δ mean IWCBI (with - without)` = best$delta[[1]],
+          `SSE reduction (%)` = best$gain_pct[[1]],
+          Recommendation = recommendation,
+          check.names = FALSE,
+          stringsAsFactors = FALSE
+        )
+
+        remaining_tokens <- setdiff(available_tokens, best_token)
+        add_node(node_df[present, , drop = FALSE], remaining_tokens, paste0(rule, " & ", best_token, "=yes"), paste0(node_id, ".1"), depth + 1L)
+        add_node(node_df[!present, , drop = FALSE], remaining_tokens, paste0(rule, " & ", best_token, "=no"), paste0(node_id, ".2"), depth + 1L)
+        invisible(NULL)
+      }
+
+      add_node(df, tokens, "All rankable model-summary rows", "1", 0L)
+      bind_rows(rows)
+    }
+
+    change_tree_out <- if (length(change_tokens) > 0 && nrow(rankable_summary) >= 4) {
+      build_change_tree(rankable_summary, change_tokens)
+    } else {
+      data.frame()
+    }
+
+    if (nrow(pairwise_conflict_raw) > 0) {
+      if ("program" %in% context_cols) {
+        pairwise_out <- pairwise_conflict_raw %>%
+          transmute(
+            Model = scenario,
+            Program = program,
+            `Pair rank`,
+            `Line A` = Line_A,
+            `Line B` = Line_B,
+            `Lower-biomass line` = Lower_line,
+            `Higher-biomass line` = Higher_line,
+            `Opt A` = Opt_A,
+            `Opt B` = Opt_B,
+            `Pair distance` = Pair_distance,
+            `Pair distance (CI widths)` = Pair_distance_CI_widths,
+            `ΔL A at B optimum` = DeltaL_A_at_B_optimum,
+            `ΔL B at A optimum` = DeltaL_B_at_A_optimum,
+            `Excess A at B optimum` = Excess_A_at_B_optimum,
+            `Excess B at A optimum` = Excess_B_at_A_optimum,
+            `Pairwise excess conflict` = Pairwise_excess_conflict
+          ) %>%
+          arrange(Model, Program, `Pair rank`)
+      } else if ("region" %in% context_cols) {
+        pairwise_out <- pairwise_conflict_raw %>%
+          transmute(
+            Model = scenario,
+            Region = region,
+            `Pair rank`,
+            `Line A` = Line_A,
+            `Line B` = Line_B,
+            `Lower-biomass line` = Lower_line,
+            `Higher-biomass line` = Higher_line,
+            `Opt A` = Opt_A,
+            `Opt B` = Opt_B,
+            `Pair distance` = Pair_distance,
+            `Pair distance (CI widths)` = Pair_distance_CI_widths,
+            `ΔL A at B optimum` = DeltaL_A_at_B_optimum,
+            `ΔL B at A optimum` = DeltaL_B_at_A_optimum,
+            `Excess A at B optimum` = Excess_A_at_B_optimum,
+            `Excess B at A optimum` = Excess_B_at_A_optimum,
+            `Pairwise excess conflict` = Pairwise_excess_conflict
+          ) %>%
+          arrange(Model, Region, `Pair rank`)
+      } else {
+        pairwise_out <- pairwise_conflict_raw %>%
+          transmute(
+            Model = scenario,
+            `Pair rank`,
+            `Line A` = Line_A,
+            `Line B` = Line_B,
+            `Lower-biomass line` = Lower_line,
+            `Higher-biomass line` = Higher_line,
+            `Opt A` = Opt_A,
+            `Opt B` = Opt_B,
+            `Pair distance` = Pair_distance,
+            `Pair distance (CI widths)` = Pair_distance_CI_widths,
+            `ΔL A at B optimum` = DeltaL_A_at_B_optimum,
+            `ΔL B at A optimum` = DeltaL_B_at_A_optimum,
+            `Excess A at B optimum` = Excess_A_at_B_optimum,
+            `Excess B at A optimum` = Excess_B_at_A_optimum,
+            `Pairwise excess conflict` = Pairwise_excess_conflict
+          ) %>%
+          arrange(Model, `Pair rank`)
+      }
+    } else {
+      pairwise_out <- data.frame()
+    }
+
+    list(
+      detail = detail_out,
+      summary = summary_out,
+      change_effects = change_effect_out,
+      change_tree = change_tree_out,
+      change_rules = change_rules_out,
+      class_tree = class_tree_out,
+      reg_tree = reg_tree_out,
+      rf_importance = rf_importance_out,
+      line_resolution = line_resolution_out,
+      pairwise_resolution = pairwise_resolution_out,
+      change_explanation = change_explanation_out,
+      pairwise = pairwise_out
+    )
+  })
+
   profile_gradient_table_reactive <- bindCache(
     profile_gradient_table_reactive,
     input$model_dir,
@@ -10324,6 +12084,65 @@ mod_likelihood_server <- function(input, output, session, rv) {
     )
   })
 
+  output$profile_conflict_table_ui <- renderUI({
+    if (!identical(input$lik_main_tab, "likelihood")) return(NULL)
+    info <- profile_data_reactive()
+    plot_kind <- sanitize_plot_kind(info$plot_kind, default = "piner")
+    if (!identical(plot_kind, "piner")) return(NULL)
+
+    filters <- lik_filters()
+    conflict_types <- c("components", "cpues", "lfs", "wfs", "tagging", "cal_fishery", "cal_year")
+    if (is.null(filters) || !isTRUE(filters$profile_type %in% conflict_types)) return(NULL)
+
+    tbls <- profile_conflict_tables_reactive()
+    if (is.null(tbls) || is.null(tbls$summary) || nrow(tbls$summary) == 0) return(NULL)
+
+    box(
+      title = "Likelihood Conflict Ranking",
+      width = 12,
+      solidHeader = TRUE,
+      status = "warning",
+      collapsible = TRUE,
+      collapsed = TRUE,
+      div(
+        style = "margin-bottom: 8px; padding: 10px 12px; background: #fff8e1; border: 1px solid #f0d98c; border-left: 4px solid #f39c12; border-radius: 4px;",
+        tags$div("Ranks models by how strongly influential likelihood lines conflict with the total profile optimum.", style = "font-weight: bold; margin-bottom: 4px;"),
+        tags$div("IWCBI uses influence at the total optimum × excess conflict × distance from the total optimum.", style = "font-size: 12px; color: #333;"),
+        tags$div("Only lines with ΔL at the total optimum ≥ 1.92 are counted as conflict lines. Excess conflict is max(ΔL - 1.92, 0).", style = "font-size: 12px; color: #333; margin-top: 4px;"),
+        tags$div("Line-count comparability is handled by reporting conflict prevalence as conflict lines / total lines and by normalizing IWCBI weights to sum to one within each model.", style = "font-size: 12px; color: #333; margin-top: 4px;"),
+        tags$div("Overall rank uses total-profile QC pass first, optional Hessian pass when Hessian information exists, then IWCBI only.", style = "font-size: 12px; color: #333; margin-top: 4px;"),
+        tags$div("Change diagnostics parse model-name tokens after the first underscore and split models by token presence, without using a base-reference comparison.", style = "font-size: 12px; color: #333; margin-top: 4px;"),
+        tags$div("QC is binary: Good profiles pass; Bad profiles fail and are excluded from rank and trees. Passing profiles require an internal minimum, enough profile support, a closed 95% profile interval, and no material non-U-shape defect.", style = "font-size: 12px; color: #333; margin-top: 4px;"),
+        tags$div("ΔL ≥ 1.92 marks a line whose own profile is outside the approximate 95% cutoff at the total optimum.", style = "font-size: 12px; color: #333; margin-top: 4px;")
+      ),
+      tags$div(style = "font-weight: bold; margin: 6px 0;", "Model summary"),
+      DTOutput("profile_conflict_summary_table"),
+      tags$hr(style = "margin: 12px 0;"),
+      tags$div(style = "font-weight: bold; margin: 6px 0;", "IWCBI continuous regression tree"),
+      actionButton(
+        "show_lik_reg_tree_download_modal",
+        "Download IWCBI Tree Plot...",
+        class = "btn-info btn-sm",
+        icon = icon("download"),
+        style = "margin-bottom: 8px;"
+      ),
+      plotOutput("profile_conflict_reg_tree_plot", height = "760px"),
+      tags$hr(style = "margin: 12px 0;"),
+      tags$div(style = "font-weight: bold; margin: 6px 0;", "LOW/HIGH classification tree"),
+      actionButton(
+        "show_lik_conflict_tree_download_modal",
+        "Download Classification Tree Plot...",
+        class = "btn-info btn-sm",
+        icon = icon("download"),
+        style = "margin-bottom: 8px;"
+      ),
+      plotOutput("profile_conflict_class_tree_plot", height = "760px"),
+      tags$hr(style = "margin: 12px 0;"),
+      tags$div(style = "font-weight: bold; margin: 6px 0;", "Change yes/no effect"),
+      plotOutput("profile_conflict_change_tree_plot", height = "420px")
+    )
+  })
+
   output$likelihood_table <- renderDT({
     if (!identical(input$lik_main_tab, "hessian")) return(NULL)
     info <- profile_data_reactive()
@@ -10389,6 +12208,792 @@ mod_likelihood_server <- function(input, output, session, rv) {
     datatable(
       format_hessian_display_cols(tbl),
       options = list(pageLength = 10, scrollX = TRUE, deferRender = TRUE),
+      rownames = FALSE
+    )
+  })
+
+  output$profile_conflict_summary_table <- renderDT({
+    tbls <- profile_conflict_tables_reactive()
+    if (is.null(tbls) || is.null(tbls$summary) || nrow(tbls$summary) == 0) return(NULL)
+
+    datatable(
+      format_hessian_display_cols(tbls$summary),
+      options = list(pageLength = 10, scrollX = TRUE, deferRender = TRUE),
+      rownames = FALSE
+    )
+  })
+
+  output$profile_conflict_change_explanation_table <- renderDT({
+    tbls <- profile_conflict_tables_reactive()
+    if (is.null(tbls) || is.null(tbls$change_explanation) || nrow(tbls$change_explanation) == 0) return(NULL)
+
+    datatable(
+      format_hessian_display_cols(tbls$change_explanation),
+      options = list(pageLength = 8, scrollX = TRUE, deferRender = TRUE),
+      rownames = FALSE
+    )
+  })
+
+  profile_conflict_class_tree_plot_reactive <- reactive({
+    tbls <- profile_conflict_tables_reactive()
+    if (is.null(tbls) || is.null(tbls$class_tree) ||
+        is.null(tbls$class_tree$nodes) || nrow(tbls$class_tree$nodes) == 0) {
+      return(
+        ggplot() +
+          annotate("text", x = 0, y = 0, label = "No conflict classification tree available", size = 5) +
+          theme_void()
+      )
+    }
+
+    nodes <- tbls$class_tree$nodes
+    edges <- tbls$class_tree$edges
+    threshold <- tbls$class_tree$threshold
+    nodes <- nodes %>%
+      mutate(
+        x_plot = x * 2.35,
+        y_plot = -Depth * 1.55,
+        node_class = dplyr::case_when(
+          abs(`P(LOW)` - `P(HIGH)`) < 1e-8 ~ "MIXED",
+          `P(LOW)` > `P(HIGH)` ~ "LOW",
+          TRUE ~ "HIGH"
+        ),
+        class_title = dplyr::case_when(
+          node_class == "LOW" ~ "LOW conflict",
+          node_class == "HIGH" ~ "HIGH conflict",
+          TRUE ~ "MIXED"
+        ),
+        label = paste0(
+          class_title, "\n",
+          "mix: LOW ", format(round(100 * `P(LOW)`, 0), trim = TRUE), "% | HIGH ", format(round(100 * `P(HIGH)`, 0), trim = TRUE), "%\n",
+          format(round(Percent, 0), trim = TRUE), "% (n=", N, ")"
+        ),
+        split_badge = ifelse(!IsLeaf & !is.na(`Split token`) & nzchar(`Split token`), paste0("Split: ", `Split token`, "?"), NA_character_)
+      )
+    if (!is.null(edges) && nrow(edges) > 0) {
+      edge_parent <- nodes %>%
+        transmute(parent_id = Node, x_parent_plot = x_plot, y_parent_plot = y_plot)
+      edge_child <- nodes %>%
+        transmute(child_id = Node, x_child_plot = x_plot, y_child_plot = y_plot)
+      edges <- edges %>%
+        mutate(
+          parent_x_raw = x,
+          parent_y_raw = y,
+          child_x_raw = xend,
+          child_y_raw = yend
+        ) %>%
+        rowwise() %>%
+        mutate(
+          parent_id = nodes$Node[which.min((nodes$x - parent_x_raw)^2 + (nodes$y - parent_y_raw)^2)],
+          child_id = nodes$Node[which.min((nodes$x - child_x_raw)^2 + (nodes$y - child_y_raw)^2)]
+        ) %>%
+        ungroup() %>%
+        left_join(edge_parent, by = "parent_id") %>%
+        left_join(edge_child, by = "child_id") %>%
+        mutate(
+          x = x_parent_plot,
+          y = y_parent_plot,
+          xend = x_child_plot,
+          yend = y_child_plot,
+          xmid = x * 0.46 + xend * 0.54,
+          ymid = y * 0.46 + yend * 0.54,
+          branch_label = Branch
+        ) %>%
+        select(x, y, xend, yend, xmid, ymid, branch_label)
+    } else {
+      edges <- data.frame(
+        x = numeric(),
+        y = numeric(),
+        xend = numeric(),
+        yend = numeric(),
+        xmid = numeric(),
+        ymid = numeric(),
+        branch_label = character(),
+        stringsAsFactors = FALSE
+      )
+    }
+    x_range <- range(nodes$x_plot, na.rm = TRUE)
+    y_range <- range(nodes$y_plot, na.rm = TRUE)
+    edge_label_df <- edges
+
+    ggplot() +
+      geom_segment(
+        data = edges,
+        aes(x = x, y = y - 0.72, xend = xend, yend = yend + 0.36),
+        linewidth = 0.65,
+        linetype = "dotted",
+        color = "#3d3d3d"
+      ) +
+      geom_label(
+        data = edge_label_df,
+        aes(x = xmid, y = ymid, label = branch_label),
+        label.size = 0.25,
+        label.padding = grid::unit(0.12, "lines"),
+        fill = "white",
+        color = "#111",
+        fontface = "italic",
+        size = 3.2
+      ) +
+      geom_label(
+        data = nodes %>% filter(!IsLeaf, !is.na(split_badge), nzchar(split_badge)),
+        aes(x = x_plot, y = y_plot - 0.55, label = split_badge),
+        label.size = 0.35,
+        label.padding = grid::unit(0.16, "lines"),
+        fill = "#fff2b8",
+        color = "#111",
+        fontface = "bold",
+        size = 3.45
+      ) +
+      geom_label(
+        data = nodes,
+        aes(x = x_plot, y = y_plot, label = label, fill = node_class),
+        label.size = 0.45,
+        label.padding = grid::unit(0.28, "lines"),
+        size = 3.15,
+        lineheight = 0.95,
+        color = "#111"
+      ) +
+      scale_fill_manual(values = c(LOW = "#8dd17e", MIXED = "#f1df9a", HIGH = "#f4a582"), name = "Node class") +
+      coord_cartesian(
+        xlim = c(x_range[[1]] - 1.35, x_range[[2]] + 1.35),
+        ylim = c(y_range[[1]] - 1.30, y_range[[2]] + 0.75),
+        clip = "off"
+      ) +
+      labs(
+        title = "Conflict Classification Tree",
+        subtitle = paste0("LOW = IWCBI <= median threshold ", format(round(threshold, 3), trim = TRUE), "; yellow badges show the yes/no split used at each internal node"),
+        x = NULL,
+        y = NULL
+      ) +
+      theme_void(base_size = 12) +
+      theme(
+        plot.title = element_text(face = "bold", hjust = 0.5, size = 16),
+        plot.subtitle = element_text(hjust = 0.5, color = "#555"),
+        legend.position = "bottom",
+        plot.margin = margin(18, 24, 18, 24)
+      )
+  })
+
+  output$profile_conflict_class_tree_plot <- renderPlot({
+    profile_conflict_class_tree_plot_reactive()
+  }, res = 110)
+
+  observeEvent(input$show_lik_conflict_tree_download_modal, {
+    show_download_modal("lik_conflict_tree", "Conflict Classification Tree", current_save_dir = input$plot_export_dir)
+    updateNumericInput(session, "lik_conflict_tree_width", value = 16)
+    updateNumericInput(session, "lik_conflict_tree_height", value = 9)
+  })
+
+  observeEvent(input$lik_conflict_tree_preset_wide, {
+    updateNumericInput(session, "lik_conflict_tree_width", value = 16)
+    updateNumericInput(session, "lik_conflict_tree_height", value = 9)
+  })
+
+  observeEvent(input$lik_conflict_tree_preset_standard, {
+    updateNumericInput(session, "lik_conflict_tree_width", value = 14)
+    updateNumericInput(session, "lik_conflict_tree_height", value = 10)
+  })
+
+  observeEvent(input$lik_conflict_tree_preset_square, {
+    updateNumericInput(session, "lik_conflict_tree_width", value = 10)
+    updateNumericInput(session, "lik_conflict_tree_height", value = 10)
+  })
+
+  profile_conflict_reg_tree_plot_reactive <- reactive({
+    tbls <- profile_conflict_tables_reactive()
+    if (is.null(tbls) || is.null(tbls$reg_tree) ||
+        is.null(tbls$reg_tree$nodes) || nrow(tbls$reg_tree$nodes) == 0) {
+      return(
+        ggplot() +
+          annotate("text", x = 0, y = 0, label = "No IWCBI continuous regression tree available", size = 5) +
+          theme_void()
+      )
+    }
+
+    nodes <- tbls$reg_tree$nodes %>%
+      mutate(
+        x_plot = x * 2.55,
+        y_plot = -Depth * 1.55,
+        rank_line = ifelse(
+          IsLeaf & !is.na(`Overall ranks`) & nzchar(`Overall ranks`),
+          paste0("\nR: ", gsub(" ", "", `Overall ranks`, fixed = TRUE)),
+          ""
+        ),
+        label = paste0(
+          format(round(`Mean IWCBI`, 1), trim = TRUE), "\n",
+          format(round(Percent, 0), trim = TRUE), "% (n=", N, ")",
+          rank_line
+        ),
+        split_badge = ifelse(!IsLeaf & !is.na(`Split token`) & nzchar(`Split token`), paste0("Split: ", `Split token`, "?"), NA_character_)
+      )
+    edges <- tbls$reg_tree$edges
+    if (!is.null(edges) && nrow(edges) > 0) {
+      edge_parent <- nodes %>%
+        transmute(parent_id = Node, x_parent_plot = x_plot, y_parent_plot = y_plot)
+      edge_child <- nodes %>%
+        transmute(child_id = Node, x_child_plot = x_plot, y_child_plot = y_plot)
+      edges <- edges %>%
+        mutate(
+          parent_x_raw = x,
+          parent_y_raw = y,
+          child_x_raw = xend,
+          child_y_raw = yend
+        ) %>%
+        rowwise() %>%
+        mutate(
+          parent_id = nodes$Node[which.min((nodes$x - parent_x_raw)^2 + (nodes$y - parent_y_raw)^2)],
+          child_id = nodes$Node[which.min((nodes$x - child_x_raw)^2 + (nodes$y - child_y_raw)^2)]
+        ) %>%
+        ungroup() %>%
+        left_join(edge_parent, by = "parent_id") %>%
+        left_join(edge_child, by = "child_id") %>%
+        mutate(
+          x = x_parent_plot,
+          y = y_parent_plot,
+          xend = x_child_plot,
+          yend = y_child_plot,
+          xmid = x * 0.46 + xend * 0.54,
+          ymid = y * 0.46 + yend * 0.54,
+          branch_label = Branch
+        ) %>%
+        select(x, y, xend, yend, xmid, ymid, branch_label)
+    } else {
+      edges <- data.frame(
+        x = numeric(),
+        y = numeric(),
+        xend = numeric(),
+        yend = numeric(),
+        xmid = numeric(),
+        ymid = numeric(),
+        branch_label = character(),
+        stringsAsFactors = FALSE
+      )
+    }
+    x_range <- range(nodes$x_plot, na.rm = TRUE)
+    y_range <- range(nodes$y_plot, na.rm = TRUE)
+    edge_label_df <- edges
+    leaf_nodes <- nodes %>%
+      filter(IsLeaf, is.finite(`Mean IWCBI`))
+    if (nrow(leaf_nodes) == 0) {
+      leaf_nodes <- nodes %>% filter(is.finite(`Mean IWCBI`))
+    }
+    best_leaf_df <- leaf_nodes %>%
+      filter(`Mean IWCBI` == min(`Mean IWCBI`, na.rm = TRUE)) %>%
+      mutate(
+        best_label = "BEST",
+        best_label_y = y_plot - 0.88
+      )
+
+    ggplot() +
+      geom_segment(
+        data = edges,
+        aes(x = x, y = y - 0.72, xend = xend, yend = yend + 0.36),
+        linewidth = 0.65,
+        linetype = "dotted",
+        color = "#3d3d3d"
+      ) +
+      geom_label(
+        data = edge_label_df,
+        aes(x = xmid, y = ymid, label = branch_label),
+        label.size = 0.25,
+        label.padding = grid::unit(0.12, "lines"),
+        fill = "white",
+        color = "#111",
+        fontface = "italic",
+        size = 3.2
+      ) +
+      geom_label(
+        data = nodes %>% filter(!IsLeaf, !is.na(split_badge), nzchar(split_badge)),
+        aes(x = x_plot, y = y_plot - 0.55, label = split_badge),
+        label.size = 0.35,
+        label.padding = grid::unit(0.16, "lines"),
+        fill = "#fff2b8",
+        color = "#111",
+        fontface = "bold",
+        size = 3.45
+      ) +
+      geom_label(
+        data = nodes,
+        aes(x = x_plot, y = y_plot, label = label, fill = `Mean IWCBI`),
+        label.size = 0.45,
+        label.padding = grid::unit(0.28, "lines"),
+        size = 3.25,
+        lineheight = 0.95,
+        color = "#111"
+      ) +
+      geom_label(
+        data = best_leaf_df,
+        aes(x = x_plot, y = y_plot, label = label, fill = `Mean IWCBI`),
+        label.size = 1.25,
+        label.padding = grid::unit(0.28, "lines"),
+        size = 3.25,
+        lineheight = 0.95,
+        color = "#111",
+        fontface = "bold",
+        show.legend = FALSE
+      ) +
+      geom_label(
+        data = best_leaf_df,
+        aes(x = x_plot, y = best_label_y, label = best_label),
+        label.size = 0.30,
+        label.padding = grid::unit(0.12, "lines"),
+        fill = "#222222",
+        color = "white",
+        fontface = "bold",
+        size = 2.65,
+        lineheight = 0.90
+      ) +
+      scale_fill_gradientn(
+        colors = c("#79c779", "#f1df9a", "#f4a582"),
+        name = "Mean IWCBI"
+      ) +
+      coord_cartesian(
+        xlim = c(x_range[[1]] - 1.25, x_range[[2]] + 1.25),
+        ylim = c(y_range[[1]] - 1.25, y_range[[2]] + 0.75),
+        clip = "off"
+      ) +
+      labs(
+        title = "IWCBI Continuous Regression Tree",
+        subtitle = "QC-passed rankable rows only; terminal nodes list overall ranks; bold border and BEST badge mark the lowest-IWCBI terminal node",
+        x = NULL,
+        y = NULL
+      ) +
+      theme_void(base_size = 12) +
+      theme(
+        plot.title = element_text(face = "bold", hjust = 0.5, size = 16),
+        plot.subtitle = element_text(hjust = 0.5, color = "#555"),
+        legend.position = "bottom",
+        plot.margin = margin(18, 24, 18, 24)
+      )
+  })
+
+  output$profile_conflict_reg_tree_plot <- renderPlot({
+    profile_conflict_reg_tree_plot_reactive()
+  }, res = 110)
+
+  observeEvent(input$show_lik_reg_tree_download_modal, {
+    show_download_modal("lik_reg_tree", "IWCBI Continuous Regression Tree", current_save_dir = input$plot_export_dir)
+    updateNumericInput(session, "lik_reg_tree_width", value = 16)
+    updateNumericInput(session, "lik_reg_tree_height", value = 9)
+  })
+
+  observeEvent(input$lik_reg_tree_preset_wide, {
+    updateNumericInput(session, "lik_reg_tree_width", value = 16)
+    updateNumericInput(session, "lik_reg_tree_height", value = 9)
+  })
+
+  observeEvent(input$lik_reg_tree_preset_standard, {
+    updateNumericInput(session, "lik_reg_tree_width", value = 14)
+    updateNumericInput(session, "lik_reg_tree_height", value = 10)
+  })
+
+  observeEvent(input$lik_reg_tree_preset_square, {
+    updateNumericInput(session, "lik_reg_tree_width", value = 10)
+    updateNumericInput(session, "lik_reg_tree_height", value = 10)
+  })
+
+  output$profile_conflict_change_tree_plot <- renderPlot({
+    tbls <- profile_conflict_tables_reactive()
+    if (is.null(tbls) || is.null(tbls$change_effects) || nrow(tbls$change_effects) == 0) {
+      return(
+        ggplot() +
+          annotate("text", x = 0, y = 0, label = "No yes/no token contrast available", size = 5) +
+          theme_void()
+      )
+    }
+
+    effects <- tbls$change_effects %>%
+      filter(
+        is.finite(`Mean IWCBI with token`),
+        is.finite(`Mean IWCBI without token`),
+        `Rows with token` > 0,
+        `Rows without token` > 0
+      ) %>%
+      arrange(`Δ mean IWCBI`, `Change token`) %>%
+      slice_head(n = 14) %>%
+      mutate(
+        token_label = paste0(
+          `Change token`,
+          "  (yes n=", `Rows with token`, ", no n=", `Rows without token`, ")"
+        ),
+        token_label = factor(token_label, levels = rev(token_label)),
+        lower_when_yes = `Δ mean IWCBI` < 0,
+        delta_label = paste0("yes-no = ", format(round(`Δ mean IWCBI`, 2), trim = TRUE))
+      )
+
+    if (nrow(effects) == 0) {
+      return(ggplot() + annotate("text", x = 0, y = 0, label = "No finite yes/no contrast available", size = 5) + theme_void())
+    }
+
+    x_vals <- c(effects$`Mean IWCBI with token`, effects$`Mean IWCBI without token`)
+    x_min <- min(x_vals, na.rm = TRUE)
+    x_max <- max(x_vals, na.rm = TRUE)
+    label_pad <- if (is.finite(x_max - x_min) && (x_max - x_min) > 0) 0.05 * (x_max - x_min) else 1
+
+    ggplot(effects, aes(y = token_label)) +
+      geom_segment(
+        aes(
+          x = `Mean IWCBI without token`,
+          xend = `Mean IWCBI with token`,
+          yend = token_label,
+          color = lower_when_yes
+        ),
+        linewidth = 1.35,
+        alpha = 0.9
+      ) +
+      geom_point(aes(x = `Mean IWCBI without token`), shape = 21, fill = "white", color = "#555", size = 3.8, stroke = 1) +
+      geom_point(aes(x = `Mean IWCBI with token`, color = lower_when_yes), size = 4.2) +
+      geom_text(
+        aes(x = pmax(`Mean IWCBI with token`, `Mean IWCBI without token`) + label_pad, label = delta_label),
+        hjust = 0,
+        size = 3.4,
+        color = "#222"
+      ) +
+      scale_color_manual(
+        values = c(`TRUE` = "#1b9e77", `FALSE` = "#d95f02"),
+        labels = c(`TRUE` = "Yes lower conflict", `FALSE` = "Yes higher conflict"),
+        name = NULL
+      ) +
+      coord_cartesian(xlim = c(x_min - label_pad, x_max + 5 * label_pad), clip = "off") +
+      labs(
+        title = "Change Yes/No Effect",
+        subtitle = "Open circle = token absent/no, filled circle = token present/yes; lower IWCBI is better",
+        x = "Mean IWCBI",
+        y = NULL
+      ) +
+      theme_bw(base_size = 12) +
+      theme(
+        plot.title = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5, color = "#555"),
+        legend.position = "bottom",
+        plot.margin = margin(10, 105, 10, 10),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor = element_blank()
+      )
+  }, res = 110)
+
+  output$profile_conflict_rf_importance_plot <- renderPlot({
+    tbls <- profile_conflict_tables_reactive()
+    if (is.null(tbls) || is.null(tbls$rf_importance) || nrow(tbls$rf_importance) == 0) {
+      return(
+        ggplot() +
+          annotate("text", x = 0, y = 0, label = "Random-forest-style token importance is not available", size = 5) +
+          theme_void()
+      )
+    }
+
+    rf_tbl <- tbls$rf_importance %>%
+      filter(is.finite(`RF-style importance (ΔMSE)`), is.finite(`ML predicted Δ yes-no`)) %>%
+      arrange(desc(`RF-style importance (ΔMSE)`), `Change token`) %>%
+      slice_head(n = 12) %>%
+      mutate(
+        token_label = paste0(`Change token`, "  (used ", `Trees used token`, "/", `Trees fitted`, " trees)"),
+        token_label = factor(token_label, levels = rev(token_label)),
+        predicted_lower_when_yes = `ML predicted Δ yes-no` < 0,
+        plot_label = paste0(
+          "ML yes-no=", format(round(`ML predicted Δ yes-no`, 2), trim = TRUE),
+          "; obs=", format(round(`Observed Δ yes-no`, 2), trim = TRUE)
+        )
+      )
+
+    if (nrow(rf_tbl) == 0) {
+      return(ggplot() + annotate("text", x = 0, y = 0, label = "No finite RF-style importance result available", size = 5) + theme_void())
+    }
+
+    x_max <- max(rf_tbl$`RF-style importance (ΔMSE)`, na.rm = TRUE)
+    label_pad <- if (is.finite(x_max) && x_max > 0) 0.04 * x_max else 1
+
+    ggplot(rf_tbl, aes(y = token_label, x = `RF-style importance (ΔMSE)`, fill = predicted_lower_when_yes)) +
+      geom_col(width = 0.68, alpha = 0.92) +
+      geom_text(
+        aes(x = `RF-style importance (ΔMSE)` + label_pad, label = plot_label),
+        hjust = 0,
+        size = 3.3,
+        color = "#222"
+      ) +
+      scale_fill_manual(
+        values = c(`TRUE` = "#1b9e77", `FALSE` = "#d95f02"),
+        labels = c(`TRUE` = "ML predicts yes lowers IWCBI", `FALSE` = "ML predicts yes raises IWCBI"),
+        name = NULL
+      ) +
+      coord_cartesian(xlim = c(0, x_max + 7 * label_pad), clip = "off") +
+      labs(
+        title = "Random Forest-Style Token Importance",
+        subtitle = "Bootstrap random-subspace trees using IWCBI as the response; bars are permutation ΔMSE",
+        x = "Permutation importance (increase in MSE)",
+        y = NULL
+      ) +
+      theme_bw(base_size = 12) +
+      theme(
+        plot.title = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5, color = "#555"),
+        legend.position = "bottom",
+        plot.margin = margin(10, 150, 10, 10),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor = element_blank()
+      )
+  }, res = 110)
+
+  output$profile_conflict_line_resolution_plot <- renderPlot({
+    tbls <- profile_conflict_tables_reactive()
+    if (is.null(tbls) || is.null(tbls$line_resolution) || nrow(tbls$line_resolution) == 0) {
+      return(
+        ggplot() +
+          annotate("text", x = 0, y = 0, label = "No line-level conflict resolution contrast available", size = 5) +
+          theme_void()
+      )
+    }
+
+    line_candidates <- tbls$line_resolution %>%
+      filter(is.finite(`Δ mean IWC (yes - no)`)) %>%
+      arrange(`Δ mean IWC (yes - no)`, `Change token`, Line)
+
+    resolved <- bind_rows(
+      line_candidates %>%
+        filter(`Δ mean IWC (yes - no)` < 0) %>%
+        slice_head(n = 14),
+      line_candidates %>%
+        filter(`Δ mean IWC (yes - no)` > 0) %>%
+        arrange(desc(`Δ mean IWC (yes - no)`), `Change token`, Line) %>%
+        slice_head(n = 6)
+    ) %>%
+      arrange(`Δ mean IWC (yes - no)`, `Change token`, Line) %>%
+      mutate(
+        display_line = paste0(`Change token`, " -> ", Line),
+        display_line = factor(display_line, levels = rev(unique(display_line))),
+        plot_label = paste0(
+          "yes ", format(round(`Mean IWC yes`, 2), trim = TRUE),
+          " | no ", format(round(`Mean IWC no`, 2), trim = TRUE)
+        ),
+        reduced_when_yes = `Δ mean IWC (yes - no)` < 0
+      )
+
+    if (nrow(resolved) == 0) {
+      return(ggplot() + annotate("text", x = 0, y = 0, label = "No finite line-level contrast available", size = 5) + theme_void())
+    }
+
+    x_min <- min(resolved$`Δ mean IWC (yes - no)`, 0, na.rm = TRUE)
+    x_max <- max(resolved$`Δ mean IWC (yes - no)`, 0, na.rm = TRUE)
+    label_pad <- if (is.finite(x_max - x_min) && (x_max - x_min) > 0) 0.06 * (x_max - x_min) else 1
+
+    ggplot(resolved, aes(y = display_line, x = `Δ mean IWC (yes - no)`, fill = reduced_when_yes)) +
+      geom_vline(xintercept = 0, color = "#555", linewidth = 0.45) +
+      geom_col(width = 0.68, alpha = 0.9) +
+      geom_text(
+        aes(
+          x = ifelse(`Δ mean IWC (yes - no)` < 0, `Δ mean IWC (yes - no)` - label_pad, `Δ mean IWC (yes - no)` + label_pad),
+          label = plot_label
+        ),
+        hjust = ifelse(resolved$`Δ mean IWC (yes - no)` < 0, 1, 0),
+        size = 3.1,
+        color = "#222"
+      ) +
+      scale_fill_manual(
+        values = c(`TRUE` = "#1b9e77", `FALSE` = "#d95f02"),
+        labels = c(`TRUE` = "Conflict reduced when yes", `FALSE` = "Conflict worse when yes"),
+        name = NULL
+      ) +
+      coord_cartesian(xlim = c(x_min - 5 * label_pad, x_max + 5 * label_pad), clip = "off") +
+      labs(
+        title = "Where Conflict Is Resolved",
+        subtitle = "Most negative bars show likelihood lines whose influence-weighted conflict is lower when the change token is present",
+        x = "Δ mean line IWC (yes - no)",
+        y = NULL
+      ) +
+      theme_bw(base_size = 12) +
+      theme(
+        plot.title = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5, color = "#555"),
+        legend.position = "bottom",
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.margin = margin(10, 120, 10, 10)
+      )
+  }, res = 110)
+
+  output$profile_conflict_pairwise_resolution_plot <- renderPlot({
+    tbls <- profile_conflict_tables_reactive()
+    if (is.null(tbls) || is.null(tbls$pairwise_resolution) || nrow(tbls$pairwise_resolution) == 0) {
+      return(
+        ggplot() +
+          annotate("text", x = 0, y = 0, label = "No pairwise relationship contrast available", size = 5) +
+          theme_void()
+      )
+    }
+
+    pair_candidates <- tbls$pairwise_resolution %>%
+      filter(is.finite(`Δ mean pairwise conflict (yes - no)`)) %>%
+      arrange(`Δ mean pairwise conflict (yes - no)`, `Change token`, Relationship)
+
+    relationships <- bind_rows(
+      pair_candidates %>%
+        filter(`Δ mean pairwise conflict (yes - no)` < 0) %>%
+        slice_head(n = 14),
+      pair_candidates %>%
+        filter(`Δ mean pairwise conflict (yes - no)` > 0) %>%
+        arrange(desc(`Δ mean pairwise conflict (yes - no)`), `Change token`, Relationship) %>%
+        slice_head(n = 6)
+    ) %>%
+      arrange(`Δ mean pairwise conflict (yes - no)`, `Change token`, Relationship) %>%
+      mutate(
+        display_pair = paste0(`Change token`, " -> ", Relationship),
+        display_pair = factor(display_pair, levels = rev(unique(display_pair))),
+        plot_label = paste0(
+          "yes ", format(round(`Mean pairwise conflict yes`, 2), trim = TRUE),
+          " | no ", format(round(`Mean pairwise conflict no`, 2), trim = TRUE)
+        ),
+        reduced_when_yes = `Δ mean pairwise conflict (yes - no)` < 0
+      )
+
+    if (nrow(relationships) == 0) {
+      return(ggplot() + annotate("text", x = 0, y = 0, label = "No finite pairwise contrast available", size = 5) + theme_void())
+    }
+
+    x_min <- min(relationships$`Δ mean pairwise conflict (yes - no)`, 0, na.rm = TRUE)
+    x_max <- max(relationships$`Δ mean pairwise conflict (yes - no)`, 0, na.rm = TRUE)
+    label_pad <- if (is.finite(x_max - x_min) && (x_max - x_min) > 0) 0.06 * (x_max - x_min) else 1
+
+    ggplot(relationships, aes(y = display_pair, x = `Δ mean pairwise conflict (yes - no)`, fill = reduced_when_yes)) +
+      geom_vline(xintercept = 0, color = "#555", linewidth = 0.45) +
+      geom_col(width = 0.68, alpha = 0.9) +
+      geom_text(
+        aes(
+          x = ifelse(`Δ mean pairwise conflict (yes - no)` < 0, `Δ mean pairwise conflict (yes - no)` - label_pad, `Δ mean pairwise conflict (yes - no)` + label_pad),
+          label = plot_label
+        ),
+        hjust = ifelse(relationships$`Δ mean pairwise conflict (yes - no)` < 0, 1, 0),
+        size = 3.1,
+        color = "#222"
+      ) +
+      scale_fill_manual(
+        values = c(`TRUE` = "#1b9e77", `FALSE` = "#d95f02"),
+        labels = c(`TRUE` = "Relationship reduced when yes", `FALSE` = "Relationship worse when yes"),
+        name = NULL
+      ) +
+      coord_cartesian(xlim = c(x_min - 5 * label_pad, x_max + 5 * label_pad), clip = "off") +
+      labs(
+        title = "Which Pairwise Relationships Are Resolved",
+        subtitle = "Most negative bars show line-pair conflicts that are lower when the change token is present",
+        x = "Δ mean pairwise conflict (yes - no)",
+        y = NULL
+      ) +
+      theme_bw(base_size = 12) +
+      theme(
+        plot.title = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5, color = "#555"),
+        legend.position = "bottom",
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.margin = margin(10, 130, 10, 10)
+      )
+  }, res = 110)
+
+  output$profile_conflict_change_rule_plot <- renderPlot({
+    tbls <- profile_conflict_tables_reactive()
+    if (is.null(tbls) || is.null(tbls$change_rules) || nrow(tbls$change_rules) == 0) {
+      return(
+        ggplot() +
+          annotate("text", x = 0, y = 0, label = "No rule-search recommendation available", size = 5) +
+          theme_void()
+      )
+    }
+
+    rules <- tbls$change_rules %>%
+      filter(is.finite(`Mean IWCBI`), is.finite(`Rest mean IWCBI`)) %>%
+      arrange(`Mean IWCBI`, `Δ mean IWCBI vs rest`, Terms, dplyr::desc(N)) %>%
+      slice_head(n = 10) %>%
+      mutate(
+        Rule = factor(Rule, levels = rev(unique(Rule))),
+        lower_than_rest = `Δ mean IWCBI vs rest` < 0,
+        point_label = paste0("n=", N, ", best=", `Best model`)
+      )
+
+    if (nrow(rules) == 0) {
+      return(ggplot() + annotate("text", x = 0, y = 0, label = "No finite rule-search result available", size = 5) + theme_void())
+    }
+
+    x_vals <- c(rules$`Mean IWCBI`, rules$`Rest mean IWCBI`)
+    x_max <- max(x_vals, na.rm = TRUE)
+    x_min <- min(x_vals, na.rm = TRUE)
+    label_pad <- if (is.finite(x_max - x_min) && (x_max - x_min) > 0) 0.12 * (x_max - x_min) else 1
+
+    ggplot(rules, aes(y = Rule)) +
+      geom_segment(
+        aes(x = `Rest mean IWCBI`, xend = `Mean IWCBI`, yend = Rule, color = lower_than_rest),
+        linewidth = 1.2,
+        alpha = 0.85
+      ) +
+      geom_point(aes(x = `Mean IWCBI`, size = N, color = lower_than_rest), alpha = 0.95) +
+      geom_point(aes(x = `Rest mean IWCBI`), shape = 21, fill = "white", color = "#777", size = 2.5, stroke = 0.8) +
+      geom_text(
+        aes(x = pmax(`Mean IWCBI`, `Rest mean IWCBI`) + label_pad, label = point_label),
+        hjust = 0,
+        size = 3,
+        color = "#333"
+      ) +
+      scale_color_manual(
+        values = c(`TRUE` = "#1b9e77", `FALSE` = "#d95f02"),
+        labels = c(`TRUE` = "Lower than rest", `FALSE` = "Higher than rest"),
+        name = "Rule contrast"
+      ) +
+      scale_size_continuous(range = c(2.5, 6), name = "Rows") +
+      coord_cartesian(xlim = c(x_min - label_pad, x_max + 5 * label_pad), clip = "off") +
+      labs(
+        title = "AI/ML Rule Finder",
+        subtitle = "Automatic search over token combinations; filled point = rule mean, open point = rest mean",
+        x = "Mean IWCBI",
+        y = NULL
+      ) +
+      theme_bw(base_size = 12) +
+      theme(
+        plot.title = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5, color = "#555"),
+        legend.position = "bottom",
+        plot.margin = margin(10, 130, 10, 10),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor = element_blank()
+      )
+  }, res = 110)
+
+  output$profile_conflict_change_tree_table <- renderDT({
+    tbls <- profile_conflict_tables_reactive()
+    if (is.null(tbls) || is.null(tbls$change_tree) || nrow(tbls$change_tree) == 0) return(NULL)
+
+    datatable(
+      format_hessian_display_cols(tbls$change_tree),
+      options = list(pageLength = 10, scrollX = TRUE, deferRender = TRUE),
+      rownames = FALSE
+    )
+  })
+
+  output$profile_conflict_change_effects_table <- renderDT({
+    tbls <- profile_conflict_tables_reactive()
+    if (is.null(tbls) || is.null(tbls$change_effects) || nrow(tbls$change_effects) == 0) return(NULL)
+
+    datatable(
+      format_hessian_display_cols(tbls$change_effects),
+      options = list(pageLength = 10, scrollX = TRUE, deferRender = TRUE),
+      rownames = FALSE
+    )
+  })
+
+  output$profile_conflict_detail_table <- renderDT({
+    tbls <- profile_conflict_tables_reactive()
+    if (is.null(tbls) || is.null(tbls$detail) || nrow(tbls$detail) == 0) return(NULL)
+
+    datatable(
+      format_hessian_display_cols(tbls$detail),
+      options = list(pageLength = 15, scrollX = TRUE, deferRender = TRUE),
+      rownames = FALSE
+    )
+  })
+
+  output$profile_conflict_pairwise_table <- renderDT({
+    tbls <- profile_conflict_tables_reactive()
+    if (is.null(tbls) || is.null(tbls$pairwise) || nrow(tbls$pairwise) == 0) return(NULL)
+
+    datatable(
+      format_hessian_display_cols(tbls$pairwise),
+      options = list(pageLength = 15, scrollX = TRUE, deferRender = TRUE),
       rownames = FALSE
     )
   })
@@ -10804,6 +13409,32 @@ mod_likelihood_server <- function(input, output, session, rv) {
     filename_fun = function() {
       format <- input$lik_format
       paste0("likelihood_profile_", Sys.Date(), ".", format)
+    }
+  )
+
+  register_folder_save_button(
+    plot_type = "lik_conflict_tree",
+    plot_reactive = profile_conflict_class_tree_plot_reactive,
+    input = input,
+    session = session,
+    output = output,
+    filename_fun = function() {
+      format <- input$lik_conflict_tree_format
+      if (is.null(format) || !nzchar(format)) format <- "png"
+      paste0("conflict_classification_tree_", Sys.Date(), ".", format)
+    }
+  )
+
+  register_folder_save_button(
+    plot_type = "lik_reg_tree",
+    plot_reactive = profile_conflict_reg_tree_plot_reactive,
+    input = input,
+    session = session,
+    output = output,
+    filename_fun = function() {
+      format <- input$lik_reg_tree_format
+      if (is.null(format) || !nzchar(format)) format <- "png"
+      paste0("iwcbi_continuous_regression_tree_", Sys.Date(), ".", format)
     }
   )
 }
