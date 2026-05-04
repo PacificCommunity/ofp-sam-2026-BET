@@ -8,6 +8,7 @@
 
 library(FLR4MFCL)
 source("tools/tag_sens.R")
+source("tools/input_change_metadata.R")
 
 env_or_default <- function(name, default) {
   value <- Sys.getenv(name, unset = NA_character_)
@@ -120,10 +121,23 @@ write(case$ini, file.path(target_dir, ini_file))
 write(case$frq, file.path(target_dir, frq_file))
 write(case$tag, file.path(target_dir, tag_file))
 
+change_meta <- append_input_change_metadata(
+  target_dir,
+  token = paste0("ExRG", paste(release_regions, collapse = "_")),
+  label = paste0("Excluded release region(s) ", paste(release_regions, collapse = ", ")),
+  operation = "release_region_exclusion",
+  source_dir = base_dir_abs,
+  details = list(
+    excluded_release_regions = release_regions,
+    excluded_release_groups = case$excluded_release_groups
+  )
+)
+
 info <- list(
   source_base_dir = base_dir_abs,
   release_region_source_dir = source_dir_abs,
   created_at = Sys.time(),
+  input_change_tokens = change_meta$tokens,
   case_name = case_name,
   excluded_release_regions = release_regions,
   excluded_release_groups = case$excluded_release_groups,

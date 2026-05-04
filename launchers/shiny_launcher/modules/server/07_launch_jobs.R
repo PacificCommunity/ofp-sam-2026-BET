@@ -66,6 +66,146 @@
     if (!nzchar(txt)) default else txt
   }
 
+  truthy_scalar <- function(x, default = FALSE) {
+    if (is.null(x) || length(x) == 0) return(default)
+    txt <- tolower(trimws(as.character(x[[1]])))
+    if (!nzchar(txt)) return(default)
+    txt %in% c("1", "true", "yes", "y", "on")
+  }
+
+  infer_recipe_base_from_env <- function(model_env) {
+    configured <- first_scalar_string(model_env$input_recipe_base, default = "")
+    if (nzchar(configured)) return(configured)
+    b <- basename(first_scalar_string(model_env$base_dir, default = ""))
+    if (grepl("fixVB_M", b, fixed = TRUE)) {
+      "fixVB_M"
+    } else if (grepl("fixVB", b, fixed = TRUE)) {
+      "fixVB"
+    } else if (grepl("fixM", b, fixed = TRUE)) {
+      "fixM"
+    } else {
+      "base"
+    }
+  }
+
+  input_recipe_plan <- function(model_env = NULL) {
+    override <- isTRUE(input$input_recipe_override)
+    if (!override) return(list(override = FALSE))
+
+    sens <- input$input_recipe_sensitivities
+    if (is.null(sens)) sens <- character(0)
+    sens <- unique(as.character(sens))
+
+    base_choice <- first_scalar_string(input$input_recipe_base_choice, default = "config")
+    recipe_base <- if (identical(base_choice, "config") && !is.null(model_env)) {
+      infer_recipe_base_from_env(model_env)
+    } else if (identical(base_choice, "config")) {
+      "base"
+    } else {
+      base_choice
+    }
+    if (!recipe_base %in% c("base", "fixM", "fixVB", "fixVB_M")) recipe_base <- "base"
+
+    movement_key <- if ("move_all" %in% sens) {
+      "movement_R1_R2_R1_R3_R2_R3"
+    } else if ("move_R2_R3" %in% sens) {
+      "movement_R2_R3"
+    } else {
+      ""
+    }
+    movement_pairs <- switch(
+      movement_key,
+      movement_R1_R2_R1_R3_R2_R3 = "1-2,1-3,2-3",
+      movement_R2_R3 = "2-3",
+      ""
+    )
+
+    sel_nodes <- if ("sel4" %in% sens) "4" else ""
+    index_cv_half <- if ("cvH" %in% sens) "1" else "0"
+
+    suffix_parts <- c(
+      if (!identical(recipe_base, "base")) recipe_base else character(0),
+      if (nzchar(movement_key)) movement_key else character(0),
+      if (nzchar(sel_nodes)) "sel_spline4" else character(0),
+      if (truthy_scalar(index_cv_half)) "index_cv_half" else character(0)
+    )
+    output_dir <- file.path(
+      "mfcl/inputs",
+      paste0("2023_4region", if (length(suffix_parts) > 0) paste0("_", paste(suffix_parts, collapse = "_")) else "")
+    )
+
+    tokens <- c(
+      switch(recipe_base, fixM = "fixM", fixVB = "fixVB", fixVB_M = c("fixVB", "fixM"), base = character(0)),
+      if (identical(movement_key, "movement_R2_R3")) "m23" else if (identical(movement_key, "movement_R1_R2_R1_R3_R2_R3")) "m123" else character(0),
+      if (nzchar(sel_nodes)) paste0("sel", sel_nodes) else character(0),
+      if (truthy_scalar(index_cv_half)) "cvH" else character(0)
+    )
+    tokens <- unique(tokens)
+    key <- if (length(tokens) > 0) paste(tokens, collapse = "_") else "base"
+    label <- if (length(tokens) > 0) paste(tokens, collapse = " + ") else "base"
+
+    list(
+      override = TRUE,
+      base = recipe_base,
+      output_dir = output_dir,
+      movement_pairs = movement_pairs,
+      sel_nodes = sel_nodes,
+      index_cv_half = index_cv_half,
+      key = key,
+      label = label
+    )
+  }
+
+  launch_model_name <- function(model_name, model_env = NULL) {
+    candidate <- if (!is.null(model_env)) first_scalar_string(model_env$launcher_model_name, default = "") else ""
+    if (nzchar(candidate)) candidate else model_name
+  }
+
+  apply_input_recipe_override <- function(model_name, model_env) {
+    if (is.null(model_env)) return(model_env)
+    env <- as.list(model_env, all.names = TRUE)
+    plan <- input_recipe_plan(env)
+    if (!isTRUE(plan$override)) return(env)
+
+    launch_name <- paste0(model_name, "_", plan$key)
+    env$launcher_model_name <- launch_name
+    env$base_dir <- plan$output_dir
+    env$model_dir <- file.path("model", launch_name)
+    env$build_inputs_on_missing <- "1"
+    env$input_recipe_enabled <- "1"
+    env$input_recipe_builder <- first_scalar_string(env$input_recipe_builder, default = "tools/build_4region_input_recipe.R")
+    env$input_recipe_base <- plan$base
+    env$input_recipe_output_dir <- plan$output_dir
+    env$input_recipe_movement_pairs <- plan$movement_pairs
+    env$input_recipe_sel_nodes <- plan$sel_nodes
+    env$input_recipe_index_cv_half <- plan$index_cv_half
+    env$input_recipe_release_regions <- first_scalar_string(env$input_recipe_release_regions, default = "9")
+    env$input_recipe_with_11par <- first_scalar_string(env$input_recipe_with_11par, default = "1")
+    env$launcher_input_recipe_label <- plan$label
+
+    summary_txt <- first_scalar_string(env$config_summary, default = "")
+    recipe_txt <- paste0("Launcher input recipe: ", plan$label, "; base_dir=", plan$output_dir)
+    env$config_summary <- if (nzchar(summary_txt)) paste(summary_txt, recipe_txt, sep = " | ") else recipe_txt
+    env
+  }
+
+  active_model_env <- function(model_name) {
+    apply_input_recipe_override(model_name, rv$models[[model_name]])
+  }
+
+  output$input_recipe_preview_ui <- renderUI({
+    if (!isTRUE(input$input_recipe_override)) return(NULL)
+    selected <- selected_models_from_checkboxes()
+    model_env <- if (length(selected) > 0 && !is.null(rv$models[[selected[[1]]]])) rv$models[[selected[[1]]]] else NULL
+    plan <- input_recipe_plan(model_env)
+    div(
+      class = "input-recipe-preview",
+      tags$div(strong("Recipe:"), " ", plan$label),
+      tags$div(strong("Input dir:"), " ", tags$code(plan$output_dir)),
+      tags$div(strong("Generated if missing:"), " yes")
+    )
+  })
+
   sanitize_profile_job_tag <- function(x) {
     txt <- trimws(paste(as.character(x), collapse = "_"))
     if (!nzchar(txt)) return("")
@@ -137,6 +277,7 @@
   }
 
   profile_launch_name <- function(model_name, profile_env = NULL) {
+    model_name <- launch_model_name(model_name, profile_env)
     if (is.null(profile_env)) return(model_name)
     set_name <- first_scalar_string(profile_env$profile_set_name, default = "")
     if (!nzchar(set_name)) return(model_name)
@@ -442,6 +583,7 @@
     }
 
     job_env <- model_env_list
+    launch_name <- launch_model_name(spec$model_name, job_env)
     # Profile sets are launch-time metadata, not runtime env vars.
     # Remove to avoid passing large/non-scalar values to env.
     job_env$profile_sets <- NULL
@@ -489,7 +631,7 @@
       batch_suffix <- paste0(profile_suffix, "-prof2d")
     }
 
-    batch_name <- paste0(spec$model_name, batch_suffix, "-local-", format(Sys.time(), "%H:%M:%S"), "-", Sys.getpid())
+    batch_name <- paste0(launch_name, batch_suffix, "-local-", format(Sys.time(), "%H:%M:%S"), "-", Sys.getpid())
     log_dir <- file.path(common_params$repo_root, "logs", "shiny_launcher_local")
     dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
     log_file <- file.path(log_dir, paste0("shiny_launcher_local_", gsub("[^A-Za-z0-9_\\-]", "_", batch_name), ".log"))
@@ -508,7 +650,7 @@
       c(
         paste("mode:", if (isTRUE(common_params$local_use_docker)) "docker" else "native"),
         paste("job_type:", spec$job_type),
-        paste("model_name:", spec$model_name)
+        paste("model_name:", launch_name)
       ),
       con = log_file
     )
@@ -539,7 +681,7 @@
       stop(
         paste(
           c(
-            sprintf("Local %s run failed for %s (status %s).", spec$job_type, spec$model_name, exit_status),
+            sprintf("Local %s run failed for %s (status %s).", spec$job_type, launch_name, exit_status),
             if (!is.null(cmd_error) && nzchar(cmd_error)) paste("Command error:", cmd_error),
             paste("Log file:", log_file),
             tail(as.character(output), 20)
@@ -555,14 +697,15 @@
       job_id = batch_name,
       mode = "local",
       log_file = log_file,
-      model_name = spec$model_name,
+      model_name = launch_name,
       job_type = spec$job_type,
       job_env = job_env
     )
   }
 
   launch_single_job_local <- function(model_name, model_env, job_type, seed = NULL, part = NULL, peel = NULL, scalar = NULL, log = TRUE) {
-    display_name <- if (identical(job_type, "prof") || identical(job_type, "prof_chain") || identical(job_type, "prof_2d")) profile_launch_name(model_name, model_env) else model_name
+    launch_name <- launch_model_name(model_name, model_env)
+    display_name <- if (identical(job_type, "prof") || identical(job_type, "prof_chain") || identical(job_type, "prof_2d")) profile_launch_name(launch_name, model_env) else launch_name
     if (isTRUE(log)) {
       rv$launch_log <- paste0(
         rv$launch_log,
@@ -615,7 +758,7 @@
   build_model_config_details <- function(model_names) {
     if (length(model_names) == 0) return("No selected models.")
     sections <- lapply(model_names, function(model_name) {
-      model_env <- rv$models[[model_name]]
+      model_env <- active_model_env(model_name)
       if (is.null(model_env) || !is.list(model_env)) {
         return(paste0(model_name, "\n  <model config not found>"))
       }
@@ -664,6 +807,12 @@
         "profile_set_name",
         "base_dir",
         "model_dir",
+        "launcher_input_recipe_label",
+        "input_recipe_base",
+        "input_recipe_movement_pairs",
+        "input_recipe_sel_nodes",
+        "input_recipe_index_cv_half",
+        "build_inputs_on_missing",
         "program_path",
         "mfcl_commands",
         "Reps",
@@ -710,6 +859,12 @@
       "profile_set_name",
       "base_dir",
       "model_dir",
+      "launcher_input_recipe_label",
+      "input_recipe_base",
+      "input_recipe_movement_pairs",
+      "input_recipe_sel_nodes",
+      "input_recipe_index_cv_half",
+      "build_inputs_on_missing",
       "program_path",
       "mfcl_commands",
       "Reps",
@@ -847,7 +1002,7 @@
     if (length(selected_models) == 0 || length(selected_job_types) == 0) return(total_jobs)
 
     for (model_name in selected_models) {
-      model_env <- rv$models[[model_name]]
+      model_env <- active_model_env(model_name)
       if (is.null(model_env)) next
       for (job_type in selected_job_types) {
         if (identical(job_type, "jitter")) {
@@ -893,7 +1048,7 @@
     }
 
     for (model_name in selected_models) {
-      model_env <- rv$models[[model_name]]
+      model_env <- active_model_env(model_name)
       if (is.null(model_env)) next
 
       for (job_type in selected_job_types) {
@@ -997,7 +1152,7 @@
 
     if (isTRUE(prof_chain_mode) && !isTRUE(is_local_mode) && length(selected_models) == 1 && "prof" %in% selected_job_types) {
       m <- selected_models[[1]]
-      me <- rv$models[[m]]
+      me <- active_model_env(m)
       prof_envs <- selected_profile_1d_envs(me)
       if (length(prof_envs) == 1) {
         sc <- resolve_prof_scalars_for_mode(prof_envs[[1]], prof_chain_mode = TRUE)
@@ -1091,7 +1246,7 @@
       )
     }
     for (model_name in selected_models) {
-      model_env <- rv$models[[model_name]]
+      model_env <- active_model_env(model_name)
       for (job_type in selected_job_types) {
         if (job_type == "jitter") {
           seeds <- parse_numeric_tokens(model_env$jitter_seeds)
@@ -1163,7 +1318,7 @@
     }
     
     model_env_lists <- lapply(selected_models, function(m) {
-      as.list(rv$models[[m]], all.names = TRUE)
+      as.list(active_model_env(m), all.names = TRUE)
     })
     names(model_env_lists) <- selected_models
 
@@ -1381,7 +1536,7 @@
       if (!did_parallel) {
         for (model_name in selected_models) {
           if (cancel_launch()) stop("Launch cancelled")
-          model_env <- rv$models[[model_name]]
+          model_env <- active_model_env(model_name)
           
           for (job_type in selected_job_types) {
             if (cancel_launch()) stop("Launch cancelled")
@@ -1950,13 +2105,14 @@
       stop(paste("Model env not found for", spec$model_name))
     }
     job_env <- list2env(model_env_list, parent = emptyenv())
+    launch_name <- launch_model_name(spec$model_name, as.list(job_env, all.names = TRUE))
     # Profile sets are launch-time metadata, not runtime env vars.
     # Remove to avoid passing large/non-scalar values to CondorBox.
     if (exists("profile_sets", envir = job_env, inherits = FALSE)) {
       rm(profile_sets, envir = job_env)
     }
     job_env$DOCKER_IMAGE <- common_params$docker_image
-    remote_dir_suffix <- spec$model_name
+    remote_dir_suffix <- launch_name
     batch_suffix <- ""
     profile_tag <- if (identical(spec$job_type, "prof") || identical(spec$job_type, "prof_chain") || identical(spec$job_type, "prof_2d")) {
       sanitize_profile_job_tag(first_scalar_string(job_env$profile_set_tag, default = first_scalar_string(job_env$profile_set_name, default = "")))
@@ -1968,15 +2124,15 @@
     
     if (!is.null(spec$seed)) {
       job_env$jitter_seed <- as.character(spec$seed)
-      remote_dir_suffix <- paste0(spec$model_name, "_seed", spec$seed)
+      remote_dir_suffix <- paste0(launch_name, "_seed", spec$seed)
       batch_suffix <- paste0("-jitter", spec$seed)
     } else if (!is.null(spec$part)) {
       job_env$hessian_part <- as.character(spec$part)
-      remote_dir_suffix <- paste0(spec$model_name, "_part", spec$part)
+      remote_dir_suffix <- paste0(launch_name, "_part", spec$part)
       batch_suffix <- paste0("-hess", spec$part)
     } else if (!is.null(spec$peel)) {
       job_env$retro_peel <- as.character(spec$peel)
-      remote_dir_suffix <- paste0(spec$model_name, "_peel", spec$peel)
+      remote_dir_suffix <- paste0(launch_name, "_peel", spec$peel)
       batch_suffix <- paste0("-retro", spec$peel)
     } else if (!is.null(spec$scalar)) {
       job_env$scalar <- as.character(spec$scalar)
@@ -1984,7 +2140,7 @@
         mapped_env <- apply_prof_init_mapping(as.list(job_env, all.names = TRUE), spec$scalar)
         job_env <- list2env(mapped_env, parent = emptyenv())
       }
-      remote_dir_suffix <- paste0(spec$model_name, profile_suffix, "_sc", spec$scalar)
+      remote_dir_suffix <- paste0(launch_name, profile_suffix, "_sc", spec$scalar)
       batch_suffix <- paste0(profile_batch_suffix, "-sc", spec$scalar)
     } else if (identical(spec$job_type, "prof_chain")) {
       if (!is.null(spec$chain_name) && nzchar(as.character(spec$chain_name))) {
@@ -2009,19 +2165,19 @@
       if (!is.null(spec$chain_anchor) && nzchar(as.character(spec$chain_anchor))) {
         job_env$chain_anchor <- as.character(spec$chain_anchor)
       }
-      remote_dir_suffix <- paste0(spec$model_name, profile_suffix, "_profchain_", if (!is.null(spec$chain_name)) as.character(spec$chain_name) else "chain")
+      remote_dir_suffix <- paste0(launch_name, profile_suffix, "_profchain_", if (!is.null(spec$chain_name)) as.character(spec$chain_name) else "chain")
       batch_suffix <- paste0(profile_batch_suffix, "-profchain", if (!is.null(spec$chain_name)) paste0("-", as.character(spec$chain_name)) else "")
     } else if (identical(spec$job_type, "prof_2d")) {
-      remote_dir_suffix <- paste0(spec$model_name, profile_suffix, "_prof2d")
+      remote_dir_suffix <- paste0(launch_name, profile_suffix, "_prof2d")
       batch_suffix <- paste0(profile_batch_suffix, "-prof2d")
     } else {
       # model job only
-      remote_dir_suffix <- paste0(spec$model_name, "_model")
+      remote_dir_suffix <- paste0(launch_name, "_model")
     }
     
     remote_dir <- paste0(common_params$github_repo, "/", common_params$output_dir, "/", remote_dir_suffix)
     batch_name <- paste0(
-      spec$model_name,
+      launch_name,
       batch_suffix,
       "-",
       format(Sys.time(), "%H:%M:%S"),
@@ -2031,7 +2187,7 @@
     
     work_dir <- file.path(
       tempdir(),
-      paste0("condorbox_", Sys.getpid(), "_", gsub("[^a-zA-Z0-9]", "_", spec$model_name))
+      paste0("condorbox_", Sys.getpid(), "_", gsub("[^a-zA-Z0-9]", "_", launch_name))
     )
     if (!dir.exists(work_dir)) dir.create(work_dir, recursive = TRUE)
     old_wd <- getwd()
@@ -2064,7 +2220,7 @@
       batch_name = batch_name,
       remote_dir = remote_dir,
       job_id = job_id,
-      model_name = spec$model_name,
+      model_name = launch_name,
       job_type = spec$job_type,
       job_env = as.list(job_env, all.names = TRUE)
     ))
@@ -2087,12 +2243,13 @@
     }
 
     job_env <- model_env
+    launch_name <- launch_model_name(model_name, job_env)
     # Profile sets are launch-time metadata only; Condor env vars must be scalar/text.
     if (!is.null(job_env$profile_sets)) {
       job_env$profile_sets <- NULL
     }
     job_env$DOCKER_IMAGE <- input$docker_image
-    remote_dir_suffix <- model_name
+    remote_dir_suffix <- launch_name
     batch_suffix <- ""
     profile_tag <- if (identical(job_type, "prof") || identical(job_type, "prof_chain") || identical(job_type, "prof_2d")) {
       sanitize_profile_job_tag(first_scalar_string(job_env$profile_set_tag, default = first_scalar_string(job_env$profile_set_name, default = "")))
@@ -2104,33 +2261,33 @@
     
     if (!is.null(seed)) {
       job_env$jitter_seed <- as.character(seed)
-      remote_dir_suffix <- paste0(model_name, "_seed", seed)
+      remote_dir_suffix <- paste0(launch_name, "_seed", seed)
       batch_suffix <- paste0("-jitter", seed)
     } else if (!is.null(part)) {
       job_env$hessian_part <- as.character(part)
-      remote_dir_suffix <- paste0(model_name, "_part", part)
+      remote_dir_suffix <- paste0(launch_name, "_part", part)
       batch_suffix <- paste0("-hess", part)
     } else if (!is.null(peel)) {
       job_env$retro_peel <- as.character(peel)
-      remote_dir_suffix <- paste0(model_name, "_peel", peel)
+      remote_dir_suffix <- paste0(launch_name, "_peel", peel)
       batch_suffix <- paste0("-retro", peel)
     } else if (!is.null(scalar)) {
       job_env$scalar <- as.character(scalar)
       if (identical(job_type, "prof")) {
         job_env <- apply_prof_init_mapping(job_env, scalar)
       }
-      remote_dir_suffix <- paste0(model_name, profile_suffix, "_sc", scalar)
+      remote_dir_suffix <- paste0(launch_name, profile_suffix, "_sc", scalar)
       batch_suffix <- paste0(profile_batch_suffix, "-sc", scalar)
     } else if (identical(job_type, "prof_2d")) {
-      remote_dir_suffix <- paste0(model_name, profile_suffix, "_prof2d")
+      remote_dir_suffix <- paste0(launch_name, profile_suffix, "_prof2d")
       batch_suffix <- paste0(profile_batch_suffix, "-prof2d")
     } else {
       # model job only
-      remote_dir_suffix <- paste0(model_name, "_model")
+      remote_dir_suffix <- paste0(launch_name, "_model")
     }
     
     remote_dir <- paste0(input$github_repo, "/", input$output_dir, "/", remote_dir_suffix)
-    batch_name <- paste0(model_name, batch_suffix, "-", format(Sys.time(), "%H:%M:%S"))
+    batch_name <- paste0(launch_name, batch_suffix, "-", format(Sys.time(), "%H:%M:%S"))
     
     if (isTRUE(log)) {
       rv$launch_log <- paste0(rv$launch_log, "  → ", batch_name, "\n")
@@ -2162,7 +2319,7 @@
       batch_name = batch_name,
       remote_dir = remote_dir,
       job_id = job_id,
-      model_name = model_name,
+      model_name = launch_name,
       job_type = job_type,
       job_env = as.list(job_env, all.names = TRUE)
     ))

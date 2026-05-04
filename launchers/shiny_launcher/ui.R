@@ -47,6 +47,28 @@ ui <- dashboardPage(
     .status-completed { color: #00a65a; }
     .status-failed { color: #dd4b39; }
     .progress { height: 12px; }
+    .input-recipe-panel {
+      background: #f7fbff;
+      border: 1px solid #d8e7f3;
+      border-left: 4px solid #3c8dbc;
+      border-radius: 4px;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+    }
+    .input-recipe-panel .shiny-input-container {
+      margin-bottom: 8px;
+    }
+    .input-recipe-preview {
+      background: #fff;
+      border: 1px solid #e1e8ef;
+      border-radius: 4px;
+      color: #4a4a4a;
+      font-size: 12px;
+      line-height: 1.35;
+      padding: 8px;
+      margin-top: 4px;
+      word-break: break-word;
+    }
 
     /* Model selector styling */
     .model-selector-container {

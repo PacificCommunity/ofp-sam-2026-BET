@@ -77,13 +77,58 @@ launch_tab_ui <- function() {
           box(
             title = "Job Configuration", status = "primary", solidHeader = TRUE, width = 6,
             
-            checkboxGroupInput("job_types", "Job Types:",
-                               choices = c("Model" = "model", 
-                                           "Jitter" = "jitter",
-                                           "Hessian" = "hessian",
-                                           "Retrospective" = "retro",
-                                           "Profile" = "prof"),
-                               selected = NULL),
+            fluidRow(
+              column(
+                6,
+                checkboxGroupInput("job_types", "Job Types:",
+                                   choices = c("Model" = "model", 
+                                               "Jitter" = "jitter",
+                                               "Hessian" = "hessian",
+                                               "Retrospective" = "retro",
+                                               "Profile" = "prof"),
+                                   selected = NULL)
+              ),
+              column(
+                6,
+                div(
+                  class = "input-recipe-panel",
+                  checkboxInput(
+                    "input_recipe_override",
+                    "Use sensitivity input recipe",
+                    value = FALSE
+                  ),
+                  conditionalPanel(
+                    condition = "input.input_recipe_override",
+                    tagList(
+                      selectInput(
+                        "input_recipe_base_choice",
+                        "Input base:",
+                        choices = c(
+                          "Config/model default" = "config",
+                          "Base 2023R4" = "base",
+                          "fixM" = "fixM",
+                          "fixVB" = "fixVB",
+                          "fixVB + fixM" = "fixVB_M"
+                        ),
+                        selected = "config"
+                      ),
+                      checkboxGroupInput(
+                        "input_recipe_sensitivities",
+                        "Sensitivities:",
+                        choices = c(
+                          "Selectivity spline = 4" = "sel4",
+                          "Index CV half" = "cvH",
+                          "Tag movement R2-R3" = "move_R2_R3",
+                          "Tag movement all R1/R2/R3 pairs" = "move_all"
+                        ),
+                        selected = character(0)
+                      ),
+                      uiOutput("input_recipe_preview_ui")
+                    )
+                  )
+                )
+              )
+            ),
 
             conditionalPanel(
               condition = "input.job_types && input.job_types.indexOf('prof') !== -1",

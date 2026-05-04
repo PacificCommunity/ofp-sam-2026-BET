@@ -20,6 +20,12 @@ REGION4_FIXM_INPUT_DIR ?= mfcl/inputs/2023_fixM
 REGION4_FIXM_OUTPUT_DIR ?= mfcl/inputs/2023_4region_fixM
 REGION4_FIXVB_M_MODEL_DIR ?= model/2023R4_fixVB_M
 REGION4_FIXM_MODEL_DIR ?= model/2023R4_fixM
+INPUT_CONFIG ?= configs/2023R4.R
+INPUT_RECIPE_BASE ?= base
+INPUT_RECIPE_OUTPUT_DIR ?=
+INPUT_RECIPE_MOVEMENT_PAIRS ?=
+INPUT_RECIPE_SEL_NODES ?=
+INPUT_RECIPE_INDEX_CV_HALF ?= 0
 
 build-4region:
 	Rscript tools/collapse_regions_9to4.R \
@@ -114,6 +120,23 @@ build-4region-fixM:
 
 build-4region-fixM-11par:
 	$(MAKE) build-4region-variant-11par SOURCE_DIR=$(REGION4_FIXM_INPUT_DIR) OUTPUT_DIR=$(REGION4_FIXM_OUTPUT_DIR)
+
+build-input-recipe:
+	@if [ -z "$(INPUT_RECIPE_OUTPUT_DIR)" ]; then echo "Usage: make build-input-recipe INPUT_RECIPE_OUTPUT_DIR=mfcl/inputs/... [INPUT_RECIPE_BASE=base|fixM|fixVB|fixVB_M]"; exit 1; fi
+	input_recipe_index_cv_half=$(INPUT_RECIPE_INDEX_CV_HALF) \
+	Rscript tools/build_4region_input_recipe.R \
+		--output-dir $(INPUT_RECIPE_OUTPUT_DIR) \
+		--base $(INPUT_RECIPE_BASE) \
+		--movement-pairs "$(INPUT_RECIPE_MOVEMENT_PAIRS)" \
+		--sel-nodes "$(INPUT_RECIPE_SEL_NODES)" \
+		--with-11par \
+		--overwrite
+
+build-config-inputs:
+	Rscript tools/build_config_inputs.R --config $(INPUT_CONFIG) --overwrite
+
+build-4region-all-inputs:
+	Rscript tools/build_config_inputs.R --config configs/2023R4.R --overwrite
 
 makepar-4region: build-4region
 	cd $(REGION4_OUTPUT_DIR) && $(MFCL_EXE) bet.frq bet.ini 00.par -makepar
@@ -265,7 +288,7 @@ docker-report:
 	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(stitch-hessian docker-run docker-model docker-prof docker-jitter docker-hessian docker-collate-hessian docker-stitch
 
 	
-.PHONY: build-4region build-4region-merge build-4region-11par build-4region-variant build-4region-variant-11par build-4region-fixVB build-4region-fixVB-11par build-4region-fixVB_M build-4region-fixVB_M-11par build-4region-fixM build-4region-fixM-11par makepar-4region makepar-4region-merge run-4region run-4region-merge run-4region-fixM run-4region-fixVB_M plot run model prof prof_chain prof_2d jitter jitter_smoke jitter_smoke_hessian hessian retro test TagMovementSubset SelectivitySplineNodes IndexCvHalf collate-hessian stitch-hessian stitch-hessian-all prof-init-map prof-init-map-model docker-run docker-model docker-prof docker-jitter docker-jitter-smoke docker-jitter-smoke-hessian docker-hessian docker-retro docker-collate-hessian docker-stitch-hessian docker-stitch-hessian-all docker-prof-init-map docker-plot prepaw report docker-report
+.PHONY: build-4region build-4region-merge build-4region-11par build-4region-variant build-4region-variant-11par build-4region-fixVB build-4region-fixVB-11par build-4region-fixVB_M build-4region-fixVB_M-11par build-4region-fixM build-4region-fixM-11par build-input-recipe build-config-inputs build-4region-all-inputs makepar-4region makepar-4region-merge run-4region run-4region-merge run-4region-fixM run-4region-fixVB_M plot run model prof prof_chain prof_2d jitter jitter_smoke jitter_smoke_hessian hessian retro test TagMovementSubset SelectivitySplineNodes IndexCvHalf collate-hessian stitch-hessian stitch-hessian-all prof-init-map prof-init-map-model docker-run docker-model docker-prof docker-jitter docker-jitter-smoke docker-jitter-smoke-hessian docker-hessian docker-retro docker-collate-hessian docker-stitch-hessian docker-stitch-hessian-all docker-prof-init-map docker-plot prepaw report docker-report
 
 
 

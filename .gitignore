@@ -21,3 +21,12 @@ configs/.last_settings.rds
 .chrome-shiny-plot/
 desktop/
 scripts/
+
+# Generated 4-region sensitivity inputs; rebuild on demand from launcher recipes.
+# Keep seed inputs such as 2023_4region, 2023_4region_fixM, 2023_4region_fixVB,
+# and 2023_4region_fixVB_M available unless the 9-region source recipe is present.
+mfcl/inputs/2023_4region_sel_spline*/
+mfcl/inputs/2023_4region_index_cv_half*/
+mfcl/inputs/2023_4region_movement_*/
+mfcl/inputs/2023_4region_*_sel_spline*/
+mfcl/inputs/2023_4region_*_index_cv_half*/

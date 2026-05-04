@@ -39,6 +39,42 @@ profile_sets_cover_reps <- function(profile_sets) {
   }, logical(1)))
 }
 
+infer_4region_input_recipe <- function(base_dir) {
+  base_dir_chr <- if (is.null(base_dir) || length(base_dir) == 0) "" else as.character(base_dir[[1]])
+  b <- basename(base_dir_chr)
+  is_4region <- grepl("^2023_4region", b)
+
+  recipe_base <- if (grepl("fixVB_M", b, fixed = TRUE)) {
+    "fixVB_M"
+  } else if (grepl("fixVB", b, fixed = TRUE)) {
+    "fixVB"
+  } else if (grepl("fixM", b, fixed = TRUE)) {
+    "fixM"
+  } else {
+    "base"
+  }
+
+  movement_pairs <- if (grepl("movement_R1_R2_R1_R3_R2_R3", b, fixed = TRUE)) {
+    "1-2,1-3,2-3"
+  } else if (grepl("movement_R2_R3", b, fixed = TRUE)) {
+    "2-3"
+  } else {
+    ""
+  }
+
+  sel_nodes <- if (grepl("sel_spline4", b, fixed = TRUE)) "4" else ""
+  index_cv_half <- if (grepl("index_cv_half", b, fixed = TRUE)) "1" else "0"
+
+  list(
+    input_recipe_enabled = if (is_4region) "1" else "0",
+    input_recipe_base = recipe_base,
+    input_recipe_output_dir = base_dir_chr,
+    input_recipe_movement_pairs = movement_pairs,
+    input_recipe_sel_nodes = sel_nodes,
+    input_recipe_index_cv_half = index_cv_half
+  )
+}
+
 apply_model_defaults <- function(models, defaults = list()) {
   stopifnot(is.list(models))
 
@@ -74,7 +110,18 @@ apply_model_defaults <- function(models, defaults = list()) {
       indepvar_reps = "",
       prof_extra_switch = "",
       retro_hessian = "0",
-      nsplit = "5"
+      nsplit = "5",
+      build_inputs_on_missing = "1",
+      input_recipe_enabled = "auto",
+      input_recipe_builder = "tools/build_4region_input_recipe.R",
+      input_recipe_base = "",
+      input_recipe_base_source = "",
+      input_recipe_output_dir = "",
+      input_recipe_movement_pairs = "",
+      input_recipe_sel_nodes = "",
+      input_recipe_index_cv_half = "",
+      input_recipe_release_regions = "9",
+      input_recipe_with_11par = "1"
     ),
     defaults
   )
@@ -111,6 +158,25 @@ apply_model_defaults <- function(models, defaults = list()) {
     prof_extra_switch <- if (!is.null(model$prof_extra_switch)) model$prof_extra_switch else defaults$prof_extra_switch
     retro_hessian <- if (!is.null(model$retro_hessian)) model$retro_hessian else defaults$retro_hessian
     nsplit <- if (!is.null(model$nsplit)) model$nsplit else defaults$nsplit
+    inferred_recipe <- infer_4region_input_recipe(base_dir)
+    build_inputs_on_missing <- if (!is.null(model$build_inputs_on_missing)) model$build_inputs_on_missing else defaults$build_inputs_on_missing
+    input_recipe_enabled <- if (!is.null(model$input_recipe_enabled)) model$input_recipe_enabled else defaults$input_recipe_enabled
+    input_recipe_builder <- if (!is.null(model$input_recipe_builder)) model$input_recipe_builder else defaults$input_recipe_builder
+    input_recipe_base <- if (!is.null(model$input_recipe_base)) model$input_recipe_base else defaults$input_recipe_base
+    input_recipe_base_source <- if (!is.null(model$input_recipe_base_source)) model$input_recipe_base_source else defaults$input_recipe_base_source
+    input_recipe_output_dir <- if (!is.null(model$input_recipe_output_dir)) model$input_recipe_output_dir else defaults$input_recipe_output_dir
+    input_recipe_movement_pairs <- if (!is.null(model$input_recipe_movement_pairs)) model$input_recipe_movement_pairs else defaults$input_recipe_movement_pairs
+    input_recipe_sel_nodes <- if (!is.null(model$input_recipe_sel_nodes)) model$input_recipe_sel_nodes else defaults$input_recipe_sel_nodes
+    input_recipe_index_cv_half <- if (!is.null(model$input_recipe_index_cv_half)) model$input_recipe_index_cv_half else defaults$input_recipe_index_cv_half
+    input_recipe_release_regions <- if (!is.null(model$input_recipe_release_regions)) model$input_recipe_release_regions else defaults$input_recipe_release_regions
+    input_recipe_with_11par <- if (!is.null(model$input_recipe_with_11par)) model$input_recipe_with_11par else defaults$input_recipe_with_11par
+
+    if (identical(input_recipe_enabled, "auto")) input_recipe_enabled <- inferred_recipe$input_recipe_enabled
+    if (!nzchar(as.character(input_recipe_base))) input_recipe_base <- inferred_recipe$input_recipe_base
+    if (!nzchar(as.character(input_recipe_output_dir))) input_recipe_output_dir <- inferred_recipe$input_recipe_output_dir
+    if (!nzchar(as.character(input_recipe_movement_pairs))) input_recipe_movement_pairs <- inferred_recipe$input_recipe_movement_pairs
+    if (!nzchar(as.character(input_recipe_sel_nodes))) input_recipe_sel_nodes <- inferred_recipe$input_recipe_sel_nodes
+    if (!nzchar(as.character(input_recipe_index_cv_half))) input_recipe_index_cv_half <- inferred_recipe$input_recipe_index_cv_half
 
     if (!identical(model$mfcl_commands, "./doitall.sh")) {
       model$mfcl_commands <- paste(program_path, model$mfcl_commands)
@@ -148,6 +214,17 @@ apply_model_defaults <- function(models, defaults = list()) {
     model$prof_extra_switch <- prof_extra_switch
     model$retro_hessian <- retro_hessian
     model$nsplit <- nsplit
+    model$build_inputs_on_missing <- build_inputs_on_missing
+    model$input_recipe_enabled <- input_recipe_enabled
+    model$input_recipe_builder <- input_recipe_builder
+    model$input_recipe_base <- input_recipe_base
+    model$input_recipe_base_source <- input_recipe_base_source
+    model$input_recipe_output_dir <- input_recipe_output_dir
+    model$input_recipe_movement_pairs <- input_recipe_movement_pairs
+    model$input_recipe_sel_nodes <- input_recipe_sel_nodes
+    model$input_recipe_index_cv_half <- input_recipe_index_cv_half
+    model$input_recipe_release_regions <- input_recipe_release_regions
+    model$input_recipe_with_11par <- input_recipe_with_11par
 
     if (profile_sets_all_define(profile_sets, "scalars")) {
       model$scalars <- NULL

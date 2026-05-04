@@ -7,6 +7,7 @@ source("tools/retro.R")
 source("tools/model_payload.R")
 source("tools/post_hessian.R")
 source("tools/condor_archive_cleanup.R")
+source("tools/input_recipe_runner.R")
 
 
 ## environment variables
@@ -18,6 +19,7 @@ model_dir <- Sys.getenv("model_dir", "model/base")
 ## Convert to absolute paths using getwd() (assumes script runs from project root)
 project_root <- getwd()
 base_dir_abs <- file.path(project_root, base_dir)
+base_dir_abs <- ensure_input_dir_available(base_dir, project_root)
 program_path_abs <- file.path(project_root, program_path)
 Sys.setenv("PROGRAM_PATH" = program_path_abs)
 

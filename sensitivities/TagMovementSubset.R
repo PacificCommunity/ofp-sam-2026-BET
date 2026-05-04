@@ -7,6 +7,7 @@
 # ============================================================
 
 library(FLR4MFCL)
+source("tools/input_change_metadata.R")
 
 env_or_default <- function(name, default) {
   value <- Sys.getenv(name, unset = NA_character_)
@@ -128,9 +129,20 @@ if (!all(ok)) warning("Some files failed to copy into: ", target_dir)
 write(frq, file.path(target_dir, frq_file))
 write(ini, file.path(target_dir, ini_file))
 
+movement_token <- paste0("m", paste(sort(unique(as.vector(keep_pairs))), collapse = ""))
+change_meta <- append_input_change_metadata(
+  target_dir,
+  token = movement_token,
+  label = paste0("Movement subset ", paste(pair_key(keep_pairs), collapse = ", ")),
+  operation = "movement_subset",
+  source_dir = base_dir_abs,
+  details = list(movement_pairs = keep_pairs, kept_directed_columns = keep_directed)
+)
+
 info <- list(
   source_base_dir = base_dir_abs,
   created_at = Sys.time(),
+  input_change_tokens = change_meta$tokens,
   movement_pairs = keep_pairs,
   old_undirected_pairs = old_undirected,
   old_directed_pairs = old_directed,

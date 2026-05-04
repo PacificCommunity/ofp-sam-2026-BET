@@ -4697,22 +4697,82 @@ mod_likelihood_server <- function(input, output, session, rv) {
     hessian_rank_tbl <- bind_rows(hessian_rank_rows)
     hessian_filter_active <- isTRUE(any(hessian_rank_tbl$hessian_has_info, na.rm = TRUE))
 
+    normalize_change_tokens <- function(x) {
+      if (is.null(x) || length(x) == 0) return(character(0))
+      vals <- unlist(strsplit(paste(as.character(x), collapse = ","), "[|,;[:space:]]+", perl = TRUE), use.names = FALSE)
+      vals <- trimws(vals)
+      vals <- vals[!is.na(vals) & nzchar(vals) & !vals %in% c("None", "Changed")]
+      unique(vals)
+    }
+
+    legacy_name_tokens <- function(sc) {
+      sc <- as.character(sc[[1]])
+      if (!nzchar(sc) || !grepl("_", sc, fixed = TRUE)) return(character(0))
+      normalize_change_tokens(strsplit(sub("^[^_]+_", "", sc), "_", fixed = TRUE)[[1]])
+    }
+
+    resolve_base_dir_path <- function(base_dir) {
+      if (is.null(base_dir) || length(base_dir) == 0 || is.na(base_dir[[1]]) || !nzchar(trimws(as.character(base_dir[[1]])))) {
+        return(NA_character_)
+      }
+      base_dir <- trimws(as.character(base_dir[[1]]))
+      candidates <- if (grepl("^/", base_dir)) {
+        base_dir
+      } else {
+        unique(c(
+          file.path(getwd(), base_dir),
+          file.path(normalizePath(file.path(getwd(), "../.."), winslash = "/", mustWork = FALSE), base_dir),
+          file.path(normalizePath(file.path(getwd(), ".."), winslash = "/", mustWork = FALSE), base_dir),
+          base_dir
+        ))
+      }
+      hit <- candidates[file.exists(file.path(candidates, "input_change_metadata.rds"))]
+      if (length(hit) > 0) hit[[1]] else candidates[[1]]
+    }
+
+    read_input_metadata_tokens <- function(base_dir) {
+      base_dir <- resolve_base_dir_path(base_dir)
+      if (is.na(base_dir)) return(character(0))
+      path <- file.path(base_dir, "input_change_metadata.rds")
+      if (!file.exists(path)) return(character(0))
+      meta <- tryCatch(readRDS(path), error = function(e) NULL)
+      if (!is.list(meta)) return(character(0))
+      normalize_change_tokens(meta$tokens)
+    }
+
+    scenario_change_tokens <- lapply(unique(summary_base$scenario), function(sc) {
+      info <- if (!is.null(rv$Info_list[[sc]]) && is.list(rv$Info_list[[sc]])) rv$Info_list[[sc]] else NULL
+      tokens <- normalize_change_tokens(if (!is.null(info)) info$change_tokens else NULL)
+      source <- if (length(tokens) > 0) "model_info" else NA_character_
+
+      if (length(tokens) == 0 && !is.null(info) && is.list(info$input_change_metadata)) {
+        tokens <- normalize_change_tokens(info$input_change_metadata$tokens)
+        if (length(tokens) > 0) source <- "model_info input metadata"
+      }
+      if (length(tokens) == 0 && !is.null(info)) {
+        tokens <- read_input_metadata_tokens(info$base_dir)
+        if (length(tokens) > 0) source <- "input_change_metadata.rds"
+      }
+      if (length(tokens) == 0) {
+        tokens <- legacy_name_tokens(sc)
+        source <- if (length(tokens) > 0) "legacy model-name fallback" else "none"
+      }
+
+      data.frame(
+        scenario = sc,
+        change_set_raw = if (length(tokens) > 0) paste(tokens, collapse = "|") else "None",
+        change_set_label = if (length(tokens) > 0) paste(tokens, collapse = " + ") else "None",
+        change_token_source = source,
+        stringsAsFactors = FALSE
+      )
+    }) %>%
+      bind_rows()
+
     summary_base <- summary_base %>%
       left_join(hessian_rank_tbl, by = "scenario") %>%
+      left_join(scenario_change_tokens, by = "scenario") %>%
       left_join(total_qc, by = context_cols) %>%
       mutate(
-        change_set_raw = dplyr::case_when(
-          grepl("_", scenario) ~ sub("^[^_]+_", "", scenario),
-          TRUE ~ "None"
-        ),
-        change_set_raw = dplyr::case_when(
-          is.na(change_set_raw) | !nzchar(change_set_raw) ~ "Changed",
-          TRUE ~ change_set_raw
-        ),
-        change_set_label = dplyr::case_when(
-          change_set_raw == "None" ~ "None",
-          TRUE ~ gsub("_", " + ", change_set_raw, fixed = TRUE)
-        ),
         `Hessian rank filter` = dplyr::case_when(
           !hessian_filter_active ~ "Ignored (not available)",
           !isTRUE(hessian_has_info) ~ "Ignored (not available)",
@@ -4801,7 +4861,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
     }
 
     split_change_tokens <- function(x) {
-      parts <- strsplit(as.character(x), "_", fixed = TRUE)
+      parts <- strsplit(as.character(x), "[|,;[:space:]]+", perl = TRUE)
       lapply(parts, function(part) {
         part <- part[!is.na(part) & nzchar(part) & !part %in% c("None", "Changed")]
         unique(part)
@@ -12111,7 +12171,7 @@ mod_likelihood_server <- function(input, output, session, rv) {
         tags$div("Only lines with ΔL at the total optimum ≥ 1.92 are counted as conflict lines. Excess conflict is max(ΔL - 1.92, 0).", style = "font-size: 12px; color: #333; margin-top: 4px;"),
         tags$div("Line-count comparability is handled by reporting conflict prevalence as conflict lines / total lines and by normalizing IWCBI weights to sum to one within each model.", style = "font-size: 12px; color: #333; margin-top: 4px;"),
         tags$div("Overall rank uses total-profile QC pass first, optional Hessian pass when Hessian information exists, then IWCBI only.", style = "font-size: 12px; color: #333; margin-top: 4px;"),
-        tags$div("Change diagnostics parse model-name tokens after the first underscore and split models by token presence, without using a base-reference comparison.", style = "font-size: 12px; color: #333; margin-top: 4px;"),
+        tags$div("Change diagnostics use input-change metadata tokens when available, with model-name parsing only as a backward-compatible fallback.", style = "font-size: 12px; color: #333; margin-top: 4px;"),
         tags$div("QC is binary: Good profiles pass; Bad profiles fail and are excluded from rank and trees. Passing profiles require an internal minimum, enough profile support, a closed 95% profile interval, and no material non-U-shape defect.", style = "font-size: 12px; color: #333; margin-top: 4px;"),
         tags$div("ΔL ≥ 1.92 marks a line whose own profile is outside the approximate 95% cutoff at the total optimum.", style = "font-size: 12px; color: #333; margin-top: 4px;")
       ),

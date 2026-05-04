@@ -2,6 +2,7 @@
 library(FLR4MFCL)
 library(CondorBox)
 source("tools/condor_archive_cleanup.R")
+source("tools/input_recipe_runner.R")
 
 ## environment variables
 program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_02_04_vsn2278")
@@ -12,6 +13,7 @@ model_dir <- Sys.getenv("model_dir", "model/base")
 ## Convert to absolute paths using getwd() (assumes script runs from project root)
 project_root <- getwd()
 base_dir_abs <- file.path(project_root, base_dir)
+base_dir_abs <- ensure_input_dir_available(base_dir, project_root)
 
 ## Hessian calculation settings
 ## Single part number for parallel execution via condor

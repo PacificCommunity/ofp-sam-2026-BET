@@ -16,6 +16,8 @@ library(CondorBox)
 source("tools/model_payload.R")
 source("tools/post_hessian.R")
 source("tools/condor_archive_cleanup.R")
+source("tools/input_change_metadata.R")
+source("tools/input_recipe_runner.R")
 
 ## -------------------------
 ## 1) Environment + paths
@@ -35,6 +37,7 @@ Sys.setenv("PROGRAM_PATH" = paste0("../../", program_path))
 
 project_root <- getwd()
 base_dir_abs <- file.path(project_root, base_dir)
+base_dir_abs <- ensure_input_dir_available(base_dir, project_root)
 
 if (!dir.exists(base_dir_abs)) {
   stop("Base inputs directory does not exist: ", base_dir_abs)
@@ -197,6 +200,9 @@ hessian_summary <- mp_run_post_hessian(
   requested = model_hessian
 )
 
+input_change_metadata <- read_input_change_metadata(base_dir_abs)
+input_change_tokens <- normalize_input_change_tokens(input_change_metadata$tokens)
+
 ## -------------------------
 ## 8) Save model run info
 ## -------------------------
@@ -210,6 +216,9 @@ info_list <- list(
   par_out          = post_hessian_input_par,
   base_dir         = base_dir,
   model_dir        = model_dir,
+  input_change_metadata = input_change_metadata,
+  change_tokens    = input_change_tokens,
+  change_token_source = if (length(input_change_tokens) > 0) "input_change_metadata.rds" else NA_character_,
   n_mixing_periods = n_mixing_periods,
   min_year         = min_year,
   hessian          = hessian_summary

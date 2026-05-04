@@ -19,6 +19,29 @@
     trimws(x)
   }
 
+  launch_preflight_truthy <- function(x, default = FALSE) {
+    txt <- launch_preflight_first(x, default = if (isTRUE(default)) "1" else "")
+    if (!nzchar(txt)) return(default)
+    tolower(txt) %in% c("1", "true", "yes", "y", "on")
+  }
+
+  launch_preflight_recipe_ready <- function(model_env) {
+    launch_preflight_truthy(model_env$build_inputs_on_missing) &&
+      launch_preflight_truthy(model_env$input_recipe_enabled)
+  }
+
+  launch_preflight_recipe_detail <- function(model_env) {
+    paste(
+      c(
+        paste0("recipe base=", launch_preflight_first(model_env$input_recipe_base, "base")),
+        paste0("movement=", launch_preflight_first(model_env$input_recipe_movement_pairs, "<none>")),
+        paste0("sel_nodes=", launch_preflight_first(model_env$input_recipe_sel_nodes, "<none>")),
+        paste0("index_cv_half=", launch_preflight_first(model_env$input_recipe_index_cv_half, "0"))
+      ),
+      collapse = "; "
+    )
+  }
+
   launch_preflight_files <- function(dir_path, pattern) {
     if (!is.character(dir_path) || length(dir_path) != 1 || !nzchar(dir_path) || !dir.exists(dir_path)) return(character(0))
     list.files(dir_path, pattern = pattern, full.names = TRUE)
@@ -112,6 +135,18 @@
       ),
       collapse = "; "
     )
+
+    if (!base_exists && launch_preflight_recipe_ready(model_env)) {
+      found_recipe <- paste(found_common, launch_preflight_recipe_detail(model_env), sep = "; ")
+      return(launch_preflight_row(
+        model_name,
+        job_type,
+        "warning",
+        "input recipe",
+        found_recipe,
+        "Input base_dir is missing locally, but the runner is configured to build it from the input recipe at job start."
+      ))
+    }
 
     if (!base_exists) {
       return(launch_preflight_row(model_name, job_type, "blocked", "base_dir", found_common, "Input base_dir does not exist."))
@@ -229,7 +264,7 @@
 
     rows <- list()
     for (m in selected) {
-      model_env <- rv$models[[m]]
+      model_env <- if (exists("active_model_env", mode = "function")) active_model_env(m) else rv$models[[m]]
       if (is.null(model_env)) next
       for (jt in job_types) {
         rows[[length(rows) + 1L]] <- launch_preflight_check_one(m, model_env, jt)
