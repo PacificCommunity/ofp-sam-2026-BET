@@ -3,6 +3,7 @@
 library(FLR4MFCL)
 source("tools/jitter.R")
 source("tools/input_recipe_runner.R")
+source("tools/fitted_model_source.R")
 
 parse_numeric_tokens <- function(x) {
   txt <- paste(as.character(x), collapse = " ")
@@ -107,6 +108,12 @@ if (!file.exists(run_prof_script)) {
 }
 base_dir_abs <- file.path(project_root, base_dir)
 base_dir_abs <- ensure_input_dir_available(base_dir, project_root)
+base_dir_abs <- ensure_fitted_model_source(
+  base_dir_abs = base_dir_abs,
+  base_dir = base_dir,
+  model_dir = model_dir,
+  project_root = project_root
+)
 
 resolve_indepvar_path <- function(model_dir, base_dir_abs) {
   candidates <- c(

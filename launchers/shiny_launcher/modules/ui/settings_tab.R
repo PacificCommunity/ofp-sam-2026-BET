@@ -3,21 +3,21 @@ settings_tab_ui <- function() {
         tabName = "settings",
         fluidRow(
           box(
-            title = "Load Pre-specified Models from R Script", status = "primary", solidHeader = TRUE, width = 6,
+            title = "Load Common Launch Settings from R Script", status = "primary", solidHeader = TRUE, width = 6,
             
-            p(strong("Load base model configurations"), 
+            p(strong("Load shared launcher settings"), 
               "from an R script (typically", code("set_model.R"), 
-              ") that contains a", code("models"), "list object."),
+              ") that contains a", code("launch_defaults"), "list object."),
             
             fileInput("config_file_upload", "Upload R script:",
                       accept = c(".R", ".r")),
             
             p("Or specify path:"),
             textInput("config_file_path", "R Script Path:", 
-                      value = "configs/set_model.R",
-                      placeholder = "Path to your set_model.R file"),
+                      value = "configs/2023R4_launch_settings.R",
+                      placeholder = "Path to your launch settings file"),
             
-            actionButton("reload_config", "Load Models from Script", 
+            actionButton("reload_config", "Load Settings from Script", 
                          icon = icon("sync"), class = "btn-info btn-block"),
             
             shiny::hr(),
@@ -28,8 +28,8 @@ settings_tab_ui <- function() {
           box(
             title = "Load Previous Run Configuration", status = "info", solidHeader = TRUE, width = 6,
             
-            p(strong("Browse saved model run history."), 
-              "These are configurations you saved after modifying models for specific analyses."),
+            p(strong("Browse saved run history."), 
+              "These are configurations saved from previous launcher sessions."),
             
             actionButton("refresh_saved_configs", "Refresh List", 
                          icon = icon("sync"), class = "btn-sm btn-default",
@@ -41,7 +41,7 @@ settings_tab_ui <- function() {
         
         fluidRow(
           box(
-            title = "Currently Loaded Models", status = "info", solidHeader = TRUE, width = 12,
+            title = "Currently Loaded Launch Settings", status = "info", solidHeader = TRUE, width = 12,
             verbatimTextOutput("models_summary")
           )
         )

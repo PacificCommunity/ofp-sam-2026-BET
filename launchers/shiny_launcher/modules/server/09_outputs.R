@@ -4,19 +4,25 @@
   output$launch_log <- renderText({ rv$launch_log })
   
   output$models_summary <- renderText({
-    if (length(rv$models) == 0) return("No models loaded.")
-    
-    summary_lines <- lapply(names(rv$models), function(nm) {
-      m <- rv$models[[nm]]
-      desc_line <- if (!is.null(m$description) && m$description != "") {
-        paste0("  Description: ", m$description, "\n")
-      } else {
-        ""
-      }
-      paste0("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n", "Model: ", nm, "\n", 
-             desc_line, "  Program: ", m$program_path, "\n")
-    })
-    paste(summary_lines, collapse = "\n")
+    if (length(rv$models) == 0 || is.null(launch_defaults_env())) return("No launch settings loaded.")
+
+    m <- launch_defaults_env()
+    summary_line <- if (!is.null(m$config_summary) && nzchar(as.character(m$config_summary))) {
+      paste0("Summary: ", m$config_summary, "\n")
+    } else {
+      ""
+    }
+    profile_count <- if (!is.null(m$profile_sets) && is.list(m$profile_sets)) length(m$profile_sets) else 0L
+    paste0(
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
+      "Common launch settings\n",
+      summary_line,
+      "Config: ", rv$base_config_name, "\n",
+      "Program: ", m$program_path, "\n",
+      "MFCL command: ", m$mfcl_commands, "\n",
+      "Profile sets: ", profile_count, "\n",
+      "Launch units: scanned from mfcl/inputs\n"
+    )
   })
 
   output$launcher_job_log_status <- renderText({

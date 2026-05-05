@@ -8,6 +8,7 @@ source("tools/model_payload.R")
 source("tools/post_hessian.R")
 source("tools/condor_archive_cleanup.R")
 source("tools/input_recipe_runner.R")
+source("tools/fitted_model_source.R")
 
 
 ## environment variables
@@ -20,6 +21,12 @@ model_dir <- Sys.getenv("model_dir", "model/base")
 project_root <- getwd()
 base_dir_abs <- file.path(project_root, base_dir)
 base_dir_abs <- ensure_input_dir_available(base_dir, project_root)
+base_dir_abs <- ensure_fitted_model_source(
+  base_dir_abs = base_dir_abs,
+  base_dir = base_dir,
+  model_dir = model_dir,
+  project_root = project_root
+)
 program_path_abs <- file.path(project_root, program_path)
 Sys.setenv("PROGRAM_PATH" = program_path_abs)
 

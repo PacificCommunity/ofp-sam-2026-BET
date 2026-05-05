@@ -19,6 +19,7 @@ configs/.last_settings.rds
 *.DS_Store
 .chrome-shiny-launcher/
 .chrome-shiny-plot/
+.fitted_sources/
 desktop/
 scripts/
 

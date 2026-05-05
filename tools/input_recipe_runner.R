@@ -3,6 +3,15 @@ as_input_recipe_flag <- function(x, default = FALSE) {
   tolower(trimws(as.character(x[[1]]))) %in% c("1", "true", "yes", "y", "on")
 }
 
+first_nonempty_input_recipe_value <- function(...) {
+  for (x in list(...)) {
+    if (!is.null(x) && length(x) > 0 && nzchar(trimws(as.character(x[[1]])))) {
+      return(trimws(as.character(x[[1]])))
+    }
+  }
+  ""
+}
+
 ensure_input_dir_available <- function(base_dir, project_root = getwd()) {
   base_dir_abs <- if (grepl("^/", base_dir)) base_dir else file.path(project_root, base_dir)
   if (dir.exists(base_dir_abs)) return(base_dir_abs)
@@ -16,7 +25,7 @@ ensure_input_dir_available <- function(base_dir, project_root = getwd()) {
     return(base_dir_abs)
   }
 
-  builder <- Sys.getenv("input_recipe_builder", "tools/build_4region_input_recipe.R")
+  builder <- Sys.getenv("input_recipe_builder", "tools/input_sensitivities/build_input_recipe.R")
   if (!file.exists(file.path(project_root, builder))) {
     stop("Input recipe builder not found: ", file.path(project_root, builder))
   }
@@ -25,7 +34,6 @@ ensure_input_dir_available <- function(base_dir, project_root = getwd()) {
     builder,
     "--output-dir", base_dir,
     "--base", Sys.getenv("input_recipe_base", "base"),
-    "--release-regions", Sys.getenv("input_recipe_release_regions", "9"),
     "--overwrite"
   )
 
@@ -34,20 +42,19 @@ ensure_input_dir_available <- function(base_dir, project_root = getwd()) {
   }
   args <- c(
     args,
-    add_arg("--base-source", Sys.getenv("input_recipe_base_source", "")),
+    add_arg("--base-input-dir", first_nonempty_input_recipe_value(
+      Sys.getenv("input_recipe_base_input_dir", ""),
+      Sys.getenv("input_recipe_base_source", "")
+    )),
+    add_arg("--base-tokens", Sys.getenv("input_recipe_base_tokens", "")),
     add_arg("--movement-pairs", Sys.getenv("input_recipe_movement_pairs", "")),
-    add_arg("--sel-nodes", Sys.getenv("input_recipe_sel_nodes", "")),
-    add_arg("--program-path", Sys.getenv("program_path", Sys.getenv("MFCL_EXE", "")))
+    add_arg("--sel-nodes", Sys.getenv("input_recipe_sel_nodes", ""))
   )
   if (as_input_recipe_flag(Sys.getenv("input_recipe_index_cv_half", "0"))) {
     args <- c(args, "--index-cv-half")
   }
-  if (as_input_recipe_flag(Sys.getenv("input_recipe_with_11par", "1"), default = TRUE)) {
-    args <- c(args, "--with-11par")
-  }
-
-  cat("Base input directory is missing; building from recipe:\n")
-  cat("  base_dir:", base_dir, "\n")
+  cat("Sensitivity input directory is missing; building from recipe:\n")
+  cat("  sensitivity output:", base_dir, "\n")
   cat("  command: Rscript", paste(args, collapse = " "), "\n")
   status <- system2("Rscript", args)
   if (!identical(status, 0L)) {

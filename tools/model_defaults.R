@@ -17,6 +17,15 @@ profile_sets_all_define <- function(profile_sets, field) {
   }, logical(1)))
 }
 
+first_nonempty_model_value <- function(...) {
+  for (x in list(...)) {
+    if (!is.null(x) && length(x) > 0 && nzchar(trimws(as.character(x[[1]])))) {
+      return(trimws(as.character(x[[1]])))
+    }
+  }
+  ""
+}
+
 profile_sets_cover_reps <- function(profile_sets) {
   if (is.null(profile_sets) || length(profile_sets) == 0) return(FALSE)
 
@@ -39,35 +48,68 @@ profile_sets_cover_reps <- function(profile_sets) {
   }, logical(1)))
 }
 
-infer_4region_input_recipe <- function(base_dir) {
-  base_dir_chr <- if (is.null(base_dir) || length(base_dir) == 0) "" else as.character(base_dir[[1]])
-  b <- basename(base_dir_chr)
-  is_4region <- grepl("^2023_4region", b)
+infer_movement_pairs_from_name <- function(name) {
+  hit <- regmatches(name, regexpr("movement_R[0-9]+_R[0-9]+(_R[0-9]+_R[0-9]+)*", name))
+  if (length(hit) == 0 || is.na(hit) || !nzchar(hit)) return("")
+  nums <- suppressWarnings(as.integer(regmatches(hit, gregexpr("[0-9]+", hit))[[1]]))
+  if (length(nums) < 2 || length(nums) %% 2 != 0) return("")
+  pairs <- paste(nums[seq(1, length(nums), by = 2)], nums[seq(2, length(nums), by = 2)], sep = "-")
+  paste(pairs, collapse = ",")
+}
 
-  recipe_base <- if (grepl("fixVB_M", b, fixed = TRUE)) {
-    "fixVB_M"
-  } else if (grepl("fixVB", b, fixed = TRUE)) {
+infer_sel_nodes_from_name <- function(name) {
+  hit <- regmatches(name, regexpr("sel_spline[0-9]+", name))
+  if (length(hit) == 0 || is.na(hit) || !nzchar(hit)) return("")
+  sub("^sel_spline", "", hit)
+}
+
+strip_recipe_suffixes_from_name <- function(name, movement_pairs, sel_nodes, index_cv_half) {
+  if (identical(index_cv_half, "1")) name <- sub("_index_cv_half$", "", name)
+  if (nzchar(sel_nodes)) name <- sub(paste0("_sel_spline", sel_nodes, "$"), "", name)
+  if (nzchar(movement_pairs)) {
+    movement_suffix <- paste0(
+      "movement_",
+      paste(
+        vapply(strsplit(movement_pairs, ",")[[1]], function(pair) {
+          vals <- trimws(strsplit(pair, "-", fixed = TRUE)[[1]])
+          paste0("R", vals[[1]], "_R", vals[[2]])
+        }, character(1)),
+        collapse = "_"
+      )
+    )
+    name <- sub(paste0("_", movement_suffix, "$"), "", name)
+  }
+  name
+}
+
+infer_base_tokens_from_name <- function(name) {
+  if (grepl("fixVB_M", name, fixed = TRUE)) {
+    c("fixVB", "fixM")
+  } else if (grepl("fixVB", name, fixed = TRUE)) {
     "fixVB"
-  } else if (grepl("fixM", b, fixed = TRUE)) {
+  } else if (grepl("fixM", name, fixed = TRUE)) {
     "fixM"
   } else {
-    "base"
+    character(0)
   }
+}
 
-  movement_pairs <- if (grepl("movement_R1_R2_R1_R3_R2_R3", b, fixed = TRUE)) {
-    "1-2,1-3,2-3"
-  } else if (grepl("movement_R2_R3", b, fixed = TRUE)) {
-    "2-3"
-  } else {
-    ""
-  }
-
-  sel_nodes <- if (grepl("sel_spline4", b, fixed = TRUE)) "4" else ""
+infer_input_recipe <- function(base_dir) {
+  base_dir_chr <- if (is.null(base_dir) || length(base_dir) == 0) "" else as.character(base_dir[[1]])
+  b <- basename(base_dir_chr)
+  movement_pairs <- infer_movement_pairs_from_name(b)
+  sel_nodes <- infer_sel_nodes_from_name(b)
   index_cv_half <- if (grepl("index_cv_half", b, fixed = TRUE)) "1" else "0"
+  source_name <- strip_recipe_suffixes_from_name(b, movement_pairs, sel_nodes, index_cv_half)
+  source_dir <- file.path(dirname(base_dir_chr), source_name)
+  base_tokens <- infer_base_tokens_from_name(source_name)
 
   list(
-    input_recipe_enabled = if (is_4region) "1" else "0",
-    input_recipe_base = recipe_base,
+    input_recipe_enabled = if (nzchar(movement_pairs) || nzchar(sel_nodes) || identical(index_cv_half, "1")) "1" else "0",
+    input_recipe_base = if (length(base_tokens) > 0) paste(base_tokens, collapse = ",") else "base",
+    input_recipe_base_input_dir = source_dir,
+    input_recipe_base_source = source_dir,
+    input_recipe_base_tokens = paste(base_tokens, collapse = ","),
     input_recipe_output_dir = base_dir_chr,
     input_recipe_movement_pairs = movement_pairs,
     input_recipe_sel_nodes = sel_nodes,
@@ -113,15 +155,15 @@ apply_model_defaults <- function(models, defaults = list()) {
       nsplit = "5",
       build_inputs_on_missing = "1",
       input_recipe_enabled = "auto",
-      input_recipe_builder = "tools/build_4region_input_recipe.R",
+      input_recipe_builder = "tools/input_sensitivities/build_input_recipe.R",
       input_recipe_base = "",
+      input_recipe_base_input_dir = "",
       input_recipe_base_source = "",
+      input_recipe_base_tokens = "",
       input_recipe_output_dir = "",
       input_recipe_movement_pairs = "",
       input_recipe_sel_nodes = "",
-      input_recipe_index_cv_half = "",
-      input_recipe_release_regions = "9",
-      input_recipe_with_11par = "1"
+      input_recipe_index_cv_half = ""
     ),
     defaults
   )
@@ -158,21 +200,27 @@ apply_model_defaults <- function(models, defaults = list()) {
     prof_extra_switch <- if (!is.null(model$prof_extra_switch)) model$prof_extra_switch else defaults$prof_extra_switch
     retro_hessian <- if (!is.null(model$retro_hessian)) model$retro_hessian else defaults$retro_hessian
     nsplit <- if (!is.null(model$nsplit)) model$nsplit else defaults$nsplit
-    inferred_recipe <- infer_4region_input_recipe(base_dir)
+    inferred_recipe <- infer_input_recipe(base_dir)
     build_inputs_on_missing <- if (!is.null(model$build_inputs_on_missing)) model$build_inputs_on_missing else defaults$build_inputs_on_missing
     input_recipe_enabled <- if (!is.null(model$input_recipe_enabled)) model$input_recipe_enabled else defaults$input_recipe_enabled
     input_recipe_builder <- if (!is.null(model$input_recipe_builder)) model$input_recipe_builder else defaults$input_recipe_builder
     input_recipe_base <- if (!is.null(model$input_recipe_base)) model$input_recipe_base else defaults$input_recipe_base
+    input_recipe_base_input_dir <- if (!is.null(model$input_recipe_base_input_dir)) model$input_recipe_base_input_dir else defaults$input_recipe_base_input_dir
     input_recipe_base_source <- if (!is.null(model$input_recipe_base_source)) model$input_recipe_base_source else defaults$input_recipe_base_source
+    input_recipe_base_tokens <- if (!is.null(model$input_recipe_base_tokens)) model$input_recipe_base_tokens else defaults$input_recipe_base_tokens
     input_recipe_output_dir <- if (!is.null(model$input_recipe_output_dir)) model$input_recipe_output_dir else defaults$input_recipe_output_dir
     input_recipe_movement_pairs <- if (!is.null(model$input_recipe_movement_pairs)) model$input_recipe_movement_pairs else defaults$input_recipe_movement_pairs
     input_recipe_sel_nodes <- if (!is.null(model$input_recipe_sel_nodes)) model$input_recipe_sel_nodes else defaults$input_recipe_sel_nodes
     input_recipe_index_cv_half <- if (!is.null(model$input_recipe_index_cv_half)) model$input_recipe_index_cv_half else defaults$input_recipe_index_cv_half
-    input_recipe_release_regions <- if (!is.null(model$input_recipe_release_regions)) model$input_recipe_release_regions else defaults$input_recipe_release_regions
-    input_recipe_with_11par <- if (!is.null(model$input_recipe_with_11par)) model$input_recipe_with_11par else defaults$input_recipe_with_11par
 
     if (identical(input_recipe_enabled, "auto")) input_recipe_enabled <- inferred_recipe$input_recipe_enabled
     if (!nzchar(as.character(input_recipe_base))) input_recipe_base <- inferred_recipe$input_recipe_base
+    if (!nzchar(as.character(input_recipe_base_input_dir))) input_recipe_base_input_dir <- first_nonempty_model_value(
+      input_recipe_base_source,
+      inferred_recipe$input_recipe_base_input_dir
+    )
+    if (!nzchar(as.character(input_recipe_base_source))) input_recipe_base_source <- inferred_recipe$input_recipe_base_source
+    if (!nzchar(as.character(input_recipe_base_tokens))) input_recipe_base_tokens <- inferred_recipe$input_recipe_base_tokens
     if (!nzchar(as.character(input_recipe_output_dir))) input_recipe_output_dir <- inferred_recipe$input_recipe_output_dir
     if (!nzchar(as.character(input_recipe_movement_pairs))) input_recipe_movement_pairs <- inferred_recipe$input_recipe_movement_pairs
     if (!nzchar(as.character(input_recipe_sel_nodes))) input_recipe_sel_nodes <- inferred_recipe$input_recipe_sel_nodes
@@ -218,13 +266,13 @@ apply_model_defaults <- function(models, defaults = list()) {
     model$input_recipe_enabled <- input_recipe_enabled
     model$input_recipe_builder <- input_recipe_builder
     model$input_recipe_base <- input_recipe_base
+    model$input_recipe_base_input_dir <- input_recipe_base_input_dir
     model$input_recipe_base_source <- input_recipe_base_source
+    model$input_recipe_base_tokens <- input_recipe_base_tokens
     model$input_recipe_output_dir <- input_recipe_output_dir
     model$input_recipe_movement_pairs <- input_recipe_movement_pairs
     model$input_recipe_sel_nodes <- input_recipe_sel_nodes
     model$input_recipe_index_cv_half <- input_recipe_index_cv_half
-    model$input_recipe_release_regions <- input_recipe_release_regions
-    model$input_recipe_with_11par <- input_recipe_with_11par
 
     if (profile_sets_all_define(profile_sets, "scalars")) {
       model$scalars <- NULL

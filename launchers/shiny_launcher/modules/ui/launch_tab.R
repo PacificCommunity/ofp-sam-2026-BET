@@ -52,7 +52,7 @@ launch_tab_ui <- function() {
     # ---- Config File Loader (inline) ----
     fluidRow(
           box(
-            title = "Load Model Configuration", status = "info", solidHeader = TRUE, width = 12,
+            title = "Load Job/Profile Configuration", status = "info", solidHeader = TRUE, width = 12,
             collapsible = TRUE, collapsed = FALSE,
             fluidRow(
               column(6,
@@ -92,38 +92,85 @@ launch_tab_ui <- function() {
                 6,
                 div(
                   class = "input-recipe-panel",
+                  radioButtons(
+                    "input_launch_mode",
+                    "Input mode:",
+                    choices = c(
+                      "Run existing input(s)" = "existing",
+                      "Build sensitivity input(s) from base" = "sensitivity"
+                    ),
+                    selected = "existing"
+                  ),
+                  conditionalPanel(
+                    condition = "input.input_launch_mode == 'existing'",
+                    selectizeInput(
+                      "existing_input_choices",
+                      "Existing inputs:",
+                      choices = NULL,
+                      selected = NULL,
+                      multiple = TRUE,
+                      options = list(
+                        placeholder = "Select existing input folder(s)",
+                        plugins = list("remove_button"),
+                        create = FALSE
+                      )
+                    )
+                  ),
+                  conditionalPanel(
+                    condition = "input.input_launch_mode == 'sensitivity'",
+                    tagList(
+                      selectizeInput(
+                        "input_recipe_base_input_choice",
+                        "Base inputs:",
+                        choices = NULL,
+                        selected = NULL,
+                        multiple = TRUE,
+                        options = list(
+                          placeholder = "Select base input folder(s)",
+                          plugins = list("remove_button"),
+                          create = FALSE
+                        )
+                      ),
+                      selectizeInput(
+                        "input_recipe_sensitivities",
+                        "Sensitivities:",
+                        choices = input_sensitivity_choices(),
+                        selected = character(0),
+                        multiple = TRUE,
+                        options = list(
+                          placeholder = "Select sensitivities to apply",
+                          plugins = list("remove_button"),
+                          create = FALSE
+                        )
+                      ),
+                      radioButtons(
+                        "input_recipe_expansion",
+                        "Expansion:",
+                        choices = c(
+                          "One-off" = "oneoff",
+                          "Factorial" = "factorial"
+                        ),
+                        selected = "oneoff",
+                        inline = TRUE
+                      ),
+                      checkboxInput(
+                        "input_recipe_include_base",
+                        "Include selected base input(s) in expanded launch set",
+                        value = TRUE
+                      ),
+                      uiOutput("input_recipe_preview_ui")
+                    )
+                  ),
+                  tags$hr(style = "margin: 10px 0;"),
                   checkboxInput(
-                    "input_recipe_override",
-                    "Use sensitivity input recipe",
+                    "fitted_model_source_enabled",
+                    "Use existing fitted output as source",
                     value = FALSE
                   ),
                   conditionalPanel(
-                    condition = "input.input_recipe_override",
+                    condition = "input.fitted_model_source_enabled",
                     tagList(
-                      selectInput(
-                        "input_recipe_base_choice",
-                        "Input base:",
-                        choices = c(
-                          "Config/model default" = "config",
-                          "Base 2023R4" = "base",
-                          "fixM" = "fixM",
-                          "fixVB" = "fixVB",
-                          "fixVB + fixM" = "fixVB_M"
-                        ),
-                        selected = "config"
-                      ),
-                      checkboxGroupInput(
-                        "input_recipe_sensitivities",
-                        "Sensitivities:",
-                        choices = c(
-                          "Selectivity spline = 4" = "sel4",
-                          "Index CV half" = "cvH",
-                          "Tag movement R2-R3" = "move_R2_R3",
-                          "Tag movement all R1/R2/R3 pairs" = "move_all"
-                        ),
-                        selected = character(0)
-                      ),
-                      uiOutput("input_recipe_preview_ui")
+                      uiOutput("fitted_model_source_preview_ui")
                     )
                   )
                 )
@@ -196,29 +243,6 @@ launch_tab_ui <- function() {
             ),
             
             shiny::hr(),
-            
-            h4("Model Selection"),
-            
-            div(class = "search-box",
-                textInput("model_search", NULL,
-                          placeholder = "🔍 Search models...",
-                          width = "100%")
-            ),
-            
-            fluidRow(
-              column(6,
-                     actionButton("select_all_models", "Select All", 
-                                  class = "btn-sm btn-success btn-block",
-                                  icon = icon("check-square"))
-              ),
-              column(6,
-                     actionButton("deselect_all_models", "Deselect All", 
-                                  class = "btn-sm btn-warning btn-block",
-                                  icon = icon("square"))
-              )
-            ),
-            
-            br(),
             
             uiOutput("model_selection_ui"),
 

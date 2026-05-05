@@ -22,6 +22,9 @@ REGION4_FIXVB_M_MODEL_DIR ?= model/2023R4_fixVB_M
 REGION4_FIXM_MODEL_DIR ?= model/2023R4_fixM
 INPUT_CONFIG ?= configs/2023R4.R
 INPUT_RECIPE_BASE ?= base
+INPUT_RECIPE_BASE_INPUT_DIR ?=
+INPUT_RECIPE_BASE_SOURCE ?=
+INPUT_RECIPE_BASE_TOKENS ?=
 INPUT_RECIPE_OUTPUT_DIR ?=
 INPUT_RECIPE_MOVEMENT_PAIRS ?=
 INPUT_RECIPE_SEL_NODES ?=
@@ -39,7 +42,7 @@ build-4region:
 	release_region_source_dir=$(REGION4_INPUT_DIR) \
 	release_regions=$(REGION4_RELEASE_REGIONS_EXCLUDED) \
 	out_dir=$$tmpdir \
-	Rscript tools/apply_release_region_exclusion.R; \
+	Rscript tools/input_sensitivities/steps/release_region_exclusion.R; \
 	rm -rf $(REGION4_OUTPUT_DIR); \
 	mkdir -p $(REGION4_OUTPUT_DIR); \
 	cp -a $$tmpdir/. $(REGION4_OUTPUT_DIR)/; \
@@ -57,7 +60,7 @@ build-4region-merge:
 	release_region_source_dir=$(REGION4_INPUT_DIR) \
 	release_regions=$(REGION4_RELEASE_REGIONS_EXCLUDED) \
 	out_dir=$$tmpdir \
-	Rscript tools/apply_release_region_exclusion.R; \
+	Rscript tools/input_sensitivities/steps/release_region_exclusion.R; \
 	rm -rf $(REGION4_MERGE_OUTPUT_DIR); \
 	mkdir -p $(REGION4_MERGE_OUTPUT_DIR); \
 	cp -a $$tmpdir/. $(REGION4_MERGE_OUTPUT_DIR)/; \
@@ -87,7 +90,7 @@ build-4region-variant: build-4region-11par
 	release_region_source_dir=$(SOURCE_DIR) \
 	release_regions=$(REGION4_RELEASE_REGIONS_EXCLUDED) \
 	out_dir=$$filtered_tmpdir \
-	Rscript tools/apply_release_region_exclusion.R; \
+	Rscript tools/input_sensitivities/steps/release_region_exclusion.R; \
 	cp -a $$filtered_tmpdir/. $(OUTPUT_DIR)/; \
 	rm -rf $$tmpdir $$filtered_tmpdir
 	@for extra in program_exclusion_info.rds release_group_exclusion_info.rds; do \
@@ -122,21 +125,22 @@ build-4region-fixM-11par:
 	$(MAKE) build-4region-variant-11par SOURCE_DIR=$(REGION4_FIXM_INPUT_DIR) OUTPUT_DIR=$(REGION4_FIXM_OUTPUT_DIR)
 
 build-input-recipe:
-	@if [ -z "$(INPUT_RECIPE_OUTPUT_DIR)" ]; then echo "Usage: make build-input-recipe INPUT_RECIPE_OUTPUT_DIR=mfcl/inputs/... [INPUT_RECIPE_BASE=base|fixM|fixVB|fixVB_M]"; exit 1; fi
+	@if [ -z "$(INPUT_RECIPE_OUTPUT_DIR)" ]; then echo "Usage: make build-input-recipe INPUT_RECIPE_OUTPUT_DIR=mfcl/inputs/... INPUT_RECIPE_BASE_INPUT_DIR=mfcl/inputs/base"; exit 1; fi
 	input_recipe_index_cv_half=$(INPUT_RECIPE_INDEX_CV_HALF) \
-	Rscript tools/build_4region_input_recipe.R \
+	Rscript tools/input_sensitivities/build_input_recipe.R \
 		--output-dir $(INPUT_RECIPE_OUTPUT_DIR) \
 		--base $(INPUT_RECIPE_BASE) \
+		--base-input-dir "$(if $(INPUT_RECIPE_BASE_INPUT_DIR),$(INPUT_RECIPE_BASE_INPUT_DIR),$(INPUT_RECIPE_BASE_SOURCE))" \
+		--base-tokens "$(INPUT_RECIPE_BASE_TOKENS)" \
 		--movement-pairs "$(INPUT_RECIPE_MOVEMENT_PAIRS)" \
 		--sel-nodes "$(INPUT_RECIPE_SEL_NODES)" \
-		--with-11par \
 		--overwrite
 
 build-config-inputs:
-	Rscript tools/build_config_inputs.R --config $(INPUT_CONFIG) --overwrite
+	Rscript tools/input_sensitivities/build_config_inputs.R --config $(INPUT_CONFIG) --overwrite
 
 build-4region-all-inputs:
-	Rscript tools/build_config_inputs.R --config configs/2023R4.R --overwrite
+	Rscript tools/input_sensitivities/build_config_inputs.R --config configs/2023R4.R --overwrite
 
 makepar-4region: build-4region
 	cd $(REGION4_OUTPUT_DIR) && $(MFCL_EXE) bet.frq bet.ini 00.par -makepar
@@ -208,13 +212,13 @@ test:
 	Rscript tests/run_tests.R
 	
 TagMovementSubset:
-	Rscript sensitivities/TagMovementSubset.R
+	base_dir=$(REGION4_OUTPUT_DIR) out_dir=$(REGION4_OUTPUT_DIR)_movement_R2_R3 movement_pairs=2-3 Rscript tools/input_sensitivities/steps/tag_movement_subset.R
 
 SelectivitySplineNodes:
-	Rscript sensitivities/SelectivitySplineNodes.R
+	base_dir=$(REGION4_OUTPUT_DIR) out_dir=$(REGION4_OUTPUT_DIR)_sel_spline4 node_count=4 Rscript tools/input_sensitivities/steps/selectivity_spline_nodes.R
 
 IndexCvHalf:
-	Rscript sensitivities/IndexCvHalf.R
+	base_dir=$(REGION4_OUTPUT_DIR) out_dir=$(REGION4_OUTPUT_DIR)_index_cv_half Rscript tools/input_sensitivities/steps/index_cv_half.R
 
 collate-hessian:
 	Rscript tools/collate_hessian_mfcl.R

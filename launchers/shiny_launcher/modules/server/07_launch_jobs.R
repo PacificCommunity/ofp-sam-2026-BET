@@ -73,6 +73,50 @@
     txt %in% c("1", "true", "yes", "y", "on")
   }
 
+  # ----- Input and sensitivity launch units -----
+  # The config file now supplies one common set of launch defaults. The actual
+  # launch units are discovered input folders, with optional on-the-fly
+  # sensitivity recipes layered on top.
+
+  if (!exists("launch_input_mode", mode = "function")) {
+    launch_input_mode <- function() {
+      mode <- first_scalar_string(input$input_launch_mode, default = "existing")
+      if (mode %in% c("existing", "sensitivity")) mode else "existing"
+    }
+  }
+
+  if (!exists("sensitivity_mode_enabled", mode = "function")) {
+    sensitivity_mode_enabled <- function() {
+      identical(launch_input_mode(), "sensitivity")
+    }
+  }
+
+  movement_suffix_from_pairs <- function(movement_pairs) {
+    movement_pairs <- trimws(as.character(movement_pairs[[1]]))
+    if (!nzchar(movement_pairs)) return("")
+    pairs <- trimws(unlist(strsplit(movement_pairs, "[,[:space:]]+")))
+    pairs <- pairs[nzchar(pairs)]
+    if (length(pairs) == 0) return("")
+    paste0(
+      "movement_",
+      paste(vapply(pairs, function(pair) {
+        vals <- trimws(strsplit(pair, "-", fixed = TRUE)[[1]])
+        if (length(vals) != 2L) return("")
+        paste0("R", vals[[1]], "_R", vals[[2]])
+      }, character(1)), collapse = "_")
+    )
+  }
+
+  strip_recipe_suffixes <- function(path, movement_pairs = "", sel_nodes = "", index_cv_half = "0") {
+    parent <- dirname(path)
+    stem <- basename(path)
+    if (truthy_scalar(index_cv_half)) stem <- sub("_index_cv_half$", "", stem)
+    if (nzchar(sel_nodes)) stem <- sub(paste0("_sel_spline", sel_nodes, "$"), "", stem)
+    movement_suffix <- movement_suffix_from_pairs(movement_pairs)
+    if (nzchar(movement_suffix)) stem <- sub(paste0("_", movement_suffix, "$"), "", stem)
+    file.path(parent, stem)
+  }
+
   infer_recipe_base_from_env <- function(model_env) {
     configured <- first_scalar_string(model_env$input_recipe_base, default = "")
     if (nzchar(configured)) return(configured)
@@ -88,71 +132,463 @@
     }
   }
 
-  input_recipe_plan <- function(model_env = NULL) {
-    override <- isTRUE(input$input_recipe_override)
+  infer_recipe_base_input_dir_from_env <- function(model_env) {
+    configured <- first_scalar_string(model_env$input_recipe_base_input_dir, default = "")
+    if (nzchar(configured)) return(configured)
+    configured <- first_scalar_string(model_env$input_recipe_base_source, default = "")
+    if (nzchar(configured)) return(configured)
+    base_dir <- first_scalar_string(model_env$base_dir, default = "")
+    if (!nzchar(base_dir)) return("")
+    strip_recipe_suffixes(
+      base_dir,
+      movement_pairs = first_scalar_string(model_env$input_recipe_movement_pairs, default = ""),
+      sel_nodes = first_scalar_string(model_env$input_recipe_sel_nodes, default = ""),
+      index_cv_half = first_scalar_string(model_env$input_recipe_index_cv_half, default = "0")
+    )
+  }
+
+  recipe_base_input_dir_for_choice <- function(model_env, recipe_base) {
+    base_input_dir <- if (!is.null(model_env)) infer_recipe_base_input_dir_from_env(model_env) else ""
+    if (is.null(model_env)) return(base_input_dir)
+    if (!nzchar(base_input_dir)) base_input_dir <- first_scalar_string(model_env$base_dir, default = "mfcl/inputs/input")
+    if (identical(recipe_base, "config") || identical(recipe_base, infer_recipe_base_from_env(model_env))) {
+      return(base_input_dir)
+    }
+    if (identical(recipe_base, "base")) return(strip_recipe_suffixes(base_input_dir))
+    file.path(dirname(base_input_dir), paste0(basename(strip_recipe_suffixes(base_input_dir)), "_", recipe_base))
+  }
+
+  recipe_base_tokens <- function(recipe_base) {
+    switch(
+      recipe_base,
+      fixM = "fixM",
+      fixVB = "fixVB",
+      fixVB_M = "fixVB,fixM",
+      ""
+    )
+  }
+
+  input_token_set <- function(model_env) {
+    if (is.null(model_env)) return(character(0))
+    txt <- first_scalar_string(model_env$input_recipe_base_tokens, default = "")
+    if (!nzchar(txt)) return(character(0))
+    vals <- trimws(unlist(strsplit(txt, "[,;[:space:]]+")))
+    unique(vals[nzchar(vals)])
+  }
+
+  sensitivity_launch_sep <- "___sens___"
+  sensitivity_combo_sep <- "___and___"
+
+  ordered_sensitivity_ids <- function(ids) {
+    ids <- unique(as.character(ids))
+    if (length(ids) == 0) return(character(0))
+    catalog <- input_sensitivity_catalog()
+    catalog$id[catalog$id %in% ids]
+  }
+
+  make_sensitivity_launch_id <- function(input_id, sensitivity_ids) {
+    ids <- ordered_sensitivity_ids(sensitivity_ids)
+    paste0(input_id, sensitivity_launch_sep, paste(ids, collapse = sensitivity_combo_sep))
+  }
+
+  parse_sensitivity_launch_id <- function(model_name) {
+    txt <- as.character(model_name[[1]])
+    if (!grepl(sensitivity_launch_sep, txt, fixed = TRUE)) {
+      return(list(is_sensitivity = FALSE, input_id = txt, sensitivity_ids = character(0), sensitivity_id = ""))
+    }
+    pieces <- strsplit(txt, sensitivity_launch_sep, fixed = TRUE)[[1]]
+    ids <- if (length(pieces) >= 2L && nzchar(pieces[[2]])) {
+      strsplit(pieces[[2]], sensitivity_combo_sep, fixed = TRUE)[[1]]
+    } else {
+      character(0)
+    }
+    list(
+      is_sensitivity = length(pieces) == 2L && length(ids) > 0,
+      input_id = pieces[[1]],
+      sensitivity_ids = ordered_sensitivity_ids(ids),
+      sensitivity_id = if (length(ids) > 0) ids[[1]] else ""
+    )
+  }
+
+  selected_sensitivity_ids <- function() {
+    sens <- input$input_recipe_sensitivities
+    if (is.null(sens)) return(character(0))
+    unique(as.character(sens))
+  }
+
+  selected_sensitivity_expansion <- function() {
+    mode <- first_scalar_string(input$input_recipe_expansion, default = "oneoff")
+    if (mode %in% c("oneoff", "factorial")) mode else "oneoff"
+  }
+
+  include_base_launch_units <- function() {
+    isTRUE(input$input_recipe_include_base)
+  }
+
+  existing_sensitivity_rows <- function(model_env) {
+    existing_tokens <- input_token_set(model_env)
+    if (length(existing_tokens) == 0) return(input_sensitivity_catalog()[0, , drop = FALSE])
+    rows <- input_sensitivity_catalog()
+    rows[rows$token %in% existing_tokens, , drop = FALSE]
+  }
+
+  sensitivity_applicability <- function(model_env, sensitivity_ids) {
+    sensitivity_ids <- unique(as.character(sensitivity_ids))
+    rows <- input_sensitivity_by_id(sensitivity_ids)
+    if (nrow(rows) == 0) {
+      return(data.frame(
+        id = character(0),
+        token = character(0),
+        label = character(0),
+        factor = character(0),
+        applicable = logical(0),
+        reason = character(0),
+        stringsAsFactors = FALSE
+      ))
+    }
+
+    existing_tokens <- input_token_set(model_env)
+    rows$applicable <- TRUE
+    rows$reason <- ""
+
+    for (idx in seq_len(nrow(rows))) {
+      if (rows$token[[idx]] %in% existing_tokens) {
+        rows$applicable[[idx]] <- FALSE
+        rows$reason[[idx]] <- paste0("already present: ", rows$token[[idx]])
+        next
+      }
+    }
+
+    rows
+  }
+
+  sensitivity_applicable_ids <- function(model_env, sensitivity_ids) {
+    rows <- sensitivity_applicability(model_env, sensitivity_ids)
+    rows$id[rows$applicable]
+  }
+
+  sensitivity_skip_summary <- function(input_ids, sensitivity_ids) {
+    pieces <- lapply(input_ids, function(input_id) {
+      env <- model_env_for_input(input_id)
+      rows <- sensitivity_applicability(env, sensitivity_ids)
+      skipped <- rows[!rows$applicable, , drop = FALSE]
+      if (nrow(skipped) == 0) return(NULL)
+      base_label <- launch_unit_label(input_id)
+      data.frame(
+        base = base_label,
+        sensitivity = skipped$label,
+        token = skipped$token,
+        reason = skipped$reason,
+        stringsAsFactors = FALSE
+      )
+    })
+    pieces <- Filter(Negate(is.null), pieces)
+    if (length(pieces) == 0) {
+      return(data.frame(base = character(0), sensitivity = character(0), token = character(0), reason = character(0)))
+    }
+    do.call(rbind, pieces)
+  }
+
+  sensitivity_replacement_rows <- function(model_env, sensitivity_ids) {
+    sens_rows <- input_sensitivity_by_id(sensitivity_ids)
+    if (nrow(sens_rows) == 0) return(sens_rows[0, , drop = FALSE])
+    existing_rows <- existing_sensitivity_rows(model_env)
+    if (nrow(existing_rows) == 0) return(existing_rows)
+    selected_factors <- unique(sens_rows$factor)
+    existing_rows[
+      existing_rows$factor %in% selected_factors &
+        !existing_rows$token %in% sens_rows$token,
+      ,
+      drop = FALSE
+    ]
+  }
+
+  sensitivity_replacement_summary <- function(input_ids, sensitivity_ids) {
+    pieces <- lapply(input_ids, function(input_id) {
+      env <- model_env_for_input(input_id)
+      selected_rows <- input_sensitivity_by_id(sensitivity_ids)
+      replaced <- sensitivity_replacement_rows(env, sensitivity_ids)
+      if (nrow(replaced) == 0) return(NULL)
+      base_label <- launch_unit_label(input_id)
+      replacement_text <- vapply(unique(replaced$factor), function(fac) {
+        old_tokens <- replaced$token[replaced$factor == fac]
+        new_tokens <- selected_rows$token[selected_rows$factor == fac]
+        paste0(fac, ": ", paste(old_tokens, collapse = ", "), " -> ", paste(new_tokens, collapse = ", "))
+      }, character(1))
+      data.frame(base = base_label, replacement = replacement_text, stringsAsFactors = FALSE)
+    })
+    pieces <- Filter(Negate(is.null), pieces)
+    if (length(pieces) == 0) {
+      return(data.frame(base = character(0), replacement = character(0), stringsAsFactors = FALSE))
+    }
+    do.call(rbind, pieces)
+  }
+
+  strip_sensitivity_suffixes_from_path <- function(path, sensitivity_rows) {
+    if (!is.character(path) || length(path) == 0 || !nzchar(path[[1]]) || nrow(sensitivity_rows) == 0) {
+      return(path)
+    }
+    parent <- dirname(path)
+    stem <- basename(path)
+    suffixes <- unique(c(sensitivity_rows$input_suffix, sensitivity_rows$suffix))
+    suffixes <- suffixes[nzchar(suffixes)]
+    suffixes <- suffixes[order(nchar(suffixes), decreasing = TRUE)]
+    for (suffix in suffixes) {
+      stem <- gsub(suffix, "", stem, fixed = TRUE)
+    }
+    stem <- gsub("__+", "_", stem)
+    stem <- gsub("^_+|_+$", "", stem)
+    file.path(parent, stem)
+  }
+
+  sensitivity_factor_choices <- function(sensitivity_ids) {
+    rows <- input_sensitivity_by_id(sensitivity_ids)
+    if (nrow(rows) == 0) return(list())
+    factors <- split(rows, rows$factor)
+    lapply(factors, function(group_rows) {
+      if (nrow(group_rows) == 0) return(list(character(0)))
+      is_nested_group <- any(group_rows$nested)
+      if (is_nested_group) {
+        c(list(character(0)), lapply(group_rows$id, function(id) id))
+      } else {
+        ids <- group_rows$id
+        combos <- unlist(lapply(seq_along(ids), function(k) {
+          combn(ids, k, simplify = FALSE)
+        }), recursive = FALSE)
+        c(list(character(0)), combos)
+      }
+    })
+  }
+
+  expand_factorial_sensitivities <- function(sensitivity_ids) {
+    sensitivity_ids <- ordered_sensitivity_ids(sensitivity_ids)
+    if (length(sensitivity_ids) == 0) return(list())
+
+    factor_choices <- sensitivity_factor_choices(sensitivity_ids)
+    if (length(factor_choices) == 0) return(list())
+
+    expand_one_factor <- function(options) {
+      lapply(options, function(x) {
+        x <- as.character(x)
+        x[nzchar(x)]
+      })
+    }
+    factor_choices <- lapply(factor_choices, expand_one_factor)
+
+    combos <- list(character(0))
+    for (choices in factor_choices) {
+      combos <- unlist(lapply(combos, function(prefix) {
+        lapply(choices, function(choice) ordered_sensitivity_ids(c(prefix, choice)))
+      }), recursive = FALSE)
+    }
+
+    combos <- Filter(function(x) length(x) > 0, combos)
+    keys <- vapply(combos, paste, character(1), collapse = "|")
+    combos[!duplicated(keys)]
+  }
+
+  sensitivity_launch_combinations <- function(model_env, sensitivity_ids) {
+    applicable <- sensitivity_applicable_ids(model_env, sensitivity_ids)
+    if (length(applicable) == 0) return(list())
+
+    if (identical(selected_sensitivity_expansion(), "factorial")) {
+      expand_factorial_sensitivities(applicable)
+    } else {
+      lapply(applicable, function(id) id)
+    }
+  }
+
+  selected_input_ids_from_checkboxes <- function() {
+    if (length(rv$models) == 0) return(character(0))
+    rows <- scan_launch_input_dirs()
+    if (nrow(rows) == 0) return(character(0))
+    if (!isTRUE(sensitivity_mode_enabled())) {
+      if (exists("selected_existing_input_ids", mode = "function")) {
+        return(selected_existing_input_ids())
+      }
+      selected <- input$existing_input_choices
+      if (is.null(selected)) return(rows$id[[1]])
+      if (length(selected) == 0) return(character(0))
+      selected <- as.character(selected)
+      selected <- selected[selected %in% rows$id]
+      if (length(selected) > 0) return(unique(selected))
+      return(character(0))
+    }
+    selected_base <- input$input_recipe_base_input_choice
+    if (is.null(selected_base)) return(rows$id[[1]])
+    if (length(selected_base) == 0) return(character(0))
+    selected_base <- as.character(selected_base)
+    selected_base <- selected_base[selected_base %in% rows$id]
+    if (length(selected_base) > 0) return(unique(selected_base))
+    character(0)
+  }
+
+  selected_launch_units_raw <- function(input_ids = selected_input_ids_from_checkboxes()) {
+    if (!isTRUE(sensitivity_mode_enabled())) return(input_ids)
+    sens <- selected_sensitivity_ids()
+    base_units <- if (isTRUE(include_base_launch_units())) input_ids else character(0)
+    if (length(sens) == 0) return(unique(base_units))
+
+    units <- unlist(lapply(input_ids, function(input_id) {
+      env <- model_env_for_input(input_id)
+      combos <- sensitivity_launch_combinations(env, sens)
+      if (length(combos) == 0) return(character(0))
+      vapply(combos, function(sids) make_sensitivity_launch_id(input_id, sids), character(1), USE.NAMES = FALSE)
+    }), use.names = FALSE)
+    unique(c(base_units, units))
+  }
+
+  selected_launch_units <- function(input_ids = selected_input_ids_from_checkboxes()) {
+    if (!isTRUE(sensitivity_mode_enabled())) return(input_ids)
+    dedupe_launch_units(selected_launch_units_raw(input_ids))
+  }
+
+  launch_unit_label <- function(model_name) {
+    parsed <- parse_sensitivity_launch_id(model_name)
+    if (!isTRUE(parsed$is_sensitivity)) {
+      row <- launch_input_row(parsed$input_id)
+      return(if (!is.null(row)) row$display_name else parsed$input_id)
+    }
+    row <- launch_input_row(parsed$input_id)
+    sens <- input_sensitivity_by_id(parsed$sensitivity_ids)
+    base_label <- if (!is.null(row)) row$display_name else parsed$input_id
+    sens_token <- if (nrow(sens) > 0) paste(sens$token, collapse = " + ") else paste(parsed$sensitivity_ids, collapse = " + ")
+    paste0(base_label, " + ", sens_token)
+  }
+
+  launch_unit_labels <- function(model_names) {
+    vapply(model_names, launch_unit_label, character(1), USE.NAMES = FALSE)
+  }
+
+  launch_unit_display_env <- function(model_name) {
+    parsed <- parse_sensitivity_launch_id(model_name)
+    if (isTRUE(parsed$is_sensitivity)) {
+      base_env <- model_env_for_input(parsed$input_id)
+      return(apply_input_recipe_override(parsed$input_id, base_env, sensitivity_id = parsed$sensitivity_ids, base_input_id = parsed$input_id))
+    }
+    model_env_for_input(model_name)
+  }
+
+  launch_unit_preview_line <- function(model_name) {
+    env <- launch_unit_display_env(model_name)
+    if (is.null(env)) return(as.character(model_name[[1]]))
+    display_dir <- first_scalar_string(env$display_base_dir, default = first_scalar_string(env$base_dir, default = ""))
+    paste0(launch_model_name(model_name, env), " -> ", display_dir)
+  }
+
+  canonical_launch_basename <- function(name) {
+    x <- basename(as.character(name[[1]]))
+    if (exists("compact_input_name", mode = "function")) {
+      x <- compact_input_name(x)
+    }
+    catalog <- input_sensitivity_catalog()
+    known_tokens <- as.character(catalog$token)
+    parts <- strsplit(x, "_", fixed = TRUE)[[1]]
+    present <- unique(parts[parts %in% known_tokens])
+    root_parts <- parts[!parts %in% known_tokens]
+    ordered_tokens <- known_tokens[known_tokens %in% present]
+    paste(c(root_parts, ordered_tokens), collapse = "_")
+  }
+
+  launch_unit_output_key <- function(model_name) {
+    env <- tryCatch(launch_unit_display_env(model_name), error = function(e) NULL)
+    if (is.null(env)) return(as.character(model_name[[1]]))
+    display_dir <- first_scalar_string(env$display_base_dir, default = first_scalar_string(env$base_dir, default = ""))
+    display_name <- if (nzchar(display_dir)) basename(display_dir) else launch_model_name(model_name, env)
+    display_name <- canonical_launch_basename(display_name)
+    paste(dirname(display_dir), display_name, sep = "/")
+  }
+
+  dedupe_launch_units <- function(units) {
+    units <- unique(as.character(units))
+    if (length(units) < 2) return(units)
+    keys <- vapply(units, launch_unit_output_key, character(1), USE.NAMES = FALSE)
+    units[!duplicated(keys)]
+  }
+
+  duplicate_launch_unit_summary <- function(input_ids = selected_input_ids_from_checkboxes()) {
+    raw_units <- selected_launch_units_raw(input_ids)
+    if (length(raw_units) < 2) {
+      return(data.frame(dropped = character(0), kept = character(0), output = character(0)))
+    }
+    keys <- vapply(raw_units, launch_unit_output_key, character(1), USE.NAMES = FALSE)
+    duplicated_rows <- duplicated(keys)
+    if (!any(duplicated_rows)) {
+      return(data.frame(dropped = character(0), kept = character(0), output = character(0)))
+    }
+    kept_idx <- match(keys[duplicated_rows], keys)
+    data.frame(
+      dropped = launch_unit_labels(raw_units[duplicated_rows]),
+      kept = launch_unit_labels(raw_units[kept_idx]),
+      output = keys[duplicated_rows],
+      stringsAsFactors = FALSE
+    )
+  }
+
+  # Build the input-recipe plan for one selected base input. This is metadata
+  # only; the actual input folder is created later by build_input_recipe.R if
+  # the job lands on a machine where that folder is missing.
+  input_recipe_plan <- function(model_env = NULL, sensitivity_ids = NULL, base_input_id = "") {
+    override <- isTRUE(sensitivity_mode_enabled())
     if (!override) return(list(override = FALSE))
 
-    sens <- input$input_recipe_sensitivities
-    if (is.null(sens)) sens <- character(0)
-    sens <- unique(as.character(sens))
+    sens <- if (is.null(sensitivity_ids)) selected_sensitivity_ids() else unique(as.character(sensitivity_ids))
 
-    base_choice <- first_scalar_string(input$input_recipe_base_choice, default = "config")
-    recipe_base <- if (identical(base_choice, "config") && !is.null(model_env)) {
-      infer_recipe_base_from_env(model_env)
-    } else if (identical(base_choice, "config")) {
-      "base"
-    } else {
-      base_choice
+    recipe_base <- "base"
+    selected_base_input_id <- first_scalar_string(base_input_id, default = "")
+    if (!nzchar(selected_base_input_id)) {
+      selected_base_input_id <- first_scalar_string(input$input_recipe_base_input_choice, default = "")
     }
-    if (!recipe_base %in% c("base", "fixM", "fixVB", "fixVB_M")) recipe_base <- "base"
-
-    movement_key <- if ("move_all" %in% sens) {
-      "movement_R1_R2_R1_R3_R2_R3"
-    } else if ("move_R2_R3" %in% sens) {
-      "movement_R2_R3"
+    selected_base_row <- if (nzchar(selected_base_input_id)) launch_input_row(selected_base_input_id) else NULL
+    if (!is.null(selected_base_row)) {
+      base_input_dir <- selected_base_row$base_dir
+      model_env <- model_env_for_input(selected_base_input_id)
     } else {
-      ""
+      base_input_dir <- recipe_base_input_dir_for_choice(model_env, recipe_base)
     }
-    movement_pairs <- switch(
-      movement_key,
-      movement_R1_R2_R1_R3_R2_R3 = "1-2,1-3,2-3",
-      movement_R2_R3 = "2-3",
-      ""
-    )
 
-    sel_nodes <- if ("sel4" %in% sens) "4" else ""
-    index_cv_half <- if ("cvH" %in% sens) "1" else "0"
+    sens_rows <- input_sensitivity_by_id(sensitivity_applicable_ids(model_env, sens))
+    existing_tokens <- input_token_set(model_env)
+    replaced_existing_rows <- sensitivity_replacement_rows(model_env, sens_rows$id)
+    if (nrow(replaced_existing_rows) > 0) {
+      base_input_dir <- strip_sensitivity_suffixes_from_path(base_input_dir, replaced_existing_rows)
+      existing_tokens <- setdiff(existing_tokens, replaced_existing_rows$token)
+    }
 
-    suffix_parts <- c(
-      if (!identical(recipe_base, "base")) recipe_base else character(0),
-      if (nzchar(movement_key)) movement_key else character(0),
-      if (nzchar(sel_nodes)) "sel_spline4" else character(0),
-      if (truthy_scalar(index_cv_half)) "index_cv_half" else character(0)
-    )
-    output_dir <- file.path(
-      "mfcl/inputs",
-      paste0("2023_4region", if (length(suffix_parts) > 0) paste0("_", paste(suffix_parts, collapse = "_")) else "")
-    )
+    recipe_options <- input_sensitivity_recipe_options(sens_rows$id)
+    movement_pairs <- recipe_options$movement_pairs
+    sel_nodes <- recipe_options$sel_nodes
+    index_cv_half <- if (isTRUE(recipe_options$index_cv_half)) "1" else "0"
+    suffix_parts <- recipe_options$suffix_parts
+    output_base_name <- if (exists("compact_input_name", mode = "function")) {
+      compact_input_name(basename(base_input_dir))
+    } else {
+      basename(base_input_dir)
+    }
+    output_name <- canonical_launch_basename(paste0(output_base_name, paste0(suffix_parts, collapse = "")))
+    output_dir <- file.path(dirname(base_input_dir), output_name)
 
-    tokens <- c(
-      switch(recipe_base, fixM = "fixM", fixVB = "fixVB", fixVB_M = c("fixVB", "fixM"), base = character(0)),
-      if (identical(movement_key, "movement_R2_R3")) "m23" else if (identical(movement_key, "movement_R1_R2_R1_R3_R2_R3")) "m123" else character(0),
-      if (nzchar(sel_nodes)) paste0("sel", sel_nodes) else character(0),
-      if (truthy_scalar(index_cv_half)) "cvH" else character(0)
-    )
-    tokens <- unique(tokens)
+    tokens <- recipe_options$tokens
     key <- if (length(tokens) > 0) paste(tokens, collapse = "_") else "base"
     label <- if (length(tokens) > 0) paste(tokens, collapse = " + ") else "base"
+    description <- if (length(recipe_options$labels) > 0) {
+      paste(recipe_options$labels, collapse = "; ")
+    } else {
+      label
+    }
 
     list(
       override = TRUE,
       base = recipe_base,
+      base_input_dir = base_input_dir,
+      base_tokens = paste(existing_tokens, collapse = ","),
       output_dir = output_dir,
       movement_pairs = movement_pairs,
       sel_nodes = sel_nodes,
       index_cv_half = index_cv_half,
       key = key,
-      label = label
+      label = label,
+      description = description
     )
   }
 
@@ -161,48 +597,379 @@
     if (nzchar(candidate)) candidate else model_name
   }
 
-  apply_input_recipe_override <- function(model_name, model_env) {
+  launch_input_row <- function(input_id) {
+    rows <- scan_launch_input_dirs()
+    hit <- rows[rows$id == input_id, , drop = FALSE]
+    if (nrow(hit) == 0) return(NULL)
+    hit[1, , drop = FALSE]
+  }
+
+  model_env_for_input <- function(input_id) {
+    row <- launch_input_row(input_id)
+    defaults <- launch_defaults_env()
+    if (is.null(row) || is.null(defaults)) return(NULL)
+
+    env <- as.list(defaults, all.names = TRUE)
+    env$base_dir <- row$base_dir
+    env$display_base_dir <- row$display_base_dir
+    env$model_dir <- file.path("model", row$display_name)
+    env$launcher_model_name <- row$display_name
+    env$launcher_input_label <- row$label
+    env$input_recipe_enabled <- "0"
+    env$input_recipe_base <- "base"
+    env$input_recipe_base_input_dir <- row$base_dir
+    env$input_recipe_base_source <- row$base_dir
+    env$input_recipe_base_tokens <- row$tokens
+    env$input_recipe_output_dir <- row$base_dir
+    if (!is.null(row$description) && nzchar(as.character(row$description[[1]]))) {
+      env$description <- row$description[[1]]
+    } else if (is.null(env$description) || !nzchar(as.character(env$description[[1]]))) {
+      env$description <- paste("Input", row$name)
+    }
+    env
+  }
+
+  # Convert a selected input folder into the runner environment used by all job
+  # types. Sensitivity selections rewrite base_dir/model_dir and mark the input
+  # recipe to be built on demand.
+  apply_input_recipe_override <- function(model_name, model_env, sensitivity_id = NULL, base_input_id = "") {
     if (is.null(model_env)) return(model_env)
     env <- as.list(model_env, all.names = TRUE)
-    plan <- input_recipe_plan(env)
-    if (!isTRUE(plan$override)) return(env)
+    plan <- input_recipe_plan(env, sensitivity_ids = sensitivity_id, base_input_id = base_input_id)
+    if (!isTRUE(plan$override) || identical(plan$key, "base")) return(env)
 
-    launch_name <- paste0(model_name, "_", plan$key)
+    base_launch_name <- launch_model_name(model_name, env)
+    launch_name <- if (identical(plan$key, "base")) base_launch_name else paste0(base_launch_name, "_", plan$key)
+    launch_name <- canonical_launch_basename(launch_name)
     env$launcher_model_name <- launch_name
     env$base_dir <- plan$output_dir
+    env$display_base_dir <- plan$output_dir
     env$model_dir <- file.path("model", launch_name)
     env$build_inputs_on_missing <- "1"
     env$input_recipe_enabled <- "1"
-    env$input_recipe_builder <- first_scalar_string(env$input_recipe_builder, default = "tools/build_4region_input_recipe.R")
+    env$input_recipe_builder <- first_scalar_string(env$input_recipe_builder, default = "tools/input_sensitivities/build_input_recipe.R")
     env$input_recipe_base <- plan$base
+    env$input_recipe_base_input_dir <- plan$base_input_dir
+    env$input_recipe_base_source <- plan$base_input_dir
+    env$input_recipe_base_tokens <- plan$base_tokens
     env$input_recipe_output_dir <- plan$output_dir
     env$input_recipe_movement_pairs <- plan$movement_pairs
     env$input_recipe_sel_nodes <- plan$sel_nodes
     env$input_recipe_index_cv_half <- plan$index_cv_half
-    env$input_recipe_release_regions <- first_scalar_string(env$input_recipe_release_regions, default = "9")
-    env$input_recipe_with_11par <- first_scalar_string(env$input_recipe_with_11par, default = "1")
     env$launcher_input_recipe_label <- plan$label
+    env$launcher_input_recipe_description <- plan$description
+    env$description <- plan$description
 
     summary_txt <- first_scalar_string(env$config_summary, default = "")
-    recipe_txt <- paste0("Launcher input recipe: ", plan$label, "; base_dir=", plan$output_dir)
+    recipe_txt <- paste0(
+      "On-demand sensitivity input: ", plan$description,
+      "; base input=", plan$base_input_dir,
+      "; output input=", plan$output_dir
+    )
     env$config_summary <- if (nzchar(summary_txt)) paste(summary_txt, recipe_txt, sep = " | ") else recipe_txt
     env
   }
 
-  active_model_env <- function(model_name) {
-    apply_input_recipe_override(model_name, rv$models[[model_name]])
+  # ----- Fitted-output source matching -----
+  # Dependent jobs such as jitter/profile can either reuse an existing fitted
+  # model output or first run a prerequisite model and then use that output.
+
+  scan_launcher_fitted_sources <- function() {
+    if (!exists("scan_fitted_model_dirs", mode = "function")) {
+      return(data.frame(
+        id = character(0),
+        name = character(0),
+        source_dir = character(0),
+        label = character(0),
+        par_file = character(0),
+        has_indepvar = logical(0),
+        has_quantity = logical(0),
+        base_dir = character(0),
+        tokens = character(0),
+        stringsAsFactors = FALSE
+      ))
+    }
+    scan_fitted_model_dirs(model_root = "model", repo_root = resolve_repo_path("."))
   }
 
+  fitted_source_choice <- function() {
+    choice <- first_scalar_string(input$fitted_model_source_choice, default = "__auto__")
+    if (nzchar(choice)) choice else "__auto__"
+  }
+
+  matched_fitted_source_row <- function(model_name, model_env, choice = fitted_source_choice()) {
+    rows <- scan_launcher_fitted_sources()
+    if (!is.data.frame(rows) || nrow(rows) == 0) return(NULL)
+
+    if (!identical(choice, "__auto__")) {
+      hit <- rows[rows$id == choice, , drop = FALSE]
+      return(if (nrow(hit) > 0) hit[1, , drop = FALSE] else NULL)
+    }
+
+    launch_name <- launch_model_name(model_name, model_env)
+    candidates <- unique(c(
+      first_scalar_string(model_env$model_dir, default = ""),
+      file.path("model", launch_name),
+      launch_name,
+      model_name,
+      basename(first_scalar_string(model_env$base_dir, default = ""))
+    ))
+    candidates <- candidates[nzchar(candidates)]
+    candidate_basenames <- basename(candidates)
+    candidate_compact <- if (exists("compact_input_name", mode = "function")) {
+      vapply(candidate_basenames, compact_input_name, character(1))
+    } else {
+      candidate_basenames
+    }
+    candidate_ids <- vapply(candidates, safe_launch_id, character(1))
+
+    row_display <- if (exists("compact_input_name", mode = "function")) {
+      vapply(rows$name, compact_input_name, character(1))
+    } else {
+      rows$name
+    }
+    row_base_display <- if (exists("compact_input_name", mode = "function")) {
+      vapply(basename(rows$base_dir), compact_input_name, character(1))
+    } else {
+      basename(rows$base_dir)
+    }
+    hit <- rows[
+      rows$source_dir %in% candidates |
+        rows$base_dir %in% candidates |
+        basename(rows$base_dir) %in% candidate_basenames |
+        row_base_display %in% candidate_compact |
+        rows$name %in% candidate_basenames |
+        row_display %in% candidate_compact |
+        rows$id %in% candidate_ids,
+      ,
+      drop = FALSE
+    ]
+    if (nrow(hit) > 0) hit[1, , drop = FALSE] else NULL
+  }
+
+  apply_fitted_model_source_selection <- function(model_name, model_env) {
+    if (is.null(model_env)) return(model_env)
+    env <- as.list(model_env, all.names = TRUE)
+    if (!isTRUE(input$fitted_model_source_enabled)) {
+      env$fitted_model_source_enabled <- "0"
+      env$fitted_model_source_dir <- ""
+      env$fitted_model_bundle <- ""
+      env$fitted_model_source_id <- ""
+      env$fitted_model_source_label <- "run prerequisite model first"
+      env$auto_run_model_before_dependency <- "1"
+      env$auto_fitted_model_dir <- file.path(first_scalar_string(env$model_dir, default = file.path("model", model_name)), "_source_model")
+      return(env)
+    }
+
+    choice <- fitted_source_choice()
+    row <- matched_fitted_source_row(model_name, env, choice = choice)
+    env$fitted_model_source_enabled <- "1"
+    env$auto_run_model_before_dependency <- "0"
+    env$auto_fitted_model_dir <- ""
+    env$fitted_model_source_choice <- choice
+    env$fitted_model_source_dir <- ""
+    env$fitted_model_source_id <- ""
+    env$fitted_model_source_label <- if (identical(choice, "__auto__")) "auto-match" else choice
+
+    if (!is.null(row) && nrow(row) > 0) {
+      env$fitted_model_source_dir <- row$source_dir[[1]]
+      env$fitted_model_source_id <- row$id[[1]]
+      env$fitted_model_source_label <- row$label[[1]]
+      summary_txt <- first_scalar_string(env$config_summary, default = "")
+      fitted_txt <- paste0(
+        "Fitted source: ", row$source_dir[[1]],
+        "; par=", row$par_file[[1]]
+      )
+      env$config_summary <- if (nzchar(summary_txt)) paste(summary_txt, fitted_txt, sep = " | ") else fitted_txt
+    }
+    env
+  }
+
+  active_model_env <- function(model_name) {
+    apply_fitted_model_source_selection(model_name, launch_unit_display_env(model_name))
+  }
+
+  observeEvent({
+    list(repo_root_val(), rv$config_loaded, input$input_launch_mode)
+  }, {
+    rows <- scan_launch_input_dirs()
+    choices <- if (nrow(rows) > 0) stats::setNames(rows$id, rows$label) else character(0)
+    current_base <- isolate(input$input_recipe_base_input_choice)
+    current_base <- if (is.null(current_base) || length(current_base) == 0) character(0) else as.character(current_base)
+    selected_inputs <- isolate(rv$selected_models)
+    selected_base <- current_base[current_base %in% rows$id]
+    if (length(selected_base) > 0) {
+      selected_base <- unique(selected_base)
+    } else if (length(selected_inputs) > 0 && selected_inputs[[1]] %in% rows$id) {
+      selected_base <- as.character(selected_inputs[selected_inputs %in% rows$id])
+    } else if (length(choices) > 0) {
+      selected_base <- unname(choices[[1]])
+    } else {
+      selected_base <- character(0)
+    }
+    updateSelectizeInput(
+      session,
+      "input_recipe_base_input_choice",
+      choices = choices,
+      selected = selected_base,
+      server = TRUE
+    )
+
+    current_existing <- isolate(input$existing_input_choices)
+    current_existing <- if (is.null(current_existing) || length(current_existing) == 0) character(0) else as.character(current_existing)
+    selected_existing <- current_existing[current_existing %in% rows$id]
+    if (length(selected_existing) == 0 && length(selected_inputs) > 0) {
+      selected_existing <- as.character(selected_inputs[selected_inputs %in% rows$id])
+    }
+    if (length(selected_existing) == 0 && length(choices) > 0) {
+      selected_existing <- unname(choices[[1]])
+    }
+    updateSelectizeInput(
+      session,
+      "existing_input_choices",
+      choices = choices,
+      selected = selected_existing,
+      server = TRUE
+    )
+  }, ignoreInit = FALSE)
+
+  observeEvent({
+    list(repo_root_val(), input$fitted_model_source_enabled, rv$launcher_job_log_trigger)
+  }, {
+    rows <- scan_launcher_fitted_sources()
+    choices <- c("Auto-match by launch model name" = "__auto__")
+    if (is.data.frame(rows) && nrow(rows) > 0) {
+      choices <- c(choices, stats::setNames(rows$id, rows$label))
+    }
+    current <- isolate(first_scalar_string(input$fitted_model_source_choice, default = "__auto__"))
+    selected <- if (nzchar(current) && current %in% unname(choices)) current else "__auto__"
+    updateSelectizeInput(
+      session,
+      "fitted_model_source_choice",
+      choices = choices,
+      selected = selected,
+      server = TRUE
+    )
+  }, ignoreInit = FALSE)
+
   output$input_recipe_preview_ui <- renderUI({
-    if (!isTRUE(input$input_recipe_override)) return(NULL)
-    selected <- selected_models_from_checkboxes()
-    model_env <- if (length(selected) > 0 && !is.null(rv$models[[selected[[1]]]])) rv$models[[selected[[1]]]] else NULL
-    plan <- input_recipe_plan(model_env)
+    if (!isTRUE(sensitivity_mode_enabled())) return(NULL)
+    base_inputs <- selected_input_ids_from_checkboxes()
+    sens <- selected_sensitivity_ids()
+    include_base <- include_base_launch_units()
+    if (length(base_inputs) == 0) {
+      return(div(class = "input-recipe-preview", tags$div("Select a base input to preview the sensitivity output.")))
+    }
+    if (length(sens) == 0 && !isTRUE(include_base)) {
+      return(div(class = "input-recipe-preview", tags$div("Select sensitivities, or include the selected base input(s), to create launch units.")))
+    }
+    units <- selected_launch_units(base_inputs)
+    skipped <- sensitivity_skip_summary(base_inputs, sens)
+    duplicates <- duplicate_launch_unit_summary(base_inputs)
+    replacements <- sensitivity_replacement_summary(base_inputs, sens)
+    generated_units <- units[vapply(units, function(unit) {
+      isTRUE(parse_sensitivity_launch_id(unit)$is_sensitivity)
+    }, logical(1))]
+    exact_skipped_lines <- if (is.data.frame(skipped) && nrow(skipped) > 0) {
+      apply(skipped, 1, function(row) {
+        paste0(row[["base"]], ": ", row[["sensitivity"]], " skipped (", row[["reason"]], ")")
+      })
+    } else {
+      character(0)
+    }
+    duplicate_skipped_lines <- if (is.data.frame(duplicates) && nrow(duplicates) > 0) {
+      apply(duplicates, 1, function(row) {
+        paste0(row[["dropped"]], " skipped (same final input as ", row[["kept"]], ")")
+      })
+    } else {
+      character(0)
+    }
+    all_skipped_lines <- unique(c(exact_skipped_lines, duplicate_skipped_lines))
+    skipped_lines <- head(all_skipped_lines, 8)
+    skipped_total <- length(all_skipped_lines)
+    replacement_lines <- if (is.data.frame(replacements) && nrow(replacements) > 0) {
+      apply(head(replacements, 6), 1, function(row) {
+        paste0(row[["base"]], ": ", row[["replacement"]])
+      })
+    } else {
+      character(0)
+    }
+    if (length(units) == 0) {
+      return(div(
+        class = "input-recipe-preview",
+        tags$div("No launch units: selected base inputs already contain the selected token(s), and base inputs are not included."),
+        if (length(skipped_lines) > 0) tags$ul(lapply(skipped_lines, function(x) tags$li(x)))
+      ))
+    }
+    preview_units <- head(units, 6)
+    preview_lines <- vapply(preview_units, function(unit) {
+      launch_unit_preview_line(unit)
+    }, character(1))
     div(
       class = "input-recipe-preview",
-      tags$div(strong("Recipe:"), " ", plan$label),
-      tags$div(strong("Input dir:"), " ", tags$code(plan$output_dir)),
-      tags$div(strong("Generated if missing:"), " yes")
+      tags$div(strong("Launch units:"), " ", length(units)),
+      tags$div(strong("Base inputs included:"), " ", if (isTRUE(include_base)) "yes" else "no"),
+      if (length(sens) > 0) tags$div(strong("Sensitivity variants:"), " ", length(generated_units)),
+      if (length(sens) > 0) tags$div(
+        strong("Expansion:"), " ",
+        if (identical(selected_sensitivity_expansion(), "factorial")) "factorial combinations" else "one-off",
+        if (input_sensitivity_has_nested_levels(sens)) " (nested levels enforced)" else ""
+      ),
+      if (length(generated_units) > 0) tags$div(strong("Generated if missing:"), " yes"),
+      if (length(replacement_lines) > 0) tags$div(strong("Replacing existing factor levels:")),
+      if (length(replacement_lines) > 0) tags$ul(lapply(replacement_lines, function(x) tags$li(x))),
+      if (is.data.frame(replacements) && nrow(replacements) > length(replacement_lines)) {
+        tags$div("... ", nrow(replacements) - length(replacement_lines), " more replacements")
+      },
+      tags$ul(lapply(preview_lines, function(x) tags$li(tags$code(x)))),
+      if (length(units) > length(preview_units)) tags$div("... ", length(units) - length(preview_units), " more"),
+      if (length(skipped_lines) > 0) tags$div(strong("Skipped overlaps:")),
+      if (length(skipped_lines) > 0) tags$ul(lapply(skipped_lines, function(x) tags$li(x))),
+      if (skipped_total > length(skipped_lines)) {
+        tags$div("... ", skipped_total - length(skipped_lines), " more skipped")
+      }
+    )
+  })
+
+  output$fitted_model_source_preview_ui <- renderUI({
+    if (!isTRUE(input$fitted_model_source_enabled)) return(NULL)
+    rows <- scan_launcher_fitted_sources()
+    if (!is.data.frame(rows) || nrow(rows) == 0) {
+      return(div(class = "input-recipe-preview", "No fitted model outputs found under ", tags$code("model/"), "."))
+    }
+    choice <- fitted_source_choice()
+    selected_units <- selected_models_from_checkboxes()
+    if (length(selected_units) == 0) {
+      return(div(class = "input-recipe-preview", "Select input folders to preview fitted-source matching."))
+    }
+    if (!identical(choice, "__auto__")) {
+      row <- matched_fitted_source_row(selected_units[[1]], active_model_env(selected_units[[1]]), choice = choice)
+      if (is.null(row)) {
+        return(div(class = "input-recipe-preview", "Selected fitted source was not found."))
+      }
+      return(div(
+        class = "input-recipe-preview",
+        tags$div(strong("Fitted source:"), " ", tags$code(row$source_dir[[1]])),
+        tags$div(strong("Par:"), " ", row$par_file[[1]]),
+        tags$div("This fitted output will be overlaid on each selected input for dependent jobs.")
+      ))
+    }
+
+    preview_units <- head(selected_units, 6)
+    preview_lines <- vapply(preview_units, function(unit) {
+      env <- active_model_env(unit)
+      row <- matched_fitted_source_row(unit, env, choice = "__auto__")
+      paste0(
+        launch_unit_label(unit),
+        " -> ",
+        if (!is.null(row)) row$source_dir[[1]] else "missing fitted output"
+      )
+    }, character(1), USE.NAMES = FALSE)
+    div(
+      class = "input-recipe-preview",
+      tags$div(strong("Auto-match:"), " by launch model name / model_dir"),
+      tags$ul(lapply(preview_lines, function(x) tags$li(tags$code(x)))),
+      if (length(selected_units) > length(preview_units)) tags$div("... ", length(selected_units) - length(preview_units), " more")
     )
   })
 
@@ -552,6 +1319,217 @@
     paste0(label, " (matched slots: ", matched_n, "; excluded slots: ", exclude_n, ")")
   }
 
+  fitted_source_job_types <- function() {
+    c("jitter", "hessian", "prof", "prof_chain", "prof_2d")
+  }
+
+  job_uses_fitted_source <- function(job_env, job_type) {
+    truthy_scalar(job_env$fitted_model_source_enabled) && job_type %in% fitted_source_job_types()
+  }
+
+  ensure_fitted_source_functions_loaded <- function(repo_root) {
+    if (!exists("fms_create_bundle", mode = "function")) {
+      source(file.path(repo_root, "tools", "fitted_model_source.R"), local = parent.frame())
+    }
+    invisible(TRUE)
+  }
+
+  prepare_job_fitted_source <- function(job_env, job_type, work_dir, repo_root) {
+    if (!job_uses_fitted_source(job_env, job_type)) {
+      return(list(job_env = job_env, extra_transfer_files = character(0)))
+    }
+
+    ensure_fitted_source_functions_loaded(repo_root)
+    source_dir <- first_scalar_string(job_env$fitted_model_source_dir, default = "")
+    if (!nzchar(source_dir)) {
+      stop("Fitted model source is enabled but no fitted output was resolved. Use Auto-match only when model/<launch_name> exists, or select a fitted output explicitly.")
+    }
+    source_abs <- if (grepl("^/", source_dir)) source_dir else file.path(repo_root, source_dir)
+    if (!dir.exists(source_abs)) {
+      stop("Selected fitted model source does not exist: ", source_abs)
+    }
+
+    source_id <- first_scalar_string(job_env$fitted_model_source_id, default = fms_safe_id(source_dir))
+    bundle <- fms_create_bundle(
+      source_dir = source_abs,
+      bundle_dir = work_dir,
+      bundle_name = paste0("fitted_source_", fms_safe_id(source_id), ".tar.gz")
+    )
+
+    job_env$fitted_model_source_enabled <- "1"
+    job_env$fitted_model_source_dir <- ""
+    job_env$fitted_model_bundle <- file.path("..", basename(bundle))
+    job_env$fitted_model_source_id <- source_id
+    list(job_env = job_env, extra_transfer_files = bundle)
+  }
+
+  condorbox_with_extra_transfer <- function(remote_user, remote_host, remote_dir, github_pat, github_username,
+                                            github_org, github_repo, stream_error = "FALSE", branch = "main",
+                                            docker_image, target_folder = NULL, condor_cpus = NULL, condor_memory = NULL,
+                                            condor_disk = NULL, make_options = "all", rmclone_script = "yes",
+                                            ghcr_login = FALSE, remote_os = "linux", condor_environment = NULL,
+                                            custom_batch_name = NULL, slot_requirements = NULL, exclude_machines = NULL,
+                                            exclude_slots = NULL, extra_transfer_files = character(0)) {
+    clone_script <- "clone_job.sh"
+    run_script <- "run_job.sh"
+    env_file <- "job_env.txt"
+    submit_file <- "condor_job.submit"
+    extra_transfer_files <- unique(extra_transfer_files[file.exists(extra_transfer_files)])
+    extra_transfer_names <- basename(extra_transfer_files)
+
+    if (.Platform$OS.type == "windows") {
+      remote_dir <- normalizePath(remote_dir, winslash = "/", mustWork = FALSE)
+    }
+
+    clone_script_content <- sprintf(
+      "\n#!/bin/bash\nexport GITHUB_PAT='%s'\nexport GITHUB_USERNAME='%s'\nexport GITHUB_ORGANIZATION='%s'\nexport GITHUB_REPO='%s'\nexport GITHUB_BRANCH='%s'\n%s\n\nif [[ -n \"$GITHUB_TARGET_FOLDER\" ]]; then\n    git init\n    git remote add origin https://$GITHUB_USERNAME:$GITHUB_PAT@github.com/$GITHUB_ORGANIZATION/$GITHUB_REPO.git\n    git config core.sparseCheckout true\n    echo \"$GITHUB_TARGET_FOLDER/\" >> .git/info/sparse-checkout\n    git pull origin $GITHUB_BRANCH\nelse\n    git clone -b $GITHUB_BRANCH https://$GITHUB_USERNAME:$GITHUB_PAT@github.com/$GITHUB_ORGANIZATION/$GITHUB_REPO.git\nfi\n",
+      github_pat, github_username, github_org, github_repo,
+      branch, if (!is.null(target_folder)) sprintf("export GITHUB_TARGET_FOLDER='%s'", target_folder) else ""
+    )
+    writeLines(clone_script_content, con = clone_script, sep = "\n")
+
+    run_script_content <- sprintf(
+      "\n#!/usr/bin/env bash\n\n# Execute the clone script\nsource %s\n\n# Load environment variables from job_env.txt if present\nif [[ -f \"%s\" ]]; then\n  grep -E '^[A-Za-z_][A-Za-z0-9_]*=' \"%s\" | sed 's/^/export /' > env_exports.sh\n  source env_exports.sh\nfi\n\n# Determine working directory\nif [[ -n \"$GITHUB_TARGET_FOLDER\" ]]; then\n    WORK_DIR=\"$GITHUB_TARGET_FOLDER\"\nelse\n    WORK_DIR=\"$GITHUB_REPO\"\nfi\n\n# Unset GitHub PAT for security\nunset GITHUB_PAT\n\n# Change to working directory and run make\ncd \"$WORK_DIR\" || exit 1\necho \"Running make with options: %s\"\nmake %s\n\n# Archive the results\ncd ..\necho \"Archiving folder: $WORK_DIR...\"\ntar -czvf output_archive.tar.gz \"$WORK_DIR\"\n",
+      clone_script, env_file, env_file, make_options, make_options
+    )
+    writeLines(run_script_content, con = run_script, sep = "\n")
+
+    if (!is.null(condor_environment)) {
+      if (is.list(condor_environment)) {
+        env_lines <- vapply(names(condor_environment), function(name) {
+          sprintf("%s=\"%s\"", name, condor_environment[[name]])
+        }, character(1))
+        writeLines(env_lines, env_file)
+      } else if (is.character(condor_environment)) {
+        env_pairs <- unlist(strsplit(condor_environment, "\\s+"))
+        valid_env <- env_pairs[grepl("^[A-Za-z_][A-Za-z0-9_]*=", env_pairs)]
+        quoted_env <- vapply(valid_env, function(pair) {
+          parts <- strsplit(pair, "=", fixed = TRUE)[[1]]
+          if (length(parts) >= 2) {
+            key <- parts[1]
+            value <- paste(parts[-1], collapse = "=")
+            sprintf("%s=\"%s\"", key, value)
+          } else {
+            pair
+          }
+        }, character(1))
+        writeLines(quoted_env, env_file)
+      }
+    }
+
+    condor_options <- c()
+    if (!is.null(condor_cpus)) condor_options <- c(condor_options, sprintf("request_cpus = %s", condor_cpus))
+    if (!is.null(condor_memory)) condor_options <- c(condor_options, sprintf("request_memory = %s", condor_memory))
+    if (!is.null(condor_disk)) condor_options <- c(condor_options, sprintf("request_disk = %s", condor_disk))
+
+    environment_string <- ""
+    if (!is.null(condor_environment)) {
+      if (is.list(condor_environment)) {
+        env_vars <- vapply(names(condor_environment), function(name) {
+          sprintf("%s=%s", name, condor_environment[[name]])
+        }, character(1))
+        environment_string <- paste(env_vars, collapse = " ")
+      } else if (is.character(condor_environment)) {
+        environment_string <- condor_environment
+      }
+    }
+
+    batch_name_template <- if (!is.null(custom_batch_name)) custom_batch_name else "$(ClusterId)"
+    condor_options <- paste(condor_options, collapse = "\n")
+    exclusion_requirements <- c()
+    if (!is.null(exclude_machines)) {
+      exclusion_requirements <- c(exclusion_requirements, sprintf("Machine != \"%s\"", exclude_machines))
+    }
+    if (!is.null(exclude_slots)) {
+      exclusion_requirements <- c(exclusion_requirements, sprintf("Name != \"%s\"", exclude_slots))
+    }
+    if (!is.null(slot_requirements)) exclusion_requirements <- c(exclusion_requirements, slot_requirements)
+    requirements_string <- if (length(exclusion_requirements) > 0) {
+      sprintf("Requirements = %s\n", paste(exclusion_requirements, collapse = " && "))
+    } else {
+      ""
+    }
+
+    transfer_inputs <- paste(c(clone_script, run_script, env_file, extra_transfer_names), collapse = ", ")
+    submit_file_content <- sprintf(
+      "\nUniverse   = docker\nDockerImage = %s\nExecutable = /bin/bash\nArguments  = %s\nShouldTransferFiles = YES\nTransferInputFiles = %s\nTransferOutputFiles = output_archive.tar.gz\nOutput     = condor_job.out\nError      = condor_job.err\nLog        = condor_job.log\nstream_error = %s\ngetenv = True\nbatch_name = %s\n%s%s%s\nQueue\n",
+      docker_image, run_script, transfer_inputs, stream_error, batch_name_template,
+      requirements_string,
+      if (nzchar(environment_string)) sprintf("environment = %s\n", environment_string) else "",
+      if (nzchar(condor_options)) paste0(condor_options, "\n") else ""
+    )
+    writeLines(submit_file_content, con = submit_file, sep = "\n")
+
+    message("Creating remote directory...")
+    system(sprintf("ssh %s@%s 'mkdir -p %s'", remote_user, remote_host, remote_dir))
+    message("Transferring files...")
+    for (f in c(clone_script, run_script, env_file, submit_file, extra_transfer_files)) {
+      system(sprintf("scp %s %s@%s:%s/%s", shQuote(f), remote_user, remote_host, remote_dir, basename(f)))
+    }
+    Sys.sleep(1)
+
+    if (ghcr_login) {
+      message("Performing docker login...")
+      if (tolower(remote_os) == "windows") {
+        config_cmd <- "mkdir %USERPROFILE%\\.docker && echo \"{\\\"credsStore\\\": \\\"wincred\\\"}\" > %USERPROFILE%\\.docker\\config.json"
+        system(sprintf("ssh %s@%s '%s'", remote_user, remote_host, config_cmd))
+        login_cmd <- sprintf("echo %s | docker login ghcr.io -u %s --password-stdin", shQuote(github_pat), github_username)
+      } else {
+        config_cmd <- "mkdir -p /tmp/docker_config && echo '{}' > /tmp/docker_config/config.json"
+        system(sprintf("ssh %s@%s '%s'", remote_user, remote_host, config_cmd))
+        login_cmd <- sprintf("echo %s | DOCKER_CONFIG=/tmp/docker_config docker login ghcr.io -u %s --password-stdin", shQuote(github_pat), github_username)
+      }
+      system(sprintf("ssh %s@%s '%s'", remote_user, remote_host, login_cmd))
+    }
+
+    message("Submitting job...")
+    submit_result <- system(sprintf("ssh %s@%s 'cd %s && condor_submit %s'", remote_user, remote_host, remote_dir, submit_file), intern = TRUE)
+    job_id <- NULL
+    message("Submit result:")
+    for (line in submit_result) message(line)
+    for (line in submit_result) {
+      if (grepl("submitted to cluster|cluster", line, ignore.case = TRUE)) {
+        numbers <- regmatches(line, gregexpr("\\d+", line))[[1]]
+        if (length(numbers) > 0) {
+          job_id <- numbers[length(numbers)]
+          break
+        }
+      }
+    }
+    if (is.null(job_id)) {
+      for (line in submit_result) {
+        if (grepl("\\d+", line)) {
+          numbers <- regmatches(line, gregexpr("\\d+", line))[[1]]
+          if (length(numbers) > 0) {
+            job_id <- numbers[length(numbers)]
+            break
+          }
+        }
+      }
+    }
+    actual_batch_name <- if (!is.null(custom_batch_name)) custom_batch_name else job_id
+    if (!is.null(job_id) && nzchar(job_id)) {
+      message(sprintf("Job submitted successfully! Job ID: %s, Batch Name: %s", job_id, actual_batch_name))
+      if (identical(rmclone_script, "yes")) {
+        message("Skipping clone script monitoring in fitted-source launcher wrapper.")
+      }
+    } else {
+      message("Job submitted but could not extract job ID")
+      job_id <- "unknown"
+    }
+    unlink(c(clone_script, run_script, env_file, submit_file, extra_transfer_files), force = TRUE)
+    message("Process completed.")
+    job_id
+  }
+
+  submit_condorbox_job <- function(..., extra_transfer_files = character(0)) {
+    extra_transfer_files <- extra_transfer_files[file.exists(extra_transfer_files)]
+    if (length(extra_transfer_files) == 0) {
+      return(CondorBox::CondorBox(...))
+    }
+    condorbox_with_extra_transfer(..., extra_transfer_files = extra_transfer_files)
+  }
+
   build_condor_exclude_slots <- function(remote_user, remote_host, run_target) {
     base_exclude <- default_condor_exclude_slots()
     patterns <- condor_target_patterns(run_target = run_target)
@@ -760,7 +1738,7 @@
     sections <- lapply(model_names, function(model_name) {
       model_env <- active_model_env(model_name)
       if (is.null(model_env) || !is.list(model_env)) {
-        return(paste0(model_name, "\n  <model config not found>"))
+        return(paste0(launch_unit_label(model_name), "\n  <model config not found>"))
       }
       fields <- names(model_env)
       has_profile_sets <- !is.null(model_env$profile_sets) && length(model_env$profile_sets) > 0
@@ -779,12 +1757,12 @@
         )
       }
       if (is.null(fields) || length(fields) == 0) {
-        return(paste0(model_name, "\n  <empty model config>"))
+        return(paste0(launch_unit_label(model_name), "\n  <empty model config>"))
       }
       field_lines <- vapply(fields, function(nm) {
         paste0("  ", nm, " : ", collapse_model_field(model_env[[nm]]))
       }, character(1))
-      paste(c(model_name, field_lines), collapse = "\n")
+      paste(c(launch_unit_label(model_name), field_lines), collapse = "\n")
     })
     paste(sections, collapse = "\n\n")
   }
@@ -808,11 +1786,21 @@
         "base_dir",
         "model_dir",
         "launcher_input_recipe_label",
+        "launcher_input_recipe_description",
         "input_recipe_base",
+        "input_recipe_base_input_dir",
+        "input_recipe_base_source",
+        "input_recipe_base_tokens",
         "input_recipe_movement_pairs",
         "input_recipe_sel_nodes",
         "input_recipe_index_cv_half",
         "build_inputs_on_missing",
+        "fitted_model_source_enabled",
+        "fitted_model_source_label",
+        "fitted_model_source_dir",
+        "fitted_model_bundle",
+        "auto_run_model_before_dependency",
+        "auto_fitted_model_dir",
         "program_path",
         "mfcl_commands",
         "Reps",
@@ -844,7 +1832,7 @@
       }, character(1))
     }
     paste(c(
-      paste0(model_name, " [", job_type, "]"),
+      paste0(launch_unit_label(model_name), " [", job_type, "]"),
       paste0("  batch_name : ", batch_name),
       env_lines
     ), collapse = "\n")
@@ -860,11 +1848,21 @@
       "base_dir",
       "model_dir",
       "launcher_input_recipe_label",
+      "launcher_input_recipe_description",
       "input_recipe_base",
+      "input_recipe_base_input_dir",
+      "input_recipe_base_source",
+      "input_recipe_base_tokens",
       "input_recipe_movement_pairs",
       "input_recipe_sel_nodes",
       "input_recipe_index_cv_half",
       "build_inputs_on_missing",
+      "fitted_model_source_enabled",
+      "fitted_model_source_label",
+      "fitted_model_source_dir",
+      "fitted_model_bundle",
+      "auto_run_model_before_dependency",
+      "auto_fitted_model_dir",
       "program_path",
       "mfcl_commands",
       "Reps",
@@ -968,7 +1966,7 @@
           }
         }
         paste(c(
-          paste0(model_name, " [", jt, "]"),
+      paste0(launch_unit_label(model_name), " [", jt, "]"),
           paste0("  batch_name : ", bn),
           type_lines
         ), collapse = "\n")
@@ -976,7 +1974,7 @@
 
       paste(
         c(
-          paste0(model_name, " [common]"),
+      paste0(launch_unit_label(model_name), " [common]"),
           common_lines,
           "",
           paste(job_blocks, collapse = "\n\n----------------------------------------\n\n")
@@ -989,12 +1987,13 @@
   }
 
   selected_models_from_checkboxes <- function() {
-    if (length(rv$models) == 0) return(character(0))
-    names(rv$models)[vapply(names(rv$models), function(model_name) {
-      checkbox_id <- paste0("model_check_", gsub("[^a-zA-Z0-9]", "_", model_name))
-      isTRUE(input[[checkbox_id]])
-    }, logical(1))]
+    selected_launch_units()
   }
+
+  observe({
+    if (length(rv$models) == 0) return()
+    rv$selected_models <- selected_models_from_checkboxes()
+  })
 
   estimate_total_jobs <- function(selected_models, selected_job_types, prof_chain_mode = FALSE, is_local_mode = FALSE, prof_anchor_requested = 100, local_prof_chain_parallel = FALSE) {
     total_jobs <- 0L
@@ -1123,7 +2122,7 @@
     model_text <- vapply(names(model_split), function(mn) {
       piece <- model_split[[mn]]
       item_txt <- paste0(piece$item, "=", piece$jobs, collapse = "; ")
-      paste0(mn, ": ", item_txt)
+      paste0(launch_unit_label(mn), ": ", item_txt)
     }, character(1), USE.NAMES = FALSE)
     paste(model_text, collapse = " | ")
   })
@@ -1134,7 +2133,18 @@
     if (is.null(selected_job_types) || length(selected_job_types) == 0) return("0 (select job type)")
     selected_job_types <- effective_selected_job_types(selected_job_types)
     selected_models <- selected_models_from_checkboxes()
-    if (length(selected_models) == 0) return("0 (select model)")
+    if (length(selected_models) == 0 &&
+        isTRUE(sensitivity_mode_enabled()) &&
+        length(selected_sensitivity_ids()) == 0 &&
+        !isTRUE(include_base_launch_units())) {
+      return("0 (select sensitivity or include base)")
+    }
+    if (length(selected_models) == 0 && isTRUE(sensitivity_mode_enabled())) {
+      return("0 (no launch units)")
+    }
+    if (length(selected_models) == 0) {
+      return(if (identical(launch_input_mode(), "existing")) "0 (select existing input)" else "0 (select base input)")
+    }
     launch_mode <- if (!is.null(input$launch_mode) && nzchar(input$launch_mode)) input$launch_mode else "condor"
     is_local_mode <- identical(launch_mode, "local_native") || identical(launch_mode, "local_docker")
     prof_chain_mode <- identical(input$prof_launch_strategy, "seq_anchor_bidir") && "prof" %in% selected_job_types
@@ -1190,7 +2200,7 @@
   
   observeEvent(input$launch_btn, {
     if (length(rv$models) == 0) { 
-      showNotification("Please load models first", type = "error")
+      showNotification("Please load launch settings first", type = "error")
       return() 
     }
     
@@ -1200,7 +2210,18 @@
     
     # Validate model selection
     if (length(selected_models) == 0) { 
-      showNotification("Please select at least one model", type = "error")
+      msg <- if (isTRUE(sensitivity_mode_enabled()) &&
+                 length(selected_sensitivity_ids()) == 0 &&
+                 !isTRUE(include_base_launch_units())) {
+        "Please select at least one sensitivity, or include the selected base input(s)"
+      } else if (isTRUE(sensitivity_mode_enabled())) {
+        "No launch units for the selected base input(s)"
+      } else if (identical(launch_input_mode(), "existing")) {
+        "Please select one or more existing inputs"
+      } else {
+        "Please select a base input"
+      }
+      showNotification(msg, type = "error")
       return() 
     }
     
@@ -1327,7 +2348,8 @@
     progress_prefix <- if (is_local_mode) "Running local" else "Launching"
     effective_output_dir <- if (is_local_mode) {
       paste(unique(vapply(selected_models, function(m) {
-        md <- rv$models[[m]]$model_dir
+        env <- active_model_env(m)
+        md <- env$model_dir
         if (is.null(md) || !nzchar(md)) m else as.character(md)
       }, character(1))), collapse = ", ")
     } else {
@@ -1454,6 +2476,7 @@
 
             if (identical(launch_mode, "condor")) {
               common_params <- list(
+                repo_root = isolate(repo_root_val()),
                 remote_user = input$remote_user,
                 remote_host = input$remote_host,
                 github_pat = Sys.getenv("GIT_PAT"),
@@ -1471,7 +2494,25 @@
                 exclude_slots = condor_exclude_slots
               )
               parallel::clusterEvalQ(cl, { library(CondorBox) })
-              parallel::clusterExport(cl, varlist = c("launch_single_job_raw", "common_params"), envir = environment())
+              parallel::clusterExport(
+                cl,
+                varlist = c(
+                  "launch_single_job_raw",
+                  "submit_condorbox_job",
+                  "condorbox_with_extra_transfer",
+                  "prepare_job_fitted_source",
+                  "job_uses_fitted_source",
+                  "fitted_source_job_types",
+                  "ensure_fitted_source_functions_loaded",
+                  "truthy_scalar",
+                  "first_scalar_string",
+                  "launch_model_name",
+                  "sanitize_profile_job_tag",
+                  "apply_prof_init_mapping",
+                  "common_params"
+                ),
+                envir = environment()
+              )
               parallel::parLapply(cl, job_specs, function(spec) {
                 tryCatch({
                   launch_single_job_raw(spec, common_params)
@@ -1886,7 +2927,7 @@
       job_record <- data.frame(
         timestamp = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
         job_type = paste(selected_job_types, collapse = ", "),
-        model_names = paste(selected_models, collapse = ", "),
+        model_names = paste(launch_unit_labels(selected_models), collapse = ", "),
         output_dir = effective_output_dir,
         batch_names = paste(batch_names, collapse = ", "),
         remote_dirs = paste(remote_dirs, collapse = ", "),
@@ -2019,7 +3060,7 @@
             strong("Summary:"),
             tags$ul(
               tags$li(paste("Total jobs:", total_jobs)),
-              tags$li(paste("Models:", paste(selected_models, collapse = ", "))),
+              tags$li(paste("Inputs:", paste(launch_unit_labels(selected_models), collapse = ", "))),
               tags$li(paste("Mode:", if (identical(launch_mode, "local_docker")) "Local Docker" else if (identical(launch_mode, "local_native")) "Local Native" else "Condor")),
               tags$li(paste(if (is_local_mode) "Model dir:" else "Output directory:", effective_output_dir)),
               tags$li(paste("Branch:", input$branch))
@@ -2193,8 +3234,16 @@
     old_wd <- getwd()
     setwd(work_dir)
     on.exit(setwd(old_wd), add = TRUE)
+
+    fitted_source <- prepare_job_fitted_source(
+      job_env = as.list(job_env, all.names = TRUE),
+      job_type = spec$job_type,
+      work_dir = work_dir,
+      repo_root = common_params$repo_root
+    )
+    job_env <- list2env(fitted_source$job_env, parent = emptyenv())
     
-    job_id <- CondorBox::CondorBox(
+    job_id <- submit_condorbox_job(
       make_options = spec$job_type, 
       remote_user = common_params$remote_user, 
       remote_host = common_params$remote_host,
@@ -2213,7 +3262,8 @@
       ghcr_login = common_params$ghcr_login,
       exclude_slots = common_params$exclude_slots,
       custom_batch_name = batch_name, 
-      condor_environment = as.list(job_env, all.names = TRUE)
+      condor_environment = as.list(job_env, all.names = TRUE),
+      extra_transfer_files = fitted_source$extra_transfer_files
     )
     
     return(list(
@@ -2293,7 +3343,24 @@
       rv$launch_log <- paste0(rv$launch_log, "  → ", batch_name, "\n")
     }
     
-    job_id <- CondorBox::CondorBox(
+    work_dir <- file.path(
+      tempdir(),
+      paste0("condorbox_", Sys.getpid(), "_", gsub("[^a-zA-Z0-9]", "_", launch_name))
+    )
+    if (!dir.exists(work_dir)) dir.create(work_dir, recursive = TRUE)
+    old_wd <- getwd()
+    setwd(work_dir)
+    on.exit(setwd(old_wd), add = TRUE)
+
+    fitted_source <- prepare_job_fitted_source(
+      job_env = job_env,
+      job_type = job_type,
+      work_dir = work_dir,
+      repo_root = isolate(repo_root_val())
+    )
+    job_env <- fitted_source$job_env
+
+    job_id <- submit_condorbox_job(
       make_options = job_type, 
       remote_user = input$remote_user, 
       remote_host = input$remote_host,
@@ -2312,7 +3379,8 @@
       ghcr_login = isTRUE(input$ghcr_login),
       exclude_slots = if (!is.null(exclude_slots)) exclude_slots else default_condor_exclude_slots(),
       custom_batch_name = batch_name, 
-      condor_environment = as.list(job_env, all.names = TRUE)
+      condor_environment = as.list(job_env, all.names = TRUE),
+      extra_transfer_files = fitted_source$extra_transfer_files
     )
     
     return(list(

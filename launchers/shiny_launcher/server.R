@@ -3,6 +3,10 @@ server <- function(input, output, session) {
     dirname(normalizePath(sys.frame(1)$ofile)),
     error = function(e) normalizePath(getwd(), mustWork = FALSE)
   )
+  if (!file.exists(file.path(app_dir, "modules", "server", "00_settings.R")) &&
+      file.exists(file.path("launchers", "shiny_launcher", "modules", "server", "00_settings.R"))) {
+    app_dir <- normalizePath(file.path("launchers", "shiny_launcher"), mustWork = TRUE)
+  }
   server_dir <- file.path(app_dir, "modules", "server")
   source(file.path(server_dir, "00_settings.R"), local = TRUE)
   source(file.path(server_dir, "01_retrieve_ui_helpers.R"), local = TRUE)

@@ -929,6 +929,7 @@
   rv <- reactiveValues(
     models = list(),
     models_original = list(),
+    launch_defaults = NULL,
     launch_log = "",
     retrieval_log = "",
     folders_data = data.frame(),

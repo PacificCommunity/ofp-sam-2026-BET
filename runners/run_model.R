@@ -247,6 +247,9 @@ saveRDS(
 keep_top <- c(
   "model_payload.rds",
   "model_info.rds",
+  "indepvar.rpt",
+  "avg_bio",
+  "relative_depletion",
   "fishery_map.R",
   "fishery_map.r",
   "tag_rep_map.r",

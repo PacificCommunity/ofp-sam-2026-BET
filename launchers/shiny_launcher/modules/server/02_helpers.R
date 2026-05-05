@@ -139,6 +139,269 @@
     saveRDS(out, log_file)
     invisible(length(idx))
   }
+
+  # ========== INPUT FOLDER DISCOVERY ==========
+
+  empty_launch_input_dirs <- function() {
+    data.frame(
+      id = character(0),
+      name = character(0),
+      display_name = character(0),
+      base_dir = character(0),
+      display_base_dir = character(0),
+      label = character(0),
+      tokens = character(0),
+      description = character(0),
+      stringsAsFactors = FALSE
+    )
+  }
+
+  safe_launch_id <- function(x) {
+    txt <- gsub("[^A-Za-z0-9]+", "_", as.character(x))
+    txt <- gsub("^_+|_+$", "", txt)
+    ifelse(nzchar(txt), txt, "input")
+  }
+
+  read_input_tokens_safe <- function(input_dir) {
+    if (exists("extract_input_change_tokens", mode = "function")) {
+      return(extract_input_change_tokens(input_dir))
+    }
+    meta_path <- file.path(input_dir, "input_change_metadata.rds")
+    if (!file.exists(meta_path)) return(character(0))
+    meta <- tryCatch(readRDS(meta_path), error = function(e) NULL)
+    tokens <- if (is.list(meta) && !is.null(meta$tokens)) as.character(meta$tokens) else character(0)
+    tokens <- tokens[!is.na(tokens) & nzchar(trimws(tokens))]
+    unique(tokens)
+  }
+
+  read_input_description_safe <- function(input_dir) {
+    if (exists("extract_input_change_description", mode = "function")) {
+      return(extract_input_change_description(input_dir))
+    }
+    meta_path <- file.path(input_dir, "input_change_metadata.rds")
+    if (!file.exists(meta_path)) return("")
+    meta <- tryCatch(readRDS(meta_path), error = function(e) NULL)
+    if (!is.list(meta)) return("")
+    explicit <- if (!is.null(meta$description)) trimws(as.character(meta$description[[1]])) else ""
+    if (nzchar(explicit)) return(explicit)
+    if (!is.null(meta$operations) && is.list(meta$operations)) {
+      labels <- vapply(meta$operations, function(op) {
+        if (!is.list(op) || is.null(op$label)) return("")
+        trimws(as.character(op$label[[1]]))
+      }, character(1))
+      labels <- unique(labels[nzchar(labels)])
+      if (length(labels) > 0) return(paste(labels, collapse = "; "))
+    }
+    paste(read_input_tokens_safe(input_dir), collapse = " + ")
+  }
+
+  looks_like_mfcl_input_dir <- function(path) {
+    if (!dir.exists(path)) return(FALSE)
+    files <- basename(list.files(path, all.files = FALSE, no.. = TRUE))
+    any(grepl("\\.frq$", files, ignore.case = TRUE)) &&
+    any(grepl("\\.ini$", files, ignore.case = TRUE))
+  }
+
+  repo_relative_path <- function(path) {
+    p <- normalizePath(path, mustWork = FALSE, winslash = "/")
+    root_norm <- normalizePath(resolve_repo_path("."), mustWork = FALSE, winslash = "/")
+    root_pattern <- gsub("([\\^$.|?*+(){}\\[\\]\\\\])", "\\\\\\1", root_norm)
+    sub(paste0("^", root_pattern, "/?"), "", p)
+  }
+
+  launch_input_scan_cache <- new.env(parent = emptyenv())
+
+  scan_launch_input_dirs <- function(inputs_root = "mfcl/inputs", force = FALSE) {
+    root <- resolve_repo_path(inputs_root)
+    if (!dir.exists(root)) {
+      return(empty_launch_input_dirs())
+    }
+
+    all_dirs <- list.dirs(root, recursive = FALSE, full.names = TRUE)
+    meta_paths <- file.path(all_dirs, "input_change_metadata.rds")
+    meta_mtime <- suppressWarnings(file.info(meta_paths)$mtime)
+    cache_key <- paste(
+      normalizePath(root, mustWork = FALSE, winslash = "/"),
+      suppressWarnings(as.numeric(file.info(root)$mtime)),
+      paste(basename(all_dirs), collapse = "|"),
+      paste(ifelse(is.na(meta_mtime), "", as.numeric(meta_mtime)), collapse = "|"),
+      sep = "::"
+    )
+    if (!isTRUE(force) &&
+        identical(launch_input_scan_cache$key, cache_key) &&
+        is.data.frame(launch_input_scan_cache$value)) {
+      return(launch_input_scan_cache$value)
+    }
+
+    dirs <- all_dirs
+    dirs <- dirs[vapply(dirs, looks_like_mfcl_input_dir, logical(1))]
+    if (length(dirs) == 0) {
+      out <- empty_launch_input_dirs()
+      launch_input_scan_cache$key <- cache_key
+      launch_input_scan_cache$value <- out
+      return(out)
+    }
+
+    rel <- vapply(dirs, repo_relative_path, character(1))
+    names(rel) <- NULL
+
+    ids <- safe_launch_id(rel)
+    ids <- make.unique(ids, sep = "_")
+    names(ids) <- NULL
+    tokens <- vapply(dirs, function(d) paste(read_input_tokens_safe(d), collapse = ", "), character(1))
+    tokens <- unname(tokens)
+    description <- vapply(dirs, read_input_description_safe, character(1))
+    description <- unname(description)
+    name <- unname(basename(dirs))
+    display_name <- if (exists("compact_input_name", mode = "function")) {
+      vapply(name, compact_input_name, character(1))
+    } else {
+      name
+    }
+    display_base_dir <- file.path(dirname(rel), display_name)
+    label <- ifelse(nzchar(tokens), paste0(display_name, " [", tokens, "]"), display_name)
+
+    out <- data.frame(
+      id = ids,
+      name = name,
+      display_name = display_name,
+      base_dir = rel,
+      display_base_dir = display_base_dir,
+      label = label,
+      tokens = tokens,
+      description = description,
+      stringsAsFactors = FALSE
+    )
+    out$.prefer_compact <- basename(out$base_dir) == out$display_name
+    out <- out[order(out$display_name, !out$.prefer_compact, out$base_dir), , drop = FALSE]
+    out <- out[!duplicated(out$display_name), , drop = FALSE]
+    out$.prefer_compact <- NULL
+    row.names(out) <- NULL
+    launch_input_scan_cache$key <- cache_key
+    launch_input_scan_cache$value <- out
+    out
+  }
+
+  normalize_launch_defaults <- function(settings, summary_text = "") {
+    if (is.null(settings)) settings <- list()
+    settings <- as.list(settings, all.names = TRUE)
+    if (is.null(settings$mfcl_commands) || length(settings$mfcl_commands) == 0) {
+      settings$mfcl_commands <- "./doitall.sh"
+    }
+    command_txt <- trimws(as.character(settings$mfcl_commands[[1]]))
+    program_txt <- if (!is.null(settings$program_path) && length(settings$program_path) > 0) {
+      trimws(as.character(settings$program_path[[1]]))
+    } else {
+      ""
+    }
+    command_already_qualified <- nzchar(program_txt) && startsWith(command_txt, program_txt)
+
+    out <- if (exists("apply_model_defaults", mode = "function")) {
+      tryCatch(
+        apply_model_defaults(list(common = settings))[[1]],
+        error = function(e) settings
+      )
+    } else {
+      settings
+    }
+    if (isTRUE(command_already_qualified)) {
+      out$mfcl_commands <- settings$mfcl_commands
+    }
+    out$config_summary <- if (!is.null(summary_text) && nzchar(as.character(summary_text))) {
+      as.character(summary_text)
+    } else {
+      ""
+    }
+    out
+  }
+
+  first_model_settings <- function(models) {
+    if (is.null(models) || !is.list(models) || length(models) == 0) return(NULL)
+    models[[1]]
+  }
+
+  launch_default_source_names <- c(
+    "launch_defaults",
+    "launcher_settings",
+    "settings",
+    "defaults",
+    "model_template"
+  )
+
+  extract_launch_defaults_from_env <- function(env) {
+    for (nm in launch_default_source_names) {
+      if (exists(nm, envir = env, inherits = FALSE)) {
+        return(list(
+          settings = get(nm, envir = env, inherits = FALSE),
+          source_label = nm,
+          legacy_count = NA_integer_
+        ))
+      }
+    }
+
+    if (exists("models", envir = env, inherits = FALSE)) {
+      models <- get("models", envir = env, inherits = FALSE)
+      return(list(
+        settings = first_model_settings(models),
+        source_label = "legacy models[[1]]",
+        legacy_count = length(models)
+      ))
+    }
+    if (exists("config", envir = env, inherits = FALSE)) {
+      config <- get("config", envir = env, inherits = FALSE)
+      if (is.list(config)) {
+        return(list(settings = config, source_label = "config", legacy_count = NA_integer_))
+      }
+    }
+    NULL
+  }
+
+  extract_launch_defaults_from_list <- function(x) {
+    for (nm in launch_default_source_names) {
+      if (!is.null(x[[nm]])) {
+        return(list(settings = x[[nm]], source_label = nm, legacy_count = NA_integer_))
+      }
+    }
+    if (!is.null(x$models)) {
+      return(list(
+        settings = first_model_settings(x$models),
+        source_label = "legacy models[[1]]",
+        legacy_count = length(x$models)
+      ))
+    }
+    if (!is.null(x$config) && is.list(x$config)) {
+      return(list(settings = x$config, source_label = "config", legacy_count = NA_integer_))
+    }
+    NULL
+  }
+
+  extract_launch_defaults <- function(obj) {
+    out <- if (is.environment(obj)) {
+      extract_launch_defaults_from_env(obj)
+    } else if (is.list(obj)) {
+      extract_launch_defaults_from_list(obj)
+    } else {
+      NULL
+    }
+
+    if (is.null(out) || is.null(out$settings)) {
+      stop("No common launch settings found. Define a 'launch_defaults' list in the config script.")
+    }
+    out
+  }
+
+  launch_defaults_env <- function() {
+    if (!is.null(rv$launch_defaults)) return(rv$launch_defaults)
+    first_model_settings(rv$models)
+  }
+
+  template_model_name <- function() {
+    "common launch settings"
+  }
+
+  template_model_env <- function() {
+    launch_defaults_env()
+  }
   
   # ========== LOAD MODELS FUNCTION ==========
   
@@ -161,6 +424,7 @@
     
     possible_paths <- c(
       possible_paths,
+      "configs/2023R4_launch_settings.R",
       "set_model.R"
     )
     
@@ -171,7 +435,7 @@
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
       "📁 Current Working Directory:\n",
       current_wd, "\n\n",
-      "🔍 Searching for R script with models...\n",
+      "🔍 Searching for launch settings script...\n",
       "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     )
     
@@ -189,8 +453,8 @@
     
     if (is.null(found_path)) {
       rv$config_status_msg <- paste0(rv$config_status_msg, 
-                                     "\n❌ No R script with models found!\n",
-                                     "Please provide a path to an R script containing a 'models' list object.")
+                                     "\n❌ No launch settings script found!\n",
+                                     "Please provide a path to an R script containing a 'launch_defaults' list object.")
       showNotification("Config file not found", type = "error")
       return(FALSE)
     }
@@ -201,31 +465,42 @@
     tryCatch({
       if (grepl("\\.rds|\\.RDS", found_path)) {
         saved_data <- readRDS(found_path)
-        rv$models <- saved_data$models
-        rv$models_original <- saved_data$models
-        rv$run_metadata <- saved_data$metadata
-        rv$base_config_name <- saved_data$metadata$base_config
+        meta <- if (!is.null(saved_data$metadata)) saved_data$metadata else list()
+        extracted <- extract_launch_defaults(saved_data)
+        rv$run_metadata <- meta
+        rv$base_config_name <- if (!is.null(meta$base_config)) meta$base_config else basename(found_path)
         rv$current_config_file <- found_path
         
         # Extract summary from saved config
-        if (!is.null(saved_data$metadata$summary)) {
-          rv$run_metadata$summary <- saved_data$metadata$summary
+        if (!is.null(meta$summary)) {
+          rv$run_metadata$summary <- meta$summary
         }
-        
-        # Extract summary from saved config
-        if (!is.null(saved_data$metadata$summary)) {
-          rv$run_metadata$summary <- saved_data$metadata$summary
+
+        rv$launch_defaults <- normalize_launch_defaults(extracted$settings, rv$run_metadata$summary)
+        rv$models <- list(common = rv$launch_defaults)
+        rv$models_original <- rv$models
+
+        run_name <- if (!is.null(meta$run_name)) meta$run_name else basename(found_path)
+        description <- if (!is.null(meta$description)) meta$description else ""
+        created_by <- if (!is.null(meta$created_by)) meta$created_by else ""
+        date_text <- if (!is.null(meta$date)) format(meta$date, "%Y-%m-%d %H:%M") else ""
+
+        legacy_line <- if (is.finite(extracted$legacy_count)) {
+          paste0("\n  - Legacy model entries ignored as launch units: ", extracted$legacy_count)
+        } else {
+          ""
         }
         
         job_history <- load_job_history(found_path)
         rv$config_status_msg <- paste0(rv$config_status_msg, 
-                                       "\n✓ Loaded saved run configuration",
-                                       "\n  - Run Name: ", saved_data$metadata$run_name,
-                                       "\n  - Description: ", saved_data$metadata$description,
-                                       "\n  - Date: ", format(saved_data$metadata$date, "%Y-%m-%d %H:%M"),
-                                       "\n  - Base Config: ", saved_data$metadata$base_config,
-                                       "\n  - Created By: ", saved_data$metadata$created_by,
-                                       "\n  - Models: ", length(rv$models))
+                                       "\n✓ Loaded saved launch settings",
+                                       "\n  - Run Name: ", run_name,
+                                       "\n  - Description: ", description,
+                                       "\n  - Date: ", date_text,
+                                       "\n  - Base Config: ", rv$base_config_name,
+                                       "\n  - Created By: ", created_by,
+                                       "\n  - Settings source: ", extracted$source_label,
+                                       legacy_line)
         
         if (nrow(job_history) > 0) {
           rv$config_status_msg <- paste0(rv$config_status_msg,
@@ -259,26 +534,25 @@
           rv$run_metadata$summary <- NULL
         }
         
-        if (exists("models", envir = env)) {
-          
-          rv$run_metadata$summary <- env$summary
+        extracted <- extract_launch_defaults(env)
+        rv$launch_defaults <- normalize_launch_defaults(extracted$settings, rv$run_metadata$summary)
+        rv$models <- list(common = rv$launch_defaults)
+        rv$models_original <- rv$models
+        rv$base_config_name <- basename(found_path)
+        rv$current_config_file <- NULL
+
+        legacy_line <- if (is.finite(extracted$legacy_count)) {
+          paste0("\n  - Legacy model entries ignored as launch units: ", extracted$legacy_count)
         } else {
-          rv$run_metadata$summary <- NULL
+          ""
         }
-        
-        if (exists("models", envir = env)) {
-          rv$models <- env$models
-          rv$models_original <- env$models
-          rv$base_config_name <- basename(found_path)
-          rv$current_config_file <- NULL
-          rv$config_status_msg <- paste0(rv$config_status_msg,
-                                         "\n✓ Successfully loaded R script",
-                                         "\n  - Script: ", basename(found_path),
-                                         "\n  - Models found: ", length(rv$models),
-                                         "\n  - ", paste(names(rv$models), collapse = " - "), "\n")
-        } else {
-          stop("No 'models' list object found in the R script.")
-        }
+
+        rv$config_status_msg <- paste0(rv$config_status_msg,
+                                       "\n✓ Successfully loaded R script",
+                                       "\n  - Script: ", basename(found_path),
+                                       "\n  - Settings source: ", extracted$source_label,
+                                       legacy_line,
+                                       "\n  - Launch units come from mfcl/inputs, not config model names.\n")
       }
 
       if (!is.null(rv$models) && length(rv$models) > 0) {
@@ -305,12 +579,13 @@
       rv$uploaded_filename <- if (!is.null(original_filename)) original_filename else basename(found_path)
       
       
-      rv$selected_models <- names(rv$models)
+      input_rows <- tryCatch(scan_launch_input_dirs(), error = function(e) data.frame())
+      rv$selected_models <- if (is.data.frame(input_rows) && nrow(input_rows) > 0) input_rows$id else character(0)
       updateSelectInput(session, "edit_model_select", 
                         choices = names(rv$models), 
                         selected = names(rv$models)[1])
       
-      showNotification(paste("Loaded", length(rv$models), "models"), type = "message")
+      showNotification("Loaded common launch settings", type = "message")
       
       # Save this config path for next time
       save_settings()

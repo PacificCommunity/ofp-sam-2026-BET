@@ -44,7 +44,7 @@
       div(
         class = "editor-toolbar",
         textInput("save_script_name", "Save as:",
-                  value = if(!is.null(current_file)) current_file else "my_model.R",
+                  value = if(!is.null(current_file)) current_file else "launch_settings.R",
                   placeholder = "filename.R",
                   width = "300px"),
         actionButton("save_script_btn", "Save", 
@@ -67,7 +67,7 @@
       
       p(style = "color: #666; font-size: 11px; margin-top: 10px;",
         icon("info-circle"), 
-        " Edit your script above. Click 'Save' to save changes, or 'Save & Reload' to save and load the updated models."),
+        " Edit your script above. Click 'Save' to save changes, or 'Save & Reload' to save and load the updated settings."),
       
       footer = tagList(
         modalButton("Cancel")
@@ -141,7 +141,7 @@
       
       removeModal()
       
-      # Reload models
+      # Reload settings
       load_models(config_path = save_path, original_filename = filename)
       
       showNotification(
@@ -645,7 +645,6 @@
   output$launch_config_status_ui <- renderUI({
     req(rv$config_loaded)
     
-    n <- length(rv$models)
     src <- if (!is.null(rv$config_path)) basename(rv$config_path) else "unknown"
     
     # Check if summary exists
@@ -663,8 +662,9 @@
                     border-left: 3px solid #f39c12; border-radius: 4px;"
     }
     
-    # Model count text
-    model_count_text <- paste0(n, " model", if(n != 1) "s", " loaded")
+    input_rows <- tryCatch(scan_launch_input_dirs(), error = function(e) data.frame())
+    input_count <- if (is.data.frame(input_rows)) nrow(input_rows) else 0L
+    settings_text <- paste0("common settings loaded • ", input_count, " input folder", if(input_count != 1) "s", " available")
     
     div(
       style = box_style,
@@ -676,7 +676,7 @@
       tags$div(
         style = "color: #666; font-size: 11px; margin-top: 4px; margin-left: 20px;",
         icon("cube"),
-        paste0(" ", model_count_text, " • "),
+        paste0(" ", settings_text, " • "),
         tags$span(
           style = "font-style: italic;",
           icon("file-code"),
