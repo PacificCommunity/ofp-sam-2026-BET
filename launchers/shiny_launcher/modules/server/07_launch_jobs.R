@@ -1399,14 +1399,14 @@
     }
 
     clone_script_content <- sprintf(
-      "\n#!/bin/bash\nexport GITHUB_PAT='%s'\nexport GITHUB_USERNAME='%s'\nexport GITHUB_ORGANIZATION='%s'\nexport GITHUB_REPO='%s'\nexport GITHUB_BRANCH='%s'\n%s\n\nif [[ -z \"$HOME\" || \"$HOME\" == \"/nonexistent\" || ! -w \"$HOME\" ]]; then\n    export HOME=\"$PWD\"\nfi\nexport XDG_CACHE_HOME=\"${XDG_CACHE_HOME:-$HOME/.cache}\"\nmkdir -p \"$XDG_CACHE_HOME/git\" 2>/dev/null || true\nGIT_CMD=(git -c credential.helper=)\n\nif [[ -n \"$GITHUB_TARGET_FOLDER\" ]]; then\n    \"${GIT_CMD[@]}\" init\n    \"${GIT_CMD[@]}\" remote add origin https://$GITHUB_USERNAME:$GITHUB_PAT@github.com/$GITHUB_ORGANIZATION/$GITHUB_REPO.git\n    \"${GIT_CMD[@]}\" config core.sparseCheckout true\n    echo \"$GITHUB_TARGET_FOLDER/\" >> .git/info/sparse-checkout\n    \"${GIT_CMD[@]}\" pull origin $GITHUB_BRANCH\nelse\n    \"${GIT_CMD[@]}\" clone -b $GITHUB_BRANCH https://$GITHUB_USERNAME:$GITHUB_PAT@github.com/$GITHUB_ORGANIZATION/$GITHUB_REPO.git\nfi\n",
+      "\n#!/bin/bash\nset -o pipefail\nexport HOME=\"$PWD\"\nexport XDG_CACHE_HOME=\"$PWD/.cache\"\nexport GIT_CONFIG_NOSYSTEM=1\nexport GIT_CONFIG_GLOBAL=/dev/null\nexport GIT_TERMINAL_PROMPT=0\nexport GCM_INTERACTIVE=Never\nmkdir -p \"$XDG_CACHE_HOME/git\" 2>/dev/null || true\n\nexport GITHUB_PAT='%s'\nexport GITHUB_USERNAME='%s'\nexport GITHUB_ORGANIZATION='%s'\nexport GITHUB_REPO='%s'\nexport GITHUB_BRANCH='%s'\n%s\n\nGIT_CMD=(git -c credential.helper= -c credential.useHttpPath=false)\necho \"clone HOME: ${HOME:-<unset>}\"\necho \"clone XDG_CACHE_HOME: ${XDG_CACHE_HOME:-<unset>}\"\necho \"clone git credential helpers: $(\"${GIT_CMD[@]}\" config --show-origin --get-all credential.helper 2>/dev/null || echo none)\"\n\nif [[ -n \"$GITHUB_TARGET_FOLDER\" ]]; then\n    \"${GIT_CMD[@]}\" init\n    \"${GIT_CMD[@]}\" remote add origin https://$GITHUB_USERNAME:$GITHUB_PAT@github.com/$GITHUB_ORGANIZATION/$GITHUB_REPO.git\n    \"${GIT_CMD[@]}\" config core.sparseCheckout true\n    echo \"$GITHUB_TARGET_FOLDER/\" >> .git/info/sparse-checkout\n    \"${GIT_CMD[@]}\" pull origin $GITHUB_BRANCH\nelse\n    \"${GIT_CMD[@]}\" clone -b $GITHUB_BRANCH https://$GITHUB_USERNAME:$GITHUB_PAT@github.com/$GITHUB_ORGANIZATION/$GITHUB_REPO.git\nfi\n",
       github_pat, github_username, github_org, github_repo,
       branch, if (!is.null(target_folder)) sprintf("export GITHUB_TARGET_FOLDER='%s'", target_folder) else ""
     )
     writeLines(clone_script_content, con = clone_script, sep = "\n")
 
     run_script_content <- sprintf(
-      "\n#!/usr/bin/env bash\nset -o pipefail\n\n# Execute the clone script\nsource %s\n\n# Load environment variables from job_env.txt if present\nif [[ -f \"%s\" ]]; then\n  grep -E '^[A-Za-z_][A-Za-z0-9_]*=' \"%s\" | sed 's/^/export /' > env_exports.sh\n  source env_exports.sh\nfi\n\n# Condor transfer audit. With stream_output enabled, these lines are visible\n# in condor_job.out shortly after the job starts, before any long MFCL run.\necho \"=== Condor transfer audit ===\"\necho \"started_at: $(date -Is 2>/dev/null || date)\"\necho \"submit_dir: $PWD\"\necho \"transferred files:\"\nls -lah . || true\nif [[ -f \"%s\" ]]; then\n  echo \"job_env keys:\"\n  grep -E '^[A-Za-z_][A-Za-z0-9_]*=' \"%s\" | cut -d= -f1 | sed 's/^/  /' || true\nfi\nif [[ -n \"$fitted_model_bundle\" ]]; then\n  echo \"fitted_model_bundle: $fitted_model_bundle\"\n  ls -lah \"$fitted_model_bundle\" 2>/dev/null || ls -lah \"../$(basename \"$fitted_model_bundle\")\" 2>/dev/null || true\nfi\n\n# Determine working directory\nif [[ -n \"$GITHUB_TARGET_FOLDER\" ]]; then\n    WORK_DIR=\"$GITHUB_TARGET_FOLDER\"\nelse\n    WORK_DIR=\"$GITHUB_REPO\"\nfi\n\n# Unset GitHub PAT for security\nunset GITHUB_PAT\n\n# Change to working directory and run make\ncd \"$WORK_DIR\" || exit 1\necho \"repo_dir: $PWD\"\necho \"git_branch: $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)\"\necho \"git_head: $(git rev-parse --short HEAD 2>/dev/null || echo unknown)\"\necho \"base_dir: ${base_dir:-<unset>}\"\necho \"model_dir: ${model_dir:-<unset>}\"\necho \"input_recipe_enabled: ${input_recipe_enabled:-0}\"\necho \"build_inputs_on_missing: ${build_inputs_on_missing:-0}\"\necho \"Running make with options: %s\"\nmake %s\n\n# Archive the results\ncd ..\necho \"Archiving folder: $WORK_DIR...\"\ntar -czvf output_archive.tar.gz \"$WORK_DIR\"\n",
+      "\n#!/usr/bin/env bash\nset -o pipefail\nexport HOME=\"$PWD\"\nexport XDG_CACHE_HOME=\"$PWD/.cache\"\nexport GIT_CONFIG_NOSYSTEM=1\nexport GIT_CONFIG_GLOBAL=/dev/null\nexport GIT_TERMINAL_PROMPT=0\nexport GCM_INTERACTIVE=Never\nmkdir -p \"$XDG_CACHE_HOME/git\" 2>/dev/null || true\n\n# Execute the clone script\nsource %s\n\n# Load environment variables from job_env.txt if present\nif [[ -f \"%s\" ]]; then\n  grep -E '^[A-Za-z_][A-Za-z0-9_]*=' \"%s\" | sed 's/^/export /' > env_exports.sh\n  source env_exports.sh\nfi\n\n# Condor transfer audit. With stream_output enabled, these lines are visible\n# in condor_job.out shortly after the job starts, before any long MFCL run.\necho \"=== Condor transfer audit ===\"\necho \"started_at: $(date -Is 2>/dev/null || date)\"\necho \"submit_dir: $PWD\"\necho \"HOME: ${HOME:-<unset>}\"\necho \"XDG_CACHE_HOME: ${XDG_CACHE_HOME:-<unset>}\"\necho \"transferred files:\"\nls -lah . || true\nif [[ -f \"%s\" ]]; then\n  echo \"job_env keys:\"\n  grep -E '^[A-Za-z_][A-Za-z0-9_]*=' \"%s\" | cut -d= -f1 | sed 's/^/  /' || true\nfi\nif [[ -n \"$fitted_model_bundle\" ]]; then\n  echo \"fitted_model_bundle: $fitted_model_bundle\"\n  ls -lah \"$fitted_model_bundle\" 2>/dev/null || ls -lah \"../$(basename \"$fitted_model_bundle\")\" 2>/dev/null || true\nfi\n\n# Determine working directory\nif [[ -n \"$GITHUB_TARGET_FOLDER\" ]]; then\n    WORK_DIR=\"$GITHUB_TARGET_FOLDER\"\nelse\n    WORK_DIR=\"$GITHUB_REPO\"\nfi\n\n# Unset GitHub PAT for security\nunset GITHUB_PAT\n\n# Change to working directory and run make\ncd \"$WORK_DIR\" || exit 1\necho \"repo_dir: $PWD\"\necho \"git_branch: $(git -c credential.helper= rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)\"\necho \"git_head: $(git -c credential.helper= rev-parse --short HEAD 2>/dev/null || echo unknown)\"\necho \"base_dir: ${base_dir:-<unset>}\"\necho \"model_dir: ${model_dir:-<unset>}\"\necho \"input_recipe_enabled: ${input_recipe_enabled:-0}\"\necho \"build_inputs_on_missing: ${build_inputs_on_missing:-0}\"\necho \"Running make with options: %s\"\nmake %s\n\n# Archive the results\ncd ..\necho \"Archiving folder: $WORK_DIR...\"\ntar -czvf output_archive.tar.gz \"$WORK_DIR\"\n",
       clone_script, env_file, env_file, env_file, env_file, make_options, make_options
     )
     writeLines(run_script_content, con = run_script, sep = "\n")
@@ -1440,15 +1440,23 @@
     if (!is.null(condor_disk)) condor_options <- c(condor_options, sprintf("request_disk = %s", condor_disk))
 
     environment_string <- ""
+    git_safe_env <- c(
+      "GIT_CONFIG_NOSYSTEM=1",
+      "GIT_CONFIG_GLOBAL=/dev/null",
+      "GIT_TERMINAL_PROMPT=0",
+      "GCM_INTERACTIVE=Never"
+    )
     if (!is.null(condor_environment)) {
       if (is.list(condor_environment)) {
         env_vars <- vapply(names(condor_environment), function(name) {
           sprintf("%s=%s", name, condor_environment[[name]])
         }, character(1))
-        environment_string <- paste(env_vars, collapse = " ")
+        environment_string <- paste(c(git_safe_env, env_vars), collapse = " ")
       } else if (is.character(condor_environment)) {
-        environment_string <- condor_environment
+        environment_string <- paste(c(git_safe_env, condor_environment), collapse = " ")
       }
+    } else {
+      environment_string <- paste(git_safe_env, collapse = " ")
     }
 
     batch_name_template <- if (!is.null(custom_batch_name)) custom_batch_name else "$(ClusterId)"
