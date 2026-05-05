@@ -86,11 +86,12 @@ Important fields:
 
 Sensitivity scripts should infer targets from the selected `base_dir` wherever
 possible. Avoid embedding a model name, region count, fishery range, or fixed
-flag value in the script. For example, the current index-CV step halves all
-fish flag 92 entries found in `doitall.sh` unless an explicit `index_fisheries`
-environment variable is supplied; the selectivity step updates global fish flag
-61 when present and otherwise updates the fishery-specific flag 61 entries it
-finds.
+flag value in the script. For example, the current index-CV step halves only
+negative fishery-specific flag 92 entries found in `doitall.sh` unless an
+explicit `index_fisheries` environment variable is supplied; positive rows such
+as `2 92 2` are MFCL options and are left unchanged. The selectivity step
+updates global fish flag 61 when present and otherwise updates the
+fishery-specific flag 61 entries it finds.
 
 After editing, run:
 
