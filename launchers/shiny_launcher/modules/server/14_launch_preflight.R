@@ -241,8 +241,8 @@
       collapse = "; "
     )
 
-    fitted_required_jobs <- if (exists("fitted_source_job_types", mode = "function")) fitted_source_job_types() else c("jitter", "hessian", "prof", "prof_chain", "prof_2d")
-    if (fitted_enabled && job_type %in% fitted_required_jobs && !fitted_par_exists) {
+    fitted_required_jobs <- if (exists("fitted_source_job_types", mode = "function")) fitted_source_job_types() else c("stage_check", "jitter", "hessian", "prof", "prof_chain", "prof_2d")
+    if (fitted_enabled && job_type %in% fitted_required_jobs && !identical(job_type, "stage_check") && !fitted_par_exists) {
       return(launch_preflight_row(
         display_name,
         job_type,
@@ -323,6 +323,16 @@
 
     if (!base_exists) {
       return(launch_preflight_row(display_name, job_type, "blocked", "base_dir", found_common, "Input base_dir does not exist."))
+    }
+
+    if (identical(job_type, "stage_check")) {
+      ok <- base_exists && frq_n > 0
+      detail <- if (ok) {
+        "Setup check will verify Condor transfer, input availability, on-demand recipe metadata, and fitted-source overlay, then stop before MFCL."
+      } else {
+        "Setup check needs at least a staged/buildable input folder with .frq."
+      }
+      return(launch_preflight_row(display_name, job_type, launch_preflight_status(ok), "transfer audit + .frq", found_common, detail))
     }
 
     if (identical(job_type, "model")) {

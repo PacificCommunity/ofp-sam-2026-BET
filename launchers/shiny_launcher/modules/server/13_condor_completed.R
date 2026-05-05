@@ -135,6 +135,7 @@
   condor_completed_job_type <- function(label, remote_dir) {
     txt <- paste(label, basename(remote_dir), sep = " ")
     if (grepl("jitter|_seed[0-9]+", txt, ignore.case = TRUE)) return("jitter")
+    if (grepl("stage[_-]?check|setup[_-]?check", txt, ignore.case = TRUE)) return("stage_check")
     if (grepl("hess|_part[0-9]+", txt, ignore.case = TRUE)) return("hessian")
     if (grepl("retro|_peel[0-9]+", txt, ignore.case = TRUE)) return("retro")
     if (grepl("prof2d|prof_2d", txt, ignore.case = TRUE)) return("prof_2d")
@@ -144,10 +145,10 @@
 
   condor_completed_model_name <- function(label, remote_dir) {
     x <- label
-    x <- sub("-(jitter[0-9]+|hess[0-9]+|retro[0-9]+|sc[0-9]+|prof2d)$", "", x, ignore.case = TRUE)
-    x <- sub("(_model|_seed[0-9]+|_part[0-9]+|_peel[0-9]+|_sc[0-9]+|_prof2d)$", "", x, ignore.case = TRUE)
+    x <- sub("-(stagecheck|jitter[0-9]+|hess[0-9]+|retro[0-9]+|sc[0-9]+|prof2d)$", "", x, ignore.case = TRUE)
+    x <- sub("(_stagecheck|_model|_seed[0-9]+|_part[0-9]+|_peel[0-9]+|_sc[0-9]+|_prof2d)$", "", x, ignore.case = TRUE)
     if (!nzchar(x) || is.na(x)) {
-      x <- sub("(_model|_seed[0-9]+|_part[0-9]+|_peel[0-9]+|_sc[0-9]+|_prof2d)$", "", basename(remote_dir), ignore.case = TRUE)
+      x <- sub("(_stagecheck|_model|_seed[0-9]+|_part[0-9]+|_peel[0-9]+|_sc[0-9]+|_prof2d)$", "", basename(remote_dir), ignore.case = TRUE)
     }
     x
   }

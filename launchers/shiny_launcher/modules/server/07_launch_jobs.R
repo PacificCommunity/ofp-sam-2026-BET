@@ -18,6 +18,7 @@
   local_job_runner <- function(job_type) {
     switch(
       job_type,
+      stage_check = "tools/condor_stage_check.R",
       model = "runners/run_model.R",
       jitter = "runners/run_jitter.R",
       hessian = "runners/run_hessian.R",
@@ -1320,7 +1321,7 @@
   }
 
   fitted_source_job_types <- function() {
-    c("jitter", "hessian", "prof", "prof_chain", "prof_2d")
+    c("stage_check", "jitter", "hessian", "prof", "prof_chain", "prof_2d")
   }
 
   job_uses_fitted_source <- function(job_env, job_type) {
@@ -1342,6 +1343,9 @@
     ensure_fitted_source_functions_loaded(repo_root)
     source_dir <- first_scalar_string(job_env$fitted_model_source_dir, default = "")
     if (!nzchar(source_dir)) {
+      if (identical(job_type, "stage_check")) {
+        return(list(job_env = job_env, extra_transfer_files = character(0)))
+      }
       stop("Fitted model source is enabled but no fitted output was resolved. Use Auto-match only when model/<launch_name> exists, or select a fitted output explicitly.")
     }
     source_abs <- if (grepl("^/", source_dir)) source_dir else file.path(repo_root, source_dir)
@@ -1389,8 +1393,8 @@
     writeLines(clone_script_content, con = clone_script, sep = "\n")
 
     run_script_content <- sprintf(
-      "\n#!/usr/bin/env bash\n\n# Execute the clone script\nsource %s\n\n# Load environment variables from job_env.txt if present\nif [[ -f \"%s\" ]]; then\n  grep -E '^[A-Za-z_][A-Za-z0-9_]*=' \"%s\" | sed 's/^/export /' > env_exports.sh\n  source env_exports.sh\nfi\n\n# Determine working directory\nif [[ -n \"$GITHUB_TARGET_FOLDER\" ]]; then\n    WORK_DIR=\"$GITHUB_TARGET_FOLDER\"\nelse\n    WORK_DIR=\"$GITHUB_REPO\"\nfi\n\n# Unset GitHub PAT for security\nunset GITHUB_PAT\n\n# Change to working directory and run make\ncd \"$WORK_DIR\" || exit 1\necho \"Running make with options: %s\"\nmake %s\n\n# Archive the results\ncd ..\necho \"Archiving folder: $WORK_DIR...\"\ntar -czvf output_archive.tar.gz \"$WORK_DIR\"\n",
-      clone_script, env_file, env_file, make_options, make_options
+      "\n#!/usr/bin/env bash\nset -o pipefail\n\n# Execute the clone script\nsource %s\n\n# Load environment variables from job_env.txt if present\nif [[ -f \"%s\" ]]; then\n  grep -E '^[A-Za-z_][A-Za-z0-9_]*=' \"%s\" | sed 's/^/export /' > env_exports.sh\n  source env_exports.sh\nfi\n\n# Condor transfer audit. With stream_output enabled, these lines are visible\n# in condor_job.out shortly after the job starts, before any long MFCL run.\necho \"=== Condor transfer audit ===\"\necho \"started_at: $(date -Is 2>/dev/null || date)\"\necho \"submit_dir: $PWD\"\necho \"transferred files:\"\nls -lah . || true\nif [[ -f \"%s\" ]]; then\n  echo \"job_env keys:\"\n  grep -E '^[A-Za-z_][A-Za-z0-9_]*=' \"%s\" | cut -d= -f1 | sed 's/^/  /' || true\nfi\nif [[ -n \"$fitted_model_bundle\" ]]; then\n  echo \"fitted_model_bundle: $fitted_model_bundle\"\n  ls -lah \"$fitted_model_bundle\" 2>/dev/null || ls -lah \"../$(basename \"$fitted_model_bundle\")\" 2>/dev/null || true\nfi\n\n# Determine working directory\nif [[ -n \"$GITHUB_TARGET_FOLDER\" ]]; then\n    WORK_DIR=\"$GITHUB_TARGET_FOLDER\"\nelse\n    WORK_DIR=\"$GITHUB_REPO\"\nfi\n\n# Unset GitHub PAT for security\nunset GITHUB_PAT\n\n# Change to working directory and run make\ncd \"$WORK_DIR\" || exit 1\necho \"repo_dir: $PWD\"\necho \"git_branch: $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)\"\necho \"git_head: $(git rev-parse --short HEAD 2>/dev/null || echo unknown)\"\necho \"base_dir: ${base_dir:-<unset>}\"\necho \"model_dir: ${model_dir:-<unset>}\"\necho \"input_recipe_enabled: ${input_recipe_enabled:-0}\"\necho \"build_inputs_on_missing: ${build_inputs_on_missing:-0}\"\necho \"Running make with options: %s\"\nmake %s\n\n# Archive the results\ncd ..\necho \"Archiving folder: $WORK_DIR...\"\ntar -czvf output_archive.tar.gz \"$WORK_DIR\"\n",
+      clone_script, env_file, env_file, env_file, env_file, make_options, make_options
     )
     writeLines(run_script_content, con = run_script, sep = "\n")
 
@@ -1452,8 +1456,8 @@
 
     transfer_inputs <- paste(c(clone_script, run_script, env_file, extra_transfer_names), collapse = ", ")
     submit_file_content <- sprintf(
-      "\nUniverse   = docker\nDockerImage = %s\nExecutable = /bin/bash\nArguments  = %s\nShouldTransferFiles = YES\nTransferInputFiles = %s\nTransferOutputFiles = output_archive.tar.gz\nOutput     = condor_job.out\nError      = condor_job.err\nLog        = condor_job.log\nstream_error = %s\ngetenv = True\nbatch_name = %s\n%s%s%s\nQueue\n",
-      docker_image, run_script, transfer_inputs, stream_error, batch_name_template,
+      "\nUniverse   = docker\nDockerImage = %s\nExecutable = /bin/bash\nArguments  = %s\nShouldTransferFiles = YES\nTransferInputFiles = %s\nTransferOutputFiles = output_archive.tar.gz\nOutput     = condor_job.out\nError      = condor_job.err\nLog        = condor_job.log\nstream_output = %s\nstream_error = %s\ngetenv = True\nbatch_name = %s\n%s%s%s\nQueue\n",
+      docker_image, run_script, transfer_inputs, stream_error, stream_error, batch_name_template,
       requirements_string,
       if (nzchar(environment_string)) sprintf("environment = %s\n", environment_string) else "",
       if (nzchar(condor_options)) paste0(condor_options, "\n") else ""
@@ -1607,6 +1611,8 @@
       batch_suffix <- paste0(profile_suffix, "-profchain", if (!is.null(spec$chain_name) && nzchar(as.character(spec$chain_name))) paste0("-", as.character(spec$chain_name)) else "")
     } else if (identical(spec$job_type, "prof_2d")) {
       batch_suffix <- paste0(profile_suffix, "-prof2d")
+    } else if (identical(spec$job_type, "stage_check")) {
+      batch_suffix <- "-stagecheck"
     }
 
     batch_name <- paste0(launch_name, batch_suffix, "-local-", format(Sys.time(), "%H:%M:%S"), "-", Sys.getpid())
@@ -1811,6 +1817,7 @@
       )
     type_fields <- switch(
       job_type,
+      stage_check = c("build_inputs_on_missing", "input_recipe_enabled", "fitted_model_source_enabled", "fitted_model_bundle", "auto_run_model_before_dependency"),
       model = c("model_hessian"),
       retro = c("retro_peel", "retro_peels", "retro_hessian"),
       jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian", "jitter_base_source"),
@@ -1874,6 +1881,7 @@
     type_fields_for <- function(job_type) {
       switch(
         job_type,
+        stage_check = c("build_inputs_on_missing", "input_recipe_enabled", "fitted_model_source_enabled", "fitted_model_bundle", "auto_run_model_before_dependency"),
         model = c("model_hessian"),
         retro = c("retro_peel", "retro_peels", "retro_hessian"),
         jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian", "jitter_base_source"),
@@ -2084,6 +2092,8 @@
           }
         } else if (identical(job_type, "model")) {
           rows[[length(rows) + 1L]] <- data.frame(model = model_name, item = "model", jobs = 1L, stringsAsFactors = FALSE)
+        } else {
+          rows[[length(rows) + 1L]] <- data.frame(model = model_name, item = job_type, jobs = 1L, stringsAsFactors = FALSE)
         }
       }
     }
@@ -3211,6 +3221,9 @@
     } else if (identical(spec$job_type, "prof_2d")) {
       remote_dir_suffix <- paste0(launch_name, profile_suffix, "_prof2d")
       batch_suffix <- paste0(profile_batch_suffix, "-prof2d")
+    } else if (identical(spec$job_type, "stage_check")) {
+      remote_dir_suffix <- paste0(launch_name, "_stagecheck")
+      batch_suffix <- "-stagecheck"
     } else {
       # model job only
       remote_dir_suffix <- paste0(launch_name, "_model")
@@ -3331,6 +3344,9 @@
     } else if (identical(job_type, "prof_2d")) {
       remote_dir_suffix <- paste0(launch_name, profile_suffix, "_prof2d")
       batch_suffix <- paste0(profile_batch_suffix, "-prof2d")
+    } else if (identical(job_type, "stage_check")) {
+      remote_dir_suffix <- paste0(launch_name, "_stagecheck")
+      batch_suffix <- "-stagecheck"
     } else {
       # model job only
       remote_dir_suffix <- paste0(launch_name, "_model")

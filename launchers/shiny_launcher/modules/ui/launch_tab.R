@@ -81,7 +81,8 @@ launch_tab_ui <- function() {
               column(
                 6,
                 checkboxGroupInput("job_types", "Job Types:",
-                                   choices = c("Model" = "model", 
+                                   choices = c("Setup check (no MFCL)" = "stage_check",
+                                               "Model" = "model",
                                                "Jitter" = "jitter",
                                                "Hessian" = "hessian",
                                                "Retrospective" = "retro",

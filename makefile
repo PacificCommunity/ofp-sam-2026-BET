@@ -184,6 +184,9 @@ run-4region-fixVB_M: build-4region-fixVB_M-11par
 model:
 	Rscript runners/run_model.R
 
+stage_check:
+	Rscript tools/condor_stage_check.R
+
 prof:
 	Rscript runners/run_prof.R
 
@@ -292,7 +295,7 @@ docker-report:
 	docker run --rm -v "$(CURDIR):$(WORKDIR)" -w $(WORKDIR) $(stitch-hessian docker-run docker-model docker-prof docker-jitter docker-hessian docker-collate-hessian docker-stitch
 
 	
-.PHONY: build-4region build-4region-merge build-4region-11par build-4region-variant build-4region-variant-11par build-4region-fixVB build-4region-fixVB-11par build-4region-fixVB_M build-4region-fixVB_M-11par build-4region-fixM build-4region-fixM-11par build-input-recipe build-config-inputs build-4region-all-inputs makepar-4region makepar-4region-merge run-4region run-4region-merge run-4region-fixM run-4region-fixVB_M plot run model prof prof_chain prof_2d jitter jitter_smoke jitter_smoke_hessian hessian retro test TagMovementSubset SelectivitySplineNodes IndexCvHalf collate-hessian stitch-hessian stitch-hessian-all prof-init-map prof-init-map-model docker-run docker-model docker-prof docker-jitter docker-jitter-smoke docker-jitter-smoke-hessian docker-hessian docker-retro docker-collate-hessian docker-stitch-hessian docker-stitch-hessian-all docker-prof-init-map docker-plot prepaw report docker-report
+.PHONY: build-4region build-4region-merge build-4region-11par build-4region-variant build-4region-variant-11par build-4region-fixVB build-4region-fixVB-11par build-4region-fixVB_M build-4region-fixVB_M-11par build-4region-fixM build-4region-fixM-11par build-input-recipe build-config-inputs build-4region-all-inputs makepar-4region makepar-4region-merge run-4region run-4region-merge run-4region-fixM run-4region-fixVB_M plot run model stage_check prof prof_chain prof_2d jitter jitter_smoke jitter_smoke_hessian hessian retro test TagMovementSubset SelectivitySplineNodes IndexCvHalf collate-hessian stitch-hessian stitch-hessian-all prof-init-map prof-init-map-model docker-run docker-model docker-prof docker-jitter docker-jitter-smoke docker-jitter-smoke-hessian docker-hessian docker-retro docker-collate-hessian docker-stitch-hessian docker-stitch-hessian-all docker-prof-init-map docker-plot prepaw report docker-report
 
 
 
