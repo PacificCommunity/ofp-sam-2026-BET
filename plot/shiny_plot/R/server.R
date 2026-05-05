@@ -27,6 +27,7 @@ reset_loaded_data_state <- function(rv) {
   rv$Info_list <- NULL
   rv$JitterPars_list <- NULL
   rv$JitterInfos_list <- NULL
+  rv$model_choice_labels <- NULL
   rv$FISHERY_MAPS <- NULL
   rv$INDEX_FISHERIES_MAPS <- NULL
   rv$YearRanges <- NULL

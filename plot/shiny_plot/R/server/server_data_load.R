@@ -301,7 +301,16 @@ server_data_load <- function(input, output, session, rv) {
         rv$TagTempOut_list <- map(results_named, "TagTempOut")
         rv$AgeOut_list <- map(results_named, "AgeOut")
         rv$IndepOut_list <- map(results_named, "IndepOut")
-        rv$Info_list <- map(results_named, "info")
+        rv$Info_list <- purrr::imap(
+          purrr::map(results_named, "info"),
+          ~ sp_enrich_model_info(file.path(MODEL_DIR, .y), .y, .x)
+        )
+        rv$model_choice_labels <- sp_model_choice_labels(MODEL_DIR, names(results_named))
+        model_choices_for <- function(models) {
+          models <- as.character(models)
+          choices <- rv$model_choice_labels[unname(rv$model_choice_labels) %in% models]
+          if (length(choices) == 0) stats::setNames(models, models) else choices
+        }
         rv$JitterPars_list <- map(results_named, "JitterPars")
         rv$JitterInfos_list <- map(results_named, "JitterInfos")
       
@@ -409,10 +418,10 @@ server_data_load <- function(input, output, session, rv) {
       
         # Update UI components with loaded data
         updatePickerInput(session, "scenarios", 
-                          choices = names(results_named),
+                          choices = model_choices_for(names(results_named)),
                           selected = names(results_named))
       
-        updateSelectInput(session, "bound_model", choices = names(results_named))
+        updateSelectInput(session, "bound_model", choices = model_choices_for(names(results_named)))
       
         available_cpue_models <- names(rv$RepOut_list)[!vapply(rv$RepOut_list, is.null, logical(1))]
         available_lf_models <- names(rv$LengOut_list)[!vapply(rv$LengOut_list, is.null, logical(1))]
@@ -420,25 +429,25 @@ server_data_load <- function(input, output, session, rv) {
 
         # Update scenario pickers for all tabs (select all by default)
         updatePickerInput(session, "stock_scenarios", 
-                          choices = names(results_named), 
+                          choices = model_choices_for(names(results_named)), 
                           selected = names(results_named))
         updatePickerInput(session, "cpue_scenarios", 
-                          choices = available_cpue_models, 
+                          choices = model_choices_for(available_cpue_models), 
                           selected = available_cpue_models)
       
         # Update model selectors for LF/WF tabs (single selection)
         lf_selected <- if (length(available_lf_models) > 0) available_lf_models[1] else character(0)
         wf_selected <- if (length(available_wf_models) > 0) available_wf_models[1] else character(0)
         updateSelectInput(session, "lf_model", 
-                          choices = available_lf_models,
+                          choices = model_choices_for(available_lf_models),
                           selected = lf_selected)
         updateSelectInput(session, "wf_model", 
-                          choices = available_wf_models,
+                          choices = model_choices_for(available_wf_models),
                           selected = wf_selected)
       
         # Update fishery names model selector
         updateSelectInput(session, "fishery_names_model",
-                          choices = names(results_named),
+                          choices = model_choices_for(names(results_named)),
                           selected = names(results_named)[1])
       
         incProgress(1)

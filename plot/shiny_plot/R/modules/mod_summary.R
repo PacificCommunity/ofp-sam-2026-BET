@@ -125,6 +125,9 @@ mod_summary_server <- function(input, output, session, rv) {
       info <- rv$Info_list[[model_name]]
       description <- if (!is.null(info$description) && nzchar(info$description)) info$description else NA_character_
       config_summary <- if (!is.null(info$config_summary) && nzchar(info$config_summary)) info$config_summary else NA_character_
+      change_label <- if (!is.null(info$change_token_label) && nzchar(info$change_token_label)) info$change_token_label else "None"
+      change_description <- if (!is.null(info$input_change_description) && nzchar(info$input_change_description)) info$input_change_description else NA_character_
+      change_source <- if (!is.null(info$change_token_source) && nzchar(info$change_token_source)) info$change_token_source else "none"
 
       list(
         valid = TRUE,
@@ -133,6 +136,9 @@ mod_summary_server <- function(input, output, session, rv) {
         dims = dims,
         description = description,
         config_summary = config_summary,
+        change_label = change_label,
+        change_description = change_description,
+        change_source = change_source,
         year_label = get_model_year_label(model_name)
       )
     }
@@ -140,6 +146,16 @@ mod_summary_server <- function(input, output, session, rv) {
     get_valid_model_summary_details <- function(model_names) {
       details <- lapply(model_names, get_model_summary_details)
       Filter(function(x) isTRUE(x$valid), details)
+    }
+
+    model_display_choices <- function(models) {
+      models <- as.character(models)
+      choices <- rv$model_choice_labels
+      if (!is.null(choices) && length(choices) > 0) {
+        out <- choices[unname(choices) %in% models]
+        if (length(out) > 0) return(out)
+      }
+      stats::setNames(models, models)
     }
   
     parse_prefix <- function(var_name) {
@@ -378,6 +394,7 @@ mod_summary_server <- function(input, output, session, rv) {
       params_df <- dplyr::bind_rows(lapply(valid_details, function(detail) {
         out <- data.frame(
           Model = detail$model_name,
+          Change_Tokens = detail$change_label,
           Model_Description = detail$description,
           Max_Grad = sprintf("%.6f", as.numeric(detail$par@max_grad)),
           Obj_Fun = sprintf("%.2f", as.numeric(detail$par@obj_fun)),
@@ -398,6 +415,7 @@ mod_summary_server <- function(input, output, session, rv) {
         invalid_rows <- dplyr::bind_rows(lapply(invalid_details, function(detail) {
           out <- data.frame(
             Model = detail$model_name,
+            Change_Tokens = NA_character_,
             Model_Description = detail$message,
             Max_Grad = NA_character_,
             Obj_Fun = NA_character_,
@@ -494,6 +512,8 @@ mod_summary_server <- function(input, output, session, rv) {
 
         description <- if (!is.na(detail$description) && nzchar(detail$description)) detail$description else "No description available"
         config_summary <- if (!is.na(detail$config_summary) && nzchar(detail$config_summary)) detail$config_summary else "No config summary available"
+        change_label <- if (!is.na(detail$change_label) && nzchar(detail$change_label)) detail$change_label else "None"
+        change_description <- if (!is.na(detail$change_description) && nzchar(detail$change_description)) detail$change_description else ""
         n_index <- length(rv$INDEX_FISHERIES_MAPS[[model_name]])
 
         column(
@@ -511,6 +531,18 @@ mod_summary_server <- function(input, output, session, rv) {
                 style = "margin-bottom: 8px; padding: 8px 10px; background: #f4f8fb; border-left: 3px solid #3c8dbc; border-radius: 3px; font-size: 12px;",
                 tags$strong("Model Description: "),
                 description
+              ),
+              tags$div(
+                style = "margin-bottom: 8px; padding: 8px 10px; background: #f7fff7; border-left: 3px solid #00a65a; border-radius: 3px; font-size: 12px;",
+                tags$strong("Change tokens: "),
+                change_label,
+                if (nzchar(change_description) && !identical(change_description, change_label)) {
+                  tags$span(paste0(" - ", change_description))
+                },
+                tags$span(
+                  paste0(" (source: ", detail$change_source, ")"),
+                  style = "color:#777;"
+                )
               ),
               if (isTRUE(input$summary_show_run_description)) {
                 tags$div(
@@ -577,7 +609,7 @@ mod_summary_server <- function(input, output, session, rv) {
       models <- input$scenarios
       selected <- input$summary_param_model
       if (is.null(selected) || !(selected %in% models)) selected <- models[[1]]
-      updateSelectInput(session, "summary_param_model", choices = models, selected = selected)
+      updateSelectInput(session, "summary_param_model", choices = model_display_choices(models), selected = selected)
     })
 
     observe({
@@ -587,7 +619,7 @@ mod_summary_server <- function(input, output, session, rv) {
 
       sel_a <- isolate(input$summary_compare_model_a)
       if (is.null(sel_a) || !(sel_a %in% models)) sel_a <- models[[1]]
-      updateSelectInput(session, "summary_compare_model_a", choices = models, selected = sel_a)
+      updateSelectInput(session, "summary_compare_model_a", choices = model_display_choices(models), selected = sel_a)
     })
 
     observe({
@@ -604,7 +636,7 @@ mod_summary_server <- function(input, output, session, rv) {
 
       updatePickerInput(
         session, "summary_compare_model_b",
-        choices = choices_b, selected = sel_b
+        choices = model_display_choices(choices_b), selected = sel_b
       )
     })
 

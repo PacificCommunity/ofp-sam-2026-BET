@@ -1,10 +1,11 @@
 server_dir_detection <- function(input, output, session, rv) {
     # DIRECTORY DETECTION
     # ---------------------------------------------------------------------------
-    repo_root <- normalizePath("..", mustWork = FALSE)
+    repo_root <- shiny_plot_repo_root()
     state_file <- file.path(repo_root, ".model_dir_last.rds")
     export_state_file <- file.path(repo_root, ".plot_export_dir_last.rds")
     default_export_dir <- normalizePath(file.path(repo_root, "figure"), mustWork = FALSE)
+    default_model_dir <- if (dir.exists(file.path(repo_root, "model"))) file.path(repo_root, "model") else repo_root
     initialized <- FALSE
     export_initialized <- FALSE
 
@@ -14,11 +15,11 @@ server_dir_detection <- function(input, output, session, rv) {
         if (!is.null(saved_dir) && is.character(saved_dir) && nchar(saved_dir) > 0 && dir.exists(saved_dir)) {
           updateTextInput(session, "model_dir", value = saved_dir)
         } else {
-          updateTextInput(session, "model_dir", value = repo_root)
+          updateTextInput(session, "model_dir", value = default_model_dir)
         }
         initialized <<- TRUE
       } else if (!initialized && !file.exists(state_file)) {
-        updateTextInput(session, "model_dir", value = repo_root)
+        updateTextInput(session, "model_dir", value = default_model_dir)
         initialized <<- TRUE
       }
     })
@@ -44,27 +45,42 @@ server_dir_detection <- function(input, output, session, rv) {
           !grepl("^\\.|^__", scenario_folders) & 
             !scenario_folders %in% c("archive", "old", "backup", "test")
         ]
+
+        # Setup-check folders and other launch bookkeeping directories can sit
+        # under model/.  Only offer folders with core model output; diagnostics
+        # still use the selected model folders after they load.
+        if (length(scenario_folders) > 0) {
+          has_output <- vapply(
+            file.path(model_dir, scenario_folders),
+            sp_model_folder_has_core_output,
+            logical(1)
+          )
+          scenario_folders <- scenario_folders[has_output]
+        }
       
         # Update reactive values
         if (length(scenario_folders) > 0) {
           rv$scenarios_detected <- TRUE
           rv$detected_scenario_names <- scenario_folders
+          rv$detected_scenario_choices <- sp_model_choice_labels(model_dir, scenario_folders)
         
           # Update picker choices
           updatePickerInput(
             session, 
             "models_to_load",
-            choices = scenario_folders,
-            selected = scenario_folders  # All selected by default
+            choices = rv$detected_scenario_choices,
+            selected = unname(rv$detected_scenario_choices)  # All selected by default
           )
         } else {
           rv$scenarios_detected <- FALSE
           rv$detected_scenario_names <- NULL
+          rv$detected_scenario_choices <- NULL
           updatePickerInput(session, "models_to_load", choices = NULL)
         }
       } else {
         rv$scenarios_detected <- FALSE
         rv$detected_scenario_names <- NULL
+        rv$detected_scenario_choices <- NULL
         updatePickerInput(session, "models_to_load", choices = NULL)
       }
     }
@@ -95,19 +111,22 @@ server_dir_detection <- function(input, output, session, rv) {
       req(rv$detected_scenario_names)
       n_detected <- length(rv$detected_scenario_names)
     
+      labels <- names(rv$detected_scenario_choices)
+      if (is.null(labels) || length(labels) == 0) labels <- rv$detected_scenario_names
+
       # Show first few model names as preview
       if (n_detected <= 5) {
-        preview <- paste(rv$detected_scenario_names, collapse = ", ")
+        preview <- paste(labels, collapse = ", ")
       } else {
         preview <- paste(
-          paste(head(rv$detected_scenario_names, 3), collapse = ", "),
+          paste(head(labels, 3), collapse = ", "),
           "... and",
           n_detected - 3,
           "more"
         )
       }
     
-      paste0("✓ Found ", n_detected, " model(s): ", preview)
+      paste0("Found ", n_detected, " model output folder(s): ", preview)
     })
   
     # ---------------------------------------------------------------------------

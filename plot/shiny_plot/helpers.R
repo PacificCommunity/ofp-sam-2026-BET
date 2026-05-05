@@ -15,6 +15,250 @@ in_shiny_plot_dir <- function() {
   identical(basename(normalizePath(getwd(), winslash = "/", mustWork = FALSE)), "shiny_plot")
 }
 
+shiny_plot_repo_root <- function() {
+  candidates <- unique(normalizePath(
+    c(
+      getwd(),
+      file.path(getwd(), ".."),
+      file.path(getwd(), "../..")
+    ),
+    winslash = "/",
+    mustWork = FALSE
+  ))
+  hits <- candidates[
+    file.exists(file.path(candidates, "tools", "input_change_metadata.R")) &
+      dir.exists(file.path(candidates, "mfcl"))
+  ]
+  if (length(hits) > 0) hits[[1]] else candidates[[1]]
+}
+
+source_repo_tool <- function(tool_file) {
+  candidates <- unique(c(
+    file.path(shiny_plot_repo_root(), "tools", tool_file),
+    file.path("tools", tool_file),
+    file.path("..", "tools", tool_file),
+    file.path("..", "..", "tools", tool_file)
+  ))
+  path <- candidates[file.exists(candidates)][1]
+  if (!is.na(path) && nzchar(path)) {
+    invisible(try(source(path), silent = TRUE))
+  }
+}
+
+source_repo_tool("input_change_metadata.R")
+
+sp_normalize_change_tokens <- function(x) {
+  if (exists("normalize_input_change_tokens", mode = "function")) {
+    x <- gsub("|", ",", paste(as.character(x), collapse = ","), fixed = TRUE)
+    return(normalize_input_change_tokens(x))
+  }
+  if (is.null(x) || length(x) == 0) return(character(0))
+  vals <- unlist(strsplit(paste(as.character(x), collapse = ","), "[|,;[:space:]]+", perl = TRUE), use.names = FALSE)
+  vals <- trimws(vals)
+  vals <- vals[!is.na(vals) & nzchar(vals) & !vals %in% c("None", "Changed", "base")]
+  unique(vals)
+}
+
+sp_known_change_tokens <- function() {
+  known <- c("fixM", "fixVB", "fixVBM", "sel4", "cvH", "m23", "m123", "ExR9Index")
+  catalog_path <- file.path(shiny_plot_repo_root(), "tools", "input_sensitivities", "sensitivity_catalog.R")
+  if (file.exists(catalog_path)) {
+    env <- new.env(parent = globalenv())
+    ok <- tryCatch({
+      sys.source(catalog_path, envir = env, keep.source = FALSE)
+      TRUE
+    }, error = function(e) FALSE)
+    if (ok && exists("input_sensitivity_catalog", envir = env, inherits = FALSE)) {
+      catalog <- tryCatch(env$input_sensitivity_catalog(), error = function(e) NULL)
+      if (is.data.frame(catalog) && "token" %in% names(catalog)) {
+        known <- unique(c(known, as.character(catalog$token)))
+      }
+    }
+  }
+  unique(known[nzchar(known)])
+}
+
+sp_legacy_change_tokens_from_name <- function(model_name) {
+  nm <- basename(as.character(model_name[[1]]))
+  if (!nzchar(nm) || !grepl("_", nm, fixed = TRUE)) return(character(0))
+
+  known <- sp_known_change_tokens()
+  tokens <- character(0)
+
+  if (grepl("fixVB_M|fixVBM", nm, fixed = FALSE)) tokens <- c(tokens, "fixVB", "fixM")
+  if (grepl("fixVB", nm, fixed = TRUE)) tokens <- c(tokens, "fixVB")
+  if (grepl("fixM", nm, fixed = TRUE) || grepl("_M($|_)", nm)) tokens <- c(tokens, "fixM")
+  if (grepl("sel4|sel_spline4|sel[._-]?spline[._-]?4", nm, ignore.case = TRUE)) tokens <- c(tokens, "sel4")
+  if (grepl("cvH|index_cv_half", nm, ignore.case = TRUE)) tokens <- c(tokens, "cvH")
+  if (grepl("(^|_)m23($|_)", nm) || grepl("movement_R2_R3", nm, fixed = TRUE)) tokens <- c(tokens, "m23")
+  if (grepl("(^|_)m123($|_)", nm) || grepl("movement_R1_R2_R1_R3_R2_R3", nm, fixed = TRUE)) tokens <- c(tokens, "m123")
+  if (grepl("ExR9Index", nm, fixed = TRUE)) tokens <- c(tokens, "ExR9Index")
+
+  parts <- strsplit(nm, "_", fixed = TRUE)[[1]]
+  if (length(parts) > 1) {
+    parts <- parts[-1]
+    parts[parts == "M"] <- "fixM"
+    drop <- grepl("^[0-9]+region$", parts) |
+      parts %in% c("base", "rep", "movement", "sel", "spline4") |
+      grepl("^R[0-9]+$", parts)
+    parts <- parts[!drop]
+    parts <- parts[parts %in% known]
+    tokens <- c(tokens, parts)
+  }
+
+  unique(tokens[nzchar(tokens)])
+}
+
+sp_first_text <- function(x, default = "") {
+  if (is.null(x) || length(x) == 0) return(default)
+  txt <- trimws(as.character(x[[1]]))
+  if (is.na(txt) || !nzchar(txt)) default else txt
+}
+
+sp_read_input_change_meta_file <- function(input_dir) {
+  if (is.null(input_dir) || length(input_dir) == 0 || is.na(input_dir[[1]])) return(NULL)
+  input_dir <- as.character(input_dir[[1]])
+  path <- file.path(input_dir, "input_change_metadata.rds")
+  if (!file.exists(path)) return(NULL)
+  meta <- tryCatch(readRDS(path), error = function(e) NULL)
+  if (!is.list(meta)) return(NULL)
+  if (exists("update_input_change_summary_fields", mode = "function")) {
+    meta <- update_input_change_summary_fields(meta)
+  }
+  meta
+}
+
+sp_resolve_input_dir <- function(input_dir, model_folder = NULL) {
+  if (is.null(input_dir) || length(input_dir) == 0 || is.na(input_dir[[1]])) return(NA_character_)
+  input_dir <- trimws(as.character(input_dir[[1]]))
+  if (!nzchar(input_dir)) return(NA_character_)
+  repo_root <- shiny_plot_repo_root()
+  candidates <- if (grepl("^/", input_dir)) {
+    input_dir
+  } else {
+    unique(c(
+      file.path(repo_root, input_dir),
+      file.path(getwd(), input_dir),
+      if (!is.null(model_folder) && nzchar(model_folder)) file.path(dirname(model_folder), input_dir) else character(0),
+      input_dir
+    ))
+  }
+  meta_hits <- candidates[file.exists(file.path(candidates, "input_change_metadata.rds"))]
+  if (length(meta_hits) > 0) return(meta_hits[[1]])
+  dir_hits <- candidates[dir.exists(candidates)]
+  if (length(dir_hits) > 0) dir_hits[[1]] else candidates[[1]]
+}
+
+sp_input_change_meta_from_info <- function(model_folder, info = NULL) {
+  if (!is.list(info)) info <- list()
+  candidate_dirs <- unique(c(
+    model_folder,
+    sp_first_text(info$base_dir),
+    sp_first_text(info$display_base_dir),
+    sp_first_text(info$input_recipe_output_dir)
+  ))
+  candidate_dirs <- candidate_dirs[nzchar(candidate_dirs)]
+  for (candidate in candidate_dirs) {
+    resolved <- sp_resolve_input_dir(candidate, model_folder = model_folder)
+    meta <- sp_read_input_change_meta_file(resolved)
+    if (is.list(meta)) {
+      attr(meta, "resolved_input_dir") <- resolved
+      return(meta)
+    }
+  }
+  NULL
+}
+
+sp_model_change_metadata <- function(model_folder, model_name = basename(model_folder), info = NULL) {
+  if (!is.list(info)) info <- list()
+
+  tokens <- sp_normalize_change_tokens(info$change_tokens)
+  source <- if (length(tokens) > 0) sp_first_text(info$change_token_source, "model_info") else NA_character_
+  meta <- NULL
+
+  if (length(tokens) == 0 && is.list(info$input_change_metadata)) {
+    meta <- info$input_change_metadata
+    tokens <- sp_normalize_change_tokens(meta$tokens)
+    if (length(tokens) > 0) source <- "model_info input metadata"
+  }
+
+  if (length(tokens) == 0) {
+    meta <- sp_input_change_meta_from_info(model_folder, info)
+    tokens <- if (is.list(meta)) sp_normalize_change_tokens(meta$tokens) else character(0)
+    if (length(tokens) > 0) source <- "input_change_metadata.rds"
+  }
+
+  if (length(tokens) == 0) {
+    tokens <- sp_legacy_change_tokens_from_name(model_name)
+    source <- if (length(tokens) > 0) "legacy known-token fallback" else "none"
+  }
+
+  label <- if (length(tokens) > 0) paste(tokens, collapse = " + ") else "None"
+  description <- ""
+  if (is.list(meta)) {
+    if (exists("input_change_metadata_description", mode = "function")) {
+      description <- input_change_metadata_description(meta)
+    } else {
+      description <- sp_first_text(meta$description)
+    }
+  }
+  if (!nzchar(description)) description <- sp_first_text(info$input_change_description)
+  if (!nzchar(description)) description <- sp_first_text(info$launcher_input_recipe_description)
+  if (!nzchar(description) && length(tokens) > 0) description <- label
+
+  list(
+    tokens = tokens,
+    label = label,
+    description = description,
+    source = source,
+    metadata = meta
+  )
+}
+
+sp_enrich_model_info <- function(model_folder, model_name = basename(model_folder), info = NULL) {
+  if (!is.list(info)) info <- list()
+  meta <- sp_model_change_metadata(model_folder, model_name, info)
+  info$change_tokens <- meta$tokens
+  info$change_token_label <- meta$label
+  info$change_token_source <- meta$source
+  info$input_change_description <- meta$description
+  if (is.list(meta$metadata) && is.null(info$input_change_metadata)) {
+    info$input_change_metadata <- meta$metadata
+  }
+  info
+}
+
+sp_model_folder_has_core_output <- function(model_folder) {
+  if (!dir.exists(model_folder)) return(FALSE)
+  if (file.exists(file.path(model_folder, "model_payload.rds"))) return(TRUE)
+  has_par <- length(list.files(model_folder, pattern = "\\.par$", full.names = FALSE)) > 0
+  has_rep <- length(list.files(model_folder, pattern = "\\.rep$", full.names = FALSE)) > 0
+  has_par && has_rep
+}
+
+sp_model_choice_labels <- function(model_dir, model_names) {
+  labels <- vapply(model_names, function(model_name) {
+    folder <- file.path(model_dir, model_name)
+    info <- tryCatch(readRDS(file.path(folder, "model_info.rds")), error = function(e) NULL)
+    if (!is.list(info)) {
+      payload_info <- tryCatch(readRDS(file.path(folder, "model_payload.rds"))$data$info, error = function(e) NULL)
+      if (is.list(payload_info)) info <- payload_info
+    }
+    meta <- sp_model_change_metadata(folder, model_name, info)
+    desc <- if (nzchar(meta$description) && !identical(meta$description, meta$label)) {
+      paste0(" - ", meta$description)
+    } else {
+      ""
+    }
+    if (length(meta$tokens) > 0) {
+      paste0(model_name, " [", meta$label, "]", desc)
+    } else {
+      paste0(model_name, " [base]")
+    }
+  }, character(1))
+  stats::setNames(model_names, labels)
+}
+
 # Reuse fishery-map logic from plots_refactored modules, robust to app cwd.
 source_plot_module <- function(module_file) {
   candidates <- if (in_shiny_plot_dir()) {
