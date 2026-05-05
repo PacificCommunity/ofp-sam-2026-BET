@@ -29,6 +29,7 @@ description  <- Sys.getenv("description", "")
 config_summary <- Sys.getenv("config_summary", "")
 model_hessian <- tolower(Sys.getenv("model_hessian", Sys.getenv("hessian", "0"))) %in% c("1", "true", "yes", "y")
 prefer_par_start <- tolower(Sys.getenv("prefer_par_start", "1")) %in% c("1", "true", "yes", "y", "on")
+allow_sensitivity_par_start <- tolower(Sys.getenv("allow_sensitivity_par_start", "0")) %in% c("1", "true", "yes", "y", "on")
 
 n_mixing_periods <- as.numeric(Sys.getenv("n_mixing_periods", ""))
 min_year         <- as.numeric(Sys.getenv("min_year", ""))
@@ -43,6 +44,11 @@ base_dir_abs <- ensure_input_dir_available(base_dir, project_root)
 if (!dir.exists(base_dir_abs)) {
   stop("Base inputs directory does not exist: ", base_dir_abs)
 }
+
+input_change_metadata <- read_input_change_metadata(base_dir_abs)
+input_change_tokens <- normalize_input_change_tokens(input_change_metadata$tokens)
+recipe_env_enabled <- tolower(Sys.getenv("input_recipe_enabled", "0")) %in% c("1", "true", "yes", "y", "on")
+sensitivity_input <- length(input_change_tokens) > 0 || isTRUE(recipe_env_enabled)
 
 ## -------------------------
 ## 2) Auto-detect .frq
@@ -97,6 +103,17 @@ if (length(par_files) > 0) {
   cat("No .par file found in base inputs; run must start from .ini/doitall makepar.\n")
 }
 
+allow_par_start <- isTRUE(prefer_par_start) && (!isTRUE(sensitivity_input) || isTRUE(allow_sensitivity_par_start))
+if (isTRUE(sensitivity_input) && !is.na(par_in) && isTRUE(prefer_par_start) && !isTRUE(allow_sensitivity_par_start)) {
+  input_change_label <- if (length(input_change_tokens) > 0) paste(input_change_tokens, collapse = ", ") else "input recipe enabled"
+  cat(
+    "Sensitivity/change-token input detected (",
+    input_change_label,
+    "); ignoring copied input .par for model start. Use allow_sensitivity_par_start=1 only for a verified fitted par.\n",
+    sep = ""
+  )
+}
+
 ## -------------------------
 ## 4) Switches
 ## -------------------------
@@ -118,7 +135,7 @@ defaultswitch <- paste(
 ## -------------------------
 mfcl_commands_raw <- Sys.getenv(
   "mfcl_commands",
-  if (!is.na(par_in)) paste(program_path, frq_file, par_in, par_out, defaultswitch) else "./doitall.sh"
+  if (!is.na(par_in) && isTRUE(allow_par_start)) paste(program_path, frq_file, par_in, par_out, defaultswitch) else "./doitall.sh"
 )
 
 is_doitall_command <- function(x) identical(trimws(as.character(x)), "./doitall.sh")
@@ -126,7 +143,20 @@ if (is_doitall_command(mfcl_commands_raw)) {
   mfcl_commands_raw <- "./doitall.sh"
 }
 
-if (!is.na(par_in) && is_doitall_command(mfcl_commands_raw) && isTRUE(prefer_par_start)) {
+if (isTRUE(sensitivity_input) && !isTRUE(allow_sensitivity_par_start) && !is_doitall_command(mfcl_commands_raw) && !is.na(par_in)) {
+  if (!is.na(ini_file) && file.exists(file.path(base_dir_abs, "doitall.sh"))) {
+    mfcl_commands_raw <- "./doitall.sh"
+    cat("Configured MFCL command uses an input .par, but par-start is disabled for this input; using ./doitall.sh instead.\n")
+  } else {
+    stop(
+      "Configured MFCL command requires an input .par, but par-start is disabled for change-token input: ",
+      if (length(input_change_tokens) > 0) paste(input_change_tokens, collapse = ", ") else "input recipe enabled",
+      ". Set allow_sensitivity_par_start=1 only for a verified fitted .par."
+    )
+  }
+}
+
+if (!is.na(par_in) && is_doitall_command(mfcl_commands_raw) && isTRUE(allow_par_start)) {
   mfcl_commands_raw <- paste(program_path, frq_file, par_in, par_out, defaultswitch)
   cat("Input .par found; using .par-based MFCL command instead of ./doitall.sh\n")
 }
@@ -205,9 +235,6 @@ hessian_summary <- mp_run_post_hessian(
   project_root = project_root,
   requested = model_hessian
 )
-
-input_change_metadata <- read_input_change_metadata(base_dir_abs)
-input_change_tokens <- normalize_input_change_tokens(input_change_metadata$tokens)
 
 ## -------------------------
 ## 8) Save model run info

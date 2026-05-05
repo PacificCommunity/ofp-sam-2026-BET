@@ -2,8 +2,8 @@
 # Create an input folder with only selected direct movement links.
 #
 # Default: keep only R2 <-> R3 in the supplied input.
-# This updates bet.frq and bet.ini. Existing .par files are copied unchanged;
-# phase-based runs using doitall.sh rebuild from bet.ini via -makepar.
+# This updates bet.frq and bet.ini. Copied .par files are removed because
+# movement dimensions changed and phase-based runs should rebuild from bet.ini.
 # ============================================================
 
 library(FLR4MFCL)
@@ -121,6 +121,7 @@ if (!is.matrix(ini@diff_coffs) || ncol(ini@diff_coffs) != nrow(old_directed)) {
 ini@diff_coffs <- ini@diff_coffs[, keep_directed, drop = FALSE]
 
 copy_input_dir(base_dir_abs, target_dir)
+removed_par_files <- remove_input_par_files(target_dir)
 
 write(frq, file.path(target_dir, frq_file))
 write(ini, file.path(target_dir, ini_file))
@@ -145,7 +146,7 @@ info <- list(
   kept_directed_columns = keep_directed,
   frq_file = frq_file,
   ini_file = ini_file,
-  par_file_modified = FALSE
+  par_files_removed = length(removed_par_files) > 0
 )
 saveRDS(info, file = file.path(target_dir, "movement_subset_info.rds"), compress = "xz")
 
@@ -155,4 +156,4 @@ cat("  output: ", target_dir, "\n")
 cat("  kept movement pairs:", paste(pair_key(keep_pairs), collapse = ", "), "\n")
 cat("  kept directed columns:", paste(keep_directed, collapse = ", "), "\n")
 cat("  diff_coffs dimensions:", paste(dim(ini@diff_coffs), collapse = " x "), "\n")
-cat("  par files copied unchanged.\n")
+cat("  removed copied par files:", ifelse(length(removed_par_files) > 0, paste(basename(removed_par_files), collapse = ", "), "<none>"), "\n")

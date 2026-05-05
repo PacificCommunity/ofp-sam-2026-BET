@@ -209,7 +209,10 @@ if (length(ini) == 0 && (is.na(par) || !file.exists(par))) {
 }
 
 meta <- tryCatch(read_input_change_metadata(base_abs), error = function(e) NULL)
+input_tokens <- character(0)
 if (is.list(meta) && length(meta) > 0) {
+  input_tokens <- if (!is.null(meta$tokens)) as.character(meta$tokens) else character(0)
+  input_tokens <- unique(input_tokens[!is.na(input_tokens) & nzchar(trimws(input_tokens))])
   emit("input tokens: ", if (length(meta$tokens) > 0) paste(meta$tokens, collapse = ", ") else "<none>")
   emit("input description: ", first(meta$description, "<none>"))
 }
@@ -258,17 +261,23 @@ if (nzchar(bundle) || nzchar(source_dir)) {
 
 emit_section("Would Run")
 prefer_par_start <- truthy(Sys.getenv("prefer_par_start", "1"), default = TRUE)
+allow_sensitivity_par_start <- truthy(Sys.getenv("allow_sensitivity_par_start", "0"), default = FALSE)
+recipe_env_enabled <- truthy(Sys.getenv("input_recipe_enabled", "0"), default = FALSE)
+allow_par_start <- isTRUE(prefer_par_start) && ((length(input_tokens) == 0 && !isTRUE(recipe_env_enabled)) || isTRUE(allow_sensitivity_par_start))
 mfcl_commands_env <- first(Sys.getenv("mfcl_commands"))
-mfcl_commands <- if (!is.na(par) && file.exists(par) && (!nzchar(mfcl_commands_env) || identical(trimws(mfcl_commands_env), "./doitall.sh")) && isTRUE(prefer_par_start)) {
+mfcl_commands <- if (!is.na(par) && file.exists(par) && (!nzchar(mfcl_commands_env) || identical(trimws(mfcl_commands_env), "./doitall.sh")) && isTRUE(allow_par_start)) {
   paste("par-start:", basename(par), "->", next_par_name(par))
 } else if (nzchar(mfcl_commands_env)) {
   mfcl_commands_env
-} else if (!is.na(par) && file.exists(par)) {
+} else if (!is.na(par) && file.exists(par) && isTRUE(allow_par_start)) {
   paste("par-start:", basename(par), "->", next_par_name(par))
 } else {
   "./doitall.sh"
 }
 emit("MFCL command mode: ", mfcl_commands)
+if ((length(input_tokens) > 0 || isTRUE(recipe_env_enabled)) && !isTRUE(allow_sensitivity_par_start)) {
+  emit("par-start note: disabled for change-token input unless allow_sensitivity_par_start=1")
+}
 emit("MFCL execution: skipped by setup check")
 
 emit_section("Summary")

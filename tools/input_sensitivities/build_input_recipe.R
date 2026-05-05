@@ -40,6 +40,7 @@ movement_pairs <- first_nonempty(args[["movement-pairs"]], env_or_default("input
 sel_nodes <- first_nonempty(args[["sel-nodes"]], env_or_default("input_recipe_sel_nodes"))
 index_cv_half <- as_flag(args[["index-cv-half"]], as_flag(env_or_default("input_recipe_index_cv_half"), FALSE))
 overwrite <- as_flag(args[["overwrite"]], TRUE)
+with_11par <- as_flag(args[["with-11par"]], as_flag(env_or_default("input_recipe_with_11par"), FALSE))
 
 if (!nzchar(sensitivity_output_dir)) stop("output-dir is required.")
 sensitivity_output_dir_abs <- resolve_path(sensitivity_output_dir, project_root)
@@ -100,6 +101,7 @@ for (step in recipe_steps) {
 }
 
 copy_input_dir(current_dir, sensitivity_output_dir_abs)
+removed_par_files <- if (isTRUE(with_11par)) character(0) else remove_input_par_files(sensitivity_output_dir_abs)
 
 final_meta <- read_input_change_metadata(sensitivity_output_dir_abs)
 final_tokens <- final_meta$tokens
@@ -119,5 +121,7 @@ cat("  base tokens:", ifelse(length(base_change_tokens) > 0, paste(base_change_t
 cat("  movement:", ifelse(nzchar(movement_pairs), movement_pairs, "<none>"), "\n")
 cat("  sel nodes:", ifelse(nzchar(sel_nodes), sel_nodes, "<none>"), "\n")
 cat("  index CV half:", index_cv_half, "\n")
+cat("  copied .par files kept:", with_11par, "\n")
+if (length(removed_par_files) > 0) cat("  removed copied .par:", paste(basename(removed_par_files), collapse = ", "), "\n")
 cat("  tokens:", paste(extract_input_change_tokens(sensitivity_output_dir_abs), collapse = ", "), "\n")
 cat("  description:", extract_input_change_description(sensitivity_output_dir_abs), "\n")

@@ -79,6 +79,13 @@ copy_input_dir <- function(src, dst, overwrite = TRUE) {
   invisible(dst)
 }
 
+remove_input_par_files <- function(path) {
+  if (!dir.exists(path)) return(character(0))
+  par_files <- list.files(path, pattern = "\\.par([0-9]+)?$", full.names = TRUE)
+  if (length(par_files) > 0) unlink(par_files, force = TRUE)
+  par_files
+}
+
 input_sensitivity_script <- function(...) {
   file.path("tools", "input_sensitivities", ...)
 }

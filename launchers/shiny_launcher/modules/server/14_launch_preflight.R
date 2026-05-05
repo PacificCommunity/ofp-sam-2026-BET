@@ -124,6 +124,14 @@
     pars[ord][[1]]
   }
 
+  launch_preflight_input_tokens <- function(dir_path) {
+    if (!dir.exists(dir_path) || !exists("read_input_change_metadata", mode = "function")) return(character(0))
+    meta <- tryCatch(read_input_change_metadata(dir_path), error = function(e) NULL)
+    if (!is.list(meta) || is.null(meta$tokens)) return(character(0))
+    tokens <- as.character(meta$tokens)
+    unique(tokens[!is.na(tokens) & nzchar(trimws(tokens))])
+  }
+
   launch_preflight_has_indepvar <- function(model_dir_abs, base_dir_abs) {
     paths <- c(file.path(model_dir_abs, "indepvar.rpt"), file.path(base_dir_abs, "indepvar.rpt"))
     paths[file.exists(paths)]
@@ -200,6 +208,9 @@
     model_par <- launch_preflight_latest_par(model_dir_abs)
     base_par_exists <- !is.na(base_par) && file.exists(base_par)
     model_par_exists <- !is.na(model_par) && file.exists(model_par)
+    base_tokens <- launch_preflight_input_tokens(base_dir_abs)
+    base_has_change_tokens <- length(base_tokens) > 0 || launch_preflight_recipe_ready(model_env)
+    base_par_usable <- base_par_exists && !base_has_change_tokens
     fitted_enabled <- launch_preflight_truthy(model_env$fitted_model_source_enabled)
     fitted_source_dir <- launch_preflight_first(model_env$fitted_model_source_dir)
     fitted_source_abs <- if (nzchar(fitted_source_dir)) resolve_repo_path(fitted_source_dir) else ""
@@ -222,8 +233,8 @@
     mfcl_commands_for_model <- launch_preflight_first(model_env$mfcl_commands)
     model_needs_par <- nzchar(mfcl_commands_for_model) && !identical(trimws(mfcl_commands_for_model), "./doitall.sh")
     prefer_par_start <- is.null(input$prefer_par_start) || isTRUE(input$prefer_par_start)
-    auto_model_ready <- auto_run_model && base_exists && frq_n > 0 && (base_par_exists || (ini_n > 0 && doitall && !model_needs_par))
-    input_or_fitted_par_exists <- base_par_exists || fitted_par_exists || auto_model_ready
+    auto_model_ready <- auto_run_model && base_exists && frq_n > 0 && (base_par_usable || (ini_n > 0 && doitall && !model_needs_par))
+    input_or_fitted_par_exists <- base_par_usable || fitted_par_exists || auto_model_ready
     dependency_indepvar_ok <- length(indepvar) > 0 || auto_model_ready
     indepvar_source <- launch_preflight_indepvar_source_label(base_indepvar, fitted_indepvar_exists, auto_model_ready)
 
@@ -231,6 +242,7 @@
       c(
         if (base_exists) paste0("base_dir=", base_dir) else paste0("missing base_dir=", base_dir),
         if (base_par_exists) paste0("base par=", basename(base_par)) else "base par=missing",
+        if (base_has_change_tokens) paste0("tokens=", paste(base_tokens, collapse = ",")),
         if (model_par_exists) paste0("model par=", basename(model_par)) else if (model_exists) "model par=missing" else "model_dir=missing",
         if (fitted_enabled && fitted_par_exists) paste0("fitted par=", basename(fitted_par)) else if (fitted_enabled) "fitted par=missing",
         if (auto_run_model) paste0("auto model first=", if (auto_model_ready) "ready" else "not ready"),
@@ -338,8 +350,10 @@
     }
 
     if (identical(job_type, "model")) {
-      ok <- frq_n > 0 && (base_par_exists || (ini_n > 0 && doitall && !model_needs_par))
-      detail <- if (ok && base_par_exists) {
+      ok <- frq_n > 0 && (base_par_usable || (ini_n > 0 && doitall && !model_needs_par))
+      detail <- if (ok && base_par_exists && base_has_change_tokens) {
+        "Change-token input has a copied .par, but model jobs ignore it and rebuild from .ini/doitall so the .par matches the changed input."
+      } else if (ok && base_par_usable) {
         if (prefer_par_start) {
           "Model will start from the latest input .par and write the next .par; ./doitall.sh is skipped."
         } else {
@@ -347,7 +361,7 @@
         }
       } else if (ok) {
         "Model can start from .ini/doitall; no input .par found."
-      } else if (model_needs_par && !base_par_exists) {
+      } else if (model_needs_par && !base_par_usable) {
         "Configured MFCL command needs a .par, but no input .par was found."
       } else {
         "Need .frq plus either input .par or .ini/doitall."
@@ -365,7 +379,7 @@
           "Jitter will use the selected fitted .par with indepvar.rpt from the base/model input."
         } else if (fitted_par_exists && auto_model_ready) {
           "Jitter will run the prerequisite model first to provide indepvar.rpt, then overlay the selected fitted .par."
-        } else if (auto_model_ready && !base_par_exists) {
+        } else if (auto_model_ready && !base_par_usable) {
           "Jitter will run the prerequisite model first, then use that fitted .par."
         } else {
           "Jitter has reference .par and .ini inputs."
@@ -382,9 +396,9 @@
 
     if (identical(job_type, "hessian")) {
       ok <- input_or_fitted_par_exists
-      detail <- if (ok && fitted_par_exists && !base_par_exists) {
+      detail <- if (ok && fitted_par_exists && !base_par_usable) {
         "Hessian will overlay the selected fitted .par onto the base input files."
-      } else if (ok && auto_model_ready && !base_par_exists) {
+      } else if (ok && auto_model_ready && !base_par_usable) {
         "Hessian will run the prerequisite model first, then use that fitted .par."
       } else if (ok) {
         "Hessian can use the latest input .par."
@@ -423,15 +437,15 @@
           "Profile will use the selected fitted .par with indepvar.rpt from the base/model input."
         } else if (fitted_par_exists && auto_model_ready) {
           "Profile will run the prerequisite model first to provide indepvar.rpt, then overlay the selected fitted .par."
-        } else if (auto_model_ready && !base_par_exists) {
+        } else if (auto_model_ready && !base_par_usable) {
           "Profile will run the prerequisite model first, then use its fitted .par/indepvar.rpt."
         } else {
           "Profile has input .par and indepvar.rpt for fixed-parameter profile."
         }
       } else if (ok) {
-        if (fitted_par_exists && !base_par_exists) {
+        if (fitted_par_exists && !base_par_usable) {
           "Profile will overlay the selected fitted .par onto the base input files."
-        } else if (auto_model_ready && !base_par_exists) {
+        } else if (auto_model_ready && !base_par_usable) {
           "Profile will run the prerequisite model first, then use that fitted .par."
         } else {
           "Profile has input .par."
@@ -454,7 +468,7 @@
       uses_scalars <- any(vapply(prof_2d_envs, function(env) {
         nzchar(launch_preflight_first(env$prof_2d_scalars_x)) || nzchar(launch_preflight_first(env$prof_2d_scalars_y))
       }, logical(1)))
-      baseline_par <- if (model_par_exists) model_par else if (base_par_exists) base_par else fitted_par
+      baseline_par <- if (model_par_exists) model_par else if (base_par_usable) base_par else fitted_par
       baseline_ok <- (!is.na(baseline_par) && file.exists(baseline_par)) || auto_model_ready
       ok <- has_spec && input_or_fitted_par_exists && baseline_ok && (!uses_scalars || dependency_indepvar_ok)
       detail <- if (!has_spec) {
