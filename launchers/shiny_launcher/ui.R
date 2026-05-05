@@ -29,7 +29,6 @@ ui <- dashboardPage(
       menuItem("Monitor Jobs", tabName = "monitor", icon = icon("chart-line")),
       menuItem("Retrieve Results", tabName = "retrieve", icon = icon("download")),
       menuItem("Job Log", tabName = "joblog", icon = icon("table")),
-      menuItem("Promote Outputs", tabName = "promote", icon = icon("level-up-alt")),
       menuItem("Condor Completed", tabName = "condor_completed", icon = icon("check-circle")) #,
   #    menuItem("Edit Models", tabName = "edit", icon = icon("edit")),
   #    menuItem("Settings", tabName = "settings", icon = icon("cog"))
@@ -559,18 +558,6 @@ ui <- dashboardPage(
       }
     });
 
-    Shiny.addCustomMessageHandler('setPromoteSelection', function(message) {
-      var ids = message.ids || [];
-      var selected = !!message.selected;
-      var boxes = document.querySelectorAll('.promote-select-checkbox');
-      boxes.forEach(function(box) {
-        if (ids.indexOf(parseInt(box.value, 10)) !== -1) {
-          box.checked = selected;
-          box.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-      });
-    });
-
     (function() {
       var lastCheckedByGroup = {};
 
@@ -629,7 +616,6 @@ ui <- dashboardPage(
       monitor_tab_ui(),
       retrieve_tab_ui(),
       joblog_tab_ui(),
-      promote_tab_ui(),
       condor_completed_tab_ui(),
       settings_tab_ui()
     )

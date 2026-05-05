@@ -97,6 +97,18 @@ latest_par <- function(path) {
   pars[ord][[1]]
 }
 
+next_par_name <- function(par_path) {
+  if (is.na(par_path) || !file.exists(par_path)) return("01.par")
+  stem <- sub("\\.par[0-9]*$", "", basename(par_path))
+  num <- suppressWarnings(as.integer(stem))
+  if (is.finite(num) && grepl("^[0-9]+$", stem)) {
+    width <- max(nchar(stem), 2L)
+    paste0(sprintf(paste0("%0", width, "d"), num + 1L), ".par")
+  } else {
+    "01.par"
+  }
+}
+
 project_root <- getwd()
 base_dir <- first(Sys.getenv("base_dir"), "mfcl/inputs/2023_rep")
 model_dir <- first(Sys.getenv("model_dir"), file.path("model", basename(base_dir)))
@@ -144,6 +156,7 @@ env_fields <- c(
   "fitted_model_source_dir",
   "auto_run_model_before_dependency",
   "auto_fitted_model_dir",
+  "prefer_par_start",
   "program_path",
   "mfcl_commands"
 )
@@ -244,7 +257,17 @@ if (nzchar(bundle) || nzchar(source_dir)) {
 }
 
 emit_section("Would Run")
-mfcl_commands <- first(Sys.getenv("mfcl_commands"), if (!is.na(par) && file.exists(par)) "program_path frq par_in par_out -switch ..." else "./doitall.sh")
+prefer_par_start <- truthy(Sys.getenv("prefer_par_start", "1"), default = TRUE)
+mfcl_commands_env <- first(Sys.getenv("mfcl_commands"))
+mfcl_commands <- if (!is.na(par) && file.exists(par) && (!nzchar(mfcl_commands_env) || identical(trimws(mfcl_commands_env), "./doitall.sh")) && isTRUE(prefer_par_start)) {
+  paste("par-start:", basename(par), "->", next_par_name(par))
+} else if (nzchar(mfcl_commands_env)) {
+  mfcl_commands_env
+} else if (!is.na(par) && file.exists(par)) {
+  paste("par-start:", basename(par), "->", next_par_name(par))
+} else {
+  "./doitall.sh"
+}
 emit("MFCL command mode: ", mfcl_commands)
 emit("MFCL execution: skipped by setup check")
 

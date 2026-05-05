@@ -80,9 +80,26 @@ launch_tab_ui <- function() {
             fluidRow(
               column(
                 6,
+                checkboxInput(
+                  "stage_check_only",
+                  "Transfer/setup check only (no MFCL)",
+                  value = FALSE
+                ),
+                tags$small(
+                  "Checks Condor staging, input recipe build, and fitted-source transfer, then stops before MFCL.",
+                  style = "display:block; color:#666; line-height:1.25; margin-top:-8px; margin-bottom:10px;"
+                ),
+                checkboxInput(
+                  "prefer_par_start",
+                  "Start model from latest .par when available",
+                  value = TRUE
+                ),
+                tags$small(
+                  "When an input .par exists, model jobs write the next .par directly instead of running ./doitall.sh.",
+                  style = "display:block; color:#666; line-height:1.25; margin-top:-8px; margin-bottom:10px;"
+                ),
                 checkboxGroupInput("job_types", "Job Types:",
-                                   choices = c("Setup check (no MFCL)" = "stage_check",
-                                               "Model" = "model",
+                                   choices = c("Model" = "model",
                                                "Jitter" = "jitter",
                                                "Hessian" = "hessian",
                                                "Retrospective" = "retro",

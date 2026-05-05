@@ -74,6 +74,16 @@
     txt %in% c("1", "true", "yes", "y", "on")
   }
 
+  launch_prefer_par_start <- function() {
+    if (is.null(input$prefer_par_start)) return(TRUE)
+    isTRUE(input$prefer_par_start)
+  }
+
+  set_prefer_par_start_env <- function(job_env, prefer = TRUE) {
+    job_env$prefer_par_start <- if (isTRUE(prefer)) "1" else "0"
+    job_env
+  }
+
   # ----- Input and sensitivity launch units -----
   # The config file now supplies one common set of launch defaults. The actual
   # launch units are discovered input folders, with optional on-the-fly
@@ -1089,6 +1099,9 @@
   }
 
   effective_selected_job_types <- function(selected_job_types) {
+    if (isTRUE(input$stage_check_only)) {
+      return("stage_check")
+    }
     selected_job_types <- unique(as.character(selected_job_types))
     if ("prof" %in% selected_job_types) {
       profile_components <- selected_profile_components()
@@ -1565,6 +1578,7 @@
     }
 
     job_env <- model_env_list
+    job_env <- set_prefer_par_start_env(job_env, isTRUE(common_params$prefer_par_start))
     launch_name <- launch_model_name(spec$model_name, job_env)
     # Profile sets are launch-time metadata, not runtime env vars.
     # Remove to avoid passing large/non-scalar values to env.
@@ -1706,6 +1720,7 @@
       repo_root = isolate(repo_root_val()),
       local_use_docker = identical(input$launch_mode, "local_docker"),
       docker_image = if (!is.null(input$local_docker_image) && nzchar(input$local_docker_image)) input$local_docker_image else input$docker_image,
+      prefer_par_start = launch_prefer_par_start(),
       model_env_lists = setNames(list(as.list(model_env, all.names = TRUE)), model_name)
     )
 
@@ -1807,6 +1822,7 @@
         "fitted_model_bundle",
         "auto_run_model_before_dependency",
         "auto_fitted_model_dir",
+        "prefer_par_start",
         "program_path",
         "mfcl_commands",
         "Reps",
@@ -1870,6 +1886,7 @@
       "fitted_model_bundle",
       "auto_run_model_before_dependency",
       "auto_fitted_model_dir",
+      "prefer_par_start",
       "program_path",
       "mfcl_commands",
       "Reps",
@@ -2107,8 +2124,8 @@
   output$estimated_jobs_breakdown_text <- renderText({
     if (length(rv$models) == 0) return("")
     selected_job_types <- input$job_types
-    if (is.null(selected_job_types) || length(selected_job_types) == 0) return("")
     selected_job_types <- effective_selected_job_types(selected_job_types)
+    if (is.null(selected_job_types) || length(selected_job_types) == 0) return("")
     selected_models <- selected_models_from_checkboxes()
     if (length(selected_models) == 0) return("")
 
@@ -2140,8 +2157,8 @@
   output$estimated_jobs_text <- renderText({
     if (length(rv$models) == 0) return("0 (load config first)")
     selected_job_types <- input$job_types
-    if (is.null(selected_job_types) || length(selected_job_types) == 0) return("0 (select job type)")
     selected_job_types <- effective_selected_job_types(selected_job_types)
+    if (is.null(selected_job_types) || length(selected_job_types) == 0) return("0 (select job type)")
     selected_models <- selected_models_from_checkboxes()
     if (length(selected_models) == 0 &&
         isTRUE(sensitivity_mode_enabled()) &&
@@ -2239,14 +2256,13 @@
     shinyjs::disable("launch_btn")
     shinyjs::addClass("launch_btn", "loading")
     
-    selected_job_types <- input$job_types
+    selected_job_types <- effective_selected_job_types(input$job_types)
     if (is.null(selected_job_types) || length(selected_job_types) == 0) {
       showNotification("Please select at least one job type", type = "error")
       shinyjs::enable("launch_btn")
       shinyjs::removeClass("launch_btn", "loading")
       return()
     }
-    selected_job_types <- effective_selected_job_types(selected_job_types)
 
     launch_mode <- if (!is.null(input$launch_mode) && nzchar(input$launch_mode)) input$launch_mode else "condor"
     is_local_mode <- launch_mode %in% c("local_native", "local_docker")
@@ -2349,7 +2365,10 @@
     }
     
     model_env_lists <- lapply(selected_models, function(m) {
-      as.list(active_model_env(m), all.names = TRUE)
+      set_prefer_par_start_env(
+        as.list(active_model_env(m), all.names = TRUE),
+        launch_prefer_par_start()
+      )
     })
     names(model_env_lists) <- selected_models
 
@@ -2501,6 +2520,7 @@
                 ghcr_login = isTRUE(input$ghcr_login),
                 output_dir = input$output_dir,
                 model_env_lists = model_env_lists,
+                prefer_par_start = launch_prefer_par_start(),
                 exclude_slots = condor_exclude_slots
               )
               parallel::clusterEvalQ(cl, { library(CondorBox) })
@@ -2516,6 +2536,7 @@
                   "ensure_fitted_source_functions_loaded",
                   "truthy_scalar",
                   "first_scalar_string",
+                  "set_prefer_par_start_env",
                   "launch_model_name",
                   "sanitize_profile_job_tag",
                   "apply_prof_init_mapping",
@@ -2536,11 +2557,12 @@
                 local_use_docker = is_local_docker,
                 local_async = TRUE,
                 docker_image = if (!is.null(input$local_docker_image) && nzchar(input$local_docker_image)) input$local_docker_image else input$docker_image,
+                prefer_par_start = launch_prefer_par_start(),
                 model_env_lists = model_env_lists
               )
               parallel::clusterExport(
                 cl,
-                varlist = c("local_env_strings", "local_job_runner", "local_run_command", "launch_single_job_local_raw", "common_params"),
+                varlist = c("local_env_strings", "local_job_runner", "local_run_command", "launch_single_job_local_raw", "set_prefer_par_start_env", "common_params"),
                 envir = environment()
               )
               parallel::parLapply(cl, job_specs, function(spec) {
@@ -3156,6 +3178,7 @@
       stop(paste("Model env not found for", spec$model_name))
     }
     job_env <- list2env(model_env_list, parent = emptyenv())
+    job_env$prefer_par_start <- if (isTRUE(common_params$prefer_par_start)) "1" else "0"
     launch_name <- launch_model_name(spec$model_name, as.list(job_env, all.names = TRUE))
     # Profile sets are launch-time metadata, not runtime env vars.
     # Remove to avoid passing large/non-scalar values to CondorBox.
@@ -3305,7 +3328,7 @@
       )
     }
 
-    job_env <- model_env
+    job_env <- set_prefer_par_start_env(model_env, launch_prefer_par_start())
     launch_name <- launch_model_name(model_name, job_env)
     # Profile sets are launch-time metadata only; Condor env vars must be scalar/text.
     if (!is.null(job_env$profile_sets)) {

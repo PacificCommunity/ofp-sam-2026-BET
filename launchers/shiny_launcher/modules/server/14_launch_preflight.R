@@ -221,6 +221,7 @@
     }
     mfcl_commands_for_model <- launch_preflight_first(model_env$mfcl_commands)
     model_needs_par <- nzchar(mfcl_commands_for_model) && !identical(trimws(mfcl_commands_for_model), "./doitall.sh")
+    prefer_par_start <- is.null(input$prefer_par_start) || isTRUE(input$prefer_par_start)
     auto_model_ready <- auto_run_model && base_exists && frq_n > 0 && (base_par_exists || (ini_n > 0 && doitall && !model_needs_par))
     input_or_fitted_par_exists <- base_par_exists || fitted_par_exists || auto_model_ready
     dependency_indepvar_ok <- length(indepvar) > 0 || auto_model_ready
@@ -233,6 +234,7 @@
         if (model_par_exists) paste0("model par=", basename(model_par)) else if (model_exists) "model par=missing" else "model_dir=missing",
         if (fitted_enabled && fitted_par_exists) paste0("fitted par=", basename(fitted_par)) else if (fitted_enabled) "fitted par=missing",
         if (auto_run_model) paste0("auto model first=", if (auto_model_ready) "ready" else "not ready"),
+        paste0("prefer par start=", if (prefer_par_start) "yes" else "no"),
         paste0("frq=", frq_n),
         paste0("ini=", ini_n),
         paste0("indepvar=", length(indepvar)),
@@ -338,7 +340,11 @@
     if (identical(job_type, "model")) {
       ok <- frq_n > 0 && (base_par_exists || (ini_n > 0 && doitall && !model_needs_par))
       detail <- if (ok && base_par_exists) {
-        "Model can start from existing input .par."
+        if (prefer_par_start) {
+          "Model will start from the latest input .par and write the next .par; ./doitall.sh is skipped."
+        } else {
+          "Latest input .par is available, but par-start preference is off; the configured MFCL command will be used."
+        }
       } else if (ok) {
         "Model can start from .ini/doitall; no input .par found."
       } else if (model_needs_par && !base_par_exists) {
@@ -477,8 +483,8 @@
     input$refresh_launch_preflight
     if (length(rv$models) == 0) return(launch_preflight_empty("Load a common launch settings config first."))
     job_types <- input$job_types
-    if (is.null(job_types) || length(job_types) == 0) return(launch_preflight_empty("Select one or more job types."))
     if (exists("effective_selected_job_types", mode = "function")) job_types <- effective_selected_job_types(job_types)
+    if (is.null(job_types) || length(job_types) == 0) return(launch_preflight_empty("Select one or more job types."))
     if (length(job_types) == 0) return(launch_preflight_empty("Select one or more profile components."))
     selected <- if (exists("selected_models_from_checkboxes", mode = "function")) selected_models_from_checkboxes() else rv$selected_models
     if (length(selected) == 0) return(launch_preflight_empty("Select one or more input folders."))

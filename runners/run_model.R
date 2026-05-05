@@ -28,6 +28,7 @@ model_dir    <- Sys.getenv("model_dir", "model/base")
 description  <- Sys.getenv("description", "")
 config_summary <- Sys.getenv("config_summary", "")
 model_hessian <- tolower(Sys.getenv("model_hessian", Sys.getenv("hessian", "0"))) %in% c("1", "true", "yes", "y")
+prefer_par_start <- tolower(Sys.getenv("prefer_par_start", "1")) %in% c("1", "true", "yes", "y", "on")
 
 n_mixing_periods <- as.numeric(Sys.getenv("n_mixing_periods", ""))
 min_year         <- as.numeric(Sys.getenv("min_year", ""))
@@ -123,6 +124,11 @@ mfcl_commands_raw <- Sys.getenv(
 is_doitall_command <- function(x) identical(trimws(as.character(x)), "./doitall.sh")
 if (is_doitall_command(mfcl_commands_raw)) {
   mfcl_commands_raw <- "./doitall.sh"
+}
+
+if (!is.na(par_in) && is_doitall_command(mfcl_commands_raw) && isTRUE(prefer_par_start)) {
+  mfcl_commands_raw <- paste(program_path, frq_file, par_in, par_out, defaultswitch)
+  cat("Input .par found; using .par-based MFCL command instead of ./doitall.sh\n")
 }
 
 if (is_doitall_command(mfcl_commands_raw) && is.na(ini_file)) {
