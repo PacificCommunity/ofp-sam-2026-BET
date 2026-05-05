@@ -228,6 +228,7 @@ emit("fitted source dir: ", if (nzchar(source_dir)) source_dir else "<none>")
 emit("auto prerequisite model: ", if (auto_model) "yes" else "no")
 
 merged_abs <- ""
+merged_par <- NA_character_
 if (nzchar(bundle) || nzchar(source_dir)) {
   old_auto <- Sys.getenv("auto_run_model_before_dependency", "")
   Sys.setenv(auto_run_model_before_dependency = "0")
@@ -261,22 +262,25 @@ if (nzchar(bundle) || nzchar(source_dir)) {
 
 emit_section("Would Run")
 prefer_par_start <- truthy(Sys.getenv("prefer_par_start", "1"), default = TRUE)
-allow_sensitivity_par_start <- truthy(Sys.getenv("allow_sensitivity_par_start", "0"), default = FALSE)
 recipe_env_enabled <- truthy(Sys.getenv("input_recipe_enabled", "0"), default = FALSE)
-allow_par_start <- isTRUE(prefer_par_start) && ((length(input_tokens) == 0 && !isTRUE(recipe_env_enabled)) || isTRUE(allow_sensitivity_par_start))
+fitted_source_active <- truthy(Sys.getenv("fitted_model_source_enabled", "0"), default = FALSE) ||
+  nzchar(first(Sys.getenv("fitted_model_bundle", ""))) ||
+  nzchar(first(Sys.getenv("fitted_model_source_dir", "")))
+allow_par_start <- isTRUE(prefer_par_start) && isTRUE(fitted_source_active)
 mfcl_commands_env <- first(Sys.getenv("mfcl_commands"))
-mfcl_commands <- if (!is.na(par) && file.exists(par) && (!nzchar(mfcl_commands_env) || identical(trimws(mfcl_commands_env), "./doitall.sh")) && isTRUE(allow_par_start)) {
-  paste("par-start:", basename(par), "->", next_par_name(par))
+run_par <- if (!is.na(merged_par) && file.exists(merged_par)) merged_par else par
+mfcl_commands <- if (!is.na(run_par) && file.exists(run_par) && (!nzchar(mfcl_commands_env) || identical(trimws(mfcl_commands_env), "./doitall.sh")) && isTRUE(allow_par_start)) {
+  paste("par-start:", basename(run_par), "->", next_par_name(run_par))
 } else if (nzchar(mfcl_commands_env)) {
   mfcl_commands_env
-} else if (!is.na(par) && file.exists(par) && isTRUE(allow_par_start)) {
-  paste("par-start:", basename(par), "->", next_par_name(par))
+} else if (!is.na(run_par) && file.exists(run_par) && isTRUE(allow_par_start)) {
+  paste("par-start:", basename(run_par), "->", next_par_name(run_par))
 } else {
   "./doitall.sh"
 }
 emit("MFCL command mode: ", mfcl_commands)
-if ((length(input_tokens) > 0 || isTRUE(recipe_env_enabled)) && !isTRUE(allow_sensitivity_par_start)) {
-  emit("par-start note: disabled for change-token input unless allow_sensitivity_par_start=1")
+if (!isTRUE(fitted_source_active) && !is.na(run_par) && file.exists(run_par)) {
+  emit("par-start note: disabled unless 'Use existing fitted output as source' is selected")
 }
 emit("MFCL execution: skipped by setup check")
 

@@ -1334,7 +1334,7 @@
   }
 
   fitted_source_job_types <- function() {
-    c("stage_check", "jitter", "hessian", "prof", "prof_chain", "prof_2d")
+    c("stage_check", "model", "jitter", "hessian", "prof", "prof_chain", "prof_2d")
   }
 
   job_uses_fitted_source <- function(job_env, job_type) {
@@ -1356,7 +1356,12 @@
     ensure_fitted_source_functions_loaded(repo_root)
     source_dir <- first_scalar_string(job_env$fitted_model_source_dir, default = "")
     if (!nzchar(source_dir)) {
-      if (identical(job_type, "stage_check")) {
+      if (job_type %in% c("stage_check", "model")) {
+        if (identical(job_type, "model")) {
+          job_env$fitted_model_source_enabled <- "0"
+          job_env$fitted_model_bundle <- ""
+          job_env$fitted_model_source_label <- "no matched fitted source; model will run from .ini/doitall"
+        }
         return(list(job_env = job_env, extra_transfer_files = character(0)))
       }
       stop("Fitted model source is enabled but no fitted output was resolved. Use Auto-match only when model/<launch_name> exists, or select a fitted output explicitly.")

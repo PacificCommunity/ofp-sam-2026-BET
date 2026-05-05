@@ -18,6 +18,7 @@ source("tools/post_hessian.R")
 source("tools/condor_archive_cleanup.R")
 source("tools/input_change_metadata.R")
 source("tools/input_recipe_runner.R")
+source("tools/fitted_model_source.R")
 
 ## -------------------------
 ## 1) Environment + paths
@@ -29,7 +30,9 @@ description  <- Sys.getenv("description", "")
 config_summary <- Sys.getenv("config_summary", "")
 model_hessian <- tolower(Sys.getenv("model_hessian", Sys.getenv("hessian", "0"))) %in% c("1", "true", "yes", "y")
 prefer_par_start <- tolower(Sys.getenv("prefer_par_start", "1")) %in% c("1", "true", "yes", "y", "on")
-allow_sensitivity_par_start <- tolower(Sys.getenv("allow_sensitivity_par_start", "0")) %in% c("1", "true", "yes", "y", "on")
+fitted_source_enabled <- tolower(Sys.getenv("fitted_model_source_enabled", "0")) %in% c("1", "true", "yes", "y", "on")
+fitted_source_bundle <- nzchar(Sys.getenv("fitted_model_bundle", ""))
+fitted_source_dir <- nzchar(Sys.getenv("fitted_model_source_dir", ""))
 
 n_mixing_periods <- as.numeric(Sys.getenv("n_mixing_periods", ""))
 min_year         <- as.numeric(Sys.getenv("min_year", ""))
@@ -40,6 +43,12 @@ Sys.setenv("PROGRAM_PATH" = paste0("../../", program_path))
 project_root <- getwd()
 base_dir_abs <- file.path(project_root, base_dir)
 base_dir_abs <- ensure_input_dir_available(base_dir, project_root)
+base_dir_abs <- ensure_fitted_model_source(
+  base_dir_abs = base_dir_abs,
+  base_dir = base_dir,
+  model_dir = model_dir,
+  project_root = project_root
+)
 
 if (!dir.exists(base_dir_abs)) {
   stop("Base inputs directory does not exist: ", base_dir_abs)
@@ -48,7 +57,7 @@ if (!dir.exists(base_dir_abs)) {
 input_change_metadata <- read_input_change_metadata(base_dir_abs)
 input_change_tokens <- normalize_input_change_tokens(input_change_metadata$tokens)
 recipe_env_enabled <- tolower(Sys.getenv("input_recipe_enabled", "0")) %in% c("1", "true", "yes", "y", "on")
-sensitivity_input <- length(input_change_tokens) > 0 || isTRUE(recipe_env_enabled)
+fitted_source_active <- isTRUE(fitted_source_enabled) || isTRUE(fitted_source_bundle) || isTRUE(fitted_source_dir)
 
 ## -------------------------
 ## 2) Auto-detect .frq
@@ -103,13 +112,13 @@ if (length(par_files) > 0) {
   cat("No .par file found in base inputs; run must start from .ini/doitall makepar.\n")
 }
 
-allow_par_start <- isTRUE(prefer_par_start) && (!isTRUE(sensitivity_input) || isTRUE(allow_sensitivity_par_start))
-if (isTRUE(sensitivity_input) && !is.na(par_in) && isTRUE(prefer_par_start) && !isTRUE(allow_sensitivity_par_start)) {
-  input_change_label <- if (length(input_change_tokens) > 0) paste(input_change_tokens, collapse = ", ") else "input recipe enabled"
+allow_par_start <- isTRUE(prefer_par_start) && isTRUE(fitted_source_active)
+if (!is.na(par_in) && isTRUE(prefer_par_start) && !isTRUE(fitted_source_active)) {
+  input_change_label <- if (length(input_change_tokens) > 0) paste(input_change_tokens, collapse = ", ") else if (isTRUE(recipe_env_enabled)) "input recipe enabled" else "plain input folder"
   cat(
-    "Sensitivity/change-token input detected (",
+    "No fitted model source selected (",
     input_change_label,
-    "); ignoring copied input .par for model start. Use allow_sensitivity_par_start=1 only for a verified fitted par.\n",
+    "); ignoring input .par for model start and rebuilding from .ini/doitall.\n",
     sep = ""
   )
 }
@@ -143,15 +152,14 @@ if (is_doitall_command(mfcl_commands_raw)) {
   mfcl_commands_raw <- "./doitall.sh"
 }
 
-if (isTRUE(sensitivity_input) && !isTRUE(allow_sensitivity_par_start) && !is_doitall_command(mfcl_commands_raw) && !is.na(par_in)) {
+if (!isTRUE(fitted_source_active) && !is_doitall_command(mfcl_commands_raw) && !is.na(par_in)) {
   if (!is.na(ini_file) && file.exists(file.path(base_dir_abs, "doitall.sh"))) {
     mfcl_commands_raw <- "./doitall.sh"
-    cat("Configured MFCL command uses an input .par, but par-start is disabled for this input; using ./doitall.sh instead.\n")
+    cat("Configured MFCL command uses an input .par, but no fitted model source was selected; using ./doitall.sh instead.\n")
   } else {
     stop(
-      "Configured MFCL command requires an input .par, but par-start is disabled for change-token input: ",
-      if (length(input_change_tokens) > 0) paste(input_change_tokens, collapse = ", ") else "input recipe enabled",
-      ". Set allow_sensitivity_par_start=1 only for a verified fitted .par."
+      "Configured MFCL command requires an input .par, but no fitted model source was selected. ",
+      "Use existing fitted output as source if this par is a verified fitted start."
     )
   }
 }

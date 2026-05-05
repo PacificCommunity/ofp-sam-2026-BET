@@ -216,6 +216,7 @@
     fitted_source_abs <- if (nzchar(fitted_source_dir)) resolve_repo_path(fitted_source_dir) else ""
     fitted_par <- launch_preflight_latest_par(fitted_source_abs)
     fitted_par_exists <- fitted_enabled && !is.na(fitted_par) && file.exists(fitted_par)
+    fitted_source_active <- isTRUE(fitted_enabled) && isTRUE(fitted_par_exists)
     auto_run_model <- launch_preflight_truthy(model_env$auto_run_model_before_dependency)
     frq_n <- length(launch_preflight_files(base_dir_abs, "\\.frq$"))
     ini_n <- length(launch_preflight_files(base_dir_abs, "\\.ini$"))
@@ -233,7 +234,7 @@
     mfcl_commands_for_model <- launch_preflight_first(model_env$mfcl_commands)
     model_needs_par <- nzchar(mfcl_commands_for_model) && !identical(trimws(mfcl_commands_for_model), "./doitall.sh")
     prefer_par_start <- is.null(input$prefer_par_start) || isTRUE(input$prefer_par_start)
-    auto_model_ready <- auto_run_model && base_exists && frq_n > 0 && (base_par_usable || (ini_n > 0 && doitall && !model_needs_par))
+    auto_model_ready <- auto_run_model && base_exists && frq_n > 0 && (fitted_source_active || (ini_n > 0 && doitall && !model_needs_par))
     input_or_fitted_par_exists <- base_par_usable || fitted_par_exists || auto_model_ready
     dependency_indepvar_ok <- length(indepvar) > 0 || auto_model_ready
     indepvar_source <- launch_preflight_indepvar_source_label(base_indepvar, fitted_indepvar_exists, auto_model_ready)
@@ -255,8 +256,9 @@
       collapse = "; "
     )
 
-    fitted_required_jobs <- if (exists("fitted_source_job_types", mode = "function")) fitted_source_job_types() else c("stage_check", "jitter", "hessian", "prof", "prof_chain", "prof_2d")
-    if (fitted_enabled && job_type %in% fitted_required_jobs && !identical(job_type, "stage_check") && !fitted_par_exists) {
+    fitted_required_jobs <- if (exists("fitted_source_job_types", mode = "function")) fitted_source_job_types() else c("stage_check", "model", "jitter", "hessian", "prof", "prof_chain", "prof_2d")
+    fitted_source_strict <- !identical(job_type, "model")
+    if (fitted_enabled && isTRUE(fitted_source_strict) && job_type %in% fitted_required_jobs && !identical(job_type, "stage_check") && !fitted_par_exists) {
       return(launch_preflight_row(
         display_name,
         job_type,
@@ -273,8 +275,10 @@
       needs_indepvar_after_build <- launch_preflight_dependent_job_needs_indepvar(job_type, model_env)
       can_build_input <- isTRUE(recipe_source$exists)
       can_run_model_first <- isTRUE(auto_run_model) && isTRUE(recipe_source$model_ready)
-      can_supply_par_after_build <- !isTRUE(needs_par_after_build) || isTRUE(fitted_par_exists) || isTRUE(can_run_model_first)
+      can_model_from_recipe <- identical(job_type, "model") && isTRUE(recipe_source$exists) && recipe_source$frq_n > 0 && recipe_source$ini_n > 0 && isTRUE(recipe_source$doitall) && !isTRUE(model_needs_par)
+      can_supply_par_after_build <- !isTRUE(needs_par_after_build) || isTRUE(can_model_from_recipe) || isTRUE(fitted_par_exists) || isTRUE(can_run_model_first)
       can_supply_indepvar_after_build <- !isTRUE(needs_indepvar_after_build) ||
+        isTRUE(can_model_from_recipe) ||
         isTRUE(fitted_indepvar_exists) ||
         isTRUE(can_run_model_first)
       ok <- can_build_input && can_supply_par_after_build && can_supply_indepvar_after_build
@@ -292,7 +296,9 @@
         found_common_recipe,
         launch_preflight_recipe_detail(model_env),
         recipe_source$found,
-        if (isTRUE(needs_par_after_build) || isTRUE(needs_indepvar_after_build)) {
+        if (isTRUE(can_model_from_recipe)) {
+          "run model from recipe .ini/doitall=ready"
+        } else if (isTRUE(needs_par_after_build) || isTRUE(needs_indepvar_after_build)) {
           paste0("run model first after build=", if (can_run_model_first) "ready" else "not ready")
         } else {
           "run model first after build=not needed"
@@ -316,6 +322,8 @@
           "Input folder is not present locally yet; the Condor job will build this sensitivity input, ",
           "then run the prerequisite model first to create indepvar.rpt before running ", job_type, "."
         )
+      } else if (isTRUE(can_model_from_recipe)) {
+        "Input folder is not present locally yet; the Condor job will build this sensitivity input and run the model from .ini/doitall because no matched fitted source was found."
       } else if (isTRUE(fitted_par_exists)) {
         "Input folder is not present locally yet; the Condor job will build this sensitivity input, then use the selected fitted .par source."
       } else if (isTRUE(needs_par_after_build) || isTRUE(needs_indepvar_after_build)) {
@@ -350,23 +358,23 @@
     }
 
     if (identical(job_type, "model")) {
-      ok <- frq_n > 0 && (base_par_usable || (ini_n > 0 && doitall && !model_needs_par))
-      detail <- if (ok && base_par_exists && base_has_change_tokens) {
-        "Change-token input has a copied .par, but model jobs ignore it and rebuild from .ini/doitall so the .par matches the changed input."
-      } else if (ok && base_par_usable) {
+      ok <- frq_n > 0 && (fitted_source_active || (ini_n > 0 && doitall && !model_needs_par))
+      detail <- if (ok && fitted_source_active) {
         if (prefer_par_start) {
-          "Model will start from the latest input .par and write the next .par; ./doitall.sh is skipped."
+          "Model will start from the selected fitted-source .par and write the next .par; ./doitall.sh is skipped."
         } else {
-          "Latest input .par is available, but par-start preference is off; the configured MFCL command will be used."
+          "Fitted-source .par is available, but par-start preference is off; the configured MFCL command will be used."
         }
+      } else if (ok && base_par_exists) {
+        "Input .par exists but is not used for model start unless 'Use existing fitted output as source' is selected; rebuilding from .ini/doitall."
       } else if (ok) {
         "Model can start from .ini/doitall; no input .par found."
-      } else if (model_needs_par && !base_par_usable) {
-        "Configured MFCL command needs a .par, but no input .par was found."
+      } else if (model_needs_par && !fitted_source_active) {
+        "Configured MFCL command needs a fitted .par; select 'Use existing fitted output as source' or use .ini/doitall."
       } else {
-        "Need .frq plus either input .par or .ini/doitall."
+        "Need .frq plus either selected fitted-source .par or .ini/doitall."
       }
-      return(launch_preflight_row(display_name, job_type, launch_preflight_status(ok), ".frq and .par or .ini/doitall", found_common, detail))
+      return(launch_preflight_row(display_name, job_type, launch_preflight_status(ok), ".frq and fitted .par or .ini/doitall", found_common, detail))
     }
 
     if (identical(job_type, "jitter")) {

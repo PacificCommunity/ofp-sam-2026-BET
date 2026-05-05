@@ -91,11 +91,11 @@ launch_tab_ui <- function() {
                 ),
                 checkboxInput(
                   "prefer_par_start",
-                  "Start model from latest .par when available",
+                  "Start model from fitted-source .par when selected",
                   value = TRUE
                 ),
                 tags$small(
-                  "When an input .par exists, model jobs write the next .par directly instead of running ./doitall.sh.",
+                  "Only trusted fitted-source .par files are used to write the next .par; normal inputs rebuild from ./doitall.sh.",
                   style = "display:block; color:#666; line-height:1.25; margin-top:-8px; margin-bottom:10px;"
                 ),
                 checkboxGroupInput("job_types", "Job Types:",
@@ -260,10 +260,6 @@ launch_tab_ui <- function() {
               )
             ),
             
-            shiny::hr(),
-            
-            uiOutput("model_selection_ui"),
-
             div(
               style = "margin-top: 10px; padding: 8px 10px; background: #f4f8fb; border-left: 4px solid #3c8dbc;",
               strong("Estimated Jobs: "),
@@ -414,14 +410,6 @@ launch_tab_ui <- function() {
               )
             )
             
-          )
-        ),
-        
-        fluidRow(
-          box(
-            title = "Selected Model Details", status = "warning", solidHeader = TRUE, width = 12,
-            collapsible = TRUE, collapsed = FALSE,
-            uiOutput("model_details_display")
           )
         ),
         
