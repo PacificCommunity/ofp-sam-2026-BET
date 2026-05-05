@@ -42,6 +42,68 @@
     )
   }
 
+  launch_preflight_recipe_source <- function(model_env, model_needs_par = FALSE) {
+    source_dir <- launch_preflight_first(
+      model_env$input_recipe_base_input_dir,
+      launch_preflight_first(model_env$input_recipe_base_source, "")
+    )
+    source_abs <- if (nzchar(source_dir)) resolve_repo_path(source_dir) else ""
+    source_exists <- nzchar(source_abs) && dir.exists(source_abs)
+    source_frq_n <- length(launch_preflight_files(source_abs, "\\.frq$"))
+    source_ini_n <- length(launch_preflight_files(source_abs, "\\.ini$"))
+    source_par <- launch_preflight_latest_par(source_abs)
+    source_par_exists <- !is.na(source_par) && file.exists(source_par)
+    source_doitall <- file.exists(file.path(source_abs, "doitall.sh"))
+    source_model_ready <- source_exists &&
+      source_frq_n > 0 &&
+      (source_par_exists || (source_ini_n > 0 && source_doitall && !isTRUE(model_needs_par)))
+    list(
+      dir = source_dir,
+      exists = source_exists,
+      frq_n = source_frq_n,
+      ini_n = source_ini_n,
+      par = source_par,
+      par_exists = source_par_exists,
+      doitall = source_doitall,
+      model_ready = source_model_ready,
+      found = paste(
+        c(
+          paste0("recipe source=", if (source_exists) source_dir else paste0("missing ", source_dir)),
+          paste0("source par=", if (source_par_exists) basename(source_par) else "missing"),
+          paste0("source frq=", source_frq_n),
+          paste0("source ini=", source_ini_n),
+          paste0("source doitall=", as.integer(source_doitall))
+        ),
+        collapse = "; "
+      )
+    )
+  }
+
+  launch_preflight_dependent_job_needs_par <- function(job_type) {
+    job_type %in% c("jitter", "hessian", "prof", "prof_chain", "prof_2d")
+  }
+
+  launch_preflight_dependent_job_needs_indepvar <- function(job_type, model_env) {
+    if (identical(job_type, "jitter")) return(TRUE)
+    if (identical(job_type, "prof") || identical(job_type, "prof_chain")) {
+      profile_components <- if (exists("selected_profile_components", mode = "function")) {
+        intersect(selected_profile_components(), c("standard", "individual"))
+      } else {
+        c("standard", "individual")
+      }
+      prof_envs <- launch_preflight_profile_envs(model_env, profile_components)
+      return(any(vapply(prof_envs, function(env) nzchar(launch_preflight_first(env$prof_fix_indepvar)), logical(1))))
+    }
+    if (identical(job_type, "prof_2d")) {
+      prof_envs <- launch_preflight_profile_envs(model_env, "prof_2d")
+      return(any(vapply(prof_envs, function(env) {
+        nzchar(launch_preflight_first(env$prof_2d_scalars_x)) ||
+          nzchar(launch_preflight_first(env$prof_2d_scalars_y))
+      }, logical(1))))
+    }
+    FALSE
+  }
+
   launch_preflight_files <- function(dir_path, pattern) {
     if (!is.character(dir_path) || length(dir_path) != 1 || !nzchar(dir_path) || !dir.exists(dir_path)) return(character(0))
     list.files(dir_path, pattern = pattern, full.names = TRUE)
@@ -192,14 +254,70 @@
     }
 
     if (!base_exists && launch_preflight_recipe_ready(model_env)) {
-      found_recipe <- paste(found_common, launch_preflight_recipe_detail(model_env), sep = "; ")
+      recipe_source <- launch_preflight_recipe_source(model_env, model_needs_par = model_needs_par)
+      needs_par_after_build <- launch_preflight_dependent_job_needs_par(job_type)
+      needs_indepvar_after_build <- launch_preflight_dependent_job_needs_indepvar(job_type, model_env)
+      can_build_input <- isTRUE(recipe_source$exists)
+      can_run_model_first <- isTRUE(auto_run_model) && isTRUE(recipe_source$model_ready)
+      can_supply_par_after_build <- !isTRUE(needs_par_after_build) || isTRUE(fitted_par_exists) || isTRUE(can_run_model_first)
+      can_supply_indepvar_after_build <- !isTRUE(needs_indepvar_after_build) ||
+        isTRUE(fitted_indepvar_exists) ||
+        isTRUE(can_run_model_first)
+      ok <- can_build_input && can_supply_par_after_build && can_supply_indepvar_after_build
+      required_bits <- c(
+        "on-demand input build",
+        if (isTRUE(needs_par_after_build) && !isTRUE(fitted_par_exists)) "prerequisite model .par" else character(0),
+        if (isTRUE(needs_indepvar_after_build) && !isTRUE(fitted_indepvar_exists)) "prerequisite indepvar.rpt" else character(0)
+      )
+      found_common_recipe <- if (isTRUE(can_run_model_first)) {
+        sub("auto model first=not ready", "auto model first=after input build", found_common, fixed = TRUE)
+      } else {
+        found_common
+      }
+      found_recipe <- paste(
+        found_common_recipe,
+        launch_preflight_recipe_detail(model_env),
+        recipe_source$found,
+        if (isTRUE(needs_par_after_build) || isTRUE(needs_indepvar_after_build)) {
+          paste0("run model first after build=", if (can_run_model_first) "ready" else "not ready")
+        } else {
+          "run model first after build=not needed"
+        },
+        sep = "; "
+      )
+      detail <- if (!can_build_input) {
+        "Input folder is not present locally yet, but the recipe source input is missing; the sensitivity input cannot be built."
+      } else if (isTRUE(needs_par_after_build) && isTRUE(needs_indepvar_after_build) && isTRUE(can_run_model_first)) {
+        paste0(
+          "Input folder is not present locally yet; the Condor job will build this sensitivity input, ",
+          "then run the prerequisite model first to create .par and indepvar.rpt before running ", job_type, "."
+        )
+      } else if (isTRUE(needs_par_after_build) && isTRUE(can_run_model_first)) {
+        paste0(
+          "Input folder is not present locally yet; the Condor job will build this sensitivity input, ",
+          "then run the prerequisite model first to create .par before running ", job_type, "."
+        )
+      } else if (isTRUE(needs_indepvar_after_build) && isTRUE(can_run_model_first)) {
+        paste0(
+          "Input folder is not present locally yet; the Condor job will build this sensitivity input, ",
+          "then run the prerequisite model first to create indepvar.rpt before running ", job_type, "."
+        )
+      } else if (isTRUE(fitted_par_exists)) {
+        "Input folder is not present locally yet; the Condor job will build this sensitivity input, then use the selected fitted .par source."
+      } else if (isTRUE(needs_par_after_build) || isTRUE(needs_indepvar_after_build)) {
+        "Input folder is not present locally yet, but this job also needs .par/indepvar.rpt and no prerequisite model or fitted source is ready."
+      } else if (identical(job_type, "model")) {
+        "Input folder is not present locally yet; the Condor job will build this sensitivity input and then run the model."
+      } else {
+        "Input folder is not present locally yet; the Condor job will build this sensitivity input before running."
+      }
       return(launch_preflight_row(
         display_name,
         job_type,
-        "ready",
-        "on-demand input build",
+        launch_preflight_status(ok),
+        paste(required_bits, collapse = " + "),
         found_recipe,
-        "Input folder is not present locally yet; the Condor job will build this sensitivity input before running."
+        detail
       ))
     }
 
