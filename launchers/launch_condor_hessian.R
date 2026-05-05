@@ -23,6 +23,7 @@ branch <- "develop_lik"                                              # Branch of
 # ---------------------------------------
 
 setwd(here::here())
+source("tools/condor_env.R")
 
 dir="develop/Feb_6_hessian"
 
@@ -66,7 +67,7 @@ for(model_name in names(models)) {
                         "slot1_2@suvofpcand26.corp.spc.int",
                         "slot1_3@suvofpcand26.corp.spc.int"),   ## these slots are super slow..
       custom_batch_name = paste0(model_name, "-hess", part, "-", format(Sys.time(), "%H:%M:%S_%D")),
-      condor_environment = hessian_env
+      condor_environment = condor_git_safe_env(hessian_env)
     )
   }
 }

@@ -1441,6 +1441,8 @@
 
     environment_string <- ""
     git_safe_env <- c(
+      "HOME=.",
+      "XDG_CACHE_HOME=.cache",
       "GIT_CONFIG_NOSYSTEM=1",
       "GIT_CONFIG_GLOBAL=/dev/null",
       "GIT_TERMINAL_PROMPT=0",

@@ -14,6 +14,7 @@ condor_cpus <- 2
 branch <- "develop_lik"
 
 setwd(here::here())
+source("tools/condor_env.R")
 
 config_file <- Sys.getenv("config_file", "configs/2023diag.R")
 if (!file.exists(config_file)) stop("Config file not found: ", config_file)
@@ -143,7 +144,7 @@ for (model_name in names(models)) {
         "slot1_3@suvofpcand26.corp.spc.int"
       ),
       custom_batch_name = paste0(model_name, "-sc", sc, "-", format(Sys.time(), "%H:%M:%S_%D")),
-      condor_environment = prof_env
+      condor_environment = condor_git_safe_env(prof_env)
     )
   }
 }
@@ -255,7 +256,7 @@ if (auto_refine_profile) {
           "slot1_3@suvofpcand26.corp.spc.int"
         ),
         custom_batch_name = paste0(model_name, "-sc", sc, "-refine-", format(Sys.time(), "%H:%M:%S_%D")),
-        condor_environment = prof_env
+        condor_environment = condor_git_safe_env(prof_env)
       )
     }
   }

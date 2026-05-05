@@ -22,6 +22,7 @@ branch <- "develop_lik"                                              # Branch of
 # ---------------------------------------
 
 setwd(here::here())
+source("tools/condor_env.R")
 
 dir="quick/Feb_6_model"
 
@@ -55,7 +56,7 @@ CondorBox::CondorBox(
                     "slot1_2@suvofpcand26.corp.spc.int",
                     "slot1_3@suvofpcand26.corp.spc.int"),   ## these slots are super slow..
     custom_batch_name = paste0(model_name,"-",format(Sys.time(), "%H:%M:%S_%D")),
-    condor_environment = models[[model_name]] ) 
+    condor_environment = condor_git_safe_env(models[[model_name]]) ) 
 
   }
   
