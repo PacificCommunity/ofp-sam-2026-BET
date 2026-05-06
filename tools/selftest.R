@@ -995,6 +995,20 @@ st_weighted_mean <- function(value, weight) {
   sum(value[ok] * weight[ok], na.rm = TRUE) / sum(weight[ok], na.rm = TRUE)
 }
 
+st_weighted_quantile <- function(value, weight, prob = 0.5) {
+  value <- suppressWarnings(as.numeric(value))
+  weight <- suppressWarnings(as.numeric(weight))
+  ok <- is.finite(value) & is.finite(weight) & weight > 0
+  if (!any(ok)) return(NA_real_)
+  value <- value[ok]
+  weight <- weight[ok]
+  ord <- order(value)
+  value <- value[ord]
+  weight <- weight[ord]
+  cw <- cumsum(weight) / sum(weight)
+  value[which(cw >= prob)[[1]]]
+}
+
 st_data_summary_rows <- function(component, base_df, pseudo_df, value_fun) {
   if (is.null(base_df) || is.null(pseudo_df) || nrow(base_df) == 0 || nrow(pseudo_df) == 0) {
     return(data.frame())
@@ -1125,6 +1139,25 @@ st_alk_annual_summary <- function(path) {
   out[is.finite(out$value), , drop = FALSE]
 }
 
+st_alk_annual_rows <- function(path) {
+  if (is.null(path) || is.na(path) || !file.exists(path)) return(data.frame())
+  alk <- suppressWarnings(read.MFCLALK(path))
+  dat <- alk@ALK
+  if (is.null(dat) || nrow(dat) == 0) return(data.frame())
+  dat$year <- suppressWarnings(as.integer(dat$year))
+  dat$value <- suppressWarnings(as.numeric(dat$age))
+  dat$weight <- suppressWarnings(as.numeric(dat$obs))
+  dat <- dat[is.finite(dat$year) & is.finite(dat$value) & is.finite(dat$weight) & dat$weight >= 0, , drop = FALSE]
+  if (nrow(dat) == 0) return(data.frame())
+  data.frame(
+    series = "all",
+    year = dat$year,
+    value = dat$value,
+    weight = dat$weight,
+    stringsAsFactors = FALSE
+  )
+}
+
 st_alk_expected_annual_summary <- function(sim_dir, base_alk_file) {
   if (is.null(base_alk_file) || is.na(base_alk_file) || !file.exists(base_alk_file)) return(data.frame())
   pred_path <- file.path(sim_dir, "agelengthresids.dat")
@@ -1145,6 +1178,29 @@ st_alk_expected_annual_summary <- function(sim_dir, base_alk_file) {
     data.frame(year = as.integer(yr), value = st_weighted_mean(x$value, x$weight))
   }))
   out[is.finite(out$value), , drop = FALSE]
+}
+
+st_alk_expected_annual_rows <- function(sim_dir, base_alk_file) {
+  if (is.null(base_alk_file) || is.na(base_alk_file) || !file.exists(base_alk_file)) return(data.frame())
+  pred_path <- file.path(sim_dir, "agelengthresids.dat")
+  if (!file.exists(pred_path)) return(data.frame())
+  alk <- suppressWarnings(read.MFCLALK(base_alk_file))
+  alk_df <- alk@ALK
+  n_age <- max(alk_df$age, na.rm = TRUE)
+  if (!is.finite(n_age) || n_age < 1L) return(data.frame())
+  preds <- st_parse_agelength_predictions(pred_path, n_age = n_age)
+  if (is.null(preds) || nrow(preds) == 0) return(data.frame())
+  preds$value <- suppressWarnings(as.numeric(preds$age))
+  preds$weight <- suppressWarnings(as.numeric(preds$predicted_prop) * as.numeric(preds$total))
+  preds <- preds[is.finite(preds$year) & is.finite(preds$value) & is.finite(preds$weight) & preds$weight >= 0, , drop = FALSE]
+  if (nrow(preds) == 0) return(data.frame())
+  data.frame(
+    series = "all",
+    year = as.integer(preds$year),
+    value = preds$value,
+    weight = preds$weight,
+    stringsAsFactors = FALSE
+  )
 }
 
 st_summarise_data_simulation <- function(base_frq_file,
@@ -1344,12 +1400,34 @@ st_summarise_data_simulation <- function(base_frq_file,
     function(x) st_weighted_mean(x$value, x$weight)
   )
   if (nrow(length_out) > 0) length_out$base_source <- unique(length_base_rows$source)[[1]]
+  length_probs <- c(`length q10` = 0.10, `length median` = 0.50, `length q90` = 0.90)
+  length_quant_out <- do.call(rbind, Map(
+    function(component_name, prob) {
+      st_data_summary_rows(
+        component_name, length_base_rows, length_pseudo_rows,
+        function(x) st_weighted_quantile(x$value, x$weight, prob)
+      )
+    },
+    names(length_probs), as.list(length_probs)
+  ))
+  if (nrow(length_quant_out) > 0) length_quant_out$base_source <- unique(length_base_rows$source)[[1]]
 
   weight_out <- st_data_summary_rows(
     "weight mean", weight_base_rows, weight_pseudo_rows,
     function(x) st_weighted_mean(x$value, x$weight)
   )
   if (nrow(weight_out) > 0) weight_out$base_source <- unique(weight_base_rows$source)[[1]]
+  weight_probs <- c(`weight q10` = 0.10, `weight median` = 0.50, `weight q90` = 0.90)
+  weight_quant_out <- do.call(rbind, Map(
+    function(component_name, prob) {
+      st_data_summary_rows(
+        component_name, weight_base_rows, weight_pseudo_rows,
+        function(x) st_weighted_quantile(x$value, x$weight, prob)
+      )
+    },
+    names(weight_probs), as.list(weight_probs)
+  ))
+  if (nrow(weight_quant_out) > 0) weight_quant_out$base_source <- unique(weight_base_rows$source)[[1]]
 
   tag_out <- st_data_summary_rows(
     "tag recaptures", st_tag_expected_annual_summary(sim_dir), st_tag_annual_summary(pseudo_tag_file),
@@ -1361,6 +1439,17 @@ st_summarise_data_simulation <- function(base_frq_file,
     function(x) mean(x$value, na.rm = TRUE)
   )
   if (nrow(alk_out) > 0) alk_out$base_source <- "fitted_age_length_pred"
+  alk_probs <- c(`age-length age q10` = 0.10, `age-length age median` = 0.50, `age-length age q90` = 0.90)
+  alk_quant_out <- do.call(rbind, Map(
+    function(component_name, prob) {
+      st_data_summary_rows(
+        component_name, st_alk_expected_annual_rows(sim_dir, base_alk_file), st_alk_annual_rows(pseudo_alk_file),
+        function(x) st_weighted_quantile(x$value, x$weight, prob)
+      )
+    },
+    names(alk_probs), as.list(alk_probs)
+  ))
+  if (nrow(alk_quant_out) > 0) alk_quant_out$base_source <- "fitted_age_length_pred"
 
   summary_cols <- c(
     "component", "series", "year", "n", "base_value", "pseudo_value", "ratio", "delta",
@@ -1374,7 +1463,10 @@ st_summarise_data_simulation <- function(base_frq_file,
     }
     x[, summary_cols, drop = FALSE]
   }
-  out <- do.call(rbind, lapply(list(frq_out, length_out, weight_out, tag_out, alk_out), complete_summary))
+  out <- do.call(rbind, lapply(
+    list(frq_out, length_out, length_quant_out, weight_out, weight_quant_out, tag_out, alk_out, alk_quant_out),
+    complete_summary
+  ))
   if (nrow(out) == 0) return(data.frame())
   out[order(out$component, out$year), , drop = FALSE]
 }

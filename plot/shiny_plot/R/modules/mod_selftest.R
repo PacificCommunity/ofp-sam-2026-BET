@@ -34,9 +34,18 @@ mod_selftest_ui <- function() {
             "CPUE mean (old summaries)" = "CPUE mean",
             "Effort carrier" = "effort",
             "Length mean" = "length mean",
+            "Length q10" = "length q10",
+            "Length median" = "length median",
+            "Length q90" = "length q90",
             "Weight mean" = "weight mean",
+            "Weight q10" = "weight q10",
+            "Weight median" = "weight median",
+            "Weight q90" = "weight q90",
             "Tag recaptures" = "tag recaptures",
-            "Age-length mean age" = "age-length mean age"
+            "Age-length mean age" = "age-length mean age",
+            "Age-length age q10" = "age-length age q10",
+            "Age-length age median" = "age-length age median",
+            "Age-length age q90" = "age-length age q90"
           ),
           selected = c(
             "catch total",
@@ -728,7 +737,11 @@ mod_selftest_server <- function(input, output, session, rv) {
         return(p_data)
       }
       annual <- bind_rows(lapply(split(annual, seq_len(nrow(annual))), function(row) {
-        fishery_components <- c("catch total", "CPUE", "effort", "length mean", "weight mean")
+        fishery_components <- c(
+          "catch total", "CPUE", "effort",
+          "length mean", "length q10", "length median", "length q90",
+          "weight mean", "weight q10", "weight median", "weight q90"
+        )
         if (!row$component[[1]] %in% fishery_components) {
           row$display_component <- row$component[[1]]
           return(row)
