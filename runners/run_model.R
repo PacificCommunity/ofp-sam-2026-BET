@@ -45,10 +45,12 @@ if (isTRUE(auto_run_model_before_dependency) &&
 n_mixing_periods <- as.numeric(Sys.getenv("n_mixing_periods", ""))
 min_year         <- as.numeric(Sys.getenv("min_year", ""))
 
-## PROGRAM_PATH used by some FLR4MFCL utilities (keep as you had it)
-Sys.setenv("PROGRAM_PATH" = paste0("../../", program_path))
-
 project_root <- getwd()
+program_path_abs <- file.path(project_root, program_path)
+## doitall.sh may run from model directories at different depths. Use an
+## absolute executable path so prerequisite source models do not depend on
+## fragile ../../ assumptions.
+Sys.setenv("PROGRAM_PATH" = program_path_abs)
 base_dir_abs <- file.path(project_root, base_dir)
 base_dir_abs <- ensure_input_dir_available(base_dir, project_root)
 base_dir_abs <- ensure_fitted_model_source(
@@ -146,8 +148,8 @@ defaultswitch <- paste(
 ## -------------------------
 ## 5) Build mfcl_commands
 ## Notes:
-## - run_commands() expects the executable to be invoked relative to work_dir,
-##   so we prepend "../../" unless using "./doitall.sh".
+## - run_commands() executes relative to work_dir. Use absolute executable paths
+##   so nested prerequisite source-model folders are handled correctly.
 ## - We keep your behaviour: allow overriding via Sys.getenv("mfcl_commands").
 ## -------------------------
 mfcl_commands_raw <- Sys.getenv(
@@ -192,7 +194,11 @@ if (!is_doitall_command(mfcl_commands_raw) && is.na(par_in)) {
 mfcl_commands <- if (is_doitall_command(mfcl_commands_raw)) {
   mfcl_commands_raw
 } else {
-  paste0("../../", mfcl_commands_raw)
+  raw_tokens <- strsplit(trimws(mfcl_commands_raw), "\\s+")[[1]]
+  exe <- raw_tokens[[1]]
+  args <- if (length(raw_tokens) > 1) paste(raw_tokens[-1], collapse = " ") else ""
+  exe_abs <- if (grepl("^/", exe)) exe else file.path(project_root, exe)
+  trimws(paste(exe_abs, args))
 }
 
 cat("Running MFCL with commands:\n", mfcl_commands, "\n")
@@ -244,7 +250,7 @@ post_hessian_input_par <- if (!is.null(final_model_par) && file.exists(final_mod
 
 hessian_summary <- mp_run_post_hessian(
   work_dir = model_dir,
-  program_path_abs = file.path(project_root, program_path),
+  program_path_abs = program_path_abs,
   program_path = program_path,
   frq_file = frq_file,
   input_par = post_hessian_input_par,
