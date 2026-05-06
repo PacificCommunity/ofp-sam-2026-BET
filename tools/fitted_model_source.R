@@ -65,7 +65,46 @@ fms_core_source_files <- function(source_dir) {
     grepl("\\.rds$", names, ignore.case = TRUE) |
     grepl("_map\\.[Rr]$", names) |
     names %in% c("avg_bio", "relative_depletion")
+  keep <- keep & names != "fitted_source_manifest.rds"
   files[keep]
+}
+
+fms_file_record <- function(path) {
+  info <- file.info(path)
+  size <- if (is.na(info$size)) 0 else info$size
+  raw <- if (size > 0) {
+    readBin(path, what = "raw", n = size)
+  } else {
+    raw(0)
+  }
+  list(
+    name = basename(path),
+    size = size,
+    mtime = as.character(info$mtime),
+    raw = raw
+  )
+}
+
+fms_restore_compact_bundle <- function(source_dir) {
+  manifest_path <- file.path(source_dir, "fitted_source_manifest.rds")
+  if (!file.exists(manifest_path)) return(invisible(FALSE))
+  manifest <- tryCatch(readRDS(manifest_path), error = function(e) NULL)
+  if (!is.list(manifest) || !isTRUE(manifest$compact)) return(invisible(FALSE))
+
+  records <- manifest$file_records
+  if (!is.list(records) || length(records) == 0) {
+    stop("Compact fitted source manifest has no file records: ", manifest_path)
+  }
+
+  for (rec in records) {
+    name <- fms_first(rec$name)
+    if (!nzchar(name) || basename(name) != name) {
+      stop("Invalid compact fitted source file name in manifest: ", name)
+    }
+    out_path <- file.path(source_dir, name)
+    writeBin(if (is.raw(rec$raw)) rec$raw else raw(0), out_path)
+  }
+  invisible(TRUE)
 }
 
 fms_model_info_field <- function(info, field) {
@@ -139,7 +178,7 @@ scan_fitted_model_dirs <- function(model_root = "model", repo_root = ".") {
   out
 }
 
-fms_create_bundle <- function(source_dir, bundle_dir = tempdir(), bundle_name = NULL) {
+fms_create_bundle <- function(source_dir, bundle_dir = tempdir(), bundle_name = NULL, compact = TRUE) {
   source_dir <- fms_resolve_path(source_dir, project_root = getwd(), parent_ok = FALSE)
   if (!dir.exists(source_dir)) stop("Fitted source directory does not exist: ", source_dir)
 
@@ -159,12 +198,16 @@ fms_create_bundle <- function(source_dir, bundle_dir = tempdir(), bundle_name = 
 
   stage <- tempfile("fitted_source_stage_", tmpdir = bundle_dir)
   dir.create(file.path(stage, "fitted_source"), recursive = TRUE, showWarnings = FALSE)
-  file.copy(core_files, to = file.path(stage, "fitted_source"), overwrite = TRUE)
+  if (!isTRUE(compact)) {
+    file.copy(core_files, to = file.path(stage, "fitted_source"), overwrite = TRUE)
+  }
   manifest <- list(
     created_at = as.character(Sys.time()),
     source_dir = normalizePath(source_dir, winslash = "/", mustWork = FALSE),
     files = basename(core_files),
-    par_file = basename(par_file)
+    par_file = basename(par_file),
+    compact = isTRUE(compact),
+    file_records = if (isTRUE(compact)) lapply(core_files, fms_file_record) else NULL
   )
   saveRDS(manifest, file = file.path(stage, "fitted_source", "fitted_source_manifest.rds"), compress = "xz")
 
@@ -234,6 +277,7 @@ fms_extract_bundle <- function(bundle_path, project_root = getwd(), source_id = 
   utils::untar(bundle_path, exdir = extract_dir)
   source_dir <- file.path(extract_dir, "fitted_source")
   if (!dir.exists(source_dir)) source_dir <- extract_dir
+  fms_restore_compact_bundle(source_dir)
   source_dir
 }
 

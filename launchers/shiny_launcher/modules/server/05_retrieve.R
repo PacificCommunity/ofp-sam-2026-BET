@@ -187,6 +187,14 @@
     normalizePath(download_dir, winslash = "/", mustWork = FALSE)
   }
 
+  retrieve_profile_relative_path <- function(source_path) {
+    source_norm <- normalizePath(source_path, winslash = "/", mustWork = FALSE)
+    parts <- strsplit(source_norm, "/", fixed = TRUE)[[1]]
+    prof_idx <- which(parts %in% c("prof", "prof_indepvar"))
+    if (length(prof_idx) == 0) return("")
+    paste(parts[prof_idx[[1]]:length(parts)], collapse = "/")
+  }
+
   retrieve_canonical_job_folder <- function(folder_name) {
     folder_name <- basename(trimws(as.character(folder_name[[1]])))
     if (!nzchar(folder_name)) return(folder_name)
@@ -204,6 +212,17 @@
     selftest_source <- identical(basename(normalizePath(source_path, winslash = "/", mustWork = FALSE)), "selftest")
     if (isTRUE(selftest_source) && file.info(item)$isdir) {
       return(file.path(target_dir, item_name, "selftest"))
+    }
+
+    profile_rel <- retrieve_profile_relative_path(source_path)
+    if (nzchar(profile_rel)) {
+      source_base <- basename(normalizePath(source_path, winslash = "/", mustWork = FALSE))
+      if (grepl("^scalar_", source_base)) {
+        return(file.path(target_dir, retrieve_canonical_job_folder(folder_name), profile_rel, item_name))
+      }
+      if (file.info(item)$isdir && grepl("^scalar_", item_name)) {
+        return(file.path(target_dir, retrieve_canonical_job_folder(folder_name), profile_rel, item_name))
+      }
     }
 
     canonical_folder <- retrieve_canonical_job_folder(folder_name)
