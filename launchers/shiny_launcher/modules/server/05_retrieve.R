@@ -186,6 +186,41 @@
 
     normalizePath(download_dir, winslash = "/", mustWork = FALSE)
   }
+
+  retrieve_canonical_job_folder <- function(folder_name) {
+    folder_name <- basename(trimws(as.character(folder_name[[1]])))
+    if (!nzchar(folder_name)) return(folder_name)
+
+    canonical <- folder_name
+    canonical <- sub("_[^_]+_profchain_(down|up)$", "", canonical, ignore.case = TRUE, perl = TRUE)
+    canonical <- sub("(_profchain_(down|up)|_prof2d|_model)$", "", canonical, ignore.case = TRUE, perl = TRUE)
+    canonical <- sub("(_seed[0-9]+|_part[0-9]+|_peel[0-9]+|_selftest_rep[0-9]+)$", "", canonical, ignore.case = TRUE, perl = TRUE)
+    canonical <- sub("_sc[-+]?[0-9.]+$", "", canonical, ignore.case = TRUE, perl = TRUE)
+    if (nzchar(canonical)) canonical else folder_name
+  }
+
+  retrieve_archive_target_item <- function(target_dir, source_path, item, folder_name) {
+    item_name <- basename(item)
+    selftest_source <- identical(basename(normalizePath(source_path, winslash = "/", mustWork = FALSE)), "selftest")
+    if (isTRUE(selftest_source) && file.info(item)$isdir) {
+      return(file.path(target_dir, item_name, "selftest"))
+    }
+
+    canonical_folder <- retrieve_canonical_job_folder(folder_name)
+    source_is_job_folder <- identical(
+      basename(normalizePath(source_path, winslash = "/", mustWork = FALSE)),
+      folder_name
+    )
+    if (isTRUE(source_is_job_folder) && !identical(canonical_folder, folder_name)) {
+      return(file.path(target_dir, canonical_folder, item_name))
+    }
+
+    if (file.info(item)$isdir && identical(item_name, folder_name) && !identical(canonical_folder, folder_name)) {
+      return(file.path(target_dir, canonical_folder))
+    }
+
+    file.path(target_dir, item_name)
+  }
   
   download_and_extract_from_folder_raw <- function(spec, common) {
     folder_name <- spec$folder_name
@@ -251,13 +286,7 @@
           if (!dir.exists(target_dir)) dir.create(target_dir, recursive = TRUE)
           
           for (item in items_in_source) {
-            item_name <- basename(item)
-            selftest_source <- identical(basename(normalizePath(source_path, winslash = "/", mustWork = FALSE)), "selftest")
-            target_item <- if (isTRUE(selftest_source) && file.info(item)$isdir) {
-              file.path(target_dir, item_name, "selftest")
-            } else {
-              file.path(target_dir, item_name)
-            }
+            target_item <- retrieve_archive_target_item(target_dir, source_path, item, folder_name)
             
             if (file.info(item)$isdir) {
               if (!dir.exists(target_item)) dir.create(target_item, recursive = TRUE)
@@ -333,13 +362,7 @@
         if (!dir.exists(target_dir)) dir.create(target_dir, recursive = TRUE)
         
         for (item in items_in_source) {
-                item_name <- basename(item)
-                selftest_source <- identical(basename(normalizePath(source_path, winslash = "/", mustWork = FALSE)), "selftest")
-                target_item <- if (isTRUE(selftest_source) && file.info(item)$isdir) {
-                  file.path(target_dir, item_name, "selftest")
-                } else {
-                  file.path(target_dir, item_name)
-                }
+          target_item <- retrieve_archive_target_item(target_dir, source_path, item, folder_name)
           
           if (file.info(item)$isdir) {
             if (!dir.exists(target_item)) dir.create(target_item, recursive = TRUE)
@@ -426,13 +449,7 @@
           }
           
           for (item in items_in_source) {
-            item_name <- basename(item)
-            selftest_source <- identical(basename(normalizePath(source_path, winslash = "/", mustWork = FALSE)), "selftest")
-            target_item <- if (isTRUE(selftest_source) && file.info(item)$isdir) {
-              file.path(target_dir, item_name, "selftest")
-            } else {
-              file.path(target_dir, item_name)
-            }
+            target_item <- retrieve_archive_target_item(target_dir, source_path, item, folder_name)
             
             if (file.info(item)$isdir) {
               if (!dir.exists(target_item)) {
@@ -572,7 +589,8 @@
           cl,
           varlist = c(
             "download_and_extract_from_folder_raw", "retrieve_archive_source_path",
-            "retrieve_archive_target_dir", "common"
+            "retrieve_archive_target_dir", "retrieve_canonical_job_folder",
+            "retrieve_archive_target_item", "common"
           ),
           envir = environment()
         )
@@ -1052,7 +1070,8 @@
           cl,
           varlist = c(
             "download_and_extract_from_folder_raw", "retrieve_archive_source_path",
-            "retrieve_archive_target_dir", "common"
+            "retrieve_archive_target_dir", "retrieve_canonical_job_folder",
+            "retrieve_archive_target_item", "common"
           ),
           envir = environment()
         )

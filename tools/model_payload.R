@@ -371,6 +371,8 @@ mp_build_model_payload <- function(folder, tag_report_year1 = "auto") {
     created_at = as.character(Sys.time()),
     folder = folder,
     files = list(par = par_file, rep = rep_file),
+    obj_fun = if (!is.null(par_file) && file.exists(par_file)) mp_extract_par_obj_fun(par_file) else NA_real_,
+    max_grad = if (!is.null(par_file) && file.exists(par_file)) mp_extract_par_max_grad(par_file) else NA_real_,
     data = list(
       ParOut = par_out,
       RepOut = rep_out,

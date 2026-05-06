@@ -182,6 +182,7 @@ st_prune_empty_dirs <- function(root) {
 }
 
 st_save_truth_payload <- function(sim_dir, sim_info, native_tag_info, seeds, rep_id) {
+  truth_par <- st_latest_par(sim_dir)
   info <- list(
     description = "MFCL self-test operating-model truth simulation",
     model_dir = sim_dir,
@@ -190,7 +191,9 @@ st_save_truth_payload <- function(sim_dir, sim_info, native_tag_info, seeds, rep
     native_tag_info = native_tag_info,
     seeds = seeds,
     selftest = TRUE,
-    truth = TRUE
+    truth = TRUE,
+    obj_fun = if (!is.na(truth_par) && file.exists(truth_par)) mp_extract_par_obj_fun(truth_par) else NA_real_,
+    max_grad = if (!is.na(truth_par) && file.exists(truth_par)) mp_extract_par_max_grad(truth_par) else NA_real_
   )
   saveRDS(info, file.path(sim_dir, "model_info.rds"), compress = "xz")
   payload <- tryCatch(
@@ -216,7 +219,7 @@ st_cleanup_selftest_rep <- function(sim_dir, input_dir, refit_dir, recovery_dir,
     "selftest_native_tag_info.rds",
     "selftest_sim_info.rds"
   )
-  input_keep <- c("selftest_input_info.rds")
+  input_keep <- c("selftest_input_info.rds", "data_simulation_summary.rds")
   refit_keep <- c("model_payload.rds", "model_info.rds")
   recovery_keep <- c("parameter_recovery.csv", "derived_recovery.csv")
 

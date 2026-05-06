@@ -852,6 +852,209 @@ st_apply_pseudo_to_frq <- function(base_frq_file,
   diagnostics
 }
 
+st_weighted_mean <- function(value, weight) {
+  value <- suppressWarnings(as.numeric(value))
+  weight <- suppressWarnings(as.numeric(weight))
+  ok <- is.finite(value) & is.finite(weight) & weight > 0
+  if (!any(ok)) return(NA_real_)
+  sum(value[ok] * weight[ok], na.rm = TRUE) / sum(weight[ok], na.rm = TRUE)
+}
+
+st_data_summary_rows <- function(component, base_df, pseudo_df, value_fun) {
+  if (is.null(base_df) || is.null(pseudo_df) || nrow(base_df) == 0 || nrow(pseudo_df) == 0) {
+    return(data.frame())
+  }
+  years <- sort(unique(c(base_df$year, pseudo_df$year)))
+  years <- years[is.finite(years)]
+  rows <- lapply(years, function(yr) {
+    b <- base_df[base_df$year == yr, , drop = FALSE]
+    p <- pseudo_df[pseudo_df$year == yr, , drop = FALSE]
+    base_value <- value_fun(b)
+    pseudo_value <- value_fun(p)
+    data.frame(
+      component = component,
+      year = as.integer(yr),
+      n = nrow(p),
+      base_value = base_value,
+      pseudo_value = pseudo_value,
+      ratio = pseudo_value / pmax(base_value, .Machine$double.eps),
+      delta = pseudo_value - base_value,
+      stringsAsFactors = FALSE
+    )
+  })
+  out <- do.call(rbind, rows)
+  out[is.finite(out$base_value) & is.finite(out$pseudo_value), , drop = FALSE]
+}
+
+st_tag_annual_summary <- function(path) {
+  if (is.null(path) || is.na(path) || !file.exists(path)) return(data.frame())
+  tag <- read.MFCLTag(path)
+  rec <- tag@recaptures
+  if (is.null(rec) || nrow(rec) == 0 || !"recap.year" %in% names(rec)) return(data.frame())
+  rec$year <- suppressWarnings(as.integer(rec$recap.year))
+  rec$value <- suppressWarnings(as.numeric(rec$recap.number))
+  rec <- rec[is.finite(rec$year) & is.finite(rec$value), , drop = FALSE]
+  if (nrow(rec) == 0) return(data.frame())
+  stats::aggregate(value ~ year, data = rec, FUN = sum)
+}
+
+st_alk_annual_summary <- function(path) {
+  if (is.null(path) || is.na(path) || !file.exists(path)) return(data.frame())
+  alk <- suppressWarnings(read.MFCLALK(path))
+  dat <- alk@ALK
+  if (is.null(dat) || nrow(dat) == 0) return(data.frame())
+  dat$year <- suppressWarnings(as.integer(dat$year))
+  dat$age <- suppressWarnings(as.numeric(dat$age))
+  dat$value <- suppressWarnings(as.numeric(dat$obs))
+  dat <- dat[is.finite(dat$year) & is.finite(dat$age) & is.finite(dat$value), , drop = FALSE]
+  if (nrow(dat) == 0) return(data.frame())
+  split_rows <- split(dat, dat$year)
+  out <- do.call(rbind, lapply(names(split_rows), function(yr) {
+    x <- split_rows[[yr]]
+    data.frame(year = as.integer(yr), value = st_weighted_mean(x$age, x$value))
+  }))
+  out[is.finite(out$value), , drop = FALSE]
+}
+
+st_summarise_data_simulation <- function(base_frq_file,
+                                         pseudo_frq_file,
+                                         base_tag_file = NA_character_,
+                                         pseudo_tag_file = NA_character_,
+                                         base_alk_file = NA_character_,
+                                         pseudo_alk_file = NA_character_) {
+  base_frq <- read.MFCLFrq(base_frq_file)
+  pseudo_frq <- read.MFCLFrq(pseudo_frq_file)
+  base_df <- freq(base_frq)
+  pseudo_df <- freq(pseudo_frq)
+  n <- min(nrow(base_df), nrow(pseudo_df))
+  if (n == 0) return(data.frame())
+
+  base_df <- base_df[seq_len(n), , drop = FALSE]
+  pseudo_df <- pseudo_df[seq_len(n), , drop = FALSE]
+  catch_component <- is.finite(base_df$catch) & base_df$catch >= 0 &
+    (!is.finite(base_df$effort) | base_df$effort <= 0)
+  cpue_component <- is.finite(base_df$catch) & base_df$catch > 0 &
+    is.finite(base_df$effort) & base_df$effort > 0 &
+    is.finite(pseudo_df$catch) & pseudo_df$catch > 0 &
+    is.finite(pseudo_df$effort) & pseudo_df$effort > 0
+
+  catch_rows <- data.frame(
+    component = "catch total",
+    year = as.integer(base_df$year[catch_component]),
+    base = suppressWarnings(as.numeric(base_df$catch[catch_component])),
+    pseudo = suppressWarnings(as.numeric(pseudo_df$catch[catch_component])),
+    stringsAsFactors = FALSE
+  )
+  cpue_rows <- data.frame(
+    component = "CPUE mean",
+    year = as.integer(base_df$year[cpue_component]),
+    base = suppressWarnings(as.numeric(base_df$catch[cpue_component] / base_df$effort[cpue_component])),
+    pseudo = suppressWarnings(as.numeric(pseudo_df$catch[cpue_component] / pseudo_df$effort[cpue_component])),
+    stringsAsFactors = FALSE
+  )
+  length_component <- is.finite(base_df$length) & is.finite(base_df$freq) & base_df$freq >= 0 &
+    is.finite(pseudo_df$length) & is.finite(pseudo_df$freq) & pseudo_df$freq >= 0
+  length_rows <- data.frame(
+    component = "length mean",
+    year = as.integer(base_df$year[length_component]),
+    base = suppressWarnings(as.numeric(base_df$length[length_component])),
+    pseudo = suppressWarnings(as.numeric(pseudo_df$length[length_component])),
+    base_weight = suppressWarnings(as.numeric(base_df$freq[length_component])),
+    pseudo_weight = suppressWarnings(as.numeric(pseudo_df$freq[length_component])),
+    stringsAsFactors = FALSE
+  )
+  weight_component <- is.finite(base_df$weight) & is.finite(base_df$freq) & base_df$freq >= 0 &
+    is.finite(pseudo_df$weight) & is.finite(pseudo_df$freq) & pseudo_df$freq >= 0
+  weight_rows <- data.frame(
+    component = "weight mean",
+    year = as.integer(base_df$year[weight_component]),
+    base = suppressWarnings(as.numeric(base_df$weight[weight_component])),
+    pseudo = suppressWarnings(as.numeric(pseudo_df$weight[weight_component])),
+    base_weight = suppressWarnings(as.numeric(base_df$freq[weight_component])),
+    pseudo_weight = suppressWarnings(as.numeric(pseudo_df$freq[weight_component])),
+    stringsAsFactors = FALSE
+  )
+
+  rows <- rbind(catch_rows, cpue_rows)
+  rows <- rows[is.finite(rows$year) & is.finite(rows$base) & is.finite(rows$pseudo), , drop = FALSE]
+  aggregate_one <- function(x) {
+    data.frame(
+      n = nrow(x),
+      base_total = if (identical(x$component[[1]], "catch total")) sum(x$base, na.rm = TRUE) else NA_real_,
+      pseudo_total = if (identical(x$component[[1]], "catch total")) sum(x$pseudo, na.rm = TRUE) else NA_real_,
+      base_mean = mean(x$base, na.rm = TRUE),
+      pseudo_mean = mean(x$pseudo, na.rm = TRUE),
+      base_median = stats::median(x$base, na.rm = TRUE),
+      pseudo_median = stats::median(x$pseudo, na.rm = TRUE)
+    )
+  }
+  frq_out <- data.frame()
+  if (nrow(rows) > 0) {
+    split_rows <- split(rows, paste(rows$component, rows$year, sep = "\r"))
+    frq_out <- do.call(rbind, lapply(split_rows, aggregate_one))
+    key <- do.call(rbind, strsplit(names(split_rows), "\r", fixed = TRUE))
+    rownames(frq_out) <- NULL
+    frq_out$component <- key[, 1]
+    frq_out$year <- as.integer(key[, 2])
+    frq_out$base_value <- ifelse(frq_out$component == "catch total", frq_out$base_total, frq_out$base_mean)
+    frq_out$pseudo_value <- ifelse(frq_out$component == "catch total", frq_out$pseudo_total, frq_out$pseudo_mean)
+    frq_out$ratio <- frq_out$pseudo_value / pmax(frq_out$base_value, .Machine$double.eps)
+    frq_out$delta <- frq_out$pseudo_value - frq_out$base_value
+  }
+
+  length_out <- st_data_summary_rows(
+    "length mean", length_rows, length_rows,
+    function(x) st_weighted_mean(x$pseudo, x$pseudo_weight)
+  )
+  if (nrow(length_out) > 0) {
+    length_base <- st_data_summary_rows(
+      "length mean", length_rows, length_rows,
+      function(x) st_weighted_mean(x$base, x$base_weight)
+    )
+    length_out$base_value <- length_base$base_value
+    length_out$ratio <- length_out$pseudo_value / pmax(length_out$base_value, .Machine$double.eps)
+    length_out$delta <- length_out$pseudo_value - length_out$base_value
+  }
+
+  weight_out <- st_data_summary_rows(
+    "weight mean", weight_rows, weight_rows,
+    function(x) st_weighted_mean(x$pseudo, x$pseudo_weight)
+  )
+  if (nrow(weight_out) > 0) {
+    weight_base <- st_data_summary_rows(
+      "weight mean", weight_rows, weight_rows,
+      function(x) st_weighted_mean(x$base, x$base_weight)
+    )
+    weight_out$base_value <- weight_base$base_value
+    weight_out$ratio <- weight_out$pseudo_value / pmax(weight_out$base_value, .Machine$double.eps)
+    weight_out$delta <- weight_out$pseudo_value - weight_out$base_value
+  }
+
+  tag_out <- st_data_summary_rows(
+    "tag recaptures", st_tag_annual_summary(base_tag_file), st_tag_annual_summary(pseudo_tag_file),
+    function(x) sum(x$value, na.rm = TRUE)
+  )
+  alk_out <- st_data_summary_rows(
+    "age-length mean age", st_alk_annual_summary(base_alk_file), st_alk_annual_summary(pseudo_alk_file),
+    function(x) mean(x$value, na.rm = TRUE)
+  )
+
+  summary_cols <- c(
+    "component", "year", "n", "base_value", "pseudo_value", "ratio", "delta",
+    "base_total", "pseudo_total", "base_mean", "pseudo_mean", "base_median", "pseudo_median"
+  )
+  complete_summary <- function(x) {
+    if (is.null(x) || nrow(x) == 0) return(data.frame())
+    for (nm in summary_cols) {
+      if (!nm %in% names(x)) x[[nm]] <- if (nm %in% c("component")) NA_character_ else NA_real_
+    }
+    x[, summary_cols, drop = FALSE]
+  }
+  out <- do.call(rbind, lapply(list(frq_out, length_out, weight_out, tag_out, alk_out), complete_summary))
+  if (nrow(out) == 0) return(data.frame())
+  out[order(out$component, out$year), , drop = FALSE]
+}
+
 st_build_pseudo_input <- function(base_dir,
                                   sim_dir,
                                   input_dir,
@@ -925,6 +1128,19 @@ st_build_pseudo_input <- function(base_dir,
     }
   }
 
+  tag_file <- st_first_file(input_dir, "\\.tag$", required = FALSE)
+  base_tag_file <- if (!is.na(tag_file)) file.path(base_dir, basename(tag_file)) else NA_character_
+  age_file <- st_first_file(input_dir, "\\.age_length$", required = FALSE)
+  base_age_file <- if (!is.na(age_file)) file.path(base_dir, basename(age_file)) else NA_character_
+  data_summary <- st_summarise_data_simulation(
+    base_frq_file = base_frq_file,
+    pseudo_frq_file = frq_file,
+    base_tag_file = base_tag_file,
+    pseudo_tag_file = tag_file,
+    base_alk_file = base_age_file,
+    pseudo_alk_file = age_file
+  )
+  saveRDS(data_summary, file.path(input_dir, "data_simulation_summary.rds"), compress = "xz")
   saveRDS(diagnostics, file.path(input_dir, "selftest_input_info.rds"), compress = "xz")
   diagnostics
 }
@@ -975,6 +1191,8 @@ st_run_refit <- function(input_dir,
 
   final_par <- file.path(refit_dir, output_par)
   if (!file.exists(final_par)) final_par <- mp_final_par(refit_dir)
+  obj_fun <- if (!is.null(final_par) && file.exists(final_par)) mp_extract_par_obj_fun(final_par) else NA_real_
+  max_grad <- if (!is.null(final_par) && file.exists(final_par)) mp_extract_par_max_grad(final_par) else NA_real_
   info <- list(
     description = "MFCL self-test refit",
     program_path = program_path_abs,
@@ -987,7 +1205,10 @@ st_run_refit <- function(input_dir,
     base_dir = input_dir,
     model_dir = refit_dir,
     selftest = TRUE,
-    exit_status = as.integer(status)
+    exit_status = as.integer(status),
+    obj_fun = obj_fun,
+    max_grad = max_grad,
+    converged = isTRUE(is.finite(max_grad) && abs(max_grad) <= 0.01)
   )
   saveRDS(info, file.path(refit_dir, "model_info.rds"), compress = "xz")
 

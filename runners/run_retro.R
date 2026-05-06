@@ -7,11 +7,17 @@ source("tools/model_payload.R")
 source("tools/post_hessian.R")
 source("tools/condor_archive_cleanup.R")
 source("tools/input_recipe_runner.R")
+source("tools/job_output_dirs.R")
 
 ## environment variables
 program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_02_04_vsn2278")
 base_dir <- Sys.getenv("base_dir", "mfcl/inputs/2023_rep")
 model_dir <- Sys.getenv("model_dir", "model/base")
+model_dir_raw <- model_dir
+model_dir <- job_canonical_model_dir(model_dir)
+if (!identical(model_dir, model_dir_raw)) {
+  cat("Canonicalized retro model_dir:", model_dir_raw, "->", model_dir, "\n")
+}
 
 ## Convert to absolute paths using getwd() (assumes script runs from project root)
 project_root <- getwd()
