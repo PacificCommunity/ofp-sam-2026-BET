@@ -743,7 +743,7 @@ mod_selftest_server <- function(input, output, session, rv) {
         labs(
           x = "Year",
           y = "Annual value",
-          subtitle = paste0("Data simulation check: red = fitted input, grey = pseudo reps, black = pseudo median; shaded = ", round(interval_level * 100), "% interval")
+          subtitle = paste0("Data simulation check: red = fitted expectation, grey = pseudo reps, black = pseudo median; shaded = ", round(interval_level * 100), "% interval")
         ) +
         theme_bw(base_size = 12) +
         theme(panel.grid.minor = element_blank(), strip.background = element_rect(fill = "#eef3f7", color = NA))
