@@ -92,7 +92,28 @@ selftest_compact_cleanup <- st_truthy(
   default = isTRUE(run_refit)
 )
 
-update_catch <- st_truthy(st_env("selftest_update_catch", "1"), default = TRUE)
+update_catch_setting <- tolower(trimws(st_env("selftest_update_catch", "auto")))
+update_effort_setting <- tolower(trimws(st_env("selftest_update_effort", "auto")))
+catch_conditioned <- if (!is.na(source_par) && file.exists(source_par)) {
+  st_catch_conditioned(source_par)
+} else {
+  FALSE
+}
+effort_conditioned <- if (!is.na(source_par) && file.exists(source_par)) {
+  st_effort_conditioned(source_par)
+} else {
+  FALSE
+}
+update_catch <- if (identical(update_catch_setting, "auto")) {
+  !isTRUE(catch_conditioned)
+} else {
+  st_truthy(update_catch_setting, default = !isTRUE(catch_conditioned))
+}
+update_effort <- if (identical(update_effort_setting, "auto")) {
+  isTRUE(effort_conditioned)
+} else {
+  st_truthy(update_effort_setting, default = isTRUE(effort_conditioned))
+}
 update_lw <- st_truthy(st_env("selftest_update_lw", "1"), default = TRUE)
 update_cpue <- st_truthy(st_env("selftest_update_cpue", "1"), default = TRUE)
 update_tags <- st_truthy(st_env("selftest_update_tags", "1"), default = TRUE)
@@ -129,9 +150,12 @@ cat("Refit mode  :", refit_mode, "\n")
 cat("Refit fevals:", refit_fevals, "\n")
 cat("Native tags :", require_native_tags && update_tags, "\n")
 cat("Compact cleanup:", selftest_compact_cleanup, "\n")
+cat("Catch conditioned:", catch_conditioned, "\n")
+cat("Effort conditioned:", effort_conditioned, "\n")
 cat("Update data :", paste(
   c(
     if (update_catch) "catch",
+    if (update_effort) "effort",
     if (update_lw) "length/weight",
     if (update_cpue) "cpue",
     if (update_tags) "tags",
@@ -315,7 +339,9 @@ for (rep_id in reps) {
   )
   sim_info$native_tag_info <- native_tag_info
 
-  required_sim <- c("test_lw_sim", "catch_sim", "cpue_sim")
+  required_sim <- c("test_lw_sim", "cpue_sim")
+  if (isTRUE(update_catch) || isTRUE(effort_conditioned)) required_sim <- c(required_sim, "catch_sim")
+  if (isTRUE(update_effort)) required_sim <- c(required_sim, "effort_sim")
   if (isTRUE(update_age_length)) required_sim <- c(required_sim, "agelengthresids.dat")
   if (isTRUE(update_tags) && isTRUE(require_native_tags)) required_sim <- c(required_sim, "report.realtag_1")
   missing_sim <- required_sim[!file.exists(file.path(sim_dir, required_sim))]
@@ -342,6 +368,7 @@ for (rep_id in reps) {
     input_dir = input_dir,
     par_file = sim_par,
     update_catch = update_catch,
+    update_effort = update_effort,
     update_lw = update_lw,
     update_cpue = update_cpue,
     update_tags = update_tags,

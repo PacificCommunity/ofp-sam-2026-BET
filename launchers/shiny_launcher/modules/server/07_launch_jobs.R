@@ -139,6 +139,8 @@
 	      env <- set_selftest_env_pair(env, "selftest_refit_fevals", positive_int_input("selftest_refit_fevals", default = 20L))
 	    }
 	    env <- set_selftest_env_pair(env, "selftest_require_native_tags", "1")
+	    env <- set_selftest_env_pair(env, "selftest_update_catch", "auto")
+	    env <- set_selftest_env_pair(env, "selftest_update_effort", "auto")
 
     projection_years <- first_scalar_string(input$selftest_projection_years, default = "")
     if (nzchar(projection_years)) {
@@ -2004,7 +2006,7 @@
       job_type,
       stage_check = c("build_inputs_on_missing", "input_recipe_enabled", "fitted_model_source_enabled", "fitted_model_bundle", "auto_run_model_before_dependency"),
       model = c("model_hessian"),
-	      selftest = c("selftest_reps", "selftest_source_mode", "selftest_refit_mode", "selftest_refit_fevals", "selftest_base_dir", "selftest_source_par", "selftest_dir", "selftest_require_native_tags", "selftest_native_tag_projection_years"),
+	      selftest = c("selftest_reps", "selftest_source_mode", "selftest_refit_mode", "selftest_refit_fevals", "selftest_base_dir", "selftest_source_par", "selftest_dir", "selftest_require_native_tags", "selftest_update_catch", "selftest_update_effort", "selftest_native_tag_projection_years"),
       retro = c("retro_peel", "retro_peels", "retro_hessian"),
       jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian", "jitter_base_source"),
       hessian = c("hessian_part", "nsplit", "model_hessian"),
@@ -2071,7 +2073,7 @@
         job_type,
         stage_check = c("build_inputs_on_missing", "input_recipe_enabled", "fitted_model_source_enabled", "fitted_model_bundle", "auto_run_model_before_dependency"),
         model = c("model_hessian"),
-	        selftest = c("selftest_reps", "selftest_source_mode", "selftest_refit_mode", "selftest_refit_fevals", "selftest_base_dir", "selftest_source_par", "selftest_dir", "selftest_require_native_tags", "selftest_native_tag_projection_years"),
+	        selftest = c("selftest_reps", "selftest_source_mode", "selftest_refit_mode", "selftest_refit_fevals", "selftest_base_dir", "selftest_source_par", "selftest_dir", "selftest_require_native_tags", "selftest_update_catch", "selftest_update_effort", "selftest_native_tag_projection_years"),
         retro = c("retro_peel", "retro_peels", "retro_hessian"),
         jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian", "jitter_base_source"),
         hessian = c("hessian_part", "nsplit", "model_hessian"),

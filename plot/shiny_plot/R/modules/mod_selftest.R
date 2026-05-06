@@ -25,17 +25,6 @@ mod_selftest_ui <- function() {
             size = 10
           )
         ),
-        selectInput(
-          "selftest_metric",
-          "Quantity:",
-          choices = c(
-            "Depletion" = "depletion",
-            "Spawning potential" = "spawning_potential",
-            "Recruitment" = "recruitment",
-            "Fishing mortality" = "fishing_mortality"
-          ),
-          selected = "depletion"
-        ),
         pickerInput(
           "selftest_sim_components",
           "Simulation data series:",
@@ -43,6 +32,7 @@ mod_selftest_ui <- function() {
             "Catch total" = "catch total",
             "CPUE" = "CPUE",
             "CPUE mean (old summaries)" = "CPUE mean",
+            "Effort" = "effort",
             "Length mean" = "length mean",
             "Weight mean" = "weight mean",
             "Tag recaptures" = "tag recaptures",
@@ -51,7 +41,7 @@ mod_selftest_ui <- function() {
           selected = c(
             "catch total",
             "CPUE",
-            "CPUE mean",
+            "effort",
             "length mean",
             "weight mean",
             "tag recaptures",
@@ -65,28 +55,28 @@ mod_selftest_ui <- function() {
             size = 6
           )
         ),
-        checkboxInput("selftest_show_replicates", "Show replicate traces", value = TRUE),
+        checkboxInput("selftest_show_replicates", "Show replicate traces", value = FALSE),
         checkboxInput("selftest_show_interval", "Show refit interval", value = TRUE),
         selectInput(
           "selftest_interval_level",
           "Interval:",
           choices = c("50%" = 0.50, "80%" = 0.80, "90%" = 0.90, "95%" = 0.95),
-          selected = 0.80
+          selected = 0.95
         ),
         sliderInput(
           "selftest_recovery_height",
           "Recovery plot height (px)",
           min = 450,
           max = 1400,
-          value = 650,
+          value = 900,
           step = 50
         ),
         sliderInput(
           "selftest_sim_height",
           "Simulation-check height (px)",
-          min = 500,
+          min = 350,
           max = 1800,
-          value = 1200,
+          value = 850,
           step = 50
         ),
         actionButton(
@@ -112,15 +102,17 @@ mod_selftest_ui <- function() {
     fluidRow(
       box(
         title = "Pseudo-Data Simulation Checks",
-        width = 8,
+        width = 12,
         solidHeader = TRUE,
         status = "info",
         collapsible = TRUE,
         uiOutput("selftest_sim_plot_ui")
-      ),
+      )
+    ),
+    fluidRow(
       box(
         title = "Replicate Checks",
-        width = 4,
+        width = 12,
         solidHeader = TRUE,
         status = "info",
         collapsible = TRUE,
@@ -230,6 +222,11 @@ stp_scalar_num <- function(x) {
   if (length(out) == 0 || !is.finite(out[1])) NA_real_ else out[1]
 }
 
+stp_par_slot_num <- function(par_obj, slot_name) {
+  if (is.null(par_obj) || !slot_name %in% slotNames(par_obj)) return(NA_real_)
+  stp_scalar_num(tryCatch(slot(par_obj, slot_name), error = function(e) NA_real_))
+}
+
 stp_read_run_diagnostics <- function(folder, source, scenario, replicate) {
   payload_file <- file.path(folder, "model_payload.rds")
   payload <- if (file.exists(payload_file)) tryCatch(readRDS(payload_file), error = function(e) NULL) else NULL
@@ -253,6 +250,8 @@ stp_read_run_diagnostics <- function(folder, source, scenario, replicate) {
     replicate = replicate,
     source = source,
     obj_fun = obj_fun,
+    tag_lik = stp_par_slot_num(par_obj, "tag_lik"),
+    mn_len_pen = stp_par_slot_num(par_obj, "mn_len_pen"),
     max_grad = max_grad,
     abs_max_grad = abs(max_grad),
     exit_status = exit_status,
@@ -324,15 +323,30 @@ stp_metric_label <- function(metric) {
   )
 }
 
-stp_summary_band <- function(df, interval_level = 0.80) {
+stp_recovery_metrics <- function() {
+  c("depletion", "spawning_potential", "recruitment", "fishing_mortality")
+}
+
+stp_extract_all_metrics <- function(rep_obj) {
+  bind_rows(lapply(stp_recovery_metrics(), function(metric) {
+    x <- stp_extract_metric(rep_obj, metric)
+    if (is.null(x) || nrow(x) == 0) return(NULL)
+    x$metric <- metric
+    x$quantity <- stp_metric_label(metric)
+    x
+  }))
+}
+
+stp_summary_band <- function(df, interval_level = 0.95) {
   if (is.null(df) || nrow(df) == 0) return(data.frame())
   interval_level <- suppressWarnings(as.numeric(interval_level[[1]]))
-  if (!is.finite(interval_level)) interval_level <- 0.80
+  if (!is.finite(interval_level)) interval_level <- 0.95
   interval_level <- max(0.01, min(0.99, interval_level))
   lower_prob <- (1 - interval_level) / 2
   upper_prob <- 1 - lower_prob
+  group_cols <- intersect(c("metric", "quantity"), names(df))
   df %>%
-    group_by(year) %>%
+    group_by(across(all_of(c(group_cols, "year")))) %>%
     summarise(
       median = stats::median(value, na.rm = TRUE),
       lower = stats::quantile(value, probs = lower_prob, na.rm = TRUE, names = FALSE),
@@ -359,7 +373,7 @@ stp_read_selftest_input_info <- function(model_dir, scenario, input_dir = NULL) 
   out
 }
 
-stp_read_data_simulation_summary <- function(input_dir, scenario) {
+stp_read_data_simulation_summary <- function(input_dir, scenario, model = "") {
   if (is.null(input_dir) || !nzchar(input_dir)) return(NULL)
   path <- file.path(input_dir, "data_simulation_summary.rds")
   if (!file.exists(path)) return(NULL)
@@ -367,8 +381,28 @@ stp_read_data_simulation_summary <- function(input_dir, scenario) {
   if (!is.data.frame(out) || nrow(out) == 0) return(NULL)
   if (!"series" %in% names(out)) out$series <- "all"
   out$scenario <- scenario
+  out$model <- model
   out$replicate <- stp_rep_id(scenario)
   out
+}
+
+stp_series_fishery <- function(series) {
+  out <- suppressWarnings(as.integer(sub("^fishery_", "", as.character(series))))
+  ifelse(is.finite(out), out, NA_integer_)
+}
+
+stp_fishery_region <- function(fishery_num, mapping = NULL) {
+  key <- as.character(fishery_num)
+  if (is.data.frame(mapping) && all(c("fishery", "region") %in% names(mapping))) {
+    idx <- which(as.character(mapping$fishery) == key)
+    if (length(idx) > 0) {
+      region <- mapping$region[[idx[[1]]]]
+      if (!is.null(region) && length(region) > 0 && !is.na(region) && nzchar(as.character(region))) {
+        return(as.character(region))
+      }
+    }
+  }
+  if (is.finite(suppressWarnings(as.numeric(fishery_num)))) paste0("fishery ", fishery_num) else "unknown"
 }
 
 stp_input_info_row <- function(info, scenario) {
@@ -388,11 +422,13 @@ stp_input_info_row <- function(info, scenario) {
   data.frame(
     scenario = scenario,
     replicate = stp_rep_id(scenario),
+    catch_conditioned = get_lgl("catch_conditioned"),
+    effort_conditioned = get_lgl("effort_conditioned"),
+    update_catch = get_lgl("update_catch"),
+    update_effort = get_lgl("update_effort"),
     catch_replaced_rows = get_num("catch_replaced_rows"),
+    effort_replaced_rows = get_num("effort_replaced_rows"),
     cpue_replaced_rows = get_num("cpue_replaced_rows"),
-    cpue_error_source = get_chr("cpue_error_source"),
-    cpue_sigma_min = get_num("cpue_sigma_min"),
-    cpue_sigma_max = get_num("cpue_sigma_max"),
     length_replaced_rows = get_num("length_replaced_rows"),
     weight_replaced_rows = get_num("weight_replaced_rows"),
     tag_recaptures_total = get_num("tag_recaptures_total"),
@@ -423,17 +459,16 @@ mod_selftest_server <- function(input, output, session, rv) {
   selftest_filters_current <- reactive({
     list(
       scenarios = input$selftest_scenarios,
-      metric = if (is.null(input$selftest_metric)) "depletion" else input$selftest_metric,
       show_replicates = isTRUE(input$selftest_show_replicates),
       show_interval = isTRUE(input$selftest_show_interval),
       interval_level = {
         lvl <- suppressWarnings(as.numeric(input$selftest_interval_level))
-        if (length(lvl) == 0 || !is.finite(lvl[1])) 0.80 else max(0.01, min(0.99, lvl[1]))
+        if (length(lvl) == 0 || !is.finite(lvl[1])) 0.95 else max(0.01, min(0.99, lvl[1]))
       },
-      recovery_height = if (is.null(input$selftest_recovery_height)) 650 else suppressWarnings(as.integer(input$selftest_recovery_height)),
-      sim_height = if (is.null(input$selftest_sim_height)) 1200 else suppressWarnings(as.integer(input$selftest_sim_height)),
+      recovery_height = if (is.null(input$selftest_recovery_height)) 900 else suppressWarnings(as.integer(input$selftest_recovery_height)),
+      sim_height = if (is.null(input$selftest_sim_height)) 850 else suppressWarnings(as.integer(input$selftest_sim_height)),
       sim_components = if (is.null(input$selftest_sim_components) || length(input$selftest_sim_components) == 0) {
-        c("catch total", "CPUE", "CPUE mean", "length mean", "weight mean", "tag recaptures", "age-length mean age")
+        c("catch total", "CPUE", "effort", "length mean", "weight mean", "tag recaptures", "age-length mean age")
       } else {
         as.character(input$selftest_sim_components)
       }
@@ -466,7 +501,7 @@ mod_selftest_server <- function(input, output, session, rv) {
   }, ignoreInit = TRUE)
 
   observeEvent(
-    list(input$live_update_plots, input$selftest_scenarios, input$selftest_metric,
+    list(input$live_update_plots, input$selftest_scenarios,
          input$selftest_show_replicates, input$selftest_show_interval,
          input$selftest_interval_level,
          input$selftest_recovery_height, input$selftest_sim_height,
@@ -499,8 +534,8 @@ mod_selftest_server <- function(input, output, session, rv) {
       row <- idx[i, , drop = FALSE]
       scenario <- row$key[[1]]
       rep_id <- row$replicate[[1]]
-      refit_ts <- stp_extract_metric(stp_read_model_rep(row$refit_dir[[1]]), filters$metric)
-      truth_ts <- stp_extract_metric(stp_read_model_rep(row$truth_dir[[1]]), filters$metric)
+      refit_ts <- stp_extract_all_metrics(stp_read_model_rep(row$refit_dir[[1]]))
+      truth_ts <- stp_extract_all_metrics(stp_read_model_rep(row$truth_dir[[1]]))
 
       bind_rows(
         if (!is.null(truth_ts)) {
@@ -545,7 +580,7 @@ mod_selftest_server <- function(input, output, session, rv) {
     idx <- idx[idx$key %in% selected, , drop = FALSE]
     rows <- lapply(seq_len(nrow(idx)), function(i) {
       row <- idx[i, , drop = FALSE]
-      stp_read_data_simulation_summary(row$input_dir[[1]], row$key[[1]])
+      stp_read_data_simulation_summary(row$input_dir[[1]], row$key[[1]], row$model[[1]])
     })
     bind_rows(rows)
   })
@@ -582,11 +617,9 @@ mod_selftest_server <- function(input, output, session, rv) {
 
     truth <- df %>% filter(source == "truth")
     refit <- df %>% filter(source == "refit")
-    interval_level <- if (!is.null(filters$interval_level)) filters$interval_level else 0.80
+    interval_level <- if (!is.null(filters$interval_level)) filters$interval_level else 0.95
     truth_med <- stp_summary_band(truth, interval_level)
     refit_band <- stp_summary_band(refit, interval_level)
-    y_label <- stp_metric_label(filters$metric)
-
     p <- ggplot()
     if (isTRUE(filters$show_interval) && nrow(refit_band) > 0) {
       p <- p +
@@ -617,9 +650,10 @@ mod_selftest_server <- function(input, output, session, rv) {
     }
 
     p +
+      facet_wrap(~ quantity, scales = "free_y", ncol = 2) +
       labs(
         x = "Year",
-        y = y_label,
+        y = NULL,
         subtitle = paste0("Red = truth, black = refit median, grey = refit replicate traces; shaded = ", round(interval_level * 100), "% interval")
       ) +
       theme_bw(base_size = 13) +
@@ -641,87 +675,7 @@ mod_selftest_server <- function(input, output, session, rv) {
       )
     }
 
-    counts <- info %>%
-      select(
-        replicate,
-        catch_replaced_rows,
-        cpue_replaced_rows,
-        length_replaced_rows,
-        weight_replaced_rows,
-        tag_recaptures_total,
-        age_length_total_sim
-      ) %>%
-      pivot_longer(-replicate, names_to = "component", values_to = "value") %>%
-      mutate(component = recode(
-        component,
-        catch_replaced_rows = "catch",
-        cpue_replaced_rows = "CPUE",
-        length_replaced_rows = "length",
-        weight_replaced_rows = "weight",
-        tag_recaptures_total = "tag recaptures",
-        age_length_total_sim = "age-length"
-      )) %>%
-      filter(is.finite(value))
-
-    checks <- info %>%
-      mutate(age_length_total_delta = age_length_total_sim - age_length_total_obs) %>%
-      select(
-        replicate,
-        length_sample_size_mismatch,
-        weight_sample_size_mismatch,
-        age_length_total_delta,
-        age_length_zero_prediction_bins
-      ) %>%
-      pivot_longer(-replicate, names_to = "check", values_to = "value") %>%
-      mutate(check = recode(
-        check,
-        length_sample_size_mismatch = "length sample mismatch",
-        weight_sample_size_mismatch = "weight sample mismatch",
-        age_length_total_delta = "age-length total delta",
-        age_length_zero_prediction_bins = "age-length zero-pred bins"
-      )) %>%
-      filter(is.finite(value))
-
     data_series <- selftest_data_simulation_series()
-    conv <- selftest_convergence_data()
-
-    p_conv <- NULL
-    if (nrow(conv) > 0) {
-      refit_conv <- conv %>% filter(source == "refit")
-      p_obj <- ggplot(refit_conv, aes(x = replicate, y = obj_fun)) +
-        geom_line(color = "#34495e", alpha = 0.55) +
-        geom_point(aes(color = converged), size = 1.9, alpha = 0.9) +
-        scale_color_manual(values = c(`TRUE` = "#1f9d55", `FALSE` = "#c0392b"), na.value = "#777") +
-        labs(x = NULL, y = "Objective function", color = "MGC <= 0.01") +
-        theme_bw(base_size = 12) +
-        theme(panel.grid.minor = element_blank(), legend.position = "bottom")
-      p_mgc <- ggplot(refit_conv, aes(x = replicate, y = abs_max_grad)) +
-        geom_hline(yintercept = 0.01, color = "#c0392b", linetype = "dashed", linewidth = 0.4) +
-        geom_line(color = "#34495e", alpha = 0.55) +
-        geom_point(aes(color = converged), size = 1.9, alpha = 0.9) +
-        scale_y_log10() +
-        scale_color_manual(values = c(`TRUE` = "#1f9d55", `FALSE` = "#c0392b"), na.value = "#777") +
-        labs(x = "Replicate", y = "|MGC| / max gradient", color = "MGC <= 0.01") +
-        theme_bw(base_size = 12) +
-        theme(panel.grid.minor = element_blank(), legend.position = "bottom")
-      p_conv <- cowplot::plot_grid(p_obj, p_mgc, ncol = 1, align = "v")
-    }
-
-    p_counts <- ggplot(counts, aes(x = replicate, y = value, color = component)) +
-      geom_line(alpha = 0.45) +
-      geom_point(size = 1.8, alpha = 0.85) +
-      scale_y_continuous(trans = "log10") +
-      labs(x = NULL, y = "Pseudo-data count (log10)", color = NULL) +
-      theme_bw(base_size = 12) +
-      theme(panel.grid.minor = element_blank(), legend.position = "bottom")
-
-    p_checks <- ggplot(checks, aes(x = replicate, y = value, color = check)) +
-      geom_hline(yintercept = 0, color = "#555", linewidth = 0.4) +
-      geom_line(alpha = 0.45) +
-      geom_point(size = 1.8, alpha = 0.85) +
-      labs(x = "Replicate", y = "Mismatch / diagnostic count", color = NULL) +
-      theme_bw(base_size = 12) +
-      theme(panel.grid.minor = element_blank(), legend.position = "bottom")
 
     if (nrow(data_series) > 0) {
       sim_components <- if (is.null(filters$sim_components) || length(filters$sim_components) == 0) {
@@ -733,6 +687,7 @@ mod_selftest_server <- function(input, output, session, rv) {
         mutate(
           year = suppressWarnings(as.numeric(year)),
           series = if ("series" %in% names(.)) as.character(series) else "all",
+          model = if ("model" %in% names(.)) as.character(model) else "",
           base_value = suppressWarnings(as.numeric(base_value)),
           pseudo_value = suppressWarnings(as.numeric(pseudo_value))
         ) %>%
@@ -744,16 +699,32 @@ mod_selftest_server <- function(input, output, session, rv) {
         p_data <- ggplot() +
           annotate("text", x = 0.5, y = 0.5, label = "No selected simulation data series found", size = 4.2, color = "#777") +
           theme_void()
-        pieces <- list(p_data, p_conv, p_counts, p_checks)
-        pieces <- pieces[!vapply(pieces, is.null, logical(1))]
-        heights <- if (length(pieces) == 4) c(0.8, 1.0, 1.05, 1) else c(0.8, 1.05, 1)
-        return(cowplot::plot_grid(plotlist = pieces, ncol = 1, align = "v", rel_heights = heights))
+        return(p_data)
       }
-      interval_level <- if (!is.null(filters$interval_level)) filters$interval_level else 0.80
+      annual <- bind_rows(lapply(split(annual, seq_len(nrow(annual))), function(row) {
+        fishery_components <- c("catch total", "CPUE", "effort", "length mean", "weight mean")
+        if (!row$component[[1]] %in% fishery_components) {
+          row$display_component <- row$component[[1]]
+          return(row)
+        }
+        fishery <- stp_series_fishery(row$series[[1]])
+        map <- tryCatch(rv$FISHERY_MAPS[[row$model[[1]]]], error = function(e) NULL)
+        region <- stp_fishery_region(fishery, map)
+        row$display_component <- paste0(row$component[[1]], " - ", region)
+        row
+      }))
+      annual <- annual %>%
+        group_by(scenario, replicate, display_component, year) %>%
+        summarise(
+          base_value = mean(base_value, na.rm = TRUE),
+          pseudo_value = mean(pseudo_value, na.rm = TRUE),
+          .groups = "drop"
+        )
+      interval_level <- if (!is.null(filters$interval_level)) filters$interval_level else 0.95
       lower_prob <- (1 - interval_level) / 2
       upper_prob <- 1 - lower_prob
       pseudo_band <- annual %>%
-        group_by(component, year) %>%
+        group_by(display_component, year) %>%
         summarise(
           median = stats::median(pseudo_value, na.rm = TRUE),
           lower = stats::quantile(pseudo_value, lower_prob, na.rm = TRUE, names = FALSE),
@@ -761,14 +732,14 @@ mod_selftest_server <- function(input, output, session, rv) {
           .groups = "drop"
         )
       base_line <- annual %>%
-        group_by(component, series, year) %>%
+        group_by(display_component, year) %>%
         summarise(base_value = stats::median(base_value, na.rm = TRUE), .groups = "drop")
       p_data <- ggplot() +
         geom_ribbon(data = pseudo_band, aes(x = year, ymin = lower, ymax = upper), fill = "#95a5a6", alpha = 0.18) +
-        geom_line(data = annual, aes(x = year, y = pseudo_value, group = interaction(scenario, series)), color = "#718093", alpha = 0.20, linewidth = 0.32) +
+        geom_line(data = annual, aes(x = year, y = pseudo_value, group = scenario), color = "#718093", alpha = 0.20, linewidth = 0.32) +
         geom_line(data = pseudo_band, aes(x = year, y = median), color = "#111111", linewidth = 0.85) +
-        geom_line(data = base_line, aes(x = year, y = base_value, group = series), color = "#d62728", alpha = 0.78, linewidth = 0.65) +
-        facet_wrap(~ component, scales = "free_y", ncol = 2) +
+        geom_line(data = base_line, aes(x = year, y = base_value), color = "#d62728", alpha = 0.78, linewidth = 0.65) +
+        facet_wrap(~ display_component, scales = "free_y", ncol = 2) +
         labs(
           x = "Year",
           y = "Annual value",
@@ -776,32 +747,26 @@ mod_selftest_server <- function(input, output, session, rv) {
         ) +
         theme_bw(base_size = 12) +
         theme(panel.grid.minor = element_blank(), strip.background = element_rect(fill = "#eef3f7", color = NA))
-      pieces <- list(p_data, p_conv, p_counts, p_checks)
-      pieces <- pieces[!vapply(pieces, is.null, logical(1))]
-      heights <- if (length(pieces) == 4) c(1.6, 1.0, 0.9, 0.9) else c(1.6, 0.9, 0.9)
-      cowplot::plot_grid(plotlist = pieces, ncol = 1, align = "v", rel_heights = heights)
+      p_data
     } else {
       p_missing <- ggplot() +
         annotate(
           "text", x = 0.5, y = 0.5,
-          label = "No catch/CPUE value summary found. Re-run or retrieve self-test outputs created after this update.",
+          label = "No pseudo-data value summary found. Re-run or retrieve self-test outputs created after this update.",
           size = 4.2, color = "#777"
         ) +
         theme_void()
-      pieces <- list(p_missing, p_conv, p_counts, p_checks)
-      pieces <- pieces[!vapply(pieces, is.null, logical(1))]
-      heights <- if (length(pieces) == 4) c(0.8, 1.0, 1.05, 1) else c(0.8, 1.05, 1)
-      cowplot::plot_grid(plotlist = pieces, ncol = 1, align = "v", rel_heights = heights)
+      p_missing
     }
   })
 
   output$selftest_recovery_plot_ui <- renderUI({
-    h <- if (is.null(input$selftest_recovery_height)) 650 else input$selftest_recovery_height
+    h <- if (is.null(input$selftest_recovery_height)) 900 else input$selftest_recovery_height
     plotOutput("selftest_recovery_plot", height = paste0(h, "px"))
   })
 
   output$selftest_sim_plot_ui <- renderUI({
-    h <- if (is.null(input$selftest_sim_height)) 1200 else input$selftest_sim_height
+    h <- if (is.null(input$selftest_sim_height)) 850 else input$selftest_sim_height
     plotOutput("selftest_sim_plot", height = paste0(h, "px"))
   })
 
@@ -822,11 +787,15 @@ mod_selftest_server <- function(input, output, session, rv) {
       transmute(
         scenario,
         replicate,
+        catch_conditioned,
+        effort_conditioned,
+        update_catch,
+        update_effort,
+        catch_replaced_rows,
+        effort_replaced_rows,
+        cpue_replaced_rows,
         tag_source,
         tag_recaptures_total,
-        cpue_error_source,
-        cpue_sigma_min,
-        cpue_sigma_max,
         age_length_source,
         age_length_sample_sizes_matched,
         length_sample_size_mismatch,
@@ -837,32 +806,26 @@ mod_selftest_server <- function(input, output, session, rv) {
     conv <- selftest_convergence_data()
     if (nrow(conv) > 0) {
       conv_wide <- conv %>%
-        select(scenario, source, obj_fun, max_grad, exit_status, run_completed, converged) %>%
+        select(scenario, source, obj_fun, tag_lik, mn_len_pen, max_grad, exit_status, run_completed, converged) %>%
         tidyr::pivot_wider(
           names_from = source,
-          values_from = c(obj_fun, max_grad, exit_status, run_completed, converged),
+          values_from = c(obj_fun, tag_lik, mn_len_pen, max_grad, exit_status, run_completed, converged),
           names_glue = "{source}_{.value}"
         )
       for (nm in c(
-        "refit_obj_fun", "refit_max_grad", "refit_converged", "refit_exit_status",
-        "truth_on_pseudo_obj_fun", "truth_on_pseudo_max_grad",
-        "source_truth_obj_fun", "source_truth_max_grad"
+        "refit_obj_fun", "refit_tag_lik", "refit_mn_len_pen", "refit_max_grad", "refit_converged", "refit_exit_status",
+        "truth_on_pseudo_obj_fun", "truth_on_pseudo_tag_lik", "truth_on_pseudo_mn_len_pen", "truth_on_pseudo_max_grad",
+        "source_truth_obj_fun", "source_truth_tag_lik", "source_truth_mn_len_pen", "source_truth_max_grad"
       )) {
         if (!nm %in% names(conv_wide)) conv_wide[[nm]] <- NA
       }
       out <- out %>%
         left_join(conv_wide, by = "scenario") %>%
-        mutate(
-          delta_obj_refit_minus_truth_on_pseudo = refit_obj_fun - truth_on_pseudo_obj_fun,
-          delta_obj_refit_minus_source_truth = refit_obj_fun - source_truth_obj_fun
-        ) %>%
         select(
           scenario, replicate,
-          refit_obj_fun, refit_max_grad, refit_converged, refit_exit_status,
-          truth_on_pseudo_obj_fun, truth_on_pseudo_max_grad,
-          delta_obj_refit_minus_truth_on_pseudo,
-          source_truth_obj_fun, source_truth_max_grad,
-          delta_obj_refit_minus_source_truth,
+          refit_obj_fun, refit_tag_lik, refit_mn_len_pen, refit_max_grad, refit_converged, refit_exit_status,
+          truth_on_pseudo_obj_fun, truth_on_pseudo_tag_lik, truth_on_pseudo_mn_len_pen, truth_on_pseudo_max_grad,
+          source_truth_obj_fun, source_truth_tag_lik, source_truth_mn_len_pen, source_truth_max_grad,
           everything()
         )
     }

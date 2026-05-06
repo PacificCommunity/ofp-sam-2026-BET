@@ -41,6 +41,8 @@ SELFTEST_REQUIRE_NATIVE_TAGS ?= 1
 SELFTEST_NATIVE_TAG_PROJECTION_YEARS ?=
 SELFTEST_PROJECTION_AVERAGE_YEARS ?=
 SELFTEST_COMPACT_CLEANUP ?=
+SELFTEST_UPDATE_CATCH ?= auto
+SELFTEST_UPDATE_EFFORT ?= auto
 
 build-4region:
 	Rscript tools/collapse_regions_9to4.R \
@@ -229,6 +231,8 @@ selftest_build:
 	selftest_dir="$(SELFTEST_DIR)" \
 	selftest_require_native_tags="$(SELFTEST_REQUIRE_NATIVE_TAGS)" \
 	selftest_compact_cleanup="$(SELFTEST_COMPACT_CLEANUP)" \
+	selftest_update_catch="$(SELFTEST_UPDATE_CATCH)" \
+	selftest_update_effort="$(SELFTEST_UPDATE_EFFORT)" \
 	selftest_native_tag_projection_years="$(SELFTEST_NATIVE_TAG_PROJECTION_YEARS)" \
 	selftest_projection_average_years="$(SELFTEST_PROJECTION_AVERAGE_YEARS)" \
 	Rscript runners/run_selftest.R
@@ -244,6 +248,8 @@ selftest:
 	selftest_dir="$(SELFTEST_DIR)" \
 	selftest_require_native_tags="$(SELFTEST_REQUIRE_NATIVE_TAGS)" \
 	selftest_compact_cleanup="$(SELFTEST_COMPACT_CLEANUP)" \
+	selftest_update_catch="$(SELFTEST_UPDATE_CATCH)" \
+	selftest_update_effort="$(SELFTEST_UPDATE_EFFORT)" \
 	selftest_native_tag_projection_years="$(SELFTEST_NATIVE_TAG_PROJECTION_YEARS)" \
 	selftest_projection_average_years="$(SELFTEST_PROJECTION_AVERAGE_YEARS)" \
 	Rscript runners/run_selftest.R

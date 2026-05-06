@@ -178,7 +178,7 @@ scan_fitted_model_dirs <- function(model_root = "model", repo_root = ".") {
   out
 }
 
-fms_create_bundle <- function(source_dir, bundle_dir = tempdir(), bundle_name = NULL, compact = TRUE) {
+fms_create_bundle <- function(source_dir, bundle_dir = tempdir(), bundle_name = NULL, compact = FALSE) {
   source_dir <- fms_resolve_path(source_dir, project_root = getwd(), parent_ok = FALSE)
   if (!dir.exists(source_dir)) stop("Fitted source directory does not exist: ", source_dir)
 
@@ -198,16 +198,14 @@ fms_create_bundle <- function(source_dir, bundle_dir = tempdir(), bundle_name = 
 
   stage <- tempfile("fitted_source_stage_", tmpdir = bundle_dir)
   dir.create(file.path(stage, "fitted_source"), recursive = TRUE, showWarnings = FALSE)
-  if (!isTRUE(compact)) {
-    file.copy(core_files, to = file.path(stage, "fitted_source"), overwrite = TRUE)
-  }
+  file.copy(core_files, to = file.path(stage, "fitted_source"), overwrite = TRUE)
   manifest <- list(
     created_at = as.character(Sys.time()),
     source_dir = normalizePath(source_dir, winslash = "/", mustWork = FALSE),
     files = basename(core_files),
     par_file = basename(par_file),
-    compact = isTRUE(compact),
-    file_records = if (isTRUE(compact)) lapply(core_files, fms_file_record) else NULL
+    compact = FALSE,
+    file_records = NULL
   )
   saveRDS(manifest, file = file.path(stage, "fitted_source", "fitted_source_manifest.rds"), compress = "xz")
 
@@ -278,6 +276,16 @@ fms_extract_bundle <- function(bundle_path, project_root = getwd(), source_id = 
   source_dir <- file.path(extract_dir, "fitted_source")
   if (!dir.exists(source_dir)) source_dir <- extract_dir
   fms_restore_compact_bundle(source_dir)
+  par_file <- fms_latest_par(source_dir)
+  if (is.na(par_file) || !file.exists(par_file)) {
+    manifest_path <- file.path(source_dir, "fitted_source_manifest.rds")
+    files_now <- paste(basename(list.files(source_dir, all.files = FALSE, no.. = TRUE)), collapse = ", ")
+    stop(
+      "Extracted fitted source bundle has no .par file after restore: ", source_dir,
+      "; manifest=", file.exists(manifest_path),
+      "; files=", if (nzchar(files_now)) files_now else "<none>"
+    )
+  }
   source_dir
 }
 
