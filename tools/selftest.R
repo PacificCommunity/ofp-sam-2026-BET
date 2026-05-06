@@ -461,6 +461,7 @@ st_parse_cpue_sim <- function(path, frq_obj) {
     if (n == 0) return(NULL)
     data.frame(
       key = st_key(fish_df$year[seq_len(n)], fish_df$month[seq_len(n)], fish_df$week[seq_len(n)], fish_df$fishery[seq_len(n)]),
+      fishery = fish_df$fishery[seq_len(n)],
       cpue = vals[seq_len(n)],
       stringsAsFactors = FALSE
     )
@@ -468,6 +469,38 @@ st_parse_cpue_sim <- function(path, frq_obj) {
   out <- out[!vapply(out, is.null, logical(1))]
   if (length(out) == 0) return(NULL)
   do.call(rbind, out)
+}
+
+st_fishery_flag_values <- function(par_file, flag) {
+  if (is.null(par_file) || length(par_file) == 0 || is.na(par_file) || !file.exists(par_file)) {
+    return(numeric(0))
+  }
+  par_obj <- read.MFCLPar(par_file)
+  flags <- par_obj@flags
+  vals <- flags[flags$flagtype < 0 & flags$flag == as.integer(flag), c("flagtype", "value"), drop = FALSE]
+  if (nrow(vals) == 0) return(numeric(0))
+  out <- suppressWarnings(as.numeric(vals$value))
+  names(out) <- as.character(abs(as.integer(vals$flagtype)))
+  out
+}
+
+st_apply_cpue_likelihood_error <- function(cpue_df, par_file, seed = 105L) {
+  if (is.null(cpue_df) || nrow(cpue_df) == 0) return(cpue_df)
+  ff92 <- st_fishery_flag_values(par_file, 92L)
+  if (length(ff92) == 0) {
+    warning("Cannot read fish_flags(92); using MFCL cpue_sim values as generated.")
+    cpue_df$error_source <- "mfcl_cpue_sim"
+    cpue_df$cpue_sigma <- NA_real_
+    return(cpue_df)
+  }
+  sigma <- abs(suppressWarnings(as.numeric(ff92[as.character(cpue_df$fishery)]))) / 100
+  sigma[!is.finite(sigma)] <- 0
+  set.seed(as.integer(seed) + 2L)
+  eps <- stats::rnorm(nrow(cpue_df), mean = -0.5 * sigma * sigma, sd = sigma)
+  cpue_df$cpue <- cpue_df$cpue * exp(eps)
+  cpue_df$error_source <- "cpue_sim_true + fish_flags(92)"
+  cpue_df$cpue_sigma <- sigma
+  cpue_df
 }
 
 st_read_next_numeric_line <- function(lines, i) {
@@ -780,14 +813,29 @@ st_apply_native_realtag <- function(base_tag_file, out_tag_file, sim_dir) {
 st_apply_pseudo_to_frq <- function(base_frq_file,
                                    out_frq_file,
                                    sim_dir,
+                                   par_file = NULL,
                                    update_catch = TRUE,
                                    update_lw = TRUE,
-                                   update_cpue = TRUE) {
+                                   update_cpue = TRUE,
+                                   seeds = list(cpue = 105L)) {
   frq_obj <- read.MFCLFrq(base_frq_file)
   frq_df <- freq(frq_obj)
   base_key <- st_key(frq_df$year, frq_df$month, frq_df$week, frq_df$fishery)
   diagnostics <- list()
-  cpue_df <- if (isTRUE(update_cpue)) st_parse_cpue_sim(file.path(sim_dir, "cpue_sim"), frq_obj) else NULL
+  cpue_df <- NULL
+  if (isTRUE(update_cpue)) {
+    cpue_true <- st_parse_cpue_sim(file.path(sim_dir, "cpue_sim_true"), frq_obj)
+    if (!is.null(cpue_true) && nrow(cpue_true) > 0) {
+      cpue_seed <- if (is.null(seeds$cpue) || length(seeds$cpue) == 0 || is.na(seeds$cpue[[1]])) 105L else seeds$cpue[[1]]
+      cpue_df <- st_apply_cpue_likelihood_error(cpue_true, par_file, seed = cpue_seed)
+    } else {
+      cpue_df <- st_parse_cpue_sim(file.path(sim_dir, "cpue_sim"), frq_obj)
+      if (!is.null(cpue_df) && nrow(cpue_df) > 0) {
+        cpue_df$error_source <- "mfcl_cpue_sim"
+        cpue_df$cpue_sigma <- NA_real_
+      }
+    }
+  }
   cpue_keys <- if (is.null(cpue_df)) character(0) else unique(cpue_df$key)
 
   if (isTRUE(update_catch)) {
@@ -810,6 +858,10 @@ st_apply_pseudo_to_frq <- function(base_frq_file,
       frq_df$effort[hit] <- frq_df$catch[hit] / cpue_df$cpue[m[hit]]
       diagnostics$cpue_replaced_rows <- length(hit)
       diagnostics$cpue_zero_or_missing <- sum(!is.na(m)) - length(hit)
+      diagnostics$cpue_error_source <- unique(cpue_df$error_source)[[1]]
+      finite_sigma <- cpue_df$cpue_sigma[is.finite(cpue_df$cpue_sigma)]
+      diagnostics$cpue_sigma_min <- if (length(finite_sigma) > 0) min(finite_sigma) else NA_real_
+      diagnostics$cpue_sigma_max <- if (length(finite_sigma) > 0) max(finite_sigma) else NA_real_
     }
   }
 
@@ -864,15 +916,24 @@ st_data_summary_rows <- function(component, base_df, pseudo_df, value_fun) {
   if (is.null(base_df) || is.null(pseudo_df) || nrow(base_df) == 0 || nrow(pseudo_df) == 0) {
     return(data.frame())
   }
-  years <- sort(unique(c(base_df$year, pseudo_df$year)))
-  years <- years[is.finite(years)]
-  rows <- lapply(years, function(yr) {
-    b <- base_df[base_df$year == yr, , drop = FALSE]
-    p <- pseudo_df[pseudo_df$year == yr, , drop = FALSE]
+  if (!"series" %in% names(base_df)) base_df$series <- "all"
+  if (!"series" %in% names(pseudo_df)) pseudo_df$series <- "all"
+  keys <- unique(rbind(
+    data.frame(year = base_df$year, series = as.character(base_df$series), stringsAsFactors = FALSE),
+    data.frame(year = pseudo_df$year, series = as.character(pseudo_df$series), stringsAsFactors = FALSE)
+  ))
+  keys <- keys[is.finite(keys$year) & nzchar(keys$series), , drop = FALSE]
+  keys <- keys[order(keys$series, keys$year), , drop = FALSE]
+  rows <- lapply(seq_len(nrow(keys)), function(i) {
+    yr <- keys$year[[i]]
+    ser <- keys$series[[i]]
+    b <- base_df[base_df$year == yr & as.character(base_df$series) == ser, , drop = FALSE]
+    p <- pseudo_df[pseudo_df$year == yr & as.character(pseudo_df$series) == ser, , drop = FALSE]
     base_value <- value_fun(b)
     pseudo_value <- value_fun(p)
     data.frame(
       component = component,
+      series = ser,
       year = as.integer(yr),
       n = nrow(p),
       base_value = base_value,
@@ -940,13 +1001,15 @@ st_summarise_data_simulation <- function(base_frq_file,
 
   catch_rows <- data.frame(
     component = "catch total",
+    series = paste0("fishery_", as.integer(base_df$fishery[catch_component])),
     year = as.integer(base_df$year[catch_component]),
     base = suppressWarnings(as.numeric(base_df$catch[catch_component])),
     pseudo = suppressWarnings(as.numeric(pseudo_df$catch[catch_component])),
     stringsAsFactors = FALSE
   )
   cpue_rows <- data.frame(
-    component = "CPUE mean",
+    component = "CPUE",
+    series = paste0("fishery_", as.integer(base_df$fishery[cpue_component])),
     year = as.integer(base_df$year[cpue_component]),
     base = suppressWarnings(as.numeric(base_df$catch[cpue_component] / base_df$effort[cpue_component])),
     pseudo = suppressWarnings(as.numeric(pseudo_df$catch[cpue_component] / pseudo_df$effort[cpue_component])),
@@ -956,6 +1019,7 @@ st_summarise_data_simulation <- function(base_frq_file,
     is.finite(pseudo_df$length) & is.finite(pseudo_df$freq) & pseudo_df$freq >= 0
   length_rows <- data.frame(
     component = "length mean",
+    series = paste0("fishery_", as.integer(base_df$fishery[length_component])),
     year = as.integer(base_df$year[length_component]),
     base = suppressWarnings(as.numeric(base_df$length[length_component])),
     pseudo = suppressWarnings(as.numeric(pseudo_df$length[length_component])),
@@ -967,6 +1031,7 @@ st_summarise_data_simulation <- function(base_frq_file,
     is.finite(pseudo_df$weight) & is.finite(pseudo_df$freq) & pseudo_df$freq >= 0
   weight_rows <- data.frame(
     component = "weight mean",
+    series = paste0("fishery_", as.integer(base_df$fishery[weight_component])),
     year = as.integer(base_df$year[weight_component]),
     base = suppressWarnings(as.numeric(base_df$weight[weight_component])),
     pseudo = suppressWarnings(as.numeric(pseudo_df$weight[weight_component])),
@@ -990,12 +1055,13 @@ st_summarise_data_simulation <- function(base_frq_file,
   }
   frq_out <- data.frame()
   if (nrow(rows) > 0) {
-    split_rows <- split(rows, paste(rows$component, rows$year, sep = "\r"))
+    split_rows <- split(rows, paste(rows$component, rows$series, rows$year, sep = "\r"))
     frq_out <- do.call(rbind, lapply(split_rows, aggregate_one))
     key <- do.call(rbind, strsplit(names(split_rows), "\r", fixed = TRUE))
     rownames(frq_out) <- NULL
     frq_out$component <- key[, 1]
-    frq_out$year <- as.integer(key[, 2])
+    frq_out$series <- key[, 2]
+    frq_out$year <- as.integer(key[, 3])
     frq_out$base_value <- ifelse(frq_out$component == "catch total", frq_out$base_total, frq_out$base_mean)
     frq_out$pseudo_value <- ifelse(frq_out$component == "catch total", frq_out$pseudo_total, frq_out$pseudo_mean)
     frq_out$ratio <- frq_out$pseudo_value / pmax(frq_out$base_value, .Machine$double.eps)
@@ -1040,13 +1106,13 @@ st_summarise_data_simulation <- function(base_frq_file,
   )
 
   summary_cols <- c(
-    "component", "year", "n", "base_value", "pseudo_value", "ratio", "delta",
+    "component", "series", "year", "n", "base_value", "pseudo_value", "ratio", "delta",
     "base_total", "pseudo_total", "base_mean", "pseudo_mean", "base_median", "pseudo_median"
   )
   complete_summary <- function(x) {
     if (is.null(x) || nrow(x) == 0) return(data.frame())
     for (nm in summary_cols) {
-      if (!nm %in% names(x)) x[[nm]] <- if (nm %in% c("component")) NA_character_ else NA_real_
+      if (!nm %in% names(x)) x[[nm]] <- if (nm %in% c("component", "series")) "all" else NA_real_
     }
     x[, summary_cols, drop = FALSE]
   }
@@ -1073,9 +1139,11 @@ st_build_pseudo_input <- function(base_dir,
     base_frq_file = base_frq_file,
     out_frq_file = frq_file,
     sim_dir = sim_dir,
+    par_file = par_file,
     update_catch = update_catch,
     update_lw = update_lw,
-    update_cpue = update_cpue
+    update_cpue = update_cpue,
+    seeds = seeds
   )
   base_frq_obj <- read.MFCLFrq(base_frq_file)
   pseudo_frq_obj <- read.MFCLFrq(frq_file)
@@ -1214,6 +1282,91 @@ st_run_refit <- function(input_dir,
 
   payload <- mp_build_model_payload(refit_dir, tag_report_year1 = tag_report_year1)
   saveRDS(payload, file.path(refit_dir, "model_payload.rds"), compress = "xz")
+  info
+}
+
+st_run_truth_on_pseudo <- function(input_dir,
+                                   eval_dir,
+                                   program_path_abs,
+                                   output_par = "truth_on_pseudo.par",
+                                   log_file = file.path(eval_dir, "mfcl_truth_on_pseudo_log.txt"),
+                                   tag_report_year1 = "auto") {
+  st_copy_dir_contents(input_dir, eval_dir)
+  frq_file <- basename(st_first_file(eval_dir, "\\.frq$"))
+  par_file <- basename(st_latest_par(eval_dir))
+  if (is.na(par_file) || !file.exists(file.path(eval_dir, par_file))) {
+    stop("Truth-on-pseudo input has no .par file: ", eval_dir)
+  }
+
+  cmd <- paste(
+    shQuote(program_path_abs),
+    shQuote(frq_file),
+    shQuote(par_file),
+    shQuote(output_par),
+    "-switch 1",
+    "1 1",
+    "0"
+  )
+
+  old_wd <- getwd()
+  on.exit(setwd(old_wd), add = TRUE)
+  setwd(eval_dir)
+  cat("MFCL truth-on-pseudo command:\n", cmd, "\n")
+  status <- system(paste(cmd, ">", shQuote(log_file), "2>&1"), intern = FALSE)
+  setwd(old_wd)
+
+  parse_total_func <- function(log_file) {
+    if (!file.exists(log_file)) return(NA_real_)
+    log_lines <- tryCatch(readLines(log_file, warn = FALSE), error = function(e) character(0))
+    total_func <- grep("Total func", log_lines, value = TRUE)
+    if (length(total_func) > 0) {
+      nums <- regmatches(total_func[[length(total_func)]], gregexpr("[-+]?[0-9]*\\.?[0-9]+(?:[eE][-+]?[0-9]+)?", total_func[[length(total_func)]], perl = TRUE))[[1]]
+      vals <- suppressWarnings(as.numeric(nums))
+      vals <- vals[is.finite(vals)]
+      if (length(vals) > 0) return(vals[[length(vals)]])
+    }
+    NA_real_
+  }
+
+  final_par <- file.path(eval_dir, output_par)
+  output_par_exists <- file.exists(final_par)
+  obj_fun <- parse_total_func(log_file)
+  if (!is.finite(obj_fun) && output_par_exists) obj_fun <- mp_extract_par_obj_fun(final_par)
+  max_grad <- if (output_par_exists) mp_extract_par_max_grad(final_par) else NA_real_
+  info <- list(
+    description = "MFCL self-test truth par evaluated on pseudo data",
+    program_path = program_path_abs,
+    mfcl_commands = cmd,
+    frq_file = frq_file,
+    par_in = par_file,
+    par_out = if (!is.null(final_par)) basename(final_par) else output_par,
+    base_dir = input_dir,
+    model_dir = eval_dir,
+    selftest = TRUE,
+    truth_on_pseudo = TRUE,
+    exit_status = as.integer(status),
+    obj_fun = obj_fun,
+    max_grad = max_grad,
+    converged = isTRUE(is.finite(max_grad) && abs(max_grad) <= 0.01)
+  )
+  saveRDS(info, file.path(eval_dir, "model_info.rds"), compress = "xz")
+
+  if (isTRUE(output_par_exists)) {
+    payload <- tryCatch(
+      mp_build_model_payload(eval_dir, tag_report_year1 = tag_report_year1),
+      error = function(e) {
+        warning("Could not build truth-on-pseudo payload for ", basename(eval_dir), ": ", conditionMessage(e))
+        NULL
+      }
+    )
+    if (!is.null(payload)) {
+      payload$obj_fun <- obj_fun
+      payload$max_grad <- max_grad
+      saveRDS(payload, file.path(eval_dir, "model_payload.rds"), compress = "xz")
+    }
+  } else {
+    unlink(file.path(eval_dir, "model_payload.rds"), force = TRUE)
+  }
   info
 }
 

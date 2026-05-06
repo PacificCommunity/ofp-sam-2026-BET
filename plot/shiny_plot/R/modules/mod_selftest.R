@@ -41,7 +41,8 @@ mod_selftest_ui <- function() {
           "Simulation data series:",
           choices = c(
             "Catch total" = "catch total",
-            "CPUE mean" = "CPUE mean",
+            "CPUE" = "CPUE",
+            "CPUE mean (old summaries)" = "CPUE mean",
             "Length mean" = "length mean",
             "Weight mean" = "weight mean",
             "Tag recaptures" = "tag recaptures",
@@ -49,6 +50,7 @@ mod_selftest_ui <- function() {
           ),
           selected = c(
             "catch total",
+            "CPUE",
             "CPUE mean",
             "length mean",
             "weight mean",
@@ -64,7 +66,13 @@ mod_selftest_ui <- function() {
           )
         ),
         checkboxInput("selftest_show_replicates", "Show replicate traces", value = TRUE),
-        checkboxInput("selftest_show_interval", "Show 80% refit interval", value = TRUE),
+        checkboxInput("selftest_show_interval", "Show refit interval", value = TRUE),
+        selectInput(
+          "selftest_interval_level",
+          "Interval:",
+          choices = c("50%" = 0.50, "80%" = 0.80, "90%" = 0.90, "95%" = 0.95),
+          selected = 0.80
+        ),
         sliderInput(
           "selftest_recovery_height",
           "Recovery plot height (px)",
@@ -153,6 +161,7 @@ stp_selftest_index <- function(model_dir, loaded_models = character()) {
   make_rows <- function(model_name, selftest_root) {
     refit_root <- file.path(selftest_root, "refit")
     sim_root <- file.path(selftest_root, "sim")
+    truth_eval_root <- file.path(selftest_root, "truth_eval")
     input_root <- file.path(selftest_root, "inputs")
     if (!dir.exists(refit_root)) return(NULL)
     rep_dirs <- list.dirs(refit_root, recursive = FALSE, full.names = FALSE)
@@ -167,6 +176,7 @@ stp_selftest_index <- function(model_dir, loaded_models = character()) {
       replicate = stp_rep_id(rep_dirs),
       refit_dir = file.path(refit_root, rep_dirs),
       truth_dir = file.path(sim_root, rep_dirs),
+      truth_eval_dir = file.path(truth_eval_root, rep_dirs),
       input_dir = file.path(input_root, rep_dirs),
       stringsAsFactors = FALSE
     )
@@ -195,7 +205,7 @@ stp_selftest_index <- function(model_dir, loaded_models = character()) {
     return(data.frame(
       key = character(), label = character(), model = character(),
       replicate_name = character(), replicate = integer(),
-      refit_dir = character(), truth_dir = character(), input_dir = character(),
+      refit_dir = character(), truth_dir = character(), truth_eval_dir = character(), input_dir = character(),
       stringsAsFactors = FALSE
     ))
   }
@@ -223,17 +233,16 @@ stp_scalar_num <- function(x) {
 stp_read_run_diagnostics <- function(folder, source, scenario, replicate) {
   payload_file <- file.path(folder, "model_payload.rds")
   payload <- if (file.exists(payload_file)) tryCatch(readRDS(payload_file), error = function(e) NULL) else NULL
-  info <- tryCatch(payload$data$info, error = function(e) NULL)
-  if (is.null(info)) {
-    info_file <- file.path(folder, "model_info.rds")
-    if (file.exists(info_file)) info <- tryCatch(readRDS(info_file), error = function(e) NULL)
-  }
+  info_file <- file.path(folder, "model_info.rds")
+  info <- if (file.exists(info_file)) tryCatch(readRDS(info_file), error = function(e) NULL) else NULL
+  if (is.null(info)) info <- tryCatch(payload$data$info, error = function(e) NULL)
   par_obj <- tryCatch(payload$data$ParOut, error = function(e) NULL)
-  obj_fun <- stp_scalar_num(payload$obj_fun)
-  if (!is.finite(obj_fun)) obj_fun <- stp_scalar_num(info$obj_fun)
+  info_first <- identical(source, "truth_on_pseudo")
+  obj_fun <- if (isTRUE(info_first)) stp_scalar_num(info$obj_fun) else stp_scalar_num(payload$obj_fun)
+  if (!is.finite(obj_fun)) obj_fun <- if (isTRUE(info_first)) stp_scalar_num(payload$obj_fun) else stp_scalar_num(info$obj_fun)
   if (!is.finite(obj_fun) && !is.null(par_obj)) obj_fun <- stp_scalar_num(tryCatch(par_obj@obj_fun, error = function(e) NA_real_))
-  max_grad <- stp_scalar_num(payload$max_grad)
-  if (!is.finite(max_grad)) max_grad <- stp_scalar_num(info$max_grad)
+  max_grad <- if (isTRUE(info_first)) stp_scalar_num(info$max_grad) else stp_scalar_num(payload$max_grad)
+  if (!is.finite(max_grad)) max_grad <- if (isTRUE(info_first)) stp_scalar_num(payload$max_grad) else stp_scalar_num(info$max_grad)
   if (!is.finite(max_grad) && !is.null(par_obj)) max_grad <- stp_scalar_num(tryCatch(par_obj@max_grad, error = function(e) NA_real_))
   exit_status <- suppressWarnings(as.integer(tryCatch(info$exit_status, error = function(e) NA_integer_)))
   if (length(exit_status) == 0 || is.na(exit_status[1])) exit_status <- NA_integer_ else exit_status <- exit_status[1]
@@ -315,14 +324,19 @@ stp_metric_label <- function(metric) {
   )
 }
 
-stp_summary_band <- function(df) {
+stp_summary_band <- function(df, interval_level = 0.80) {
   if (is.null(df) || nrow(df) == 0) return(data.frame())
+  interval_level <- suppressWarnings(as.numeric(interval_level[[1]]))
+  if (!is.finite(interval_level)) interval_level <- 0.80
+  interval_level <- max(0.01, min(0.99, interval_level))
+  lower_prob <- (1 - interval_level) / 2
+  upper_prob <- 1 - lower_prob
   df %>%
     group_by(year) %>%
     summarise(
       median = stats::median(value, na.rm = TRUE),
-      lower = stats::quantile(value, probs = 0.10, na.rm = TRUE, names = FALSE),
-      upper = stats::quantile(value, probs = 0.90, na.rm = TRUE, names = FALSE),
+      lower = stats::quantile(value, probs = lower_prob, na.rm = TRUE, names = FALSE),
+      upper = stats::quantile(value, probs = upper_prob, na.rm = TRUE, names = FALSE),
       .groups = "drop"
     )
 }
@@ -351,6 +365,7 @@ stp_read_data_simulation_summary <- function(input_dir, scenario) {
   if (!file.exists(path)) return(NULL)
   out <- tryCatch(readRDS(path), error = function(e) NULL)
   if (!is.data.frame(out) || nrow(out) == 0) return(NULL)
+  if (!"series" %in% names(out)) out$series <- "all"
   out$scenario <- scenario
   out$replicate <- stp_rep_id(scenario)
   out
@@ -375,6 +390,9 @@ stp_input_info_row <- function(info, scenario) {
     replicate = stp_rep_id(scenario),
     catch_replaced_rows = get_num("catch_replaced_rows"),
     cpue_replaced_rows = get_num("cpue_replaced_rows"),
+    cpue_error_source = get_chr("cpue_error_source"),
+    cpue_sigma_min = get_num("cpue_sigma_min"),
+    cpue_sigma_max = get_num("cpue_sigma_max"),
     length_replaced_rows = get_num("length_replaced_rows"),
     weight_replaced_rows = get_num("weight_replaced_rows"),
     tag_recaptures_total = get_num("tag_recaptures_total"),
@@ -408,10 +426,14 @@ mod_selftest_server <- function(input, output, session, rv) {
       metric = if (is.null(input$selftest_metric)) "depletion" else input$selftest_metric,
       show_replicates = isTRUE(input$selftest_show_replicates),
       show_interval = isTRUE(input$selftest_show_interval),
+      interval_level = {
+        lvl <- suppressWarnings(as.numeric(input$selftest_interval_level))
+        if (length(lvl) == 0 || !is.finite(lvl[1])) 0.80 else max(0.01, min(0.99, lvl[1]))
+      },
       recovery_height = if (is.null(input$selftest_recovery_height)) 650 else suppressWarnings(as.integer(input$selftest_recovery_height)),
       sim_height = if (is.null(input$selftest_sim_height)) 1200 else suppressWarnings(as.integer(input$selftest_sim_height)),
       sim_components = if (is.null(input$selftest_sim_components) || length(input$selftest_sim_components) == 0) {
-        c("catch total", "CPUE mean", "length mean", "weight mean", "tag recaptures", "age-length mean age")
+        c("catch total", "CPUE", "CPUE mean", "length mean", "weight mean", "tag recaptures", "age-length mean age")
       } else {
         as.character(input$selftest_sim_components)
       }
@@ -446,6 +468,7 @@ mod_selftest_server <- function(input, output, session, rv) {
   observeEvent(
     list(input$live_update_plots, input$selftest_scenarios, input$selftest_metric,
          input$selftest_show_replicates, input$selftest_show_interval,
+         input$selftest_interval_level,
          input$selftest_recovery_height, input$selftest_sim_height,
          input$selftest_sim_components),
     {
@@ -537,7 +560,8 @@ mod_selftest_server <- function(input, output, session, rv) {
     rows <- lapply(seq_len(nrow(idx)), function(i) {
       row <- idx[i, , drop = FALSE]
       bind_rows(
-        stp_read_run_diagnostics(row$truth_dir[[1]], "truth", row$key[[1]], row$replicate[[1]]),
+        stp_read_run_diagnostics(row$truth_dir[[1]], "source_truth", row$key[[1]], row$replicate[[1]]),
+        stp_read_run_diagnostics(row$truth_eval_dir[[1]], "truth_on_pseudo", row$key[[1]], row$replicate[[1]]),
         stp_read_run_diagnostics(row$refit_dir[[1]], "refit", row$key[[1]], row$replicate[[1]])
       )
     })
@@ -558,8 +582,9 @@ mod_selftest_server <- function(input, output, session, rv) {
 
     truth <- df %>% filter(source == "truth")
     refit <- df %>% filter(source == "refit")
-    truth_med <- stp_summary_band(truth)
-    refit_band <- stp_summary_band(refit)
+    interval_level <- if (!is.null(filters$interval_level)) filters$interval_level else 0.80
+    truth_med <- stp_summary_band(truth, interval_level)
+    refit_band <- stp_summary_band(refit, interval_level)
     y_label <- stp_metric_label(filters$metric)
 
     p <- ggplot()
@@ -595,7 +620,7 @@ mod_selftest_server <- function(input, output, session, rv) {
       labs(
         x = "Year",
         y = y_label,
-        subtitle = "Red = truth, black = refit median, grey = refit replicate traces"
+        subtitle = paste0("Red = truth, black = refit median, grey = refit replicate traces; shaded = ", round(interval_level * 100), "% interval")
       ) +
       theme_bw(base_size = 13) +
       theme(
@@ -605,6 +630,8 @@ mod_selftest_server <- function(input, output, session, rv) {
   })
 
   selftest_sim_plot <- reactive({
+    filters <- selftest_filters_applied()
+    req(filters)
     info <- selftest_sim_data()
     if (nrow(info) == 0) {
       return(
@@ -705,6 +732,7 @@ mod_selftest_server <- function(input, output, session, rv) {
       annual <- data_series %>%
         mutate(
           year = suppressWarnings(as.numeric(year)),
+          series = if ("series" %in% names(.)) as.character(series) else "all",
           base_value = suppressWarnings(as.numeric(base_value)),
           pseudo_value = suppressWarnings(as.numeric(pseudo_value))
         ) %>%
@@ -721,27 +749,30 @@ mod_selftest_server <- function(input, output, session, rv) {
         heights <- if (length(pieces) == 4) c(0.8, 1.0, 1.05, 1) else c(0.8, 1.05, 1)
         return(cowplot::plot_grid(plotlist = pieces, ncol = 1, align = "v", rel_heights = heights))
       }
+      interval_level <- if (!is.null(filters$interval_level)) filters$interval_level else 0.80
+      lower_prob <- (1 - interval_level) / 2
+      upper_prob <- 1 - lower_prob
       pseudo_band <- annual %>%
         group_by(component, year) %>%
         summarise(
           median = stats::median(pseudo_value, na.rm = TRUE),
-          lower = stats::quantile(pseudo_value, 0.10, na.rm = TRUE, names = FALSE),
-          upper = stats::quantile(pseudo_value, 0.90, na.rm = TRUE, names = FALSE),
+          lower = stats::quantile(pseudo_value, lower_prob, na.rm = TRUE, names = FALSE),
+          upper = stats::quantile(pseudo_value, upper_prob, na.rm = TRUE, names = FALSE),
           .groups = "drop"
         )
       base_line <- annual %>%
-        group_by(component, year) %>%
+        group_by(component, series, year) %>%
         summarise(base_value = stats::median(base_value, na.rm = TRUE), .groups = "drop")
       p_data <- ggplot() +
         geom_ribbon(data = pseudo_band, aes(x = year, ymin = lower, ymax = upper), fill = "#95a5a6", alpha = 0.18) +
-        geom_line(data = annual, aes(x = year, y = pseudo_value, group = scenario), color = "#718093", alpha = 0.22, linewidth = 0.35) +
+        geom_line(data = annual, aes(x = year, y = pseudo_value, group = interaction(scenario, series)), color = "#718093", alpha = 0.20, linewidth = 0.32) +
         geom_line(data = pseudo_band, aes(x = year, y = median), color = "#111111", linewidth = 0.85) +
-        geom_line(data = base_line, aes(x = year, y = base_value), color = "#d62728", linewidth = 0.75) +
+        geom_line(data = base_line, aes(x = year, y = base_value, group = series), color = "#d62728", alpha = 0.78, linewidth = 0.65) +
         facet_wrap(~ component, scales = "free_y", ncol = 2) +
         labs(
           x = "Year",
           y = "Annual value",
-          subtitle = "Data simulation check: red = fitted input, grey = pseudo reps, black = pseudo median"
+          subtitle = paste0("Data simulation check: red = fitted input, grey = pseudo reps, black = pseudo median; shaded = ", round(interval_level * 100), "% interval")
         ) +
         theme_bw(base_size = 12) +
         theme(panel.grid.minor = element_blank(), strip.background = element_rect(fill = "#eef3f7", color = NA))
@@ -793,6 +824,9 @@ mod_selftest_server <- function(input, output, session, rv) {
         replicate,
         tag_source,
         tag_recaptures_total,
+        cpue_error_source,
+        cpue_sigma_min,
+        cpue_sigma_max,
         age_length_source,
         age_length_sample_sizes_matched,
         length_sample_size_mismatch,
@@ -809,13 +843,26 @@ mod_selftest_server <- function(input, output, session, rv) {
           values_from = c(obj_fun, max_grad, exit_status, run_completed, converged),
           names_glue = "{source}_{.value}"
         )
+      for (nm in c(
+        "refit_obj_fun", "refit_max_grad", "refit_converged", "refit_exit_status",
+        "truth_on_pseudo_obj_fun", "truth_on_pseudo_max_grad",
+        "source_truth_obj_fun", "source_truth_max_grad"
+      )) {
+        if (!nm %in% names(conv_wide)) conv_wide[[nm]] <- NA
+      }
       out <- out %>%
         left_join(conv_wide, by = "scenario") %>%
-        mutate(delta_obj_refit_minus_truth = refit_obj_fun - truth_obj_fun) %>%
+        mutate(
+          delta_obj_refit_minus_truth_on_pseudo = refit_obj_fun - truth_on_pseudo_obj_fun,
+          delta_obj_refit_minus_source_truth = refit_obj_fun - source_truth_obj_fun
+        ) %>%
         select(
           scenario, replicate,
           refit_obj_fun, refit_max_grad, refit_converged, refit_exit_status,
-          truth_obj_fun, truth_max_grad, delta_obj_refit_minus_truth,
+          truth_on_pseudo_obj_fun, truth_on_pseudo_max_grad,
+          delta_obj_refit_minus_truth_on_pseudo,
+          source_truth_obj_fun, source_truth_max_grad,
+          delta_obj_refit_minus_source_truth,
           everything()
         )
     }

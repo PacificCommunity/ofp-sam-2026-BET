@@ -114,6 +114,7 @@ key_parameters <- key_parameters[nzchar(key_parameters)]
 dir.create(selftest_dir_abs, recursive = TRUE, showWarnings = FALSE)
 dir.create(file.path(selftest_dir_abs, "sim"), recursive = TRUE, showWarnings = FALSE)
 dir.create(file.path(selftest_dir_abs, "inputs"), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(selftest_dir_abs, "truth_eval"), recursive = TRUE, showWarnings = FALSE)
 dir.create(file.path(selftest_dir_abs, "refit"), recursive = TRUE, showWarnings = FALSE)
 dir.create(file.path(selftest_dir_abs, "recovery"), recursive = TRUE, showWarnings = FALSE)
 
@@ -209,7 +210,7 @@ st_save_truth_payload <- function(sim_dir, sim_info, native_tag_info, seeds, rep
   invisible(!is.null(payload))
 }
 
-st_cleanup_selftest_rep <- function(sim_dir, input_dir, refit_dir, recovery_dir, run_refit) {
+st_cleanup_selftest_rep <- function(sim_dir, input_dir, truth_eval_dir, refit_dir, recovery_dir, run_refit) {
   if (!isTRUE(selftest_compact_cleanup)) return(invisible(FALSE))
 
   sim_keep <- c(
@@ -220,17 +221,20 @@ st_cleanup_selftest_rep <- function(sim_dir, input_dir, refit_dir, recovery_dir,
     "selftest_sim_info.rds"
   )
   input_keep <- c("selftest_input_info.rds", "data_simulation_summary.rds")
+  truth_eval_keep <- c("model_payload.rds", "model_info.rds")
   refit_keep <- c("model_payload.rds", "model_info.rds")
   recovery_keep <- c("parameter_recovery.csv", "derived_recovery.csv")
 
   deleted <- c(
     sim = mp_cleanup_files(sim_dir, keep = sim_keep, recursive = TRUE),
     inputs = mp_cleanup_files(input_dir, keep = input_keep, recursive = TRUE),
+    truth_eval = if (dir.exists(truth_eval_dir)) mp_cleanup_files(truth_eval_dir, keep = truth_eval_keep, recursive = TRUE) else 0L,
     refit = if (isTRUE(run_refit) && dir.exists(refit_dir)) mp_cleanup_files(refit_dir, keep = refit_keep, recursive = TRUE) else 0L,
     recovery = mp_cleanup_files(recovery_dir, keep = recovery_keep, recursive = TRUE)
   )
   st_prune_empty_dirs(sim_dir)
   st_prune_empty_dirs(input_dir)
+  st_prune_empty_dirs(truth_eval_dir)
   if (isTRUE(run_refit)) st_prune_empty_dirs(refit_dir)
   st_prune_empty_dirs(recovery_dir)
 
@@ -245,6 +249,7 @@ for (rep_id in reps) {
 
   sim_dir <- file.path(selftest_dir_abs, "sim", rep_label)
   input_dir <- file.path(selftest_dir_abs, "inputs", rep_label)
+  truth_eval_dir <- file.path(selftest_dir_abs, "truth_eval", rep_label)
   refit_dir <- file.path(selftest_dir_abs, "refit", rep_label)
   recovery_dir <- file.path(selftest_dir_abs, "recovery", rep_label)
   dir.create(recovery_dir, recursive = TRUE, showWarnings = FALSE)
@@ -320,9 +325,11 @@ for (rep_id in reps) {
       replicate = rep_id,
       sim_status = sim_info$status,
       input_built = FALSE,
+      truth_eval_status = NA_integer_,
       refit_status = NA_integer_,
       sim_dir = sim_dir,
       input_dir = input_dir,
+      truth_eval_dir = truth_eval_dir,
       refit_dir = refit_dir,
       stringsAsFactors = FALSE
     )
@@ -356,6 +363,14 @@ for (rep_id in reps) {
     stop("Length/weight simulated sample-size totals did not match MFCL sample sizes for ", rep_label)
   }
 
+  truth_eval_info <- st_run_truth_on_pseudo(
+    input_dir = input_dir,
+    eval_dir = truth_eval_dir,
+    program_path_abs = program_path_abs,
+    tag_report_year1 = "auto"
+  )
+  cat("Truth-on-pseudo evaluation completed with status:", truth_eval_info$exit_status, "\n")
+
   refit_status <- NA_integer_
   if (isTRUE(run_refit)) {
     refit_info <- st_run_refit(
@@ -386,15 +401,17 @@ for (rep_id in reps) {
   }
 
   st_save_truth_payload(sim_dir, sim_info, native_tag_info, seeds, rep_id)
-  st_cleanup_selftest_rep(sim_dir, input_dir, refit_dir, recovery_dir, run_refit)
+  st_cleanup_selftest_rep(sim_dir, input_dir, truth_eval_dir, refit_dir, recovery_dir, run_refit)
 
   run_rows[[length(run_rows) + 1L]] <- data.frame(
     replicate = rep_id,
     sim_status = sim_info$status,
     input_built = TRUE,
+    truth_eval_status = truth_eval_info$exit_status,
     refit_status = refit_status,
     sim_dir = sim_dir,
     input_dir = input_dir,
+    truth_eval_dir = truth_eval_dir,
     refit_dir = refit_dir,
     stringsAsFactors = FALSE
   )
