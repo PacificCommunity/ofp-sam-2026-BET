@@ -61,7 +61,7 @@ mod_selftest_ui <- function() {
           style = "width: 100%;"
         ),
         tags$small(
-          "Load the self-test refit folder, e.g. selftest/<run>/refit.",
+          "Load the self-test refit folder, e.g. model/<run>/selftest/refit.",
           style = "display:block; margin-top:8px; color:#666;"
         )
       ),

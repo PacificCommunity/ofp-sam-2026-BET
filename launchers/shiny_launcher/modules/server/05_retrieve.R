@@ -184,12 +184,7 @@
     source_base <- basename(normalizePath(source_path, winslash = "/", mustWork = FALSE))
     if (!identical(source_base, "selftest")) return(download_dir)
 
-    download_norm <- normalizePath(download_dir, winslash = "/", mustWork = FALSE)
-    if (identical(basename(download_norm), "selftest")) return(download_norm)
-    if (identical(basename(download_norm), "model")) {
-      return(file.path(dirname(download_norm), "selftest"))
-    }
-    file.path(download_norm, "selftest")
+    normalizePath(download_dir, winslash = "/", mustWork = FALSE)
   }
   
   download_and_extract_from_folder_raw <- function(spec, common) {
@@ -257,7 +252,12 @@
           
           for (item in items_in_source) {
             item_name <- basename(item)
-            target_item <- file.path(target_dir, item_name)
+            selftest_source <- identical(basename(normalizePath(source_path, winslash = "/", mustWork = FALSE)), "selftest")
+            target_item <- if (isTRUE(selftest_source) && file.info(item)$isdir) {
+              file.path(target_dir, item_name, "selftest")
+            } else {
+              file.path(target_dir, item_name)
+            }
             
             if (file.info(item)$isdir) {
               if (!dir.exists(target_item)) dir.create(target_item, recursive = TRUE)
@@ -333,8 +333,13 @@
         if (!dir.exists(target_dir)) dir.create(target_dir, recursive = TRUE)
         
         for (item in items_in_source) {
-          item_name <- basename(item)
-          target_item <- file.path(target_dir, item_name)
+                item_name <- basename(item)
+                selftest_source <- identical(basename(normalizePath(source_path, winslash = "/", mustWork = FALSE)), "selftest")
+                target_item <- if (isTRUE(selftest_source) && file.info(item)$isdir) {
+                  file.path(target_dir, item_name, "selftest")
+                } else {
+                  file.path(target_dir, item_name)
+                }
           
           if (file.info(item)$isdir) {
             if (!dir.exists(target_item)) dir.create(target_item, recursive = TRUE)
@@ -422,7 +427,12 @@
           
           for (item in items_in_source) {
             item_name <- basename(item)
-            target_item <- file.path(target_dir, item_name)
+            selftest_source <- identical(basename(normalizePath(source_path, winslash = "/", mustWork = FALSE)), "selftest")
+            target_item <- if (isTRUE(selftest_source) && file.info(item)$isdir) {
+              file.path(target_dir, item_name, "selftest")
+            } else {
+              file.path(target_dir, item_name)
+            }
             
             if (file.info(item)$isdir) {
               if (!dir.exists(target_item)) {

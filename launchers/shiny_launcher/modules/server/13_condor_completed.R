@@ -170,13 +170,7 @@
       tryCatch(resolve_repo_path(download_location), error = function(e) file.path(getwd(), download_location))
     }
     local_root_norm <- normalizePath(local_root, winslash = "/", mustWork = FALSE)
-    selftest_root <- if (identical(basename(local_root_norm), "selftest")) {
-      local_root_norm
-    } else if (identical(basename(local_root_norm), "model")) {
-      file.path(dirname(local_root_norm), "selftest")
-    } else {
-      file.path(local_root_norm, "selftest")
-    }
+    selftest_root <- file.path(local_root_norm, model_name, "selftest")
 
     remote_base <- basename(remote_dir)
     candidates <- c(file.path(local_root, model_name))
@@ -198,8 +192,8 @@
     } else if (identical(job_type, "selftest")) {
       rep_name <- if (is.finite(selftest_rep)) sprintf("rep_%03d", selftest_rep) else ""
       candidates <- c(
-        if (nzchar(rep_name)) file.path(selftest_root, model_name, "refit", rep_name) else NULL,
-        file.path(selftest_root, model_name),
+        if (nzchar(rep_name)) file.path(selftest_root, "refit", rep_name) else NULL,
+        selftest_root,
         candidates
       )
     }
