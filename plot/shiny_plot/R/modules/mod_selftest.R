@@ -32,7 +32,7 @@ mod_selftest_ui <- function() {
             "Catch total" = "catch total",
             "CPUE" = "CPUE",
             "CPUE mean (old summaries)" = "CPUE mean",
-            "Effort" = "effort",
+            "Effort carrier" = "effort",
             "Length mean" = "length mean",
             "Weight mean" = "weight mean",
             "Tag recaptures" = "tag recaptures",
@@ -41,7 +41,6 @@ mod_selftest_ui <- function() {
           selected = c(
             "catch total",
             "CPUE",
-            "effort",
             "length mean",
             "weight mean",
             "tag recaptures",
@@ -405,6 +404,25 @@ stp_fishery_region <- function(fishery_num, mapping = NULL) {
   if (is.finite(suppressWarnings(as.numeric(fishery_num)))) paste0("fishery ", fishery_num) else "unknown"
 }
 
+stp_cpue_fisheries <- function(model_dir, model = "") {
+  candidates <- c(
+    file.path(model_dir, "model_payload.rds"),
+    if (nzchar(model)) file.path(dirname(model_dir), model, "model_payload.rds") else NA_character_,
+    if (nzchar(model)) file.path("model", model, "model_payload.rds") else NA_character_
+  )
+  candidates <- candidates[!is.na(candidates) & file.exists(candidates)]
+  for (path in candidates) {
+    payload <- tryCatch(readRDS(path), error = function(e) NULL)
+    flags <- tryCatch(payload$data$ParOut@flags, error = function(e) NULL)
+    if (!is.data.frame(flags) || !all(c("flagtype", "flag", "value") %in% names(flags))) next
+    vals <- flags[flags$flagtype < 0 & flags$flag == 92, c("flagtype", "value"), drop = FALSE]
+    vals$value <- suppressWarnings(as.numeric(vals$value))
+    out <- abs(as.integer(vals$flagtype[is.finite(vals$value) & vals$value != 0]))
+    if (length(out) > 0) return(out)
+  }
+  integer(0)
+}
+
 stp_input_info_row <- function(info, scenario) {
   get_num <- function(name) {
     x <- suppressWarnings(as.numeric(info[[name]]))
@@ -468,7 +486,7 @@ mod_selftest_server <- function(input, output, session, rv) {
       recovery_height = if (is.null(input$selftest_recovery_height)) 900 else suppressWarnings(as.integer(input$selftest_recovery_height)),
       sim_height = if (is.null(input$selftest_sim_height)) 850 else suppressWarnings(as.integer(input$selftest_sim_height)),
       sim_components = if (is.null(input$selftest_sim_components) || length(input$selftest_sim_components) == 0) {
-        c("catch total", "CPUE", "effort", "length mean", "weight mean", "tag recaptures", "age-length mean age")
+        c("catch total", "CPUE", "length mean", "weight mean", "tag recaptures", "age-length mean age")
       } else {
         as.character(input$selftest_sim_components)
       }
@@ -688,6 +706,7 @@ mod_selftest_server <- function(input, output, session, rv) {
           year = suppressWarnings(as.numeric(year)),
           series = if ("series" %in% names(.)) as.character(series) else "all",
           model = if ("model" %in% names(.)) as.character(model) else "",
+          fishery_num = stp_series_fishery(series),
           base_value = suppressWarnings(as.numeric(base_value)),
           pseudo_value = suppressWarnings(as.numeric(pseudo_value))
         ) %>%
@@ -695,6 +714,13 @@ mod_selftest_server <- function(input, output, session, rv) {
           component %in% sim_components,
           is.finite(year), is.finite(base_value), is.finite(pseudo_value)
         )
+      cpue_fisheries <- unique(unlist(lapply(unique(annual$model), function(model_name) {
+        stp_cpue_fisheries(input$model_dir, model_name)
+      }), use.names = FALSE))
+      if (length(cpue_fisheries) > 0) {
+        annual <- annual %>%
+          filter(component != "CPUE" | fishery_num %in% cpue_fisheries)
+      }
       if (nrow(annual) == 0) {
         p_data <- ggplot() +
           annotate("text", x = 0.5, y = 0.5, label = "No selected simulation data series found", size = 4.2, color = "#777") +
@@ -736,7 +762,7 @@ mod_selftest_server <- function(input, output, session, rv) {
         summarise(base_value = stats::median(base_value, na.rm = TRUE), .groups = "drop")
       p_data <- ggplot() +
         geom_ribbon(data = pseudo_band, aes(x = year, ymin = lower, ymax = upper), fill = "#95a5a6", alpha = 0.18) +
-        geom_line(data = annual, aes(x = year, y = pseudo_value, group = scenario), color = "#718093", alpha = 0.20, linewidth = 0.32) +
+        geom_line(data = annual, aes(x = year, y = pseudo_value, group = scenario), color = "#59636e", alpha = 0.42, linewidth = 0.38) +
         geom_line(data = pseudo_band, aes(x = year, y = median), color = "#111111", linewidth = 0.85) +
         geom_line(data = base_line, aes(x = year, y = base_value), color = "#d62728", alpha = 0.78, linewidth = 0.65) +
         facet_wrap(~ display_component, scales = "free_y", ncol = 2) +

@@ -111,11 +111,23 @@ st_normalise_switch <- function(switch_args) {
   paste("-switch", paste(vals, collapse = " "))
 }
 
+st_ensure_switch_change <- function(switch_args, type, index, value) {
+  switch_args <- st_normalise_switch(switch_args)
+  vals <- suppressWarnings(as.integer(unlist(strsplit(trimws(sub("(^|.*[[:space:]])-switch[[:space:]]+", "", switch_args)), "[[:space:]]+"))))
+  if (length(vals) < 1L || anyNA(vals)) stop("Invalid -switch argument: ", switch_args)
+  n_changes <- vals[[1]]
+  changes <- if (n_changes > 0L) matrix(vals[-1L], ncol = 3, byrow = TRUE) else matrix(integer(0), ncol = 3)
+  keep <- !(changes[, 1] == as.integer(type) & changes[, 2] == as.integer(index))
+  changes <- rbind(changes[keep, , drop = FALSE], c(as.integer(type), as.integer(index), as.integer(value)))
+  st_make_switch(changes)
+}
+
 st_default_switch <- function() {
   st_make_switch(rbind(
     c(1, 1, 1),
     c(1, 241, 1),
     c(1, 242, 1),
+    c(1, 244, 1),
     c(1, 190, 1),
     c(1, 186, 1),
     c(1, 187, 1),
@@ -398,7 +410,7 @@ st_run_mfcl_simulation <- function(sim_dir,
     "-cpue_seed", as.integer(seeds$cpue),
     "-tag_seed", as.integer(seeds$tag)
   )
-  switch_args <- st_normalise_switch(switch_args)
+  switch_args <- st_ensure_switch_change(switch_args, 1L, 244L, 1L)
   cmd <- paste(
     shQuote(program_path_abs),
     shQuote(basename(frq_file)),
@@ -540,16 +552,19 @@ st_apply_cpue_likelihood_error <- function(cpue_df, par_file, seed = 105L) {
   if (length(ff92) == 0) {
     warning("Cannot read fish_flags(92); using MFCL cpue_sim values as generated.")
     cpue_df$error_source <- "mfcl_cpue_sim"
-    cpue_df$cpue_sigma <- NA_real_
+    cpue_df$cpue_cv <- NA_real_
+    cpue_df$cpue_sdlog <- NA_real_
     return(cpue_df)
   }
-  sigma <- abs(suppressWarnings(as.numeric(ff92[as.character(cpue_df$fishery)]))) / 100
-  sigma[!is.finite(sigma)] <- 0
+  cv <- abs(suppressWarnings(as.numeric(ff92[as.character(cpue_df$fishery)]))) / 100
+  cv[!is.finite(cv)] <- 0
+  sdlog <- sqrt(log1p(cv * cv))
   set.seed(as.integer(seed) + 2L)
-  eps <- stats::rnorm(nrow(cpue_df), mean = -0.5 * sigma * sigma, sd = sigma)
+  eps <- stats::rnorm(nrow(cpue_df), mean = -0.5 * sdlog * sdlog, sd = sdlog)
   cpue_df$cpue <- cpue_df$cpue * exp(eps)
-  cpue_df$error_source <- "cpue_sim_true + fish_flags(92)"
-  cpue_df$cpue_sigma <- sigma
+  cpue_df$error_source <- "cpue_sim_true + fish_flags(92) CV lognormal"
+  cpue_df$cpue_cv <- cv
+  cpue_df$cpue_sdlog <- sdlog
   cpue_df
 }
 
@@ -883,7 +898,8 @@ st_apply_pseudo_to_frq <- function(base_frq_file,
       cpue_df <- st_parse_cpue_sim(file.path(sim_dir, "cpue_sim"), frq_obj)
       if (!is.null(cpue_df) && nrow(cpue_df) > 0) {
         cpue_df$error_source <- "mfcl_cpue_sim"
-        cpue_df$cpue_sigma <- NA_real_
+        cpue_df$cpue_cv <- NA_real_
+        cpue_df$cpue_sdlog <- NA_real_
       }
     }
   }
@@ -922,9 +938,12 @@ st_apply_pseudo_to_frq <- function(base_frq_file,
       diagnostics$cpue_replaced_rows <- length(hit)
       diagnostics$cpue_zero_or_missing <- sum(!is.na(m)) - length(hit)
       diagnostics$cpue_error_source <- unique(cpue_df$error_source)[[1]]
-      finite_sigma <- cpue_df$cpue_sigma[is.finite(cpue_df$cpue_sigma)]
-      diagnostics$cpue_sigma_min <- if (length(finite_sigma) > 0) min(finite_sigma) else NA_real_
-      diagnostics$cpue_sigma_max <- if (length(finite_sigma) > 0) max(finite_sigma) else NA_real_
+      finite_cv <- cpue_df$cpue_cv[is.finite(cpue_df$cpue_cv)]
+      finite_sdlog <- cpue_df$cpue_sdlog[is.finite(cpue_df$cpue_sdlog)]
+      diagnostics$cpue_cv_min <- if (length(finite_cv) > 0) min(finite_cv) else NA_real_
+      diagnostics$cpue_cv_max <- if (length(finite_cv) > 0) max(finite_cv) else NA_real_
+      diagnostics$cpue_sdlog_min <- if (length(finite_sdlog) > 0) min(finite_sdlog) else NA_real_
+      diagnostics$cpue_sdlog_max <- if (length(finite_sdlog) > 0) max(finite_sdlog) else NA_real_
     }
   }
 
@@ -1159,11 +1178,21 @@ st_summarise_data_simulation <- function(base_frq_file,
     hit_cpue_sim <- which(!is.na(m_cpue_sim) & is.finite(cpue_sim_df$cpue[m_cpue_sim]) & cpue_sim_df$cpue[m_cpue_sim] > 0)
     sim_cpue[hit_cpue_sim] <- cpue_sim_df$cpue[m_cpue_sim[hit_cpue_sim]]
   }
+  cpue_key_set <- unique(c(
+    if (!is.null(cpue_true_df) && nrow(cpue_true_df) > 0) cpue_true_df$key else character(0),
+    if (!is.null(cpue_sim_df) && nrow(cpue_sim_df) > 0) cpue_sim_df$key else character(0)
+  ))
+  if (length(cpue_key_set) == 0 && !is.null(par_file) && file.exists(par_file)) {
+    ff92 <- st_fishery_flag_values(par_file, 92L)
+    cpue_fisheries <- suppressWarnings(as.integer(names(ff92)[is.finite(ff92) & ff92 != 0]))
+    cpue_key_set <- real_key[base_real$fishery %in% cpue_fisheries]
+  }
   catch_component <- is.finite(base_catch) & base_catch >= 0 &
     is.finite(sim_catch) & sim_catch >= 0
   cpue_component <- is.finite(base_real$catch) & base_real$catch > 0 &
     is.finite(base_real$effort) & base_real$effort > 0 &
-    is.finite(sim_cpue) & sim_cpue > 0
+    is.finite(sim_cpue) & sim_cpue > 0 &
+    real_key %in% cpue_key_set
 
   catch_rows <- data.frame(
     component = "catch total",
