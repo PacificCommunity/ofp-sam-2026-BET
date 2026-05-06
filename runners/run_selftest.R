@@ -13,6 +13,7 @@ library(FLR4MFCL)
 source("tools/model_payload.R")
 source("tools/selftest.R")
 source("tools/fitted_model_source.R")
+source("tools/condor_archive_cleanup.R")
 
 project_root <- getwd()
 `%||%` <- function(x, y) if (is.null(x) || length(x) == 0 || is.na(x[[1]])) y else x
@@ -86,6 +87,10 @@ if (!refit_mode %in% c("last_par", "doitall")) {
 }
 refit_fevals <- suppressWarnings(as.integer(st_env("selftest_refit_fevals", "500")))
 if (!is.finite(refit_fevals) || refit_fevals < 1L) refit_fevals <- 500L
+selftest_compact_cleanup <- st_truthy(
+  st_env("selftest_compact_cleanup", if (isTRUE(run_refit)) "1" else "0"),
+  default = isTRUE(run_refit)
+)
 
 update_catch <- st_truthy(st_env("selftest_update_catch", "1"), default = TRUE)
 update_lw <- st_truthy(st_env("selftest_update_lw", "1"), default = TRUE)
@@ -122,6 +127,7 @@ cat("Run refit   :", run_refit, "\n")
 cat("Refit mode  :", refit_mode, "\n")
 cat("Refit fevals:", refit_fevals, "\n")
 cat("Native tags :", require_native_tags && update_tags, "\n")
+cat("Compact cleanup:", selftest_compact_cleanup, "\n")
 cat("Update data :", paste(
   c(
     if (update_catch) "catch",
@@ -158,6 +164,76 @@ prepare_selftest_source_par <- function(sim_dir, source_par, rep_label) {
   sim_par <- file.path(sim_dir, basename(source_par))
   file.copy(source_par, sim_par, overwrite = TRUE)
   sim_par
+}
+
+st_prune_empty_dirs <- function(root) {
+  if (!dir.exists(root)) return(invisible(0L))
+  dirs <- list.dirs(root, recursive = TRUE, full.names = TRUE)
+  dirs <- rev(dirs[nzchar(dirs)])
+  removed <- 0L
+  for (d in dirs) {
+    entries <- list.files(d, all.files = TRUE, no.. = TRUE)
+    if (length(entries) == 0) {
+      unlink(d, recursive = TRUE, force = TRUE)
+      removed <- removed + 1L
+    }
+  }
+  invisible(removed)
+}
+
+st_save_truth_payload <- function(sim_dir, sim_info, native_tag_info, seeds, rep_id) {
+  info <- list(
+    description = "MFCL self-test operating-model truth simulation",
+    model_dir = sim_dir,
+    replicate = rep_id,
+    sim_info = sim_info,
+    native_tag_info = native_tag_info,
+    seeds = seeds,
+    selftest = TRUE,
+    truth = TRUE
+  )
+  saveRDS(info, file.path(sim_dir, "model_info.rds"), compress = "xz")
+  payload <- tryCatch(
+    mp_build_model_payload(sim_dir, tag_report_year1 = "auto"),
+    error = function(e) {
+      warning("Could not build self-test truth payload for ", basename(sim_dir), ": ", conditionMessage(e))
+      NULL
+    }
+  )
+  if (!is.null(payload)) {
+    saveRDS(payload, file.path(sim_dir, "model_payload.rds"), compress = "xz")
+  }
+  invisible(!is.null(payload))
+}
+
+st_cleanup_selftest_rep <- function(sim_dir, input_dir, refit_dir, recovery_dir, run_refit) {
+  if (!isTRUE(selftest_compact_cleanup)) return(invisible(FALSE))
+
+  sim_keep <- c(
+    "model_payload.rds",
+    "model_info.rds",
+    "selftest_projection_info.rds",
+    "selftest_native_tag_info.rds",
+    "selftest_sim_info.rds"
+  )
+  input_keep <- c("selftest_input_info.rds")
+  refit_keep <- c("model_payload.rds", "model_info.rds")
+  recovery_keep <- c("parameter_recovery.csv", "derived_recovery.csv")
+
+  deleted <- c(
+    sim = mp_cleanup_files(sim_dir, keep = sim_keep, recursive = TRUE),
+    inputs = mp_cleanup_files(input_dir, keep = input_keep, recursive = TRUE),
+    refit = if (isTRUE(run_refit) && dir.exists(refit_dir)) mp_cleanup_files(refit_dir, keep = refit_keep, recursive = TRUE) else 0L,
+    recovery = mp_cleanup_files(recovery_dir, keep = recovery_keep, recursive = TRUE)
+  )
+  st_prune_empty_dirs(sim_dir)
+  st_prune_empty_dirs(input_dir)
+  if (isTRUE(run_refit)) st_prune_empty_dirs(refit_dir)
+  st_prune_empty_dirs(recovery_dir)
+
+  cat("Compact cleanup removed files:",
+      paste(paste(names(deleted), deleted, sep = "="), collapse = ", "), "\n")
+  invisible(TRUE)
 }
 
 for (rep_id in reps) {
@@ -277,12 +353,12 @@ for (rep_id in reps) {
   if (isTRUE(run_refit)) {
     refit_info <- st_run_refit(
       input_dir = input_dir,
-	      refit_dir = refit_dir,
-	      program_path_abs = program_path_abs,
-	      fevals = refit_fevals,
-	      mode = refit_mode,
-	      tag_report_year1 = "auto"
-	    )
+      refit_dir = refit_dir,
+      program_path_abs = program_path_abs,
+      fevals = refit_fevals,
+      mode = refit_mode,
+      tag_report_year1 = "auto"
+    )
     refit_status <- refit_info$exit_status
     cat("Refit completed with status:", refit_status, "\n")
 
@@ -302,6 +378,9 @@ for (rep_id in reps) {
     )
   }
 
+  st_save_truth_payload(sim_dir, sim_info, native_tag_info, seeds, rep_id)
+  st_cleanup_selftest_rep(sim_dir, input_dir, refit_dir, recovery_dir, run_refit)
+
   run_rows[[length(run_rows) + 1L]] <- data.frame(
     replicate = rep_id,
     sim_status = sim_info$status,
@@ -317,5 +396,9 @@ for (rep_id in reps) {
 run_summary <- if (length(run_rows) > 0) do.call(rbind, run_rows) else data.frame()
 utils::write.csv(run_summary, file.path(selftest_dir_abs, "selftest_runs.csv"), row.names = FALSE)
 saveRDS(run_summary, file.path(selftest_dir_abs, "selftest_runs.rds"), compress = "xz")
+
+top_keep_dir <- strsplit(gsub("^/+|/+$", "", selftest_dir), "/", fixed = TRUE)[[1]][[1]]
+if (!nzchar(top_keep_dir)) top_keep_dir <- "selftest"
+cb_condor_keep_only_model_cleanup(keep_dir = top_keep_dir)
 
 cat("\nSelf-test runner finished. Summary:", file.path(selftest_dir_abs, "selftest_runs.csv"), "\n")
