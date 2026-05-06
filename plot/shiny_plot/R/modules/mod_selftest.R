@@ -36,6 +36,33 @@ mod_selftest_ui <- function() {
           ),
           selected = "depletion"
         ),
+        pickerInput(
+          "selftest_sim_components",
+          "Simulation data series:",
+          choices = c(
+            "Catch total" = "catch total",
+            "CPUE mean" = "CPUE mean",
+            "Length mean" = "length mean",
+            "Weight mean" = "weight mean",
+            "Tag recaptures" = "tag recaptures",
+            "Age-length mean age" = "age-length mean age"
+          ),
+          selected = c(
+            "catch total",
+            "CPUE mean",
+            "length mean",
+            "weight mean",
+            "tag recaptures",
+            "age-length mean age"
+          ),
+          multiple = TRUE,
+          options = pickerOptions(
+            actionsBox = TRUE,
+            selectedTextFormat = "count > 2",
+            countSelectedText = "{0} series selected",
+            size = 6
+          )
+        ),
         checkboxInput("selftest_show_replicates", "Show replicate traces", value = TRUE),
         checkboxInput("selftest_show_interval", "Show 80% refit interval", value = TRUE),
         sliderInput(
@@ -382,7 +409,12 @@ mod_selftest_server <- function(input, output, session, rv) {
       show_replicates = isTRUE(input$selftest_show_replicates),
       show_interval = isTRUE(input$selftest_show_interval),
       recovery_height = if (is.null(input$selftest_recovery_height)) 650 else suppressWarnings(as.integer(input$selftest_recovery_height)),
-      sim_height = if (is.null(input$selftest_sim_height)) 1200 else suppressWarnings(as.integer(input$selftest_sim_height))
+      sim_height = if (is.null(input$selftest_sim_height)) 1200 else suppressWarnings(as.integer(input$selftest_sim_height)),
+      sim_components = if (is.null(input$selftest_sim_components) || length(input$selftest_sim_components) == 0) {
+        c("catch total", "CPUE mean", "length mean", "weight mean", "tag recaptures", "age-length mean age")
+      } else {
+        as.character(input$selftest_sim_components)
+      }
     )
   })
   selftest_filters_applied <- reactiveVal(NULL)
@@ -414,7 +446,8 @@ mod_selftest_server <- function(input, output, session, rv) {
   observeEvent(
     list(input$live_update_plots, input$selftest_scenarios, input$selftest_metric,
          input$selftest_show_replicates, input$selftest_show_interval,
-         input$selftest_recovery_height, input$selftest_sim_height),
+         input$selftest_recovery_height, input$selftest_sim_height,
+         input$selftest_sim_components),
     {
       req(rv$data_loaded)
       if (!isTRUE(input$live_update_plots)) return()
@@ -664,13 +697,30 @@ mod_selftest_server <- function(input, output, session, rv) {
       theme(panel.grid.minor = element_blank(), legend.position = "bottom")
 
     if (nrow(data_series) > 0) {
+      sim_components <- if (is.null(filters$sim_components) || length(filters$sim_components) == 0) {
+        unique(as.character(data_series$component))
+      } else {
+        as.character(filters$sim_components)
+      }
       annual <- data_series %>%
         mutate(
           year = suppressWarnings(as.numeric(year)),
           base_value = suppressWarnings(as.numeric(base_value)),
           pseudo_value = suppressWarnings(as.numeric(pseudo_value))
         ) %>%
-        filter(is.finite(year), is.finite(base_value), is.finite(pseudo_value))
+        filter(
+          component %in% sim_components,
+          is.finite(year), is.finite(base_value), is.finite(pseudo_value)
+        )
+      if (nrow(annual) == 0) {
+        p_data <- ggplot() +
+          annotate("text", x = 0.5, y = 0.5, label = "No selected simulation data series found", size = 4.2, color = "#777") +
+          theme_void()
+        pieces <- list(p_data, p_conv, p_counts, p_checks)
+        pieces <- pieces[!vapply(pieces, is.null, logical(1))]
+        heights <- if (length(pieces) == 4) c(0.8, 1.0, 1.05, 1) else c(0.8, 1.05, 1)
+        return(cowplot::plot_grid(plotlist = pieces, ncol = 1, align = "v", rel_heights = heights))
+      }
       pseudo_band <- annual %>%
         group_by(component, year) %>%
         summarise(
