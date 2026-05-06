@@ -49,6 +49,7 @@ rows <- lapply(names(models), function(model_name) {
       if (!is.null(m$input_recipe_base_source)) as.character(m$input_recipe_base_source) else ""
     ),
     base_tokens = if (!is.null(m$input_recipe_base_tokens)) as.character(m$input_recipe_base_tokens) else "",
+    fixed_params = if (!is.null(m$input_recipe_fixed_params)) as.character(m$input_recipe_fixed_params) else "",
     movement_pairs = if (!is.null(m$input_recipe_movement_pairs)) as.character(m$input_recipe_movement_pairs) else "",
     sel_nodes = if (!is.null(m$input_recipe_sel_nodes)) as.character(m$input_recipe_sel_nodes) else "",
     index_cv_half = if (!is.null(m$input_recipe_index_cv_half)) as.character(m$input_recipe_index_cv_half) else "0",
@@ -73,6 +74,7 @@ for (idx in seq_len(nrow(plan))) {
   )
   if (nzchar(p$base_input_dir)) cmd_args <- c(cmd_args, "--base-input-dir", p$base_input_dir)
   if (nzchar(p$base_tokens)) cmd_args <- c(cmd_args, "--base-tokens", p$base_tokens)
+  if (nzchar(p$fixed_params)) cmd_args <- c(cmd_args, "--fixed-params", p$fixed_params)
   if (nzchar(p$movement_pairs)) cmd_args <- c(cmd_args, "--movement-pairs", p$movement_pairs)
   if (nzchar(p$sel_nodes)) cmd_args <- c(cmd_args, "--sel-nodes", p$sel_nodes)
   if (as_flag(p$index_cv_half)) cmd_args <- c(cmd_args, "--index-cv-half")

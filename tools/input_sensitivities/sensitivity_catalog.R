@@ -12,6 +12,7 @@ input_sensitivity_row <- function(id,
                                   factor,
                                   label,
                                   nested = FALSE,
+                                  fixed_params = "",
                                   movement_pairs = "",
                                   sel_nodes = "",
                                   index_cv_half = "0") {
@@ -23,6 +24,7 @@ input_sensitivity_row <- function(id,
     factor = factor,
     nested = isTRUE(nested),
     label = label,
+    fixed_params = fixed_params,
     movement_pairs = movement_pairs,
     sel_nodes = sel_nodes,
     index_cv_half = index_cv_half,
@@ -33,7 +35,7 @@ input_sensitivity_row <- function(id,
 validate_input_sensitivity_catalog <- function(x) {
   required <- c(
     "id", "token", "suffix", "input_suffix", "factor", "nested", "label",
-    "movement_pairs", "sel_nodes", "index_cv_half"
+    "fixed_params", "movement_pairs", "sel_nodes", "index_cv_half"
   )
   missing <- setdiff(required, names(x))
   if (length(missing) > 0) {
@@ -56,6 +58,24 @@ validate_input_sensitivity_catalog <- function(x) {
 
 input_sensitivity_catalog <- function() {
   validate_input_sensitivity_catalog(do.call(rbind, list(
+    input_sensitivity_row(
+      id = "fixM",
+      token = "fixM",
+      suffix = "_fixM",
+      input_suffix = "_fixM",
+      factor = "fixed_params",
+      label = "Fix natural mortality (M)",
+      fixed_params = "M"
+    ),
+    input_sensitivity_row(
+      id = "fixVB",
+      token = "fixVB",
+      suffix = "_fixVB",
+      input_suffix = "_fixVB",
+      factor = "fixed_params",
+      label = "Fix growth (VB)",
+      fixed_params = "VB"
+    ),
     input_sensitivity_row(
       id = "sel4",
       token = "sel4",
@@ -110,7 +130,10 @@ input_sensitivity_by_id <- function(ids) {
 
 input_sensitivity_recipe_options <- function(ids) {
   rows <- input_sensitivity_by_id(ids)
+  fixed_params <- unique(trimws(unlist(strsplit(paste(rows$fixed_params[nzchar(rows$fixed_params)], collapse = ","), "[,;[:space:]+]+", perl = TRUE), use.names = FALSE)))
+  fixed_params <- fixed_params[nzchar(fixed_params)]
   list(
+    fixed_params = paste(fixed_params, collapse = ","),
     movement_pairs = paste(rows$movement_pairs[nzchar(rows$movement_pairs)], collapse = ","),
     sel_nodes = {
       vals <- rows$sel_nodes[nzchar(rows$sel_nodes)]
@@ -135,6 +158,8 @@ input_sensitivity_has_nested_levels <- function(ids) {
 
 compact_input_name <- function(name) {
   x <- basename(as.character(name[[1]]))
+  x <- gsub("_fixVB_M", "_fixM_fixVB", x, fixed = TRUE)
+  x <- gsub("_fixVBM", "_fixM_fixVB", x, fixed = TRUE)
   replacements <- input_sensitivity_catalog()[, c("input_suffix", "suffix"), drop = FALSE]
   replacements <- replacements[order(nchar(replacements$input_suffix), decreasing = TRUE), , drop = FALSE]
   for (idx in seq_len(nrow(replacements))) {

@@ -98,13 +98,95 @@ launch_tab_ui <- function() {
                   "Only trusted fitted-source .par files are used to write the next .par; normal inputs rebuild from ./doitall.sh.",
                   style = "display:block; color:#666; line-height:1.25; margin-top:-8px; margin-bottom:10px;"
                 ),
-                checkboxGroupInput("job_types", "Job Types:",
-                                   choices = c("Model" = "model",
-                                               "Jitter" = "jitter",
-                                               "Hessian" = "hessian",
-                                               "Retrospective" = "retro",
-                                               "Profile" = "prof"),
-                                   selected = NULL)
+                fluidRow(
+                  column(
+                    5,
+                    checkboxGroupInput("job_types", "Job Types:",
+                                       choices = c("Model" = "model",
+                                                   "Jitter" = "jitter",
+                                                   "Hessian" = "hessian",
+                                                   "Retrospective" = "retro",
+                                                   "Profile" = "prof"),
+                                       selected = NULL)
+                  ),
+                  column(
+                    7,
+                    div(
+                      class = "job-type-options",
+                      conditionalPanel(
+                        condition = "input.job_types && input.job_types.indexOf('jitter') !== -1",
+                        numericInput(
+                          "job_jitter_n",
+                          "Jitter runs:",
+                          value = 30,
+                          min = 1,
+                          step = 1
+                        )
+                      ),
+                      conditionalPanel(
+                        condition = "input.job_types && input.job_types.indexOf('hessian') !== -1",
+                        checkboxInput(
+                          "hessian_parallel",
+                          "Parallel Hessian",
+                          value = TRUE
+                        ),
+                        conditionalPanel(
+                          condition = "input.hessian_parallel",
+                          numericInput(
+                            "hessian_nsplit",
+                            "Hessian parts:",
+                            value = 5,
+                            min = 1,
+                            step = 1
+                          )
+                        ),
+                        conditionalPanel(
+                          condition = "!input.hessian_parallel",
+                          tags$small(
+                            "Runs as one Hessian job.",
+                            style = "display:block; color:#666; line-height:1.25; margin-top:-6px; margin-bottom:10px;"
+                          )
+                        )
+                      ),
+                      conditionalPanel(
+                        condition = "input.job_types && input.job_types.indexOf('retro') !== -1",
+                        numericInput(
+                          "retro_peels_n",
+                          "Retrospective peels:",
+                          value = 7,
+                          min = 1,
+                          step = 1
+                        )
+                      ),
+                      conditionalPanel(
+                        condition = "input.job_types && input.job_types.indexOf('prof') !== -1",
+                        checkboxGroupInput(
+                          "profile_components",
+                          "Profile Components:",
+                          choices = c(
+                            "Standard scalar profile" = "standard",
+                            "Individual parameter profiles" = "individual",
+                            "2D profile" = "prof_2d"
+                          ),
+                          selected = "standard"
+                        ),
+                        selectInput(
+                          "prof_launch_strategy",
+                          "Profile Launch Strategy:",
+                          choices = c(
+                            "Independent (current)" = "independent",
+                            "Sequential from anchor (two chains)" = "seq_anchor_bidir"
+                          ),
+                          selected = "seq_anchor_bidir"
+                        ),
+                        conditionalPanel(
+                          condition = "input.prof_launch_strategy == 'seq_anchor_bidir'",
+                          numericInput("prof_anchor_scalar", "Anchor scalar:", value = 100, min = 1, step = 1)
+                        )
+                      )
+                    )
+                  )
+                )
               ),
               column(
                 6,
@@ -188,38 +270,20 @@ launch_tab_ui <- function() {
                   conditionalPanel(
                     condition = "input.fitted_model_source_enabled",
                     tagList(
+                      selectizeInput(
+                        "fitted_model_source_choice",
+                        "Fitted output:",
+                        choices = c("Auto-match by launch model name" = "__auto__"),
+                        selected = "__auto__",
+                        multiple = FALSE,
+                        options = list(
+                          create = FALSE,
+                          placeholder = "Search fitted output with latest .par"
+                        )
+                      ),
                       uiOutput("fitted_model_source_preview_ui")
                     )
                   )
-                )
-              )
-            ),
-
-            conditionalPanel(
-              condition = "input.job_types && input.job_types.indexOf('prof') !== -1",
-              tagList(
-                checkboxGroupInput(
-                  "profile_components",
-                  "Profile Components:",
-                  choices = c(
-                    "Standard scalar profile" = "standard",
-                    "Individual parameter profiles" = "individual",
-                    "2D profile" = "prof_2d"
-                  ),
-                  selected = "standard"
-                ),
-                selectInput(
-                  "prof_launch_strategy",
-                  "Profile Launch Strategy:",
-                  choices = c(
-                    "Independent (current)" = "independent",
-                    "Sequential from anchor (two chains)" = "seq_anchor_bidir"
-                  ),
-                  selected = "seq_anchor_bidir"
-                ),
-                conditionalPanel(
-                  condition = "input.prof_launch_strategy == 'seq_anchor_bidir'",
-                  numericInput("prof_anchor_scalar", "Anchor scalar:", value = 100, min = 1, step = 1)
                 )
               )
             ),

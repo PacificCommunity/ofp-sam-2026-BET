@@ -10,13 +10,14 @@ if (nrow(catalog) == 0) stop("Sensitivity catalog is empty.")
 choices <- input_sensitivity_choices()
 if (length(choices) != nrow(catalog)) stop("Sensitivity choices do not match catalog rows.")
 
-sample_name <- "2023_4region_movement_R2_R3_sel_spline4_index_cv_half"
+sample_name <- "2023_4region_fixVB_M_movement_R2_R3_sel_spline4_index_cv_half"
 sample_compact <- compact_input_name(sample_name)
-if (!identical(sample_compact, "2023_4region_m23_sel4_cvH")) {
+if (!identical(sample_compact, "2023_4region_fixM_fixVB_m23_sel4_cvH")) {
   stop("Unexpected compact_input_name result: ", sample_compact)
 }
 
 step_options <- list(
+  fixed_params = "VB,M",
   movement_pairs = "2-3",
   sel_nodes = "4",
   index_cv_half = TRUE

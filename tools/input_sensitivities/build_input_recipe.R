@@ -36,6 +36,7 @@ base_input_dir <- first_nonempty(
   env_or_default("input_recipe_base_source")
 )
 base_tokens <- first_nonempty(args[["base-tokens"]], env_or_default("input_recipe_base_tokens"))
+fixed_params <- first_nonempty(args[["fixed-params"]], env_or_default("input_recipe_fixed_params"))
 movement_pairs <- first_nonempty(args[["movement-pairs"]], env_or_default("input_recipe_movement_pairs"))
 sel_nodes <- first_nonempty(args[["sel-nodes"]], env_or_default("input_recipe_sel_nodes"))
 index_cv_half <- as_flag(args[["index-cv-half"]], as_flag(env_or_default("input_recipe_index_cv_half"), FALSE))
@@ -48,6 +49,7 @@ sensitivity_output_dir_abs <- resolve_path(sensitivity_output_dir, project_root)
 if (!nzchar(base_input_dir)) {
   base_input_dir <- infer_recipe_source_dir(
     sensitivity_output_dir_abs,
+    fixed_params = fixed_params,
     movement_pairs = movement_pairs,
     sel_nodes = sel_nodes,
     index_cv_half = index_cv_half,
@@ -88,6 +90,7 @@ if (length(base_change_tokens) > 0) {
 }
 
 recipe_steps <- build_input_recipe_steps(list(
+  fixed_params = fixed_params,
   movement_pairs = movement_pairs,
   sel_nodes = sel_nodes,
   index_cv_half = index_cv_half
@@ -118,6 +121,7 @@ cat("Built sensitivity input recipe:\n")
 cat("  base input:", base_input_dir_abs, "\n")
 cat("  sensitivity output:", sensitivity_output_dir_abs, "\n")
 cat("  base tokens:", ifelse(length(base_change_tokens) > 0, paste(base_change_tokens, collapse = ", "), "<none>"), "\n")
+cat("  fixed params:", ifelse(nzchar(fixed_params), fixed_params, "<none>"), "\n")
 cat("  movement:", ifelse(nzchar(movement_pairs), movement_pairs, "<none>"), "\n")
 cat("  sel nodes:", ifelse(nzchar(sel_nodes), sel_nodes, "<none>"), "\n")
 cat("  index CV half:", index_cv_half, "\n")

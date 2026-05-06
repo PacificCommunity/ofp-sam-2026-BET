@@ -205,6 +205,14 @@
     NULL
   }
 
+  as_bool_setting <- function(x, default = FALSE) {
+    if (is.null(x) || length(x) == 0) return(default)
+    if (is.logical(x)) return(isTRUE(x[[1]]))
+    txt <- tolower(trimws(as.character(x[[1]])))
+    if (!nzchar(txt)) return(default)
+    txt %in% c("1", "true", "yes", "y", "on")
+  }
+
   job_type_choices <- function() {
     c("Model" = "model",
       "Jitter" = "jitter",
@@ -304,6 +312,26 @@
       update_job_type_choices(job_types_value)
     }
 
+    for (k in c("job_jitter_n", "hessian_nsplit", "retro_peels_n")) {
+      v <- latest_setting_value(k, launcher_obj, root_obj, launcher_mtime, root_mtime)
+      if (!is.null(v)) updateNumericInput(session, k, value = v)
+    }
+
+    hessian_parallel_value <- latest_setting_value("hessian_parallel", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (!is.null(hessian_parallel_value)) {
+      updateCheckboxInput(session, "hessian_parallel", value = as_bool_setting(hessian_parallel_value, default = TRUE))
+    }
+
+    fitted_source_enabled_value <- latest_setting_value("fitted_model_source_enabled", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (!is.null(fitted_source_enabled_value)) {
+      updateCheckboxInput(session, "fitted_model_source_enabled", value = as_bool_setting(fitted_source_enabled_value, default = FALSE))
+    }
+
+    fitted_source_choice_value <- latest_setting_value("fitted_model_source_choice", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (!is.null(fitted_source_choice_value)) {
+      updateSelectizeInput(session, "fitted_model_source_choice", selected = as.character(fitted_source_choice_value[[1]]))
+    }
+
     for (k in c("remote_user", "remote_host", "github_username", "github_org", "github_repo")) {
       v <- latest_setting_value(k, launcher_obj, root_obj, launcher_mtime, root_mtime)
       if (!is.null(v)) {
@@ -400,6 +428,12 @@
       output_dir = input$output_dir,
       run_description = input$run_description,
       job_types = input$job_types,
+      job_jitter_n = input$job_jitter_n,
+      hessian_parallel = input$hessian_parallel,
+      hessian_nsplit = input$hessian_nsplit,
+      retro_peels_n = input$retro_peels_n,
+      fitted_model_source_enabled = input$fitted_model_source_enabled,
+      fitted_model_source_choice = input$fitted_model_source_choice,
       profile_components = input$profile_components,
       prof_launch_strategy = input$prof_launch_strategy,
       prof_anchor_scalar = input$prof_anchor_scalar,
@@ -558,6 +592,22 @@
           rv$last_job_type <- saved_settings$job_types
           update_job_type_choices(saved_settings$job_types)
         }
+
+        for (k in c("job_jitter_n", "hessian_nsplit", "retro_peels_n")) {
+          if (!is.null(saved_settings[[k]])) updateNumericInput(session, k, value = saved_settings[[k]])
+        }
+
+        if (!is.null(saved_settings$hessian_parallel)) {
+          updateCheckboxInput(session, "hessian_parallel", value = as_bool_setting(saved_settings$hessian_parallel, default = TRUE))
+        }
+
+        if (!is.null(saved_settings$fitted_model_source_enabled)) {
+          updateCheckboxInput(session, "fitted_model_source_enabled", value = as_bool_setting(saved_settings$fitted_model_source_enabled, default = FALSE))
+        }
+
+        if (!is.null(saved_settings$fitted_model_source_choice)) {
+          updateSelectizeInput(session, "fitted_model_source_choice", selected = as.character(saved_settings$fitted_model_source_choice[[1]]))
+        }
         
         if (!is.null(saved_settings$last_browse_path)) {
           rv$last_browse_path <- saved_settings$last_browse_path
@@ -627,6 +677,12 @@
       github_org = input$github_org,
       github_repo = input$github_repo,
       job_types = input$job_types,
+      job_jitter_n = input$job_jitter_n,
+      hessian_parallel = input$hessian_parallel,
+      hessian_nsplit = input$hessian_nsplit,
+      retro_peels_n = input$retro_peels_n,
+      fitted_model_source_enabled = input$fitted_model_source_enabled,
+      fitted_model_source_choice = input$fitted_model_source_choice,
       profile_components = input$profile_components,
       prof_launch_strategy = input$prof_launch_strategy,
       prof_anchor_scalar = input$prof_anchor_scalar,
@@ -715,6 +771,30 @@
     save_settings()
   }, ignoreInit = TRUE)
 
+  observeEvent(input$job_jitter_n, {
+    save_settings()
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$hessian_parallel, {
+    save_settings()
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$hessian_nsplit, {
+    save_settings()
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$retro_peels_n, {
+    save_settings()
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$fitted_model_source_enabled, {
+    save_settings()
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$fitted_model_source_choice, {
+    save_settings()
+  }, ignoreInit = TRUE)
+
   observeEvent(input$profile_components, {
     save_settings()
   }, ignoreInit = TRUE)
@@ -767,6 +847,12 @@
       input$output_dir,
       input$run_description,
       input$job_types,
+      input$job_jitter_n,
+      input$hessian_parallel,
+      input$hessian_nsplit,
+      input$retro_peels_n,
+      input$fitted_model_source_enabled,
+      input$fitted_model_source_choice,
       input$profile_components,
       input$prof_launch_strategy,
       input$prof_anchor_scalar,

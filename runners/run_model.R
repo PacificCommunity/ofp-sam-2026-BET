@@ -33,6 +33,14 @@ prefer_par_start <- tolower(Sys.getenv("prefer_par_start", "1")) %in% c("1", "tr
 fitted_source_enabled <- tolower(Sys.getenv("fitted_model_source_enabled", "0")) %in% c("1", "true", "yes", "y", "on")
 fitted_source_bundle <- nzchar(Sys.getenv("fitted_model_bundle", ""))
 fitted_source_dir <- nzchar(Sys.getenv("fitted_model_source_dir", ""))
+auto_run_model_before_dependency <- tolower(Sys.getenv("auto_run_model_before_dependency", "0")) %in% c("1", "true", "yes", "y", "on")
+
+if (isTRUE(auto_run_model_before_dependency) &&
+    !isTRUE(fitted_source_enabled) &&
+    !isTRUE(fitted_source_bundle) &&
+    !isTRUE(fitted_source_dir)) {
+  Sys.setenv(auto_run_model_before_dependency = "0")
+}
 
 n_mixing_periods <- as.numeric(Sys.getenv("n_mixing_periods", ""))
 min_year         <- as.numeric(Sys.getenv("min_year", ""))

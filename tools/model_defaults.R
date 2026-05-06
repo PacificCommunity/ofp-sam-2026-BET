@@ -63,7 +63,21 @@ infer_sel_nodes_from_name <- function(name) {
   sub("^sel_spline", "", hit)
 }
 
-strip_recipe_suffixes_from_name <- function(name, movement_pairs, sel_nodes, index_cv_half) {
+infer_fixed_params_from_name <- function(name) {
+  has_fix_m <- grepl("fixM", name, fixed = TRUE) || grepl("(^|_)M($|_)", name)
+  has_fix_vb <- grepl("fixVB", name, fixed = TRUE)
+  if ((has_fix_m && has_fix_vb) || grepl("fixVBM", name, fixed = TRUE) || grepl("fixVB_M", name, fixed = TRUE)) {
+    "VB,M"
+  } else if (has_fix_vb) {
+    "VB"
+  } else if (has_fix_m) {
+    "M"
+  } else {
+    ""
+  }
+}
+
+strip_recipe_suffixes_from_name <- function(name, fixed_params, movement_pairs, sel_nodes, index_cv_half) {
   if (identical(index_cv_half, "1")) name <- sub("_index_cv_half$", "", name)
   if (nzchar(sel_nodes)) name <- sub(paste0("_sel_spline", sel_nodes, "$"), "", name)
   if (nzchar(movement_pairs)) {
@@ -78,6 +92,17 @@ strip_recipe_suffixes_from_name <- function(name, movement_pairs, sel_nodes, ind
       )
     )
     name <- sub(paste0("_", movement_suffix, "$"), "", name)
+  }
+  fixed_vals <- toupper(trimws(unlist(strsplit(as.character(fixed_params), "[,;[:space:]+]+", perl = TRUE), use.names = FALSE)))
+  fixed_vals <- fixed_vals[nzchar(fixed_vals)]
+  if ("VBM" %in% fixed_vals || all(c("VB", "M") %in% fixed_vals)) {
+    name <- sub("_fixM_fixVB$", "", name)
+    name <- sub("_fixVB_fixM$", "", name)
+    name <- sub("_fixVBM$", "", name)
+    name <- sub("_fixVB_M$", "", name)
+  } else {
+    if ("VB" %in% fixed_vals) name <- sub("_fixVB$", "", name)
+    if ("M" %in% fixed_vals) name <- sub("_fixM$", "", name)
   }
   name
 }
@@ -100,17 +125,19 @@ infer_input_recipe <- function(base_dir) {
   movement_pairs <- infer_movement_pairs_from_name(b)
   sel_nodes <- infer_sel_nodes_from_name(b)
   index_cv_half <- if (grepl("index_cv_half", b, fixed = TRUE)) "1" else "0"
-  source_name <- strip_recipe_suffixes_from_name(b, movement_pairs, sel_nodes, index_cv_half)
+  fixed_params <- infer_fixed_params_from_name(b)
+  source_name <- strip_recipe_suffixes_from_name(b, fixed_params, movement_pairs, sel_nodes, index_cv_half)
   source_dir <- file.path(dirname(base_dir_chr), source_name)
   base_tokens <- infer_base_tokens_from_name(source_name)
 
   list(
-    input_recipe_enabled = if (nzchar(movement_pairs) || nzchar(sel_nodes) || identical(index_cv_half, "1")) "1" else "0",
+    input_recipe_enabled = if (nzchar(fixed_params) || nzchar(movement_pairs) || nzchar(sel_nodes) || identical(index_cv_half, "1")) "1" else "0",
     input_recipe_base = if (length(base_tokens) > 0) paste(base_tokens, collapse = ",") else "base",
     input_recipe_base_input_dir = source_dir,
     input_recipe_base_source = source_dir,
     input_recipe_base_tokens = paste(base_tokens, collapse = ","),
     input_recipe_output_dir = base_dir_chr,
+    input_recipe_fixed_params = fixed_params,
     input_recipe_movement_pairs = movement_pairs,
     input_recipe_sel_nodes = sel_nodes,
     input_recipe_index_cv_half = index_cv_half
@@ -161,6 +188,7 @@ apply_model_defaults <- function(models, defaults = list()) {
       input_recipe_base_source = "",
       input_recipe_base_tokens = "",
       input_recipe_output_dir = "",
+      input_recipe_fixed_params = "",
       input_recipe_movement_pairs = "",
       input_recipe_sel_nodes = "",
       input_recipe_index_cv_half = ""
@@ -171,6 +199,12 @@ apply_model_defaults <- function(models, defaults = list()) {
   Map(function(model, model_name) {
     program_path <- if (!is.null(model$program_path)) model$program_path else defaults$program_path
     base_dir <- if (!is.null(model$base_dir)) model$base_dir else defaults$base_dir
+    mfcl_commands <- if (!is.null(model$mfcl_commands) && length(model$mfcl_commands) > 0) {
+      trimws(as.character(model$mfcl_commands[[1]]))
+    } else {
+      "./doitall.sh"
+    }
+    if (!nzchar(mfcl_commands)) mfcl_commands <- "./doitall.sh"
     reps <- if (!is.null(model$Reps)) model$Reps else defaults$Reps
     scalars <- if (!is.null(model$scalars)) model$scalars else defaults$scalars
     retro_peels <- if (!is.null(model$retro_peels)) model$retro_peels else defaults$retro_peels
@@ -209,6 +243,7 @@ apply_model_defaults <- function(models, defaults = list()) {
     input_recipe_base_source <- if (!is.null(model$input_recipe_base_source)) model$input_recipe_base_source else defaults$input_recipe_base_source
     input_recipe_base_tokens <- if (!is.null(model$input_recipe_base_tokens)) model$input_recipe_base_tokens else defaults$input_recipe_base_tokens
     input_recipe_output_dir <- if (!is.null(model$input_recipe_output_dir)) model$input_recipe_output_dir else defaults$input_recipe_output_dir
+    input_recipe_fixed_params <- if (!is.null(model$input_recipe_fixed_params)) model$input_recipe_fixed_params else defaults$input_recipe_fixed_params
     input_recipe_movement_pairs <- if (!is.null(model$input_recipe_movement_pairs)) model$input_recipe_movement_pairs else defaults$input_recipe_movement_pairs
     input_recipe_sel_nodes <- if (!is.null(model$input_recipe_sel_nodes)) model$input_recipe_sel_nodes else defaults$input_recipe_sel_nodes
     input_recipe_index_cv_half <- if (!is.null(model$input_recipe_index_cv_half)) model$input_recipe_index_cv_half else defaults$input_recipe_index_cv_half
@@ -222,17 +257,19 @@ apply_model_defaults <- function(models, defaults = list()) {
     if (!nzchar(as.character(input_recipe_base_source))) input_recipe_base_source <- inferred_recipe$input_recipe_base_source
     if (!nzchar(as.character(input_recipe_base_tokens))) input_recipe_base_tokens <- inferred_recipe$input_recipe_base_tokens
     if (!nzchar(as.character(input_recipe_output_dir))) input_recipe_output_dir <- inferred_recipe$input_recipe_output_dir
+    if (!nzchar(as.character(input_recipe_fixed_params))) input_recipe_fixed_params <- inferred_recipe$input_recipe_fixed_params
     if (!nzchar(as.character(input_recipe_movement_pairs))) input_recipe_movement_pairs <- inferred_recipe$input_recipe_movement_pairs
     if (!nzchar(as.character(input_recipe_sel_nodes))) input_recipe_sel_nodes <- inferred_recipe$input_recipe_sel_nodes
     if (!nzchar(as.character(input_recipe_index_cv_half))) input_recipe_index_cv_half <- inferred_recipe$input_recipe_index_cv_half
 
-    if (!identical(model$mfcl_commands, "./doitall.sh")) {
-      model$mfcl_commands <- paste(program_path, model$mfcl_commands)
+    if (!identical(mfcl_commands, "./doitall.sh")) {
+      mfcl_commands <- paste(program_path, mfcl_commands)
     }
 
     model$model_dir <- file.path("model", model_name)
     model$base_dir <- base_dir
     model$program_path <- program_path
+    model$mfcl_commands <- mfcl_commands
     model$Reps <- reps
     model$scalars <- scalars
     model$retro_peels <- retro_peels
@@ -270,6 +307,7 @@ apply_model_defaults <- function(models, defaults = list()) {
     model$input_recipe_base_source <- input_recipe_base_source
     model$input_recipe_base_tokens <- input_recipe_base_tokens
     model$input_recipe_output_dir <- input_recipe_output_dir
+    model$input_recipe_fixed_params <- input_recipe_fixed_params
     model$input_recipe_movement_pairs <- input_recipe_movement_pairs
     model$input_recipe_sel_nodes <- input_recipe_sel_nodes
     model$input_recipe_index_cv_half <- input_recipe_index_cv_half

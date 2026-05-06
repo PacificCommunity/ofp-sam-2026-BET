@@ -148,6 +148,7 @@ env_fields <- c(
   "input_recipe_enabled",
   "input_recipe_base_input_dir",
   "input_recipe_output_dir",
+  "input_recipe_fixed_params",
   "input_recipe_movement_pairs",
   "input_recipe_sel_nodes",
   "input_recipe_index_cv_half",

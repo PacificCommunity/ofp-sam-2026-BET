@@ -47,6 +47,7 @@ ensure_input_dir_available <- function(base_dir, project_root = getwd()) {
       Sys.getenv("input_recipe_base_source", "")
     )),
     add_arg("--base-tokens", Sys.getenv("input_recipe_base_tokens", "")),
+    add_arg("--fixed-params", Sys.getenv("input_recipe_fixed_params", "")),
     add_arg("--movement-pairs", Sys.getenv("input_recipe_movement_pairs", "")),
     add_arg("--sel-nodes", Sys.getenv("input_recipe_sel_nodes", ""))
   )

@@ -60,7 +60,7 @@ sp_normalize_change_tokens <- function(x) {
 }
 
 sp_known_change_tokens <- function() {
-  known <- c("fixM", "fixVB", "fixVBM", "sel4", "cvH", "m23", "m123", "ExR9Index")
+  known <- c("fixM", "fixVB", "sel4", "cvH", "m23", "m123", "ExR9Index")
   catalog_path <- file.path(shiny_plot_repo_root(), "tools", "input_sensitivities", "sensitivity_catalog.R")
   if (file.exists(catalog_path)) {
     env <- new.env(parent = globalenv())
@@ -85,8 +85,8 @@ sp_legacy_change_tokens_from_name <- function(model_name) {
   known <- sp_known_change_tokens()
   tokens <- character(0)
 
-  if (grepl("fixVB_M|fixVBM", nm, fixed = FALSE)) tokens <- c(tokens, "fixVB", "fixM")
-  if (grepl("fixVB", nm, fixed = TRUE)) tokens <- c(tokens, "fixVB")
+  if (grepl("fixVB_M|fixVBM", nm, fixed = FALSE)) tokens <- c(tokens, "fixM", "fixVB")
+  if (!grepl("fixVB_M|fixVBM", nm, fixed = FALSE) && grepl("fixVB", nm, fixed = TRUE)) tokens <- c(tokens, "fixVB")
   if (grepl("fixM", nm, fixed = TRUE) || grepl("_M($|_)", nm)) tokens <- c(tokens, "fixM")
   if (grepl("sel4|sel_spline4|sel[._-]?spline[._-]?4", nm, ignore.case = TRUE)) tokens <- c(tokens, "sel4")
   if (grepl("cvH|index_cv_half", nm, ignore.case = TRUE)) tokens <- c(tokens, "cvH")

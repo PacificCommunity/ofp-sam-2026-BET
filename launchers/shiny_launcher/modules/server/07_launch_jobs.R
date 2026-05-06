@@ -84,6 +84,49 @@
     job_env
   }
 
+  positive_int_input <- function(input_id, default, min_value = 1L) {
+    value <- tryCatch(input[[input_id]], error = function(e) NULL)
+    value <- suppressWarnings(as.integer(value))
+    if (!is.finite(value) || value < min_value) value <- as.integer(default)
+    if (!is.finite(value) || value < min_value) value <- as.integer(min_value)
+    as.integer(value)
+  }
+
+  launch_job_sequence <- function(n) {
+    n <- suppressWarnings(as.integer(n))
+    if (!is.finite(n) || n < 1L) return("")
+    paste(seq_len(n), collapse = " ")
+  }
+
+  launch_hessian_parallel <- function() {
+    value <- tryCatch(input$hessian_parallel, error = function(e) NULL)
+    if (is.null(value)) return(TRUE)
+    isTRUE(value)
+  }
+
+  apply_launch_job_option_overrides <- function(model_env) {
+    if (is.null(model_env)) return(model_env)
+    env <- as.list(model_env, all.names = TRUE)
+
+    jitter_n <- positive_int_input("job_jitter_n", default = 30L)
+    retro_n <- positive_int_input("retro_peels_n", default = 7L)
+    hessian_parallel <- launch_hessian_parallel()
+    hessian_nsplit <- if (isTRUE(hessian_parallel)) {
+      positive_int_input("hessian_nsplit", default = 5L)
+    } else {
+      1L
+    }
+
+    env$jitter_seeds <- launch_job_sequence(jitter_n)
+    env$retro_peels <- launch_job_sequence(retro_n)
+    env$nsplit <- as.character(hessian_nsplit)
+    env$launcher_jitter_runs <- as.character(jitter_n)
+    env$launcher_retro_peels <- as.character(retro_n)
+    env$launcher_hessian_parallel <- if (isTRUE(hessian_parallel)) "1" else "0"
+    env$launcher_hessian_parts <- as.character(hessian_nsplit)
+    env
+  }
+
   # ----- Input and sensitivity launch units -----
   # The config file now supplies one common set of launch defaults. The actual
   # launch units are discovered input folders, with optional on-the-fly
@@ -118,13 +161,24 @@
     )
   }
 
-  strip_recipe_suffixes <- function(path, movement_pairs = "", sel_nodes = "", index_cv_half = "0") {
+  strip_recipe_suffixes <- function(path, fixed_params = "", movement_pairs = "", sel_nodes = "", index_cv_half = "0") {
     parent <- dirname(path)
     stem <- basename(path)
     if (truthy_scalar(index_cv_half)) stem <- sub("_index_cv_half$", "", stem)
     if (nzchar(sel_nodes)) stem <- sub(paste0("_sel_spline", sel_nodes, "$"), "", stem)
     movement_suffix <- movement_suffix_from_pairs(movement_pairs)
     if (nzchar(movement_suffix)) stem <- sub(paste0("_", movement_suffix, "$"), "", stem)
+    fixed_vals <- toupper(trimws(unlist(strsplit(as.character(fixed_params), "[,;[:space:]+]+", perl = TRUE), use.names = FALSE)))
+    fixed_vals <- fixed_vals[nzchar(fixed_vals)]
+    if ("VBM" %in% fixed_vals || all(c("VB", "M") %in% fixed_vals)) {
+      stem <- sub("_fixM_fixVB$", "", stem)
+      stem <- sub("_fixVB_fixM$", "", stem)
+      stem <- sub("_fixVBM$", "", stem)
+      stem <- sub("_fixVB_M$", "", stem)
+    } else {
+      if ("VB" %in% fixed_vals) stem <- sub("_fixVB$", "", stem)
+      if ("M" %in% fixed_vals) stem <- sub("_fixM$", "", stem)
+    }
     file.path(parent, stem)
   }
 
@@ -152,6 +206,7 @@
     if (!nzchar(base_dir)) return("")
     strip_recipe_suffixes(
       base_dir,
+      fixed_params = first_scalar_string(model_env$input_recipe_fixed_params, default = ""),
       movement_pairs = first_scalar_string(model_env$input_recipe_movement_pairs, default = ""),
       sel_nodes = first_scalar_string(model_env$input_recipe_sel_nodes, default = ""),
       index_cv_half = first_scalar_string(model_env$input_recipe_index_cv_half, default = "0")
@@ -567,6 +622,7 @@
     }
 
     recipe_options <- input_sensitivity_recipe_options(sens_rows$id)
+    fixed_params <- recipe_options$fixed_params
     movement_pairs <- recipe_options$movement_pairs
     sel_nodes <- recipe_options$sel_nodes
     index_cv_half <- if (isTRUE(recipe_options$index_cv_half)) "1" else "0"
@@ -594,13 +650,27 @@
       base_input_dir = base_input_dir,
       base_tokens = paste(existing_tokens, collapse = ","),
       output_dir = output_dir,
+      fixed_params = fixed_params,
       movement_pairs = movement_pairs,
       sel_nodes = sel_nodes,
       index_cv_half = index_cv_half,
+      tokens = tokens,
       key = key,
       label = label,
       description = description
     )
+  }
+
+  drop_profile_sets_for_fixed_tokens <- function(profile_sets, tokens) {
+    if (is.null(profile_sets) || length(profile_sets) == 0) return(profile_sets)
+    tokens <- unique(as.character(tokens))
+    drop <- character(0)
+    if ("fixM" %in% tokens) drop <- c(drop, "LorenM")
+    if ("fixVB" %in% tokens) drop <- c(drop, "L1", "L2", "kappa")
+    drop <- unique(drop)
+    if (length(drop) == 0) return(profile_sets)
+    if (is.null(names(profile_sets))) return(profile_sets)
+    profile_sets[setdiff(names(profile_sets), drop)]
   }
 
   launch_model_name <- function(model_name, model_env = NULL) {
@@ -632,6 +702,7 @@
     env$input_recipe_base_source <- row$base_dir
     env$input_recipe_base_tokens <- row$tokens
     env$input_recipe_output_dir <- row$base_dir
+    env$input_recipe_fixed_params <- ""
     if (!is.null(row$description) && nzchar(as.character(row$description[[1]]))) {
       env$description <- row$description[[1]]
     } else if (is.null(env$description) || !nzchar(as.character(env$description[[1]]))) {
@@ -664,12 +735,14 @@
     env$input_recipe_base_source <- plan$base_input_dir
     env$input_recipe_base_tokens <- plan$base_tokens
     env$input_recipe_output_dir <- plan$output_dir
+    env$input_recipe_fixed_params <- plan$fixed_params
     env$input_recipe_movement_pairs <- plan$movement_pairs
     env$input_recipe_sel_nodes <- plan$sel_nodes
     env$input_recipe_index_cv_half <- plan$index_cv_half
     env$launcher_input_recipe_label <- plan$label
     env$launcher_input_recipe_description <- plan$description
     env$description <- plan$description
+    env$profile_sets <- drop_profile_sets_for_fixed_tokens(env$profile_sets, plan$tokens)
 
     summary_txt <- first_scalar_string(env$config_summary, default = "")
     recipe_txt <- paste0(
@@ -792,12 +865,25 @@
         "; par=", row$par_file[[1]]
       )
       env$config_summary <- if (nzchar(summary_txt)) paste(summary_txt, fitted_txt, sep = " | ") else fitted_txt
+    } else {
+      env$fitted_model_source_dir <- ""
+      env$fitted_model_bundle <- ""
+      env$fitted_model_source_id <- ""
+      env$fitted_model_source_label <- if (identical(choice, "__auto__")) {
+        "no auto-matched fitted output; run prerequisite model first"
+      } else {
+        "selected fitted output not found; run prerequisite model first"
+      }
+      env$auto_run_model_before_dependency <- "1"
+      env$auto_fitted_model_dir <- file.path(first_scalar_string(env$model_dir, default = file.path("model", model_name)), "_source_model")
     }
     env
   }
 
   active_model_env <- function(model_name) {
-    apply_fitted_model_source_selection(model_name, launch_unit_display_env(model_name))
+    apply_launch_job_option_overrides(
+      apply_fitted_model_source_selection(model_name, launch_unit_display_env(model_name))
+    )
   }
 
   observeEvent({
@@ -973,7 +1059,7 @@
       paste0(
         launch_unit_label(unit),
         " -> ",
-        if (!is.null(row)) row$source_dir[[1]] else "missing fitted output"
+        if (!is.null(row)) row$source_dir[[1]] else "no match; will run prerequisite model first"
       )
     }, character(1), USE.NAMES = FALSE)
     div(
@@ -1356,15 +1442,10 @@
     ensure_fitted_source_functions_loaded(repo_root)
     source_dir <- first_scalar_string(job_env$fitted_model_source_dir, default = "")
     if (!nzchar(source_dir)) {
-      if (job_type %in% c("stage_check", "model")) {
-        if (identical(job_type, "model")) {
-          job_env$fitted_model_source_enabled <- "0"
-          job_env$fitted_model_bundle <- ""
-          job_env$fitted_model_source_label <- "no matched fitted source; model will run from .ini/doitall"
-        }
-        return(list(job_env = job_env, extra_transfer_files = character(0)))
-      }
-      stop("Fitted model source is enabled but no fitted output was resolved. Use Auto-match only when model/<launch_name> exists, or select a fitted output explicitly.")
+      job_env$fitted_model_source_enabled <- "0"
+      job_env$fitted_model_bundle <- ""
+      job_env$fitted_model_source_label <- "no matched fitted source; model will run first if this job needs .par/indepvar.rpt"
+      return(list(job_env = job_env, extra_transfer_files = character(0)))
     }
     source_abs <- if (grepl("^/", source_dir)) source_dir else file.path(repo_root, source_dir)
     if (!dir.exists(source_abs)) {
@@ -1827,6 +1908,7 @@
         "input_recipe_base_input_dir",
         "input_recipe_base_source",
         "input_recipe_base_tokens",
+        "input_recipe_fixed_params",
         "input_recipe_movement_pairs",
         "input_recipe_sel_nodes",
         "input_recipe_index_cv_half",
@@ -1891,6 +1973,7 @@
       "input_recipe_base_input_dir",
       "input_recipe_base_source",
       "input_recipe_base_tokens",
+      "input_recipe_fixed_params",
       "input_recipe_movement_pairs",
       "input_recipe_sel_nodes",
       "input_recipe_index_cv_half",

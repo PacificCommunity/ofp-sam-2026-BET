@@ -109,19 +109,10 @@ profile_sets_base <- list(
 
 launch_defaults <- list(
   description = "Shared settings; launch units are discovered from mfcl/inputs",
-  mfcl_commands = "./doitall.sh",
   program_path = program_path,
   base_dir = "mfcl/inputs/2023_4region",
-  retro_peels = "1 2 3 4 5 6 7",
   n_mixing_periods = "2",
   min_year = "1952",
-  jitter_seeds = paste0(1:30, collapse = " "),
-  jitter_cv = "0.2",
-  jitter_hessian = "0",
-  model_hessian = "0",
-  prof_hessian = "0",
-  retro_hessian = "0",
-  nsplit = "5",
   prof_init_map_rds = "",
   init_from_scalar_map = "",
   profile_sets = clone_list(profile_sets_base)

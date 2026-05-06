@@ -43,6 +43,7 @@ strip_suffix_once <- function(x, suffix) {
 }
 
 infer_recipe_source_dir <- function(output_dir,
+                                    fixed_params = "",
                                     movement_pairs = "",
                                     sel_nodes = "",
                                     index_cv_half = FALSE,
@@ -57,6 +58,15 @@ infer_recipe_source_dir <- function(output_dir,
   movement_suffix <- movement_pairs_to_suffix(movement_pairs)
   if (nzchar(movement_suffix)) stem <- strip_suffix_once(stem, movement_suffix)
 
+  fixed_vals <- toupper(trimws(unlist(strsplit(as.character(fixed_params), "[,;[:space:]+]+", perl = TRUE), use.names = FALSE)))
+  fixed_vals <- fixed_vals[nzchar(fixed_vals)]
+  if ("VBM" %in% fixed_vals || all(c("VB", "M") %in% fixed_vals)) {
+    stem <- strip_suffix_once(strip_suffix_once(strip_suffix_once(strip_suffix_once(stem, "fixM_fixVB"), "fixVB_fixM"), "fixVBM"), "fixVB_M")
+  } else {
+    if ("VB" %in% fixed_vals) stem <- strip_suffix_once(stem, "fixVB")
+    if ("M" %in% fixed_vals) stem <- strip_suffix_once(stem, "fixM")
+  }
+
   file.path(parent, stem)
 }
 
@@ -66,6 +76,7 @@ base_recipe_tokens <- function(recipe_base = "", base_tokens = "") {
 
   recipe_base <- trimws(as.character(recipe_base[[1]]))
   if (!nzchar(recipe_base) || identical(recipe_base, "base")) return(character(0))
+  if (identical(recipe_base, "fixVBM")) return(c("fixM", "fixVB"))
   if (identical(recipe_base, "fixVB_M")) return(c("fixVB", "fixM"))
   normalize_input_change_tokens(recipe_base)
 }

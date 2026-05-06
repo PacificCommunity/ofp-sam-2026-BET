@@ -37,7 +37,7 @@ Rscript tools/input_sensitivities/build_input_recipe.R \
 ### Case 1: new level of an existing sensitivity type
 
 If the new sensitivity can be expressed with existing recipe fields
-(`movement_pairs`, `sel_nodes`, or `index_cv_half`), only add one
+(`fixed_params`, `movement_pairs`, `sel_nodes`, or `index_cv_half`), only add one
 `input_sensitivity_row()` in `sensitivity_catalog.R`.
 
 Example:
@@ -52,6 +52,22 @@ input_sensitivity_row(
   label = "Tag movement R1-R2",
   nested = TRUE,
   movement_pairs = "1-2"
+)
+```
+
+Fixed-parameter levels are also catalog rows. The current fixed-parameter
+factor is factorial, so selecting both `fixM` and `fixVB` in factorial mode
+creates the combined M+growth-fixed input without a separate `fixVBM` row:
+
+```r
+input_sensitivity_row(
+  id = "fixVB",
+  token = "fixVB",
+  suffix = "_fixVB",
+  input_suffix = "_fixVB",
+  factor = "fixed_params",
+  label = "Fix growth (VB)",
+  fixed_params = "VB"
 )
 ```
 
@@ -91,7 +107,11 @@ negative fishery-specific flag 92 entries found in `doitall.sh` unless an
 explicit `index_fisheries` environment variable is supplied; positive rows such
 as `2 92 2` are MFCL options and are left unchanged. The selectivity step
 updates global fish flag 61 when present and otherwise updates the
-fishery-specific flag 61 entries it finds.
+fishery-specific flag 61 entries it finds. The fixed-parameter step edits
+`doitall.sh` switches only: `fixM` zeros switch `1 121`, and `fixVB` zeros
+switches `1 12`, `1 13`, and `1 14`. When both are selected in a factorial
+combination, both sets of switches are zeroed and the metadata stores the two
+tokens `fixM` and `fixVB`.
 
 After editing, run:
 

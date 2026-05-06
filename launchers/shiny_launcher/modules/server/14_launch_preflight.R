@@ -34,6 +34,7 @@
     paste(
       c(
         paste0("base_input=", launch_preflight_first(model_env$input_recipe_base_input_dir, launch_preflight_first(model_env$base_dir, "<none>"))),
+        paste0("fixed_params=", launch_preflight_first(model_env$input_recipe_fixed_params, "<none>")),
         paste0("movement=", launch_preflight_first(model_env$input_recipe_movement_pairs, "<none>")),
         paste0("sel_nodes=", launch_preflight_first(model_env$input_recipe_sel_nodes, "<none>")),
         paste0("index_cv_half=", launch_preflight_first(model_env$input_recipe_index_cv_half, "0"))
@@ -255,19 +256,6 @@
       ),
       collapse = "; "
     )
-
-    fitted_required_jobs <- if (exists("fitted_source_job_types", mode = "function")) fitted_source_job_types() else c("stage_check", "model", "jitter", "hessian", "prof", "prof_chain", "prof_2d")
-    fitted_source_strict <- !identical(job_type, "model")
-    if (fitted_enabled && isTRUE(fitted_source_strict) && job_type %in% fitted_required_jobs && !identical(job_type, "stage_check") && !fitted_par_exists) {
-      return(launch_preflight_row(
-        display_name,
-        job_type,
-        "blocked",
-        "fitted .par",
-        found_common,
-        "Fitted model source is enabled, but no matched/selected fitted .par was found."
-      ))
-    }
 
     if (!base_exists && launch_preflight_recipe_ready(model_env)) {
       recipe_source <- launch_preflight_recipe_source(model_env, model_needs_par = model_needs_par)
