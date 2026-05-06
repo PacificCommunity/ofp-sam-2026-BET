@@ -140,15 +140,17 @@
     if (grepl("retro|_peel[0-9]+", txt, ignore.case = TRUE)) return("retro")
     if (grepl("prof2d|prof_2d", txt, ignore.case = TRUE)) return("prof_2d")
     if (grepl("prof|_sc[0-9]+|-sc[0-9]+", txt, ignore.case = TRUE)) return("prof")
+    if (grepl("self[_-]?test|_selftest_rep[0-9]+|-selftest-rep[0-9]+", txt, ignore.case = TRUE)) return("selftest")
     "model"
   }
 
   condor_completed_model_name <- function(label, remote_dir) {
     x <- label
-    x <- sub("-(stagecheck|jitter[0-9]+|hess[0-9]+|retro[0-9]+|sc[0-9]+|prof2d)$", "", x, ignore.case = TRUE)
-    x <- sub("(_stagecheck|_model|_seed[0-9]+|_part[0-9]+|_peel[0-9]+|_sc[0-9]+|_prof2d)$", "", x, ignore.case = TRUE)
+    x <- sub("-(stagecheck|jitter[0-9]+|hess[0-9]+|retro[0-9]+|sc[0-9]+|prof2d|selftest-rep[0-9]+)$", "", x, ignore.case = TRUE)
+    x <- sub("(_stagecheck|_model|_seed[0-9]+|_part[0-9]+|_peel[0-9]+|_sc[0-9]+|_prof2d|_selftest_rep[0-9]+)$", "", x, ignore.case = TRUE)
     if (!nzchar(x) || is.na(x)) {
-      x <- sub("(_stagecheck|_model|_seed[0-9]+|_part[0-9]+|_peel[0-9]+|_sc[0-9]+|_prof2d)$", "", basename(remote_dir), ignore.case = TRUE)
+      x <- sub("(_stagecheck|_model|_seed[0-9]+|_part[0-9]+|_peel[0-9]+|_sc[0-9]+|_prof2d|_selftest_rep[0-9]+)$", "", basename(remote_dir), ignore.case = TRUE)
+      x <- sub("-selftest-rep[0-9]+$", "", x, ignore.case = TRUE)
     }
     x
   }
@@ -167,6 +169,14 @@
     } else {
       tryCatch(resolve_repo_path(download_location), error = function(e) file.path(getwd(), download_location))
     }
+    local_root_norm <- normalizePath(local_root, winslash = "/", mustWork = FALSE)
+    selftest_root <- if (identical(basename(local_root_norm), "selftest")) {
+      local_root_norm
+    } else if (identical(basename(local_root_norm), "model")) {
+      file.path(dirname(local_root_norm), "selftest")
+    } else {
+      file.path(local_root_norm, "selftest")
+    }
 
     remote_base <- basename(remote_dir)
     candidates <- c(file.path(local_root, model_name))
@@ -175,6 +185,7 @@
     part <- suppressWarnings(as.integer(sub(".*_part([0-9]+)$", "\\1", remote_base)))
     peel <- suppressWarnings(as.integer(sub(".*_peel([0-9]+)$", "\\1", remote_base)))
     scalar <- suppressWarnings(as.integer(sub(".*_sc([0-9]+)$", "\\1", remote_base)))
+    selftest_rep <- suppressWarnings(as.integer(sub(".*(?:_selftest_rep|-selftest-rep)([0-9]+)$", "\\1", remote_base, perl = TRUE)))
 
     if (identical(job_type, "jitter") && is.finite(seed)) {
       candidates <- c(file.path(local_root, model_name, "jitter", paste0("jitter_seed_", seed)), candidates)
@@ -184,11 +195,19 @@
       candidates <- c(file.path(local_root, model_name, "retro", paste0("peel_", peel)), candidates)
     } else if (identical(job_type, "prof") && is.finite(scalar)) {
       candidates <- c(file.path(local_root, model_name, "prof", paste0("scalar_", scalar)), candidates)
+    } else if (identical(job_type, "selftest")) {
+      rep_name <- if (is.finite(selftest_rep)) sprintf("rep_%03d", selftest_rep) else ""
+      candidates <- c(
+        if (nzchar(rep_name)) file.path(selftest_root, model_name, "refit", rep_name) else NULL,
+        file.path(selftest_root, model_name),
+        candidates
+      )
     }
 
     if (!identical(remote_base, model_name)) {
       remote_model_name <- remote_base
-      remote_model_name <- sub("(_model|_seed[0-9]+|_part[0-9]+|_peel[0-9]+|_sc[0-9]+|_prof2d)$", "", remote_model_name, ignore.case = TRUE)
+      remote_model_name <- sub("(_model|_seed[0-9]+|_part[0-9]+|_peel[0-9]+|_sc[0-9]+|_prof2d|_selftest_rep[0-9]+)$", "", remote_model_name, ignore.case = TRUE)
+      remote_model_name <- sub("-selftest-rep[0-9]+$", "", remote_model_name, ignore.case = TRUE)
       if (nzchar(remote_model_name)) candidates <- c(candidates, file.path(local_root, remote_model_name))
     }
 

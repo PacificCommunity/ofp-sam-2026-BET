@@ -174,6 +174,9 @@
           if ("prof" %in% allowed_types || "profile" %in% allowed_types || "prof_2d" %in% allowed_types) {
             keep <- keep | grepl("_sc\\d+$", base_names) | is_prof_chain | grepl("_prof2d$", base_names)
           }
+          if ("selftest" %in% allowed_types || "self-test" %in% allowed_types) {
+            keep <- keep | grepl("(_selftest_rep\\d+|-selftest-rep\\d+)$", base_names, ignore.case = TRUE)
+          }
           if (any(keep)) {
             dirs <- dirs[keep]
             base_names <- base_names[keep]
@@ -189,12 +192,15 @@
         part_vals <- suppressWarnings(as.integer(sub(".*_part(\\d+)$", "\\1", base_names[grepl("_part\\d+$", base_names)])))
         peel_vals <- suppressWarnings(as.integer(sub(".*_peel(\\d+)$", "\\1", base_names[grepl("_peel\\d+$", base_names)])))
         sc_vals <- suppressWarnings(as.integer(sub(".*_sc(\\d+)$", "\\1", base_names[grepl("_sc\\d+$", base_names)])))
+        selftest_names <- base_names[grepl("(_selftest_rep\\d+|-selftest-rep\\d+)$", base_names, ignore.case = TRUE)]
+        selftest_vals <- suppressWarnings(as.integer(sub(".*(?:_selftest_rep|-selftest-rep)(\\d+)$", "\\1", selftest_names, perl = TRUE)))
         prof_chain_count <- sum(is_prof_chain)
         model_count <- sum(grepl("_model$", base_names))
         other_count <- sum(!(grepl("_seed\\d+$", base_names) |
                              grepl("_part\\d+$", base_names) |
                              grepl("_peel\\d+$", base_names) |
                              grepl("_sc\\d+$", base_names) |
+                             grepl("(_selftest_rep\\d+|-selftest-rep\\d+)$", base_names, ignore.case = TRUE) |
                              is_prof_chain |
                              grepl("_model$", base_names)))
 
@@ -204,6 +210,7 @@
           summarize_numeric_group(part_vals, "part"),
           summarize_numeric_group(peel_vals, "peel"),
           summarize_numeric_group(sc_vals, "scalar"),
+          summarize_numeric_group(selftest_vals, "self-test rep"),
           if (prof_chain_count > 0) paste0("prof_chain: ", prof_chain_count) else NULL,
           if (other_count > 0) paste0("other: ", other_count) else NULL
         )

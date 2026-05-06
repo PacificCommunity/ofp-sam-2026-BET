@@ -146,6 +146,51 @@
       "-avz --progress"
     }
   }
+
+  retrieve_archive_source_path <- function(temp_dir, extract_path, folder_name) {
+    source_path <- file.path(temp_dir, extract_path)
+
+    if (!dir.exists(source_path)) {
+      extract_parts <- strsplit(extract_path, "/", fixed = TRUE)[[1]]
+      if (length(extract_parts) >= 3) {
+        repo_part <- extract_parts[1]
+        rest_parts <- extract_parts[-1]
+        if (length(rest_parts) >= 1) {
+          alt_parts <- c(rest_parts[1], folder_name, rest_parts[-1])
+          alt_extract_path <- paste(c(repo_part, alt_parts), collapse = "/")
+          alt_source_path <- file.path(temp_dir, alt_extract_path)
+          if (dir.exists(alt_source_path)) source_path <- alt_source_path
+        }
+      }
+    }
+
+    if (!dir.exists(source_path)) {
+      candidate_dirs <- list.dirs(temp_dir, recursive = TRUE, full.names = TRUE)
+      pattern <- paste0("/", gsub("([.])", "\\\\.", extract_path), "$")
+      matches <- candidate_dirs[grepl(pattern, candidate_dirs)]
+      if (length(matches) > 0) source_path <- matches[1]
+    }
+
+    if (!dir.exists(source_path)) {
+      candidate_dirs <- list.dirs(temp_dir, recursive = TRUE, full.names = TRUE)
+      selftest_matches <- candidate_dirs[basename(candidate_dirs) == "selftest"]
+      if (length(selftest_matches) > 0) source_path <- selftest_matches[1]
+    }
+
+    source_path
+  }
+
+  retrieve_archive_target_dir <- function(download_dir, source_path) {
+    source_base <- basename(normalizePath(source_path, winslash = "/", mustWork = FALSE))
+    if (!identical(source_base, "selftest")) return(download_dir)
+
+    download_norm <- normalizePath(download_dir, winslash = "/", mustWork = FALSE)
+    if (identical(basename(download_norm), "selftest")) return(download_norm)
+    if (identical(basename(download_norm), "model")) {
+      return(file.path(dirname(download_norm), "selftest"))
+    }
+    file.path(download_norm, "selftest")
+  }
   
   download_and_extract_from_folder_raw <- function(spec, common) {
     folder_name <- spec$folder_name
@@ -191,21 +236,7 @@
         next
       }
       
-      source_path <- file.path(temp_dir, extract_path)
-      
-      if (!dir.exists(source_path)) {
-        extract_parts <- strsplit(extract_path, "/", fixed = TRUE)[[1]]
-        if (length(extract_parts) >= 3) {
-          repo_part <- extract_parts[1]
-          rest_parts <- extract_parts[-1]
-          if (length(rest_parts) >= 1) {
-            alt_parts <- c(rest_parts[1], folder_name, rest_parts[-1])
-            alt_extract_path <- paste(c(repo_part, alt_parts), collapse = "/")
-            alt_source_path <- file.path(temp_dir, alt_extract_path)
-            if (dir.exists(alt_source_path)) source_path <- alt_source_path
-          }
-        }
-      }
+      source_path <- retrieve_archive_source_path(temp_dir, extract_path, folder_name)
       
       if (dir.exists(source_path)) {
         job_child_path <- file.path(source_path, folder_name)
@@ -221,7 +252,7 @@
         }
         
         if (length(items_in_source) > 0) {
-          target_dir <- download_dir
+          target_dir <- retrieve_archive_target_dir(download_dir, source_path)
           if (!dir.exists(target_dir)) dir.create(target_dir, recursive = TRUE)
           
           for (item in items_in_source) {
@@ -282,21 +313,7 @@
       return(list(ok = FALSE, msg = paste(folder_name, "/", tar_name, " extract failed")))
     }
     
-    source_path <- file.path(temp_dir, extract_path)
-    
-    if (!dir.exists(source_path)) {
-      extract_parts <- strsplit(extract_path, "/", fixed = TRUE)[[1]]
-      if (length(extract_parts) >= 3) {
-        repo_part <- extract_parts[1]
-        rest_parts <- extract_parts[-1]
-        if (length(rest_parts) >= 1) {
-          alt_parts <- c(rest_parts[1], folder_name, rest_parts[-1])
-          alt_extract_path <- paste(c(repo_part, alt_parts), collapse = "/")
-          alt_source_path <- file.path(temp_dir, alt_extract_path)
-          if (dir.exists(alt_source_path)) source_path <- alt_source_path
-        }
-      }
-    }
+    source_path <- retrieve_archive_source_path(temp_dir, extract_path, folder_name)
     
     if (dir.exists(source_path)) {
       job_child_path <- file.path(source_path, folder_name)
@@ -312,7 +329,7 @@
       }
       
       if (length(items_in_source) > 0) {
-        target_dir <- download_dir
+        target_dir <- retrieve_archive_target_dir(download_dir, source_path)
         if (!dir.exists(target_dir)) dir.create(target_dir, recursive = TRUE)
         
         for (item in items_in_source) {
@@ -380,34 +397,7 @@
         next
       }
       
-      source_path <- file.path(temp_dir, extract_path)
-      
-      if (!dir.exists(source_path)) {
-        # Fallback: if job folder is inserted after the first repo subdir (e.g., repo/model/<job>/...)
-        extract_parts <- strsplit(extract_path, "/", fixed = TRUE)[[1]]
-        if (length(extract_parts) >= 3) {
-          repo_part <- extract_parts[1]
-          rest_parts <- extract_parts[-1]
-          if (length(rest_parts) >= 1) {
-            alt_parts <- c(rest_parts[1], folder_name, rest_parts[-1])
-            alt_extract_path <- paste(c(repo_part, alt_parts), collapse = "/")
-            alt_source_path <- file.path(temp_dir, alt_extract_path)
-            if (dir.exists(alt_source_path)) {
-              source_path <- alt_source_path
-            }
-          }
-        }
-      }
-      
-      if (!dir.exists(source_path)) {
-        # Fallback: try to find the extract path anywhere in the archive
-        candidate_dirs <- list.dirs(temp_dir, recursive = TRUE, full.names = TRUE)
-        pattern <- paste0("/", gsub("([.])", "\\\\.", extract_path), "$")
-        matches <- candidate_dirs[grepl(pattern, candidate_dirs)]
-        if (length(matches) > 0) {
-          source_path <- matches[1]
-        }
-      }
+      source_path <- retrieve_archive_source_path(temp_dir, extract_path, folder_name)
       
       if (dir.exists(source_path)) {
         job_child_path <- file.path(source_path, folder_name)
@@ -425,7 +415,7 @@
         }
         
         if (length(items_in_source) > 0) {
-          target_dir <- download_dir
+          target_dir <- retrieve_archive_target_dir(download_dir, source_path)
           if (!dir.exists(target_dir)) {
             dir.create(target_dir, recursive = TRUE)
           }
@@ -568,7 +558,14 @@
         rv$retrieval_log <- paste0(rv$retrieval_log, "⚡ Parallel mode ON (cores: ", cores, ")\n")
         cl <- parallel::makeCluster(cores)
         on.exit(parallel::stopCluster(cl), add = TRUE)
-        parallel::clusterExport(cl, varlist = c("download_and_extract_from_folder_raw", "common"), envir = environment())
+        parallel::clusterExport(
+          cl,
+          varlist = c(
+            "download_and_extract_from_folder_raw", "retrieve_archive_source_path",
+            "retrieve_archive_target_dir", "common"
+          ),
+          envir = environment()
+        )
         results <- parallel::parLapply(cl, specs, function(spec) download_and_extract_from_folder_raw(spec, common))
       } else {
         results <- list()
@@ -1041,7 +1038,14 @@
         rv$retrieval_log <- paste0(rv$retrieval_log, "⚡ Parallel mode ON (cores: ", cores, ")\n")
         cl <- parallel::makeCluster(cores)
         on.exit(parallel::stopCluster(cl), add = TRUE)
-        parallel::clusterExport(cl, varlist = c("download_and_extract_from_folder_raw", "common"), envir = environment())
+        parallel::clusterExport(
+          cl,
+          varlist = c(
+            "download_and_extract_from_folder_raw", "retrieve_archive_source_path",
+            "retrieve_archive_target_dir", "common"
+          ),
+          envir = environment()
+        )
         results <- parallel::parLapply(cl, specs, function(spec) {
           if (is.na(spec$folder_path)) {
             return(list(ok = FALSE, message = "Folder not found in scanned results"))
