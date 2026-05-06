@@ -7,12 +7,13 @@ source("tools/fitted_model_source.R")
 
 ## environment variables
 program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_02_04_vsn2278")
-Sys.setenv("PROGRAM_PATH" = paste0("../../", program_path))
 base_dir <- Sys.getenv("base_dir", "mfcl/inputs/2023_rep")
 model_dir <- Sys.getenv("model_dir", "model/base")
 
 ## Convert to absolute paths using getwd() (assumes script runs from project root)
 project_root <- getwd()
+program_path_abs <- file.path(project_root, program_path)
+Sys.setenv("PROGRAM_PATH" = program_path_abs)
 base_dir_abs <- file.path(project_root, base_dir)
 base_dir_abs <- ensure_input_dir_available(base_dir, project_root)
 base_dir_abs <- ensure_fitted_model_source(
@@ -113,11 +114,13 @@ hessian_switch <- paste("-switch 3",
                         sep = " ")
 
 output_par_name <- paste0("hessian_", hessian_part, ".par")
-mfcl_commands <- paste0("../../../../", program_path, " ", 
-                        frq_file, " ", 
-                        basename(most_recent), " ", 
-                        output_par_name, " ", 
-                        hessian_switch)
+mfcl_commands <- paste(
+  program_path_abs,
+  frq_file,
+  basename(most_recent),
+  output_par_name,
+  hessian_switch
+)
 
 cat("Running MFCL with commands:", mfcl_commands, "\n")
 
@@ -136,6 +139,7 @@ info_list <- list(
   end_par       = end_par,
   npars         = npars,
   frq_file      = frq_file,
+  program_path_abs = program_path_abs,
   program_path  = program_path,
   model_dir     = model_dir,
   part_dir      = part_dir,

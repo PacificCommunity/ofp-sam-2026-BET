@@ -12,13 +12,13 @@ source("tools/fitted_model_source.R")
 
 ## environment variables
 program_path <- Sys.getenv("program_path", "mfcl/exe/mfclo64_2026_02_04_vsn2278")
-Sys.setenv("PROGRAM_PATH" = paste0("../../", program_path))
 base_dir <- Sys.getenv("base_dir", "mfcl/inputs/2023_rep")
 model_dir <- Sys.getenv("model_dir", "model/base")
 
 ## Convert to absolute paths using getwd() (assumes script runs from project root)
 project_root <- getwd()
 program_path_abs <- file.path(project_root, program_path)
+Sys.setenv("PROGRAM_PATH" = program_path_abs)
 base_dir_abs <- file.path(project_root, base_dir)
 base_dir_abs <- ensure_input_dir_available(base_dir, project_root)
 base_dir_abs <- ensure_fitted_model_source(
@@ -151,7 +151,23 @@ extract_donor_par_lines <- function(entries, donor_scalar) {
   as.character(val)
 }
 
-resolve_init_par <- function(init_par_override, init_from_scalar, scalar_dir, prof_dir, fallback_par, init_map_entries = NULL) {
+profile_scalar_dir_candidates <- function(donor_scalar_label, prof_dir, profile_root_dir = "") {
+  scalar_name <- paste0("scalar_", donor_scalar_label)
+  candidates <- file.path(prof_dir, scalar_name)
+  if (nzchar(profile_root_dir) && dir.exists(profile_root_dir)) {
+    all_dirs <- list.dirs(profile_root_dir, recursive = TRUE, full.names = TRUE)
+    candidates <- c(candidates, all_dirs[basename(all_dirs) == scalar_name])
+  }
+  unique(candidates[nzchar(candidates)])
+}
+
+resolve_init_par <- function(init_par_override,
+                             init_from_scalar,
+                             scalar_dir,
+                             prof_dir,
+                             fallback_par,
+                             init_map_entries = NULL,
+                             profile_root_dir = "") {
   # 1) Explicit override path/file
   if (nzchar(init_par_override)) {
     candidate <- if (grepl("^/", init_par_override)) init_par_override else file.path(scalar_dir, init_par_override)
@@ -173,9 +189,18 @@ resolve_init_par <- function(init_par_override, init_from_scalar, scalar_dir, pr
       return(list(path = out, source = "rds", donor = init_from_scalar))
     }
 
-    donor_dir <- file.path(prof_dir, paste0("scalar_", donor_scalar_label))
-    donor_payload <- file.path(donor_dir, "profile_payload.rds")
-    if (file.exists(donor_payload)) {
+    if (abs(init_from_scalar - 100) < 1e-8 && file.exists(fallback_par)) {
+      return(list(path = fallback_par, source = "baseline_100", donor = init_from_scalar))
+    }
+
+    donor_dirs <- profile_scalar_dir_candidates(
+      donor_scalar_label = donor_scalar_label,
+      prof_dir = prof_dir,
+      profile_root_dir = profile_root_dir
+    )
+    for (donor_dir in donor_dirs) {
+      donor_payload <- file.path(donor_dir, "profile_payload.rds")
+      if (!file.exists(donor_payload)) next
       payload_obj <- tryCatch(readRDS(donor_payload), error = function(e) NULL)
       payload_lines <- NULL
       if (is.list(payload_obj) && !is.null(payload_obj$par_lines)) {
@@ -188,13 +213,21 @@ resolve_init_par <- function(init_par_override, init_from_scalar, scalar_dir, pr
       }
     }
 
-    donor_par <- mp_final_par(donor_dir)
-    if (!is.null(donor_par) && file.exists(donor_par)) {
-      out <- file.path(scalar_dir, paste0("warm_init_from_scalar_", donor_scalar_label, ".par"))
-      file.copy(donor_par, out, overwrite = TRUE)
-      return(list(path = out, source = "neighbor", donor = init_from_scalar))
+    for (donor_dir in donor_dirs) {
+      donor_par <- mp_final_par(donor_dir)
+      if (!is.null(donor_par) && file.exists(donor_par)) {
+        out <- file.path(scalar_dir, paste0("warm_init_from_scalar_", donor_scalar_label, ".par"))
+        file.copy(donor_par, out, overwrite = TRUE)
+        return(list(path = out, source = "neighbor", donor = init_from_scalar))
+      }
     }
-    warning("init_from_scalar set but donor final par not found in: ", donor_dir, " -> fallback")
+    warning(
+      "init_from_scalar set but donor final par not found for scalar ",
+      donor_scalar_label,
+      " under: ",
+      paste(donor_dirs, collapse = ", "),
+      " -> fallback"
+    )
   }
 
   # 3) Default
@@ -502,7 +535,8 @@ init_info <- resolve_init_par(
   scalar_dir = scalar_dir,
   prof_dir = prof_dir,
   fallback_par = most_recent,
-  init_map_entries = init_map_obj$entries
+  init_map_entries = init_map_obj$entries,
+  profile_root_dir = profile_storage$profile_root_dir
 )
 init_par_file <- init_info$path
 init_source <- init_info$source
