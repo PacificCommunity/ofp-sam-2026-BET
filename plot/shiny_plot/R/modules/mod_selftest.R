@@ -248,6 +248,11 @@ stp_input_info_row <- function(info, scenario) {
     weight_sample_size_mismatch = get_num("weight_sample_size_mismatch"),
     age_length_zero_prediction_bins = get_num("age_length_zero_prediction_bins"),
     age_length_sample_sizes_matched = get_lgl("age_length_sample_sizes_matched"),
+    base_minyear = get_num("base_minyear"),
+    base_maxyear = get_num("base_maxyear"),
+    pseudo_minyear = get_num("pseudo_minyear"),
+    pseudo_maxyear = get_num("pseudo_maxyear"),
+    estimation_period_matched = get_lgl("estimation_period_matched"),
     tag_source = get_chr("tag_source"),
     age_length_source = get_chr("age_length_source"),
     stringsAsFactors = FALSE

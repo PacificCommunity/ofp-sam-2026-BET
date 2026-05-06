@@ -874,6 +874,23 @@ st_build_pseudo_input <- function(base_dir,
     update_lw = update_lw,
     update_cpue = update_cpue
   )
+  base_frq_obj <- read.MFCLFrq(base_frq_file)
+  pseudo_frq_obj <- read.MFCLFrq(frq_file)
+  base_range <- as.integer(range(base_frq_obj)[c("minyear", "maxyear")])
+  pseudo_range <- as.integer(range(pseudo_frq_obj)[c("minyear", "maxyear")])
+  if (!identical(base_range, pseudo_range)) {
+    stop(
+      "Self-test pseudo .frq year range changed from fitted input range: base ",
+      paste(base_range, collapse = "-"),
+      ", pseudo ",
+      paste(pseudo_range, collapse = "-")
+    )
+  }
+  diagnostics$base_minyear <- base_range[[1]]
+  diagnostics$base_maxyear <- base_range[[2]]
+  diagnostics$pseudo_minyear <- pseudo_range[[1]]
+  diagnostics$pseudo_maxyear <- pseudo_range[[2]]
+  diagnostics$estimation_period_matched <- TRUE
 
   if (!is.null(par_file) && file.exists(par_file)) {
     file.copy(par_file, file.path(input_dir, basename(par_file)), overwrite = TRUE)

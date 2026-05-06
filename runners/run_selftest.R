@@ -280,8 +280,12 @@ for (rep_id in reps) {
       nsims = native_tag_nsims,
       output_par = "selftest_native_tag.par"
     )
-    cat("Native realtag generated:", native_tag_info$report_realtag,
-        "projection years:", proj_info$projection_years, "\n")
+    cat(
+      "Native realtag generated:", native_tag_info$report_realtag,
+      "(MFCL helper projection only:",
+      proj_info$first_projection_year, "-", proj_info$last_projection_year,
+      "; pseudo-data estimation period remains the fitted input period)\n"
+    )
   }
 
   if (nzchar(tag_sim_file)) {
