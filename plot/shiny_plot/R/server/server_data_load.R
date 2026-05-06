@@ -431,6 +431,9 @@ server_data_load <- function(input, output, session, rv) {
         updatePickerInput(session, "stock_scenarios", 
                           choices = model_choices_for(names(results_named)), 
                           selected = names(results_named))
+        updatePickerInput(session, "selftest_scenarios",
+                          choices = model_choices_for(names(results_named)),
+                          selected = names(results_named))
         updatePickerInput(session, "cpue_scenarios", 
                           choices = model_choices_for(available_cpue_models), 
                           selected = available_cpue_models)

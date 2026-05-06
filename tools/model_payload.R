@@ -305,7 +305,19 @@ mp_extract_rep_timeseries <- function(rep_obj, scenario = NA_character_, peel = 
 }
 
 mp_build_model_payload <- function(folder, tag_report_year1 = "auto") {
-  par_file <- mp_final_par(folder)
+  info_out <- if (file.exists(file.path(folder, "model_info.rds"))) mp_safe(readRDS(file.path(folder, "model_info.rds"))) else NULL
+  info_par <- NULL
+  info_par_name <- mp_safe(info_out$par_out)
+  if (length(info_par_name) > 0 && !is.na(info_par_name[1]) && nzchar(as.character(info_par_name[1]))) {
+    par_candidates <- unique(c(
+      as.character(info_par_name[1]),
+      file.path(folder, as.character(info_par_name[1])),
+      file.path(folder, basename(as.character(info_par_name[1])))
+    ))
+    info_par <- mp_first_or_null(par_candidates[file.exists(par_candidates)])
+  }
+
+  par_file <- if (!is.null(info_par)) info_par else mp_final_par(folder)
   rep_file <- mp_final_rep(folder)
 
   par_out <- if (!is.null(par_file) && file.exists(par_file)) mp_safe(read.MFCLPar(par_file)) else NULL
@@ -313,9 +325,11 @@ mp_build_model_payload <- function(folder, tag_report_year1 = "auto") {
 
   tagrep_out <- if (!is.null(par_file) && file.exists(par_file)) mp_safe(suppressWarnings(read.MFCLTagRep(par_file))) else NULL
 
-  info_out <- if (file.exists(file.path(folder, "model_info.rds"))) mp_safe(readRDS(file.path(folder, "model_info.rds"))) else NULL
   model_min_year <- suppressWarnings(as.numeric(info_out$min_year))
-  if (!is.finite(model_min_year)) model_min_year <- suppressWarnings(as.numeric(tryCatch(par_out@range["minyear"], error = function(e) NA)))
+  if (length(model_min_year) == 0 || !is.finite(model_min_year[1])) {
+    model_min_year <- suppressWarnings(as.numeric(tryCatch(par_out@range["minyear"], error = function(e) NA_real_)))
+  }
+  model_min_year <- if (length(model_min_year) == 0) NA_real_ else model_min_year[1]
 
   tag_year1 <- if (is.numeric(tag_report_year1) && length(tag_report_year1) > 0 && is.finite(tag_report_year1[1])) {
     as.integer(tag_report_year1[1])

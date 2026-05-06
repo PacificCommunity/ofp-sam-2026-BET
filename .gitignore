@@ -11,6 +11,7 @@ model
 .model_dir_last.rds
 .shiny_launcher_settings.rds
 logs/
+selftest/
 plot/.plot_export_dir_last.rds
 report/.knitr_cache/
 launchers/shiny_launcher/.launcher_settings.rds

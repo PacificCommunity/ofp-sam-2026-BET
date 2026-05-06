@@ -30,6 +30,16 @@ INPUT_RECIPE_FIXED_PARAMS ?=
 INPUT_RECIPE_MOVEMENT_PAIRS ?=
 INPUT_RECIPE_SEL_NODES ?=
 INPUT_RECIPE_INDEX_CV_HALF ?= 0
+SELFTEST_REPS ?= 1
+SELFTEST_REFIT_FEVALS ?= 500
+SELFTEST_BASE_DIR ?= mfcl/inputs/2023_4region
+SELFTEST_SOURCE_PAR ?=
+SELFTEST_SOURCE_MODE ?= last_par
+SELFTEST_REFIT_MODE ?= last_par
+SELFTEST_DIR ?= selftest/2023_4region
+SELFTEST_REQUIRE_NATIVE_TAGS ?= 1
+SELFTEST_NATIVE_TAG_PROJECTION_YEARS ?=
+SELFTEST_PROJECTION_AVERAGE_YEARS ?=
 
 build-4region:
 	Rscript tools/collapse_regions_9to4.R \
@@ -206,6 +216,34 @@ jitter_smoke:
 
 jitter_smoke_hessian:
 	jitter_smoke_only=1 jitter_hessian=1 jitter_smoke_hessian=1 Rscript runners/run_jitter.R
+
+selftest_build:
+	selftest_run_refit=0 \
+	selftest_reps="$(SELFTEST_REPS)" \
+	selftest_refit_fevals="$(SELFTEST_REFIT_FEVALS)" \
+	selftest_base_dir="$(SELFTEST_BASE_DIR)" \
+	selftest_source_par="$(SELFTEST_SOURCE_PAR)" \
+	selftest_source_mode="$(SELFTEST_SOURCE_MODE)" \
+	selftest_refit_mode="$(SELFTEST_REFIT_MODE)" \
+	selftest_dir="$(SELFTEST_DIR)" \
+	selftest_require_native_tags="$(SELFTEST_REQUIRE_NATIVE_TAGS)" \
+	selftest_native_tag_projection_years="$(SELFTEST_NATIVE_TAG_PROJECTION_YEARS)" \
+	selftest_projection_average_years="$(SELFTEST_PROJECTION_AVERAGE_YEARS)" \
+	Rscript runners/run_selftest.R
+
+selftest:
+	selftest_run_refit=1 \
+	selftest_reps="$(SELFTEST_REPS)" \
+	selftest_refit_fevals="$(SELFTEST_REFIT_FEVALS)" \
+	selftest_base_dir="$(SELFTEST_BASE_DIR)" \
+	selftest_source_par="$(SELFTEST_SOURCE_PAR)" \
+	selftest_source_mode="$(SELFTEST_SOURCE_MODE)" \
+	selftest_refit_mode="$(SELFTEST_REFIT_MODE)" \
+	selftest_dir="$(SELFTEST_DIR)" \
+	selftest_require_native_tags="$(SELFTEST_REQUIRE_NATIVE_TAGS)" \
+	selftest_native_tag_projection_years="$(SELFTEST_NATIVE_TAG_PROJECTION_YEARS)" \
+	selftest_projection_average_years="$(SELFTEST_PROJECTION_AVERAGE_YEARS)" \
+	Rscript runners/run_selftest.R
 
 hessian:
 	Rscript runners/run_hessian.R

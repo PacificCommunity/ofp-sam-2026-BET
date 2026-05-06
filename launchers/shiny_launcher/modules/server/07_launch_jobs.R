@@ -23,6 +23,7 @@
       jitter = "runners/run_jitter.R",
       hessian = "runners/run_hessian.R",
       retro = "runners/run_retro.R",
+      selftest = "runners/run_selftest.R",
       prof = "runners/run_prof.R",
       prof_chain = "runners/run_prof_chain.R",
       prof_2d = "runners/run_prof_2d.R",
@@ -90,6 +91,69 @@
     if (!is.finite(value) || value < min_value) value <- as.integer(default)
     if (!is.finite(value) || value < min_value) value <- as.integer(min_value)
     as.integer(value)
+  }
+
+  selftest_reps_for_launch <- function() {
+    n <- positive_int_input("selftest_reps_n", default = 20L)
+    as.integer(seq_len(n))
+  }
+
+  selftest_output_dir_for_env <- function(model_name, model_env) {
+    configured <- first_scalar_string(model_env$selftest_dir, default = "")
+    if (nzchar(configured)) return(configured)
+    requested <- first_scalar_string(input$selftest_output_dir, default = "")
+    if (nzchar(requested)) return(requested)
+    file.path("selftest", canonical_launch_basename(launch_model_name(model_name, model_env)))
+  }
+
+  set_selftest_env_pair <- function(env, key, value) {
+    env[[key]] <- as.character(value)
+    env[[toupper(key)]] <- as.character(value)
+    env
+  }
+
+	  apply_selftest_option_overrides <- function(model_name, model_env) {
+	    if (is.null(model_env)) return(model_env)
+	    env <- as.list(model_env, all.names = TRUE)
+
+    base_dir <- first_scalar_string(env$selftest_base_dir, default = "")
+    if (!nzchar(base_dir)) base_dir <- first_scalar_string(env$base_dir, default = "")
+    if (nzchar(base_dir)) {
+      env <- set_selftest_env_pair(env, "selftest_base_dir", base_dir)
+    }
+
+    source_par <- first_scalar_string(env$selftest_source_par, default = "")
+    if (nzchar(source_par)) {
+      env <- set_selftest_env_pair(env, "selftest_source_par", source_par)
+    }
+
+	    source_mode <- first_scalar_string(input$selftest_source_mode, default = "last_par")
+	    if (!source_mode %in% c("last_par", "doitall")) source_mode <- "last_par"
+	    refit_mode <- first_scalar_string(input$selftest_refit_mode, default = "last_par")
+	    if (!refit_mode %in% c("last_par", "doitall")) refit_mode <- "last_par"
+
+	    env <- set_selftest_env_pair(env, "selftest_dir", selftest_output_dir_for_env(model_name, env))
+	    env <- set_selftest_env_pair(env, "selftest_source_mode", source_mode)
+	    env <- set_selftest_env_pair(env, "selftest_refit_mode", refit_mode)
+	    if (identical(refit_mode, "last_par")) {
+	      env <- set_selftest_env_pair(env, "selftest_refit_fevals", positive_int_input("selftest_refit_fevals", default = 20L))
+	    }
+	    env <- set_selftest_env_pair(env, "selftest_require_native_tags", "1")
+
+    projection_years <- first_scalar_string(input$selftest_projection_years, default = "")
+    if (nzchar(projection_years)) {
+      env <- set_selftest_env_pair(env, "selftest_native_tag_projection_years", projection_years)
+    }
+
+    env
+  }
+
+  apply_selftest_rep_to_env <- function(job_env, selftest_rep = NULL) {
+    if (is.null(selftest_rep)) return(job_env)
+    rep_txt <- as.character(as.integer(selftest_rep))
+    job_env$selftest_reps <- rep_txt
+    job_env$SELFTEST_REPS <- rep_txt
+    job_env
   }
 
   launch_job_sequence <- function(n) {
@@ -881,8 +945,11 @@
   }
 
   active_model_env <- function(model_name) {
-    apply_launch_job_option_overrides(
-      apply_fitted_model_source_selection(model_name, launch_unit_display_env(model_name))
+    apply_selftest_option_overrides(
+      model_name,
+      apply_launch_job_option_overrides(
+        apply_fitted_model_source_selection(model_name, launch_unit_display_env(model_name))
+      )
     )
   }
 
@@ -1420,7 +1487,7 @@
   }
 
   fitted_source_job_types <- function() {
-    c("stage_check", "model", "jitter", "hessian", "prof", "prof_chain", "prof_2d")
+    c("stage_check", "model", "jitter", "hessian", "prof", "prof_chain", "prof_2d", "selftest")
   }
 
   job_uses_fitted_source <- function(job_env, job_type) {
@@ -1696,6 +1763,9 @@
     } else if (!is.null(spec$peel)) {
       job_env$retro_peel <- as.character(spec$peel)
       batch_suffix <- paste0("-retro", spec$peel)
+    } else if (!is.null(spec$selftest_rep)) {
+      job_env <- apply_selftest_rep_to_env(job_env, spec$selftest_rep)
+      batch_suffix <- sprintf("-selftest-rep%03d", as.integer(spec$selftest_rep))
     } else if (!is.null(spec$scalar)) {
       job_env$scalar <- as.character(spec$scalar)
       if (identical(spec$job_type, "prof")) {
@@ -1797,7 +1867,7 @@
     )
   }
 
-  launch_single_job_local <- function(model_name, model_env, job_type, seed = NULL, part = NULL, peel = NULL, scalar = NULL, log = TRUE) {
+  launch_single_job_local <- function(model_name, model_env, job_type, seed = NULL, part = NULL, peel = NULL, scalar = NULL, selftest_rep = NULL, log = TRUE) {
     launch_name <- launch_model_name(model_name, model_env)
     display_name <- if (identical(job_type, "prof") || identical(job_type, "prof_chain") || identical(job_type, "prof_2d")) profile_launch_name(launch_name, model_env) else launch_name
     if (isTRUE(log)) {
@@ -1806,6 +1876,7 @@
         "  → ",
         display_name,
         if (!is.null(seed)) paste0(" seed ", seed) else if (!is.null(part)) paste0(" part ", part) else if (!is.null(peel)) paste0(" peel ", peel) else if (!is.null(scalar)) paste0(" scalar ", scalar) else "",
+        if (!is.null(selftest_rep)) paste0(" self-test rep ", selftest_rep) else "",
         " [local",
         if (identical(input$launch_mode, "local_docker")) ", docker" else ", native",
         "]\n"
@@ -1827,7 +1898,8 @@
         seed = seed,
         part = part,
         peel = peel,
-        scalar = scalar
+        scalar = scalar,
+        selftest_rep = selftest_rep
       ),
       common_params = common_params
     )
@@ -1932,6 +2004,7 @@
       job_type,
       stage_check = c("build_inputs_on_missing", "input_recipe_enabled", "fitted_model_source_enabled", "fitted_model_bundle", "auto_run_model_before_dependency"),
       model = c("model_hessian"),
+	      selftest = c("selftest_reps", "selftest_source_mode", "selftest_refit_mode", "selftest_refit_fevals", "selftest_base_dir", "selftest_source_par", "selftest_dir", "selftest_require_native_tags", "selftest_native_tag_projection_years"),
       retro = c("retro_peel", "retro_peels", "retro_hessian"),
       jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian", "jitter_base_source"),
       hessian = c("hessian_part", "nsplit", "model_hessian"),
@@ -1998,6 +2071,7 @@
         job_type,
         stage_check = c("build_inputs_on_missing", "input_recipe_enabled", "fitted_model_source_enabled", "fitted_model_bundle", "auto_run_model_before_dependency"),
         model = c("model_hessian"),
+	        selftest = c("selftest_reps", "selftest_source_mode", "selftest_refit_mode", "selftest_refit_fevals", "selftest_base_dir", "selftest_source_par", "selftest_dir", "selftest_require_native_tags", "selftest_native_tag_projection_years"),
         retro = c("retro_peel", "retro_peels", "retro_hessian"),
         jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian", "jitter_base_source"),
         hessian = c("hessian_part", "nsplit", "model_hessian"),
@@ -2135,6 +2209,8 @@
           total_jobs <- total_jobs + nsplit
         } else if (identical(job_type, "retro")) {
           total_jobs <- total_jobs + length(parse_numeric_tokens(model_env$retro_peels))
+        } else if (identical(job_type, "selftest")) {
+          total_jobs <- total_jobs + length(selftest_reps_for_launch())
         } else if (identical(job_type, "prof")) {
           for (prof_env in selected_profile_1d_envs(model_env)) {
             scalars <- resolve_prof_scalars_for_mode(prof_env, prof_chain_mode = prof_chain_mode)
@@ -2184,6 +2260,9 @@
         } else if (identical(job_type, "retro")) {
           jobs <- length(parse_numeric_tokens(model_env$retro_peels))
           rows[[length(rows) + 1L]] <- data.frame(model = model_name, item = "retro", jobs = as.integer(jobs), stringsAsFactors = FALSE)
+        } else if (identical(job_type, "selftest")) {
+          jobs <- length(selftest_reps_for_launch())
+          rows[[length(rows) + 1L]] <- data.frame(model = model_name, item = "self-test", jobs = as.integer(jobs), stringsAsFactors = FALSE)
         } else if (identical(job_type, "prof")) {
           prof_envs <- selected_profile_1d_envs(model_env)
           for (prof_env in prof_envs) {
@@ -2374,6 +2453,7 @@
     total_jobs <- 0
     job_specs <- list()
   add_job_spec <- function(model_name, job_type, seed = NULL, part = NULL, peel = NULL, scalar = NULL,
+                           selftest_rep = NULL,
                            chain_name = NULL, chain_scalars = NULL, chain_first_init_from = NULL, chain_anchor = NULL,
                            profile_env = NULL) {
       job_specs[[length(job_specs) + 1]] <<- list(
@@ -2383,6 +2463,7 @@
         part = part,
         peel = peel,
         scalar = scalar,
+        selftest_rep = selftest_rep,
         chain_name = chain_name,
         chain_scalars = chain_scalars,
         chain_first_init_from = chain_first_init_from,
@@ -2411,6 +2492,12 @@
           total_jobs <- total_jobs + length(peels)
           for (peel in peels) {
             add_job_spec(model_name, job_type, peel = peel)
+          }
+        } else if (job_type == "selftest") {
+          reps <- selftest_reps_for_launch()
+          total_jobs <- total_jobs + length(reps)
+          for (rep_id in reps) {
+            add_job_spec(model_name, job_type, selftest_rep = rep_id)
           }
         } else if (job_type == "prof") {
           for (prof_env in selected_profile_1d_envs(model_env)) {
@@ -2635,6 +2722,7 @@
                   "truthy_scalar",
                   "first_scalar_string",
                   "set_prefer_par_start_env",
+                  "apply_selftest_rep_to_env",
                   "launch_model_name",
                   "sanitize_profile_job_tag",
                   "apply_prof_init_mapping",
@@ -2660,7 +2748,20 @@
               )
               parallel::clusterExport(
                 cl,
-                varlist = c("local_env_strings", "local_job_runner", "local_run_command", "launch_single_job_local_raw", "set_prefer_par_start_env", "common_params"),
+                varlist = c(
+                  "local_env_strings",
+                  "local_job_runner",
+                  "local_run_command",
+                  "local_command_preview",
+                  "launch_single_job_local_raw",
+                  "set_prefer_par_start_env",
+                  "apply_selftest_rep_to_env",
+                  "first_scalar_string",
+                  "launch_model_name",
+                  "sanitize_profile_job_tag",
+                  "apply_prof_init_mapping",
+                  "common_params"
+                ),
                 envir = environment()
               )
               parallel::parLapply(cl, job_specs, function(spec) {
@@ -2821,6 +2922,44 @@
                 )
                 maybe_send_progress_details()
                 
+                rv$launch_log <- paste0(
+                  rv$launch_log,
+                  sprintf("  ✓ %s: %s\n\n", tools::toTitleCase(completion_word), result$batch_name)
+                )
+              }
+              if (cancel_launch()) stop("Launch cancelled")
+            } else if (job_type == "selftest") {
+              reps <- selftest_reps_for_launch()
+              for (rep_id in reps) {
+                if (cancel_launch()) stop("Launch cancelled")
+                current_job <- current_job + 1
+
+                update_launch_notification(
+                  sprintf("%s job %d/%d: %s (self-test rep %d)",
+                          progress_prefix,
+                          current_job, total_jobs, model_name, rep_id)
+                )
+
+                rv$launch_log <- paste0(
+                  rv$launch_log,
+                  sprintf("[%d/%d] 🔄 %s: %s (self-test rep %d)\n",
+                          current_job, total_jobs, progress_prefix, model_name, rep_id)
+                )
+
+                progress_details <- c(
+                  progress_details,
+                  sprintf("[%d/%d] 🔄 %s (self-test rep %d)",
+                          current_job, total_jobs, model_name, rep_id)
+                )
+
+                result <- launch_single_job(model_name, model_env, job_type = job_type, selftest_rep = rep_id, exclude_slots = condor_exclude_slots)
+                collect_job_result(result)
+
+                progress_details[length(progress_details)] <- paste0(
+                  progress_details[length(progress_details)], " ✓"
+                )
+                maybe_send_progress_details()
+
                 rv$launch_log <- paste0(
                   rv$launch_log,
                   sprintf("  ✓ %s: %s\n\n", tools::toTitleCase(completion_word), result$batch_name)
@@ -3306,6 +3445,13 @@
       job_env$retro_peel <- as.character(spec$peel)
       remote_dir_suffix <- paste0(launch_name, "_peel", spec$peel)
       batch_suffix <- paste0("-retro", spec$peel)
+    } else if (!is.null(spec$selftest_rep)) {
+      job_env <- list2env(
+        apply_selftest_rep_to_env(as.list(job_env, all.names = TRUE), spec$selftest_rep),
+        parent = emptyenv()
+      )
+      remote_dir_suffix <- sprintf("%s_selftest_rep%03d", launch_name, as.integer(spec$selftest_rep))
+      batch_suffix <- sprintf("-selftest-rep%03d", as.integer(spec$selftest_rep))
     } else if (!is.null(spec$scalar)) {
       job_env$scalar <- as.character(spec$scalar)
       if (identical(spec$job_type, "prof")) {
@@ -3410,7 +3556,7 @@
     ))
   }
   
-  launch_single_job <- function(model_name, model_env, job_type, seed = NULL, part = NULL, peel = NULL, scalar = NULL, log = TRUE, exclude_slots = NULL) {
+  launch_single_job <- function(model_name, model_env, job_type, seed = NULL, part = NULL, peel = NULL, scalar = NULL, selftest_rep = NULL, log = TRUE, exclude_slots = NULL) {
     if (input$launch_mode %in% c("local_native", "local_docker")) {
       return(
         launch_single_job_local(
@@ -3421,6 +3567,7 @@
           part = part,
           peel = peel,
           scalar = scalar,
+          selftest_rep = selftest_rep,
           log = log
         )
       )
@@ -3455,6 +3602,10 @@
       job_env$retro_peel <- as.character(peel)
       remote_dir_suffix <- paste0(launch_name, "_peel", peel)
       batch_suffix <- paste0("-retro", peel)
+    } else if (!is.null(selftest_rep)) {
+      job_env <- apply_selftest_rep_to_env(job_env, selftest_rep)
+      remote_dir_suffix <- sprintf("%s_selftest_rep%03d", launch_name, as.integer(selftest_rep))
+      batch_suffix <- sprintf("-selftest-rep%03d", as.integer(selftest_rep))
     } else if (!is.null(scalar)) {
       job_env$scalar <- as.character(scalar)
       if (identical(job_type, "prof")) {

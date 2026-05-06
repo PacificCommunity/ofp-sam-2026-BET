@@ -106,7 +106,8 @@ launch_tab_ui <- function() {
                                                    "Jitter" = "jitter",
                                                    "Hessian" = "hessian",
                                                    "Retrospective" = "retro",
-                                                   "Profile" = "prof"),
+                                                   "Profile" = "prof",
+                                                   "Self-Test" = "selftest"),
                                        selected = NULL)
                   ),
                   column(
@@ -183,7 +184,49 @@ launch_tab_ui <- function() {
                           condition = "input.prof_launch_strategy == 'seq_anchor_bidir'",
                           numericInput("prof_anchor_scalar", "Anchor scalar:", value = 100, min = 1, step = 1)
                         )
-                      )
+                      ),
+                      conditionalPanel(
+                        condition = "input.job_types && input.job_types.indexOf('selftest') !== -1",
+                        numericInput(
+                          "selftest_reps_n",
+                          "Self-test reps:",
+                          value = 20,
+                          min = 1,
+                          step = 1
+                        ),
+		                        radioButtons(
+	                          "selftest_source_mode",
+	                          "Truth source:",
+	                          choices = c(
+	                            "Existing last .par" = "last_par",
+	                            "Run doitall.sh first" = "doitall"
+	                          ),
+	                          selected = "last_par"
+	                        ),
+	                        radioButtons(
+	                          "selftest_refit_mode",
+	                          "Refit mode:",
+	                          choices = c(
+	                            "Start from last .par" = "last_par",
+	                            "Run doitall.sh" = "doitall"
+	                          ),
+	                          selected = "last_par"
+	                        ),
+	                        conditionalPanel(
+	                          condition = "input.selftest_refit_mode == 'last_par'",
+	                        numericInput(
+	                          "selftest_refit_fevals",
+	                            "Refit fevals from last .par:",
+	                          value = 20,
+	                          min = 1,
+	                          step = 1
+	                          )
+	                        ),
+	                        tags$small(
+	                          "Self-test outputs are written under selftest/<model name>; native-tag projection length is chosen automatically.",
+	                          style = "display:block; color:#666; line-height:1.25; margin-top:-4px; margin-bottom:8px;"
+	                        )
+	                      )
                     )
                   )
                 )

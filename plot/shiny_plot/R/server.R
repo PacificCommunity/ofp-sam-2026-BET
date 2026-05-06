@@ -6,6 +6,7 @@ source("R/modules/mod_lf.R")
 source("R/modules/mod_wf.R")
 source("R/modules/mod_likelihood.R")
 source("R/modules/mod_sections.R")
+source("R/modules/mod_selftest.R")
 source("R/server/download_helpers.R")
 source("R/server/server_dir_detection.R")
 source("R/server/server_data_load.R")
@@ -213,6 +214,7 @@ server <- function(input, output, session) {
   mod_wf_server(input, output, session, rv)
   mod_likelihood_server(input, output, session, rv)
   mod_harvest_server(input, output, session, rv)
+  mod_selftest_server(input, output, session, rv)
   mod_tagging_server(input, output, session, rv)
   mod_fishery_process_server(input, output, session, rv)
   mod_population_biology_server(input, output, session, rv)
@@ -234,6 +236,7 @@ server <- function(input, output, session) {
     picker_ids_all <- c(
       "lik_scenarios",
       "harvest_scenarios",
+      "selftest_scenarios",
       "tag_scenarios",
       "fishery_process_scenarios",
       "population_biology_scenarios"

@@ -6,6 +6,7 @@ source("R/modules/mod_lf.R")
 source("R/modules/mod_wf.R")
 source("R/modules/mod_likelihood.R")
 source("R/modules/mod_sections.R")
+source("R/modules/mod_selftest.R")
 
 ui <- dashboardPage(
   skin = "blue",
@@ -108,6 +109,7 @@ ui <- dashboardPage(
       menuItem("⚖️ Weight Frequency", tabName = "wf", icon = NULL),
       menuItem("📉 Diagnostics", tabName = "diagnostics", icon = NULL),
       menuItem("⭐ Key Quantities", tabName = "harvest", icon = NULL),
+      menuItem("🧪 Self-Test", tabName = "selftest", icon = NULL),
       menuItem("🎣 Tagging Dynamics", tabName = "tagging", icon = NULL),
       menuItem("🚢 Fishery Process", tabName = "fishery_process", icon = NULL),
       menuItem("🧬 Population Biology", tabName = "population_biology", icon = NULL)
@@ -352,6 +354,7 @@ ui <- dashboardPage(
         body.live-update-on #wf_apply_filters,
         body.live-update-on #lik_apply_filters,
         body.live-update-on #harvest_apply_filters,
+        body.live-update-on #selftest_apply_filters,
         body.live-update-on #tag_apply_filters,
         body.live-update-on #fishery_process_apply_filters,
         body.live-update-on #population_biology_apply_filters,
@@ -729,15 +732,19 @@ ui <- dashboardPage(
       # -----------------------------------------------------------------------
       mod_harvest_ui(),
       # -----------------------------------------------------------------------
-      # TAB 9: TAGGING DYNAMICS
+      # TAB 9: SELF-TEST
+      # -----------------------------------------------------------------------
+      mod_selftest_ui(),
+      # -----------------------------------------------------------------------
+      # TAB 10: TAGGING DYNAMICS
       # -----------------------------------------------------------------------
       mod_tagging_ui(),
       # -----------------------------------------------------------------------
-      # TAB 10: FISHERY PROCESS DYNAMICS
+      # TAB 11: FISHERY PROCESS DYNAMICS
       # -----------------------------------------------------------------------
       mod_fishery_process_ui(),
       # -----------------------------------------------------------------------
-      # TAB 11: POPULATION BIOLOGY
+      # TAB 12: POPULATION BIOLOGY
       # -----------------------------------------------------------------------
       mod_population_biology_ui()
     ),

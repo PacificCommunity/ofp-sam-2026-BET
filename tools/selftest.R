@@ -1,0 +1,1052 @@
+st_truthy <- function(x, default = FALSE) {
+  if (is.null(x) || length(x) == 0) return(default)
+  txt <- tolower(trimws(as.character(x[[1]])))
+  if (!nzchar(txt) || is.na(txt)) return(default)
+  txt %in% c("1", "true", "yes", "y", "on")
+}
+
+st_first <- function(x, default = "") {
+  if (is.null(x) || length(x) == 0) return(default)
+  txt <- trimws(as.character(x[[1]]))
+  if (!nzchar(txt) || is.na(txt)) default else txt
+}
+
+st_safe_id <- function(x, default = "selftest") {
+  txt <- gsub("[^A-Za-z0-9]+", "_", as.character(x[[1]]))
+  txt <- gsub("^_+|_+$", "", txt)
+  if (!nzchar(txt)) default else txt
+}
+
+st_resolve_path <- function(path, project_root = getwd(), must_work = FALSE) {
+  path <- st_first(path)
+  if (!nzchar(path)) return("")
+  out <- if (grepl("^/", path)) path else file.path(project_root, path)
+  normalizePath(out, winslash = "/", mustWork = must_work)
+}
+
+st_latest_par <- function(dir_path) {
+  if (!dir.exists(dir_path)) return(NA_character_)
+  pars <- list.files(dir_path, pattern = "\\.par([0-9]+)?$", full.names = TRUE)
+  if (length(pars) == 0) return(NA_character_)
+  base_names <- basename(pars)
+  stems <- sub("\\.par[0-9]*$", "", base_names)
+  nums <- suppressWarnings(as.integer(stems))
+  exact <- grepl("^[0-9]+\\.par$", base_names)
+  info <- file.info(pars)
+  ord <- order(
+    !exact,
+    -ifelse(is.finite(nums), nums, -1L),
+    -ifelse(is.finite(as.numeric(info$mtime)), as.numeric(info$mtime), -Inf),
+    base_names
+  )
+  pars[ord][[1]]
+}
+
+st_first_file <- function(dir_path, pattern, required = TRUE) {
+  hits <- list.files(dir_path, pattern = pattern, full.names = TRUE)
+  if (length(hits) == 0) {
+    if (isTRUE(required)) stop("No file matching ", pattern, " in ", dir_path)
+    return(NA_character_)
+  }
+  hits[[1]]
+}
+
+st_copy_dir_contents <- function(from, to, overwrite = TRUE) {
+  if (!dir.exists(from)) stop("Source directory does not exist: ", from)
+  if (dir.exists(to)) unlink(to, recursive = TRUE, force = TRUE)
+  dir.create(to, recursive = TRUE, showWarnings = FALSE)
+  files <- list.files(from, full.names = TRUE, all.files = TRUE, no.. = TRUE)
+  if (length(files) > 0) {
+    ok <- file.copy(files, to = to, overwrite = overwrite, recursive = TRUE, copy.date = TRUE)
+    if (!all(ok)) stop("Failed to copy some files from ", from, " to ", to)
+  }
+  invisible(to)
+}
+
+st_key <- function(year, month, week, fishery) {
+  paste(as.integer(year), as.integer(month), as.integer(week), as.integer(fishery), sep = "_")
+}
+
+st_num_key <- function(x) {
+  sprintf("%.10g", suppressWarnings(as.numeric(x)))
+}
+
+st_parse_numeric_tokens <- function(x) {
+  if (is.null(x) || length(x) == 0) return(numeric(0))
+  toks <- unlist(strsplit(paste(as.character(x), collapse = " "), "[,[:space:]]+"))
+  toks <- toks[nzchar(toks)]
+  suppressWarnings(as.numeric(toks))
+}
+
+st_make_switch <- function(changes) {
+  if (is.data.frame(changes)) changes <- as.matrix(changes)
+  if (is.null(dim(changes))) {
+    if (length(changes) %% 3 != 0) stop("Switch changes must be type/index/value triplets.")
+    changes <- matrix(changes, ncol = 3, byrow = TRUE)
+  }
+  if (ncol(changes) != 3) stop("Switch changes must have three columns: type, index, value.")
+  changes <- apply(changes, 2, as.integer)
+  n_changes <- nrow(changes)
+  paste("-switch", n_changes, paste(as.vector(t(changes)), collapse = " "))
+}
+
+st_normalise_switch <- function(switch_args) {
+  switch_args <- st_first(switch_args)
+  if (!nzchar(switch_args)) return(st_default_switch())
+  if (!grepl("(^|[[:space:]])-switch([[:space:]]|$)", switch_args)) {
+    switch_args <- paste("-switch", switch_args)
+  }
+  tokens <- unlist(strsplit(trimws(sub("(^|.*[[:space:]])-switch[[:space:]]+", "", switch_args)), "[[:space:]]+"))
+  tokens <- tokens[nzchar(tokens)]
+  vals <- suppressWarnings(as.integer(tokens))
+  if (length(vals) < 1L || anyNA(vals)) stop("Invalid -switch argument: ", switch_args)
+  n_changes <- vals[[1]]
+  expected <- 1L + 3L * n_changes
+  if (length(vals) != expected) {
+    stop(
+      "Invalid -switch argument: declared ", n_changes, " changes but found ",
+      (length(vals) - 1L) / 3, " triplets in: ", switch_args
+    )
+  }
+  paste("-switch", paste(vals, collapse = " "))
+}
+
+st_default_switch <- function() {
+  st_make_switch(rbind(
+    c(1, 1, 1),
+    c(1, 241, 1),
+    c(1, 242, 1),
+    c(1, 190, 1),
+    c(1, 186, 1),
+    c(1, 187, 1),
+    c(1, 188, 1),
+    c(1, 189, 1),
+    c(2, 96, 200)
+  ))
+}
+
+st_projection_step7_switch <- function(nsims = 1L) {
+  st_make_switch(rbind(
+    c(1, 145, 7),
+    c(2, 20, as.integer(nsims))
+  ))
+}
+
+st_projection_step8_switch <- function(nsims = 1L) {
+  st_make_switch(rbind(
+    c(1, 145, 8),
+    c(1, 234, 1),
+    c(1, 235, 20),
+    c(1, 237, 0),
+    c(2, 20, as.integer(nsims))
+  ))
+}
+
+st_native_tag_switch <- function(nsims = 1L) {
+  st_make_switch(rbind(
+    c(1, 1, 1),
+    c(1, 241, 1),
+    c(1, 242, 1),
+    c(1, 190, 1),
+    c(1, 186, 1),
+    c(1, 187, 1),
+    c(1, 188, 1),
+    c(1, 246, 0),
+    c(2, 96, 200),
+    c(2, 20, as.integer(nsims)),
+    c(2, 183, 1)
+  ))
+}
+
+st_system_mfcl <- function(cmd, log_file) {
+  cat("MFCL command:\n", cmd, "\n")
+  status <- system(paste(cmd, ">", shQuote(log_file), "2>&1"), intern = FALSE)
+  as.integer(status)
+}
+
+st_write_minimal_tag_sim <- function(out_file,
+                                     frq_file,
+                                     n_release = 100,
+                                     reporting_rate = 0.5,
+                                     year = NA_integer_,
+                                     month = NA_integer_,
+                                     fishery = NA_integer_) {
+  frq_obj <- read.MFCLFrq(frq_file)
+  real_df <- realisations(frq_obj)
+  real_df <- real_df[is.finite(real_df$year) & is.finite(real_df$month), , drop = FALSE]
+  if (nrow(real_df) == 0) stop("Cannot build .tag_sim because the .frq has no fishing incidents: ", frq_file)
+
+  terminal_year <- if (is.finite(year)) as.integer(year) else max(real_df$year, na.rm = TRUE)
+  terminal_month <- if (is.finite(month)) as.integer(month) else max(real_df$month[real_df$year == terminal_year], na.rm = TRUE)
+  terminal_fishery <- if (is.finite(fishery)) {
+    as.integer(fishery)
+  } else {
+    suppressWarnings(as.integer(real_df$fishery[real_df$year == terminal_year & real_df$month == terminal_month][[1]]))
+  }
+  if (!is.finite(terminal_fishery)) terminal_fishery <- 1L
+  n_fisheries <- suppressWarnings(as.integer(frq_obj@n_fisheries))
+  if (!is.finite(n_fisheries) || n_fisheries < 1L) n_fisheries <- max(real_df$fishery, na.rm = TRUE)
+
+  lines <- c(
+    "# RELEASE GROUPS",
+    "1",
+    "#",
+    "# 1 - RELEASE REGION YEAR MONTH Fishery Predicted numbers",
+    sprintf("1 %d %d %d %d", as.integer(terminal_year), as.integer(terminal_month), terminal_fishery, as.integer(n_release)),
+    "#",
+    "# Reporting rates for each event: rows = fisheries; cols = tag events",
+    rep(sprintf("%.6f", reporting_rate), n_fisheries)
+  )
+  writeLines(lines, out_file)
+  invisible(out_file)
+}
+
+st_projection_controls <- function(frq_obj, average_years = numeric(0)) {
+  max_year <- as.integer(range(frq_obj)["maxyear"])
+  if (length(average_years) == 0 || !all(is.finite(average_years))) {
+    average_years <- (max_year - 2L):max_year
+  }
+  average_years <- as.character(as.integer(average_years))
+  n_fish <- as.integer(n_fisheries(frq_obj))
+  dff <- data_flags(frq_obj)
+  rd <- realisations(frq_obj)
+  has_effort <- vapply(seq_len(n_fish), function(i) {
+    vals <- rd$effort[rd$fishery == i]
+    any(is.finite(vals) & vals > 0)
+  }, logical(1))
+  caeff <- ifelse(dff[1, seq_len(n_fish)] == 1 | !has_effort, 1L, 2L)
+  controls <- data.frame(
+    name = paste0("F", seq_len(n_fish)),
+    region = as.numeric(c(region_fish(frq_obj))),
+    caeff = as.integer(caeff),
+    scaler = 1,
+    ess_length = NA_real_,
+    ess_weight = NA_real_
+  )
+  list(average_years = average_years, controls = controls)
+}
+
+st_prepare_projection_input <- function(sim_dir,
+                                        program_path_abs,
+                                        frq_file,
+                                        par_file,
+                                        projection_years = NA_integer_,
+                                        average_years = numeric(0),
+                                        projection_root = "selftest_proj") {
+  old_wd <- getwd()
+  on.exit(setwd(old_wd), add = TRUE)
+  setwd(sim_dir)
+
+  frq_obj <- read.MFCLFrq(frq_file)
+  par_obj <- read.MFCLPar(par_file)
+  if (length(projection_years) == 0 || !is.finite(projection_years)) {
+    projection_years <- max(30L, as.integer(dimensions(par_obj)["agecls"]))
+  }
+  ctl <- st_projection_controls(frq_obj, average_years = average_years)
+  first_projection_year <- as.integer(range(frq_obj)["maxyear"]) + 1L
+  proj_ctl <- MFCLprojControl(
+    nyears = as.integer(projection_years),
+    nsims = 1,
+    avyrs = ctl$average_years,
+    fprojyr = first_projection_year,
+    controls = ctl$controls
+  )
+  proj_frq <- generate(frq_obj, proj_ctl)
+
+  proj_frq_file <- file.path(sim_dir, paste0(projection_root, ".frq"))
+  zero_par_file <- file.path(sim_dir, paste0(projection_root, "_00.par"))
+  proj_par_file <- file.path(sim_dir, paste0(projection_root, ".par"))
+  FLR4MFCL::write(proj_frq, proj_frq_file)
+
+  tag_file <- st_first_file(sim_dir, "\\.tag$", required = FALSE)
+  if (!is.na(tag_file)) file.copy(tag_file, file.path(sim_dir, paste0(projection_root, ".tag")), overwrite = TRUE)
+  alk_file <- st_first_file(sim_dir, "\\.age_length$", required = FALSE)
+  if (!is.na(alk_file)) file.copy(alk_file, file.path(sim_dir, paste0(projection_root, ".age_length")), overwrite = TRUE)
+  ini_file <- st_first_file(sim_dir, "\\.ini$")
+
+  makepar_cmd <- paste(
+    shQuote(program_path_abs),
+    shQuote(basename(proj_frq_file)),
+    shQuote(basename(ini_file)),
+    shQuote(basename(zero_par_file)),
+    "-makepar"
+  )
+  makepar_log <- file.path(sim_dir, "mfcl_selftest_projection_makepar_log.txt")
+  makepar_status <- st_system_mfcl(makepar_cmd, makepar_log)
+  if (!file.exists(zero_par_file)) {
+    stop("Projection makepar did not create ", zero_par_file, "; see ", makepar_log)
+  }
+
+  zero_par <- read.MFCLPar(zero_par_file)
+  proj_par <- generate(par_obj, zero_par, proj_frq)
+  FLR4MFCL::write(proj_par, proj_par_file)
+
+  st_write_minimal_tag_sim(
+    file.path(sim_dir, paste0(projection_root, ".tag_sim")),
+    proj_frq_file
+  )
+
+  info <- list(
+    projection_root = projection_root,
+    projection_years = as.integer(projection_years),
+    average_years = ctl$average_years,
+    projection_frq = proj_frq_file,
+    projection_par = proj_par_file,
+    first_projection_year = first_projection_year,
+    last_projection_year = as.integer(range(proj_frq)["maxyear"]),
+    makepar_status = makepar_status,
+    makepar_log = makepar_log
+  )
+  saveRDS(info, file.path(sim_dir, "selftest_projection_info.rds"), compress = "xz")
+  info
+}
+
+st_run_native_tag_simulation <- function(sim_dir,
+                                         program_path_abs,
+                                         projection_info,
+                                         seeds,
+                                         nsims = 1L,
+                                         output_par = "selftest_native_tag.par") {
+  old_wd <- getwd()
+  on.exit(setwd(old_wd), add = TRUE)
+  setwd(sim_dir)
+
+  writeLines(as.character(as.integer(seeds$tag)), file.path(sim_dir, "simseed"))
+  step7_cmd <- paste(
+    shQuote(program_path_abs),
+    shQuote(basename(projection_info$projection_frq)),
+    shQuote(basename(projection_info$projection_par)),
+    shQuote("selftest_stoch.par"),
+    st_projection_step7_switch(nsims)
+  )
+  step7_log <- file.path(sim_dir, "mfcl_selftest_stoch7_log.txt")
+  step7_status <- st_system_mfcl(step7_cmd, step7_log)
+  if (!file.exists(file.path(sim_dir, paste0(projection_info$projection_root, ".dep"))) ||
+      !file.exists(file.path(sim_dir, "proparams.val")) ||
+      !file.exists(file.path(sim_dir, "proparams_noeff.val"))) {
+    stop("Stochastic projection step 7 did not create dependency files; see ", step7_log)
+  }
+
+  step8_cmd <- paste(
+    shQuote(program_path_abs),
+    shQuote(basename(projection_info$projection_frq)),
+    shQuote(basename(projection_info$projection_par)),
+    shQuote("selftest_stoch.par"),
+    st_projection_step8_switch(nsims)
+  )
+  step8_log <- file.path(sim_dir, "mfcl_selftest_stoch8_log.txt")
+  step8_status <- st_system_mfcl(step8_cmd, step8_log)
+  required_stoch <- c("simulated_numbers_at_age", "simulated_numbers_at_age_noeff", "simyears")
+  missing_stoch <- required_stoch[!file.exists(file.path(sim_dir, required_stoch))]
+  if (length(missing_stoch) > 0) {
+    stop("Stochastic projection step 8 missing: ", paste(missing_stoch, collapse = ", "), "; see ", step8_log)
+  }
+
+  seed_args <- c(
+    "-length_seed", as.integer(seeds$length),
+    "-weight_seed", as.integer(seeds$weight),
+    "-catch_seed", as.integer(seeds$catch),
+    "-effort_seed", as.integer(seeds$effort),
+    "-cpue_seed", as.integer(seeds$cpue),
+    "-tag_seed", as.integer(seeds$tag)
+  )
+  tag_cmd <- paste(
+    shQuote(program_path_abs),
+    shQuote(basename(projection_info$projection_frq)),
+    shQuote(basename(projection_info$projection_par)),
+    shQuote(output_par),
+    st_native_tag_switch(nsims),
+    paste(seed_args, collapse = " ")
+  )
+  tag_log <- file.path(sim_dir, "mfcl_selftest_native_tag_log.txt")
+  tag_status <- st_system_mfcl(tag_cmd, tag_log)
+  realtag <- list.files(sim_dir, pattern = "^report\\.realtag_[0-9]+$", full.names = TRUE)
+  if (length(realtag) == 0) {
+    stop("Native tag simulation did not create report.realtag_#; see ", tag_log)
+  }
+
+  info <- list(
+    step7_status = step7_status,
+    step8_status = step8_status,
+    tag_status = tag_status,
+    report_realtag = basename(realtag[[1]]),
+    step7_log = step7_log,
+    step8_log = step8_log,
+    native_tag_log = tag_log
+  )
+  saveRDS(info, file.path(sim_dir, "selftest_native_tag_info.rds"), compress = "xz")
+  info
+}
+
+st_run_mfcl_simulation <- function(sim_dir,
+                                   program_path_abs,
+                                   frq_file,
+                                   par_file,
+                                   output_par = "selftest_sim.par",
+                                   switch_args = st_default_switch(),
+                                   seeds = list(length = 101L, weight = 102L, catch = 103L, effort = 104L, cpue = 105L, tag = 106L),
+                                   log_file = file.path(sim_dir, "mfcl_selftest_sim_log.txt")) {
+  old_wd <- getwd()
+  on.exit(setwd(old_wd), add = TRUE)
+  setwd(sim_dir)
+
+  seed_args <- c(
+    "-length_seed", as.integer(seeds$length),
+    "-weight_seed", as.integer(seeds$weight),
+    "-catch_seed", as.integer(seeds$catch),
+    "-effort_seed", as.integer(seeds$effort),
+    "-cpue_seed", as.integer(seeds$cpue),
+    "-tag_seed", as.integer(seeds$tag)
+  )
+  switch_args <- st_normalise_switch(switch_args)
+  cmd <- paste(
+    shQuote(program_path_abs),
+    shQuote(basename(frq_file)),
+    shQuote(basename(par_file)),
+    shQuote(output_par),
+    switch_args,
+    paste(seed_args, collapse = " ")
+  )
+
+  cat("MFCL simulation command:\n", cmd, "\n")
+  status <- system(paste(cmd, ">", shQuote(log_file), "2>&1"), intern = FALSE)
+
+  sim_files <- c("test_lw_sim", "test_lw_sim_alt", "catch_sim", "effort_sim", "cpue_sim", "cpue_sim_true")
+  present <- sim_files[file.exists(file.path(sim_dir, sim_files))]
+  info <- list(
+    command = cmd,
+    status = as.integer(status),
+    output_par = output_par,
+    seeds = seeds,
+    expected_files = sim_files,
+    present_files = present,
+    log_file = log_file
+  )
+  saveRDS(info, file.path(sim_dir, "selftest_sim_info.rds"), compress = "xz")
+  info
+}
+
+st_parse_catch_sim <- function(path, frq_obj) {
+  if (!file.exists(path)) return(NULL)
+  lines <- readLines(path, warn = FALSE)
+  data_lines <- lines[!grepl("^\\s*#", lines) & nzchar(trimws(lines))]
+  if (length(data_lines) == 0) return(NULL)
+  vals <- utils::read.table(text = paste(data_lines, collapse = "\n"), fill = TRUE)
+  sim_val <- if (ncol(vals) >= 2) vals[[2]] else vals[[1]]
+  real_df <- realisations(frq_obj)
+  if (length(sim_val) < nrow(real_df)) {
+    warning("catch_sim has fewer rows than .frq realisations; using available rows only.")
+  }
+  n <- min(length(sim_val), nrow(real_df))
+  data.frame(
+    key = st_key(real_df$year[seq_len(n)], real_df$month[seq_len(n)], real_df$week[seq_len(n)], real_df$fishery[seq_len(n)]),
+    catch = suppressWarnings(as.numeric(sim_val[seq_len(n)])),
+    stringsAsFactors = FALSE
+  )
+}
+
+st_parse_cpue_sim <- function(path, frq_obj) {
+  if (!file.exists(path)) return(NULL)
+  lines <- readLines(path, warn = FALSE)
+  fish_lines <- grep("^\\s*Fishery\\s*:", lines, value = TRUE)
+  if (length(fish_lines) == 0) return(NULL)
+  real_df <- realisations(frq_obj)
+  out <- lapply(fish_lines, function(line) {
+    fishery <- suppressWarnings(as.integer(sub("^\\s*Fishery\\s*:\\s*([0-9]+).*", "\\1", line)))
+    value_txt <- sub("^\\s*Fishery\\s*:\\s*[0-9]+\\s*", "", line)
+    vals <- suppressWarnings(as.numeric(unlist(strsplit(trimws(value_txt), "[[:space:]]+"))))
+    vals <- vals[is.finite(vals)]
+    fish_df <- real_df[real_df$fishery == fishery, , drop = FALSE]
+    n <- min(length(vals), nrow(fish_df))
+    if (n == 0) return(NULL)
+    data.frame(
+      key = st_key(fish_df$year[seq_len(n)], fish_df$month[seq_len(n)], fish_df$week[seq_len(n)], fish_df$fishery[seq_len(n)]),
+      cpue = vals[seq_len(n)],
+      stringsAsFactors = FALSE
+    )
+  })
+  out <- out[!vapply(out, is.null, logical(1))]
+  if (length(out) == 0) return(NULL)
+  do.call(rbind, out)
+}
+
+st_read_next_numeric_line <- function(lines, i) {
+  n <- length(lines)
+  while (i <= n) {
+    txt <- trimws(lines[[i]])
+    if (nzchar(txt) && !grepl("^#", txt)) {
+      vals <- suppressWarnings(as.numeric(unlist(strsplit(txt, "[[:space:]]+"))))
+      return(list(index = i, values = vals[!is.na(vals)]))
+    }
+    i <- i + 1L
+  }
+  NULL
+}
+
+st_parse_lw_sim <- function(path, frq_obj) {
+  if (!file.exists(path)) return(NULL)
+  lines <- readLines(path, warn = FALSE)
+  lf <- lf_range(frq_obj)
+  length_bins <- seq(lf["LFFirst"], by = lf["LFWidth"], length.out = lf["LFIntervals"])
+  weight_bins <- seq(lf["WFFirst"], by = lf["WFWidth"], length.out = lf["WFIntervals"])
+
+  out <- list()
+  type <- NA_character_
+  projection <- NA_integer_
+  seed <- NA_integer_
+  i <- 1L
+  while (i <= length(lines)) {
+    txt <- trimws(lines[[i]])
+    if (!nzchar(txt)) {
+      i <- i + 1L
+      next
+    }
+    if (grepl("^#\\s*Simulated length", txt, ignore.case = TRUE)) {
+      type <- "length"
+      i <- i + 1L
+      next
+    }
+    if (grepl("^#\\s*Simulated weight", txt, ignore.case = TRUE)) {
+      type <- "weight"
+      i <- i + 1L
+      next
+    }
+    if (grepl("^#\\s*projection", txt, ignore.case = TRUE)) {
+      projection <- suppressWarnings(as.integer(tail(strsplit(txt, "[[:space:]]+")[[1]], 1)))
+      i <- i + 1L
+      next
+    }
+    if (grepl("^#\\s*seed", txt, ignore.case = TRUE)) {
+      seed <- suppressWarnings(as.integer(tail(strsplit(txt, "[[:space:]]+")[[1]], 1)))
+      i <- i + 1L
+      next
+    }
+    if (grepl("^#", txt) || is.na(type)) {
+      i <- i + 1L
+      next
+    }
+
+    key_vals <- suppressWarnings(as.numeric(unlist(strsplit(txt, "[[:space:]]+"))))
+    if (length(key_vals) < 4) {
+      i <- i + 1L
+      next
+    }
+    sample_line <- st_read_next_numeric_line(lines, i + 1L)
+    data_line <- if (!is.null(sample_line)) st_read_next_numeric_line(lines, sample_line$index + 1L) else NULL
+    if (is.null(sample_line) || is.null(data_line)) break
+
+    bins <- if (identical(type, "length")) length_bins else weight_bins
+    vals <- data_line$values
+    if (length(vals) > length(bins)) vals <- vals[seq_along(bins)]
+    if (length(vals) < length(bins)) vals <- c(vals, rep(NA_real_, length(bins) - length(vals)))
+    out[[length(out) + 1L]] <- data.frame(
+      type = type,
+      projection = projection,
+      seed = seed,
+      year = as.integer(key_vals[[1]]),
+      month = as.integer(key_vals[[2]]),
+      week = as.integer(key_vals[[3]]),
+      fishery = as.integer(key_vals[[4]]),
+      bin = bins,
+      freq = vals,
+      sample_size = suppressWarnings(as.numeric(sample_line$values[[1]])),
+      stringsAsFactors = FALSE
+    )
+    i <- data_line$index + 1L
+  }
+
+  if (length(out) == 0) return(NULL)
+  do.call(rbind, out)
+}
+
+st_parse_agelength_predictions <- function(path, n_age) {
+  if (!file.exists(path)) return(NULL)
+  lines <- readLines(path, warn = FALSE)
+  header_re <- "^\\s*Fishery\\s+([0-9]+)\\s+Year\\s+([0-9]+)\\s+Month\\s+([0-9]+)"
+  out <- list()
+  i <- 1L
+  sample_index <- 0L
+
+  while (i <= length(lines)) {
+    line <- lines[[i]]
+    if (!grepl(header_re, line, ignore.case = TRUE)) {
+      i <- i + 1L
+      next
+    }
+
+    sample_index <- sample_index + 1L
+    fishery <- as.integer(sub(header_re, "\\1", line, ignore.case = TRUE))
+    year <- as.integer(sub(header_re, "\\2", line, ignore.case = TRUE))
+    month <- as.integer(sub(header_re, "\\3", line, ignore.case = TRUE))
+    i <- i + 1L
+    length_index <- 0L
+
+    while (i + 2L <= length(lines) && !grepl(header_re, lines[[i]], ignore.case = TRUE)) {
+      total_line <- st_parse_numeric_tokens(lines[[i]])
+      observed <- st_parse_numeric_tokens(lines[[i + 1L]])
+      predicted <- st_parse_numeric_tokens(lines[[i + 2L]])
+      if (length(total_line) == 0 && length(observed) == 0 && length(predicted) == 0) {
+        i <- i + 1L
+        next
+      }
+      if (length(observed) < n_age || length(predicted) < n_age) {
+        stop(
+          "Age-length residual block has fewer age columns than expected at sample ",
+          sample_index, " in ", path
+        )
+      }
+      length_index <- length_index + 1L
+      out[[length(out) + 1L]] <- data.frame(
+        sample_index = sample_index,
+        fishery = fishery,
+        year = year,
+        month = month,
+        length_index = length_index,
+        age = seq_len(n_age),
+        observed_prop = observed[seq_len(n_age)],
+        predicted_prop = predicted[seq_len(n_age)],
+        stringsAsFactors = FALSE
+      )
+      i <- i + 3L
+    }
+  }
+
+  if (length(out) == 0) return(NULL)
+  do.call(rbind, out)
+}
+
+st_apply_pseudo_to_age_length <- function(base_alk_file,
+                                          out_alk_file,
+                                          sim_dir,
+                                          seed = 1007L) {
+  pred_path <- file.path(sim_dir, "agelengthresids.dat")
+  if (!file.exists(pred_path)) {
+    stop("Cannot simulate age-length data: missing MFCL agelengthresids.dat in ", sim_dir)
+  }
+
+  alk <- read.MFCLALK(base_alk_file)
+  alk_df <- alk@ALK
+  n_age <- max(alk_df$age, na.rm = TRUE)
+  if (!is.finite(n_age) || n_age < 1L) stop("Cannot infer number of ages from ", base_alk_file)
+
+  preds <- st_parse_agelength_predictions(pred_path, n_age = n_age)
+  if (is.null(preds) || nrow(preds) == 0) {
+    stop("Cannot parse age-length predictions from ", pred_path)
+  }
+
+  sample_key <- paste(alk_df$year, alk_df$month, alk_df$fishery, alk_df$species, sep = "_")
+  sample_levels <- unique(sample_key)
+  pred_key <- paste(preds$year, preds$month, preds$fishery, sep = "_")
+  pred_levels <- unique(pred_key)
+
+  if (length(sample_levels) != length(pred_levels)) {
+    stop(
+      "Age-length sample count mismatch: input has ", length(sample_levels),
+      " samples but agelengthresids.dat has ", length(pred_levels), "."
+    )
+  }
+
+  set.seed(as.integer(seed))
+  original_counts <- alk_df$obs
+  simulated_records <- 0L
+  simulated_length_bins <- 0L
+  zero_prediction_bins <- 0L
+
+  for (sample_id in seq_along(sample_levels)) {
+    idx <- which(sample_key == sample_levels[[sample_id]])
+    sample_meta <- alk_df[idx[1L], , drop = FALSE]
+    key3 <- paste(sample_meta$year, sample_meta$month, sample_meta$fishery, sep = "_")
+    pred_sample <- preds[pred_key == key3, , drop = FALSE]
+    if (nrow(pred_sample) == 0) {
+      stop("No age-length predictions found for sample ", sample_levels[[sample_id]])
+    }
+
+    n_len <- length(idx) / n_age
+    if (n_len != floor(n_len)) {
+      stop("Age-length sample is not a rectangular length x age matrix: ", sample_levels[[sample_id]])
+    }
+    if (max(pred_sample$length_index, na.rm = TRUE) < n_len) {
+      stop("Age-length prediction block has too few length bins for ", sample_levels[[sample_id]])
+    }
+    pred_profiles <- lapply(seq_len(n_len), function(len_id) {
+      pred_len <- pred_sample[pred_sample$length_index == len_id, , drop = FALSE]
+      pred_len <- pred_len[order(pred_len$age), , drop = FALSE]
+      pmax(as.numeric(pred_len$predicted_prop[seq_len(n_age)]), 0)
+    })
+    pred_sums <- vapply(pred_profiles, sum, numeric(1), na.rm = TRUE)
+
+    for (len_id in seq_len(n_len)) {
+      len_idx <- idx[((len_id - 1L) * n_age + 1L):(len_id * n_age)]
+      n_obs <- round(sum(original_counts[len_idx], na.rm = TRUE))
+      prob <- pred_profiles[[len_id]]
+
+      if (n_obs <= 0L) {
+        alk_df$obs[len_idx] <- 0
+        next
+      }
+      if (!is.finite(sum(prob)) || sum(prob) <= 0) {
+        donor <- which(is.finite(pred_sums) & pred_sums > 0)
+        if (length(donor) == 0) {
+          stop("All age-length predicted probabilities are zero for ", sample_levels[[sample_id]])
+        }
+        donor <- donor[which.min(abs(donor - len_id))]
+        prob <- pred_profiles[[donor]]
+        zero_prediction_bins <- zero_prediction_bins + 1L
+      }
+      alk_df$obs[len_idx] <- as.numeric(rmultinom(1L, size = n_obs, prob = prob))
+      simulated_length_bins <- simulated_length_bins + 1L
+    }
+    simulated_records <- simulated_records + 1L
+  }
+
+  old_by_bin <- rowsum(original_counts, rep(seq_len(length(original_counts) / n_age), each = n_age), reorder = FALSE)
+  new_by_bin <- rowsum(alk_df$obs, rep(seq_len(length(alk_df$obs) / n_age), each = n_age), reorder = FALSE)
+  sample_sizes_matched <- isTRUE(all.equal(as.numeric(old_by_bin[, 1]), as.numeric(new_by_bin[, 1]), tolerance = 0))
+
+  alk@ALK <- alk_df
+  FLR4MFCL::write(alk, file = out_alk_file)
+
+  list(
+    age_length_source = basename(pred_path),
+    age_length_records = simulated_records,
+    age_length_nonzero_length_bins = simulated_length_bins,
+    age_length_zero_prediction_bins = zero_prediction_bins,
+    age_length_total_obs = sum(original_counts, na.rm = TRUE),
+    age_length_total_sim = sum(alk_df$obs, na.rm = TRUE),
+    age_length_sample_sizes_matched = sample_sizes_matched,
+    out_age_length_file = out_alk_file
+  )
+}
+
+st_tag_summary <- function(path) {
+  tag <- read.MFCLTag(path)
+  list(
+    release_groups = as.integer(tag@release_groups),
+    release_rows = nrow(tag@releases),
+    recapture_rows = nrow(tag@recaptures),
+    recaptures_total = sum(tag@recaptures$recap.number, na.rm = TRUE)
+  )
+}
+
+st_apply_native_realtag <- function(base_tag_file, out_tag_file, sim_dir) {
+  realtag <- list.files(sim_dir, pattern = "^report\\.realtag_[0-9]+$", full.names = TRUE)
+  if (length(realtag) == 0) {
+    stoch_files <- c("simulated_numbers_at_age", "simulated_numbers_at_age_noeff", "simyears")
+    stoch_present <- stoch_files[file.exists(file.path(sim_dir, stoch_files))]
+    log_file <- file.path(sim_dir, "mfcl_selftest_sim_log.txt")
+    log_hint <- ""
+    if (file.exists(log_file)) {
+      log_txt <- readLines(log_file, warn = FALSE)
+      if (any(grepl("simulated_numbers_at_age", log_txt, fixed = TRUE))) {
+        log_hint <- " MFCL log mentions simulated_numbers_at_age, which usually means age_flag(20)>0 entered the stochastic simulation loop but the stochastic projection input files were missing."
+      }
+    }
+    stop(
+      "Cannot simulate tag data: MFCL did not write report.realtag_# in ", sim_dir,
+      ". Historical tag self-tests must use MFCL sim_realtag output: parest_flags(241)=1 ",
+      "activates pseudo-observations, parest_flags(242)=1 activates real estimation-period tags, ",
+      "and the random seed is read from the simseed input file. The -tag_seed option applies to ",
+      "virtual projection tags (sim_tag), not the historical real-tag replacement. Manual evidence ",
+      "indicates report.realtag_# is written inside the numbered stochastic simulation loop; with ",
+      "age_flag(20)=0 MFCL can still write projection-0 size/catch/CPUE pseudo files but does not read ",
+      "simseed or write report.realtag_#. With age_flag(20)>0, MFCL also needs stochastic projection ",
+      "inputs generated by the preceding simulation setup steps: ", paste(stoch_files, collapse = ", "),
+      ". The projection horizon must also be long enough to age historical tag releases through the ",
+      "sim_realtag bookkeeping; this runner defaults to max(30, age classes) projection years for that reason. ",
+      "Present here: ", if (length(stoch_present)) paste(stoch_present, collapse = ", ") else "none",
+      ".", log_hint, " This self-test requires MFCL-native tag pseudo-observations so tag likelihood ",
+      "structure is not faked."
+    )
+  }
+
+  file.copy(realtag[[1]], out_tag_file, overwrite = TRUE)
+  base_summary <- st_tag_summary(base_tag_file)
+  sim_summary <- st_tag_summary(out_tag_file)
+  if (!identical(base_summary$release_groups, sim_summary$release_groups)) {
+    stop(
+      "Simulated tag release-group count does not match base .tag: base=",
+      base_summary$release_groups, " simulated=", sim_summary$release_groups
+    )
+  }
+  list(
+    tag_source = basename(realtag[[1]]),
+    tag_release_groups = sim_summary$release_groups,
+    tag_release_rows = sim_summary$release_rows,
+    tag_recapture_rows = sim_summary$recapture_rows,
+    tag_recaptures_total = sim_summary$recaptures_total
+  )
+}
+
+st_apply_pseudo_to_frq <- function(base_frq_file,
+                                   out_frq_file,
+                                   sim_dir,
+                                   update_catch = TRUE,
+                                   update_lw = TRUE,
+                                   update_cpue = TRUE) {
+  frq_obj <- read.MFCLFrq(base_frq_file)
+  frq_df <- freq(frq_obj)
+  base_key <- st_key(frq_df$year, frq_df$month, frq_df$week, frq_df$fishery)
+  diagnostics <- list()
+  cpue_df <- if (isTRUE(update_cpue)) st_parse_cpue_sim(file.path(sim_dir, "cpue_sim"), frq_obj) else NULL
+  cpue_keys <- if (is.null(cpue_df)) character(0) else unique(cpue_df$key)
+
+  if (isTRUE(update_catch)) {
+    catch_df <- st_parse_catch_sim(file.path(sim_dir, "catch_sim"), frq_obj)
+    diagnostics$catch_rows <- if (is.null(catch_df)) 0L else nrow(catch_df)
+    if (!is.null(catch_df) && nrow(catch_df) > 0) {
+      m <- match(base_key, catch_df$key)
+      hit <- which(!is.na(m) & is.finite(catch_df$catch[m]) & !(base_key %in% cpue_keys))
+      frq_df$catch[hit] <- catch_df$catch[m[hit]]
+      diagnostics$catch_replaced_rows <- length(hit)
+      diagnostics$catch_skipped_cpue_rows <- sum(!is.na(m) & base_key %in% cpue_keys)
+    }
+  }
+
+  if (isTRUE(update_cpue)) {
+    diagnostics$cpue_rows <- if (is.null(cpue_df)) 0L else nrow(cpue_df)
+    if (!is.null(cpue_df) && nrow(cpue_df) > 0) {
+      m <- match(base_key, cpue_df$key)
+      hit <- which(!is.na(m) & is.finite(cpue_df$cpue[m]) & cpue_df$cpue[m] > 0)
+      frq_df$effort[hit] <- frq_df$catch[hit] / cpue_df$cpue[m[hit]]
+      diagnostics$cpue_replaced_rows <- length(hit)
+      diagnostics$cpue_zero_or_missing <- sum(!is.na(m)) - length(hit)
+    }
+  }
+
+  if (isTRUE(update_lw)) {
+    lw_df <- st_parse_lw_sim(file.path(sim_dir, "test_lw_sim"), frq_obj)
+    diagnostics$lw_rows <- if (is.null(lw_df)) 0L else nrow(lw_df)
+    if (!is.null(lw_df) && nrow(lw_df) > 0) {
+      len_df <- lw_df[lw_df$type == "length", , drop = FALSE]
+      if (nrow(len_df) > 0) {
+        len_key_frq <- paste(base_key, st_num_key(frq_df$length), sep = "_")
+        len_key_sim <- paste(st_key(len_df$year, len_df$month, len_df$week, len_df$fishery), st_num_key(len_df$bin), sep = "_")
+        idx <- which(is.finite(frq_df$length))
+        m <- match(len_key_frq[idx], len_key_sim)
+        hit <- idx[!is.na(m) & is.finite(len_df$freq[m])]
+        frq_df$freq[hit] <- len_df$freq[m[!is.na(m) & is.finite(len_df$freq[m])]]
+        diagnostics$length_replaced_rows <- length(hit)
+        len_tot <- aggregate(freq ~ year + month + week + fishery + sample_size, len_df, sum)
+        diagnostics$length_sample_size_mismatch <- sum(abs(len_tot$freq - floor(len_tot$sample_size)) > 1.000001, na.rm = TRUE)
+      }
+
+      wgt_df <- lw_df[lw_df$type == "weight", , drop = FALSE]
+      if (nrow(wgt_df) > 0) {
+        wgt_key_frq <- paste(base_key, st_num_key(frq_df$weight), sep = "_")
+        wgt_key_sim <- paste(st_key(wgt_df$year, wgt_df$month, wgt_df$week, wgt_df$fishery), st_num_key(wgt_df$bin), sep = "_")
+        idx <- which(is.finite(frq_df$weight))
+        m <- match(wgt_key_frq[idx], wgt_key_sim)
+        ok <- !is.na(m) & is.finite(wgt_df$freq[m])
+        hit <- idx[ok]
+        frq_df$freq[hit] <- wgt_df$freq[m[ok]]
+        diagnostics$weight_replaced_rows <- length(hit)
+        wgt_tot <- aggregate(freq ~ year + month + week + fishery + sample_size, wgt_df, sum)
+        diagnostics$weight_sample_size_mismatch <- sum(abs(wgt_tot$freq - floor(wgt_tot$sample_size)) > 1.000001, na.rm = TRUE)
+      }
+    }
+  }
+
+  freq(frq_obj) <- frq_df
+  FLR4MFCL::write(frq_obj, file = out_frq_file)
+  diagnostics$out_frq_file <- out_frq_file
+  diagnostics
+}
+
+st_build_pseudo_input <- function(base_dir,
+                                  sim_dir,
+                                  input_dir,
+                                  par_file = NULL,
+                                  update_catch = TRUE,
+                                  update_lw = TRUE,
+                                  update_cpue = TRUE,
+                                  update_tags = TRUE,
+                                  update_age_length = TRUE,
+                                  require_native_tags = TRUE,
+                                  seeds = list(age_length = 1007L)) {
+  st_copy_dir_contents(base_dir, input_dir)
+  frq_file <- st_first_file(input_dir, "\\.frq$")
+  base_frq_file <- file.path(base_dir, basename(frq_file))
+  diagnostics <- st_apply_pseudo_to_frq(
+    base_frq_file = base_frq_file,
+    out_frq_file = frq_file,
+    sim_dir = sim_dir,
+    update_catch = update_catch,
+    update_lw = update_lw,
+    update_cpue = update_cpue
+  )
+
+  if (!is.null(par_file) && file.exists(par_file)) {
+    file.copy(par_file, file.path(input_dir, basename(par_file)), overwrite = TRUE)
+  }
+
+  if (isTRUE(update_tags)) {
+    tag_file <- st_first_file(input_dir, "\\.tag$", required = FALSE)
+    if (!is.na(tag_file)) {
+      base_tag_file <- file.path(base_dir, basename(tag_file))
+      tag_info <- tryCatch(
+        st_apply_native_realtag(base_tag_file, tag_file, sim_dir),
+        error = function(e) {
+          if (isTRUE(require_native_tags)) stop(e)
+          list(tag_source = "unchanged_no_native_realtag", tag_error = conditionMessage(e))
+        }
+      )
+      diagnostics <- c(diagnostics, tag_info)
+    }
+  }
+
+  if (isTRUE(update_age_length)) {
+    age_file <- st_first_file(input_dir, "\\.age_length$", required = FALSE)
+    if (!is.na(age_file)) {
+      base_age_file <- file.path(base_dir, basename(age_file))
+      age_info <- st_apply_pseudo_to_age_length(
+        base_alk_file = base_age_file,
+        out_alk_file = age_file,
+        sim_dir = sim_dir,
+        seed = seeds$age_length
+      )
+      diagnostics <- c(diagnostics, age_info)
+    }
+  }
+
+  saveRDS(diagnostics, file.path(input_dir, "selftest_input_info.rds"), compress = "xz")
+  diagnostics
+}
+
+st_run_refit <- function(input_dir,
+                         refit_dir,
+                         program_path_abs,
+                         fevals = 500L,
+                         mode = "last_par",
+                         output_par = "selftest_refit.par",
+                         log_file = file.path(refit_dir, "mfcl_selftest_refit_log.txt"),
+                         tag_report_year1 = "auto") {
+  st_copy_dir_contents(input_dir, refit_dir)
+  frq_file <- basename(st_first_file(refit_dir, "\\.frq$"))
+  par_file <- basename(st_latest_par(refit_dir))
+  mode <- tolower(trimws(as.character(mode[[1]])))
+  if (!mode %in% c("last_par", "doitall")) {
+    stop("Unsupported self-test refit mode: ", mode, ". Use last_par or doitall.")
+  }
+
+  if (identical(mode, "last_par")) {
+    if (is.na(par_file) || !file.exists(file.path(refit_dir, par_file))) {
+      stop("Refit input has no .par start file: ", refit_dir)
+    }
+    cmd <- paste(
+      shQuote(program_path_abs),
+      shQuote(frq_file),
+      shQuote(par_file),
+      shQuote(output_par),
+      "-switch 1",
+      "1 1",
+      as.integer(fevals)
+    )
+  } else {
+    if (!file.exists(file.path(refit_dir, "doitall.sh"))) {
+      stop("Refit mode doitall requires doitall.sh in pseudo input folder: ", refit_dir)
+    }
+    cmd <- "./doitall.sh"
+  }
+
+  old_wd <- getwd()
+  on.exit(setwd(old_wd), add = TRUE)
+  setwd(refit_dir)
+  cat("MFCL refit command:\n", cmd, "\n")
+  if (identical(mode, "doitall")) Sys.chmod("doitall.sh", mode = "0755")
+  status <- system(paste(cmd, ">", shQuote(log_file), "2>&1"), intern = FALSE)
+  setwd(old_wd)
+
+  final_par <- file.path(refit_dir, output_par)
+  if (!file.exists(final_par)) final_par <- mp_final_par(refit_dir)
+  info <- list(
+    description = "MFCL self-test refit",
+    program_path = program_path_abs,
+    mfcl_commands = cmd,
+    frq_file = frq_file,
+    par_in = par_file,
+    par_out = if (!is.null(final_par)) basename(final_par) else output_par,
+    refit_mode = mode,
+    refit_fevals = if (identical(mode, "last_par")) as.integer(fevals) else NA_integer_,
+    base_dir = input_dir,
+    model_dir = refit_dir,
+    selftest = TRUE,
+    exit_status = as.integer(status)
+  )
+  saveRDS(info, file.path(refit_dir, "model_info.rds"), compress = "xz")
+
+  payload <- mp_build_model_payload(refit_dir, tag_report_year1 = tag_report_year1)
+  saveRDS(payload, file.path(refit_dir, "model_payload.rds"), compress = "xz")
+  info
+}
+
+st_read_indepvar <- function(path) {
+  if (!file.exists(path)) return(NULL)
+  out <- tryCatch(
+    utils::read.table(path, header = TRUE, stringsAsFactors = FALSE, fill = TRUE, comment.char = ""),
+    error = function(e) NULL
+  )
+  if (is.null(out) || nrow(out) == 0) return(NULL)
+  names(out) <- sub("^Var_name$", "name", names(out))
+  names(out) <- sub("^Estimate$", "estimate", names(out))
+  names(out) <- sub("^Index$", "index", names(out))
+  out$index <- suppressWarnings(as.integer(out$index))
+  out$estimate <- suppressWarnings(as.numeric(out$estimate))
+  out
+}
+
+st_parameter_recovery <- function(truth_indepvar,
+                                  refit_indepvar,
+                                  out_file,
+                                  key_parameters = character(0)) {
+  truth <- st_read_indepvar(truth_indepvar)
+  refit <- st_read_indepvar(refit_indepvar)
+  if (is.null(truth) || is.null(refit)) return(NULL)
+  truth <- truth[, intersect(c("index", "name", "estimate"), names(truth)), drop = FALSE]
+  refit <- refit[, intersect(c("index", "name", "estimate"), names(refit)), drop = FALSE]
+  names(truth)[names(truth) == "estimate"] <- "truth"
+  names(refit)[names(refit) == "estimate"] <- "estimate"
+  merged <- merge(truth, refit, by = c("index", "name"), all = FALSE)
+  merged$delta <- merged$estimate - merged$truth
+  merged$rel_delta <- merged$delta / ifelse(is.finite(merged$truth) & abs(merged$truth) > 1e-12, abs(merged$truth), NA_real_)
+  merged$pct_delta <- 100 * merged$rel_delta
+  if (length(key_parameters) > 0) {
+    keep <- Reduce(`|`, lapply(key_parameters, function(pat) grepl(pat, merged$name, fixed = TRUE)))
+    merged$key_parameter <- keep
+  } else {
+    merged$key_parameter <- FALSE
+  }
+  utils::write.csv(merged, out_file, row.names = FALSE)
+  merged
+}
+
+st_derived_recovery <- function(truth_dir, refit_dir, out_file) {
+  truth_rep <- mp_final_rep(truth_dir)
+  refit_rep <- mp_final_rep(refit_dir)
+  if (is.null(truth_rep) || is.null(refit_rep) || !file.exists(truth_rep) || !file.exists(refit_rep)) {
+    return(NULL)
+  }
+  truth_obj <- mp_safe(read.MFCLRep(truth_rep))
+  refit_obj <- mp_safe(read.MFCLRep(refit_rep))
+  truth_ts <- mp_extract_rep_timeseries(truth_obj, scenario = "truth", peel = 0L)
+  refit_ts <- mp_extract_rep_timeseries(refit_obj, scenario = "refit", peel = 0L)
+  if (is.null(truth_ts) || is.null(refit_ts)) return(NULL)
+  truth_ts$scenario <- NULL
+  truth_ts$peel <- NULL
+  refit_ts$scenario <- NULL
+  refit_ts$peel <- NULL
+  names(truth_ts)[names(truth_ts) != "year"] <- paste0(names(truth_ts)[names(truth_ts) != "year"], "_truth")
+  names(refit_ts)[names(refit_ts) != "year"] <- paste0(names(refit_ts)[names(refit_ts) != "year"], "_estimate")
+  out <- merge(truth_ts, refit_ts, by = "year", all = FALSE)
+  for (nm in names(out)) {
+    if (!grepl("_truth$", nm)) next
+    base <- sub("_truth$", "", nm)
+    est_nm <- paste0(base, "_estimate")
+    if (est_nm %in% names(out)) {
+      out[[paste0(base, "_delta")]] <- out[[est_nm]] - out[[nm]]
+      out[[paste0(base, "_rel_delta")]] <- out[[paste0(base, "_delta")]] /
+        ifelse(is.finite(out[[nm]]) & abs(out[[nm]]) > 1e-12, abs(out[[nm]]), NA_real_)
+    }
+  }
+  utils::write.csv(out, out_file, row.names = FALSE)
+  out
+}

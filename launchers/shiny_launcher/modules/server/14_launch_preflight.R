@@ -414,6 +414,65 @@
       return(launch_preflight_row(display_name, job_type, launch_preflight_status(ok), ".frq, .tag, .age_length, .ini", found_common, detail))
     }
 
+    if (identical(job_type, "selftest")) {
+      source_mode <- launch_preflight_first(model_env$selftest_source_mode, "last_par")
+      if (!source_mode %in% c("last_par", "doitall")) source_mode <- "last_par"
+      refit_mode <- launch_preflight_first(model_env$selftest_refit_mode, "last_par")
+      if (!refit_mode %in% c("last_par", "doitall")) refit_mode <- "last_par"
+      source_par_config <- launch_preflight_first(model_env$selftest_source_par)
+      source_par_abs <- if (nzchar(source_par_config)) resolve_repo_path(source_par_config) else ""
+      source_par_exists <- nzchar(source_par_abs) && file.exists(source_par_abs)
+      truth_par_ready <- if (identical(source_mode, "doitall")) {
+        doitall && ini_n > 0
+      } else {
+        source_par_exists || fitted_par_exists || base_par_usable
+      }
+      data_ready <- frq_n > 0 && ini_n > 0 && tag_n > 0 && age_n > 0
+      refit_ready <- !identical(refit_mode, "doitall") || doitall
+      ok <- data_ready && truth_par_ready && refit_ready
+      found_selftest <- paste(
+        found_common,
+        paste0("tag=", tag_n),
+        paste0("age_length=", age_n),
+        paste0("doitall=", as.integer(doitall)),
+        paste0("truth source=", source_mode),
+        if (nzchar(source_par_config)) paste0("selftest source par=", if (source_par_exists) basename(source_par_abs) else "missing") else "selftest source par=auto",
+        paste0("refit mode=", refit_mode),
+        sep = "; "
+      )
+      required <- paste(
+        c(
+          ".frq",
+          ".ini",
+          ".tag",
+          ".age_length",
+          if (identical(source_mode, "doitall")) "source doitall.sh" else "truth .par",
+          if (identical(refit_mode, "doitall")) "refit doitall.sh" else character(0)
+        ),
+        collapse = ", "
+      )
+      detail <- if (ok) {
+        if (identical(source_mode, "doitall")) {
+          "Self-test will run doitall.sh first and use that fitted result as truth, then simulate pseudo data and refit each replicate."
+        } else if (fitted_par_exists) {
+          "Self-test will use the selected fitted-source .par as truth, then simulate pseudo data with MFCL native realtag and refit each replicate."
+        } else if (source_par_exists) {
+          "Self-test will use the configured selftest_source_par as truth, then simulate pseudo data with MFCL native realtag and refit each replicate."
+        } else {
+          "Self-test will use the latest base input .par as truth, then simulate pseudo data with MFCL native realtag and refit each replicate."
+        }
+      } else if (!data_ready) {
+        "Self-test needs the full fitted input data set: .frq, .ini, .tag, and .age_length. Tags and age-length are simulated/checked, not skipped."
+      } else if (!truth_par_ready && identical(source_mode, "doitall")) {
+        "Truth source is doitall, but base input does not have the .ini/doitall.sh needed to create the truth .par."
+      } else if (!truth_par_ready) {
+        "Truth source is last .par, but no usable base/fitted/configured .par is available. Select 'Use existing fitted output as source' or provide a fitted .par."
+      } else {
+        "Refit mode is doitall, but doitall.sh is missing from the base input."
+      }
+      return(launch_preflight_row(display_name, job_type, launch_preflight_status(ok), required, found_selftest, detail))
+    }
+
     if (identical(job_type, "prof")) {
       profile_components <- if (exists("selected_profile_components", mode = "function")) {
         intersect(selected_profile_components(), c("standard", "individual"))

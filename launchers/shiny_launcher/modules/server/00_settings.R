@@ -218,7 +218,8 @@
       "Jitter" = "jitter",
       "Hessian" = "hessian",
       "Retrospective" = "retro",
-      "Profile" = "prof")
+      "Profile" = "prof",
+      "Self-Test" = "selftest")
   }
 
   normalize_saved_job_types <- function(x, fallback = NULL) {
