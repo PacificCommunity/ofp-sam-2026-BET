@@ -701,6 +701,7 @@ st_parse_agelength_predictions <- function(path, n_age) {
         month = month,
         length_index = length_index,
         age = seq_len(n_age),
+        total = if (length(total_line) > 0) total_line[[1]] else NA_real_,
         observed_prop = observed[seq_len(n_age)],
         predicted_prop = predicted[seq_len(n_age)],
         stringsAsFactors = FALSE
@@ -1093,6 +1094,19 @@ st_tag_annual_summary <- function(path) {
   stats::aggregate(value ~ year, data = rec, FUN = sum)
 }
 
+st_tag_expected_annual_summary <- function(sim_dir) {
+  payload_file <- file.path(sim_dir, "model_payload.rds")
+  if (!file.exists(payload_file)) return(data.frame())
+  payload <- tryCatch(readRDS(payload_file), error = function(e) NULL)
+  dat <- tryCatch(payload$data$TagTempOut, error = function(e) NULL)
+  if (!is.data.frame(dat) || !all(c("recap.year", "recap.pred") %in% names(dat))) return(data.frame())
+  dat$year <- suppressWarnings(as.integer(dat$recap.year))
+  dat$value <- suppressWarnings(as.numeric(dat$recap.pred))
+  dat <- dat[is.finite(dat$year) & is.finite(dat$value), , drop = FALSE]
+  if (nrow(dat) == 0) return(data.frame())
+  stats::aggregate(value ~ year, data = dat, FUN = sum)
+}
+
 st_alk_annual_summary <- function(path) {
   if (is.null(path) || is.na(path) || !file.exists(path)) return(data.frame())
   alk <- suppressWarnings(read.MFCLALK(path))
@@ -1107,6 +1121,28 @@ st_alk_annual_summary <- function(path) {
   out <- do.call(rbind, lapply(names(split_rows), function(yr) {
     x <- split_rows[[yr]]
     data.frame(year = as.integer(yr), value = st_weighted_mean(x$age, x$value))
+  }))
+  out[is.finite(out$value), , drop = FALSE]
+}
+
+st_alk_expected_annual_summary <- function(sim_dir, base_alk_file) {
+  if (is.null(base_alk_file) || is.na(base_alk_file) || !file.exists(base_alk_file)) return(data.frame())
+  pred_path <- file.path(sim_dir, "agelengthresids.dat")
+  if (!file.exists(pred_path)) return(data.frame())
+  alk <- suppressWarnings(read.MFCLALK(base_alk_file))
+  alk_df <- alk@ALK
+  n_age <- max(alk_df$age, na.rm = TRUE)
+  if (!is.finite(n_age) || n_age < 1L) return(data.frame())
+  preds <- st_parse_agelength_predictions(pred_path, n_age = n_age)
+  if (is.null(preds) || nrow(preds) == 0) return(data.frame())
+  preds$value <- suppressWarnings(as.numeric(preds$age))
+  preds$weight <- suppressWarnings(as.numeric(preds$predicted_prop) * as.numeric(preds$total))
+  preds <- preds[is.finite(preds$year) & is.finite(preds$value) & is.finite(preds$weight) & preds$weight >= 0, , drop = FALSE]
+  if (nrow(preds) == 0) return(data.frame())
+  split_rows <- split(preds, preds$year)
+  out <- do.call(rbind, lapply(names(split_rows), function(yr) {
+    x <- split_rows[[yr]]
+    data.frame(year = as.integer(yr), value = st_weighted_mean(x$value, x$weight))
   }))
   out[is.finite(out$value), , drop = FALSE]
 }
@@ -1316,13 +1352,15 @@ st_summarise_data_simulation <- function(base_frq_file,
   if (nrow(weight_out) > 0) weight_out$base_source <- unique(weight_base_rows$source)[[1]]
 
   tag_out <- st_data_summary_rows(
-    "tag recaptures", st_tag_annual_summary(base_tag_file), st_tag_annual_summary(pseudo_tag_file),
+    "tag recaptures", st_tag_expected_annual_summary(sim_dir), st_tag_annual_summary(pseudo_tag_file),
     function(x) sum(x$value, na.rm = TRUE)
   )
+  if (nrow(tag_out) > 0) tag_out$base_source <- "fitted_tag_pred"
   alk_out <- st_data_summary_rows(
-    "age-length mean age", st_alk_annual_summary(base_alk_file), st_alk_annual_summary(pseudo_alk_file),
+    "age-length mean age", st_alk_expected_annual_summary(sim_dir, base_alk_file), st_alk_annual_summary(pseudo_alk_file),
     function(x) mean(x$value, na.rm = TRUE)
   )
+  if (nrow(alk_out) > 0) alk_out$base_source <- "fitted_age_length_pred"
 
   summary_cols <- c(
     "component", "series", "year", "n", "base_value", "pseudo_value", "ratio", "delta",

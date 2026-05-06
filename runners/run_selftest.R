@@ -362,6 +362,8 @@ for (rep_id in reps) {
     next
   }
 
+  st_save_truth_payload(sim_dir, sim_info, native_tag_info, seeds, rep_id)
+
   input_info <- st_build_pseudo_input(
     base_dir = base_dir_abs,
     sim_dir = sim_dir,
@@ -427,7 +429,6 @@ for (rep_id in reps) {
     )
   }
 
-  st_save_truth_payload(sim_dir, sim_info, native_tag_info, seeds, rep_id)
   st_cleanup_selftest_rep(sim_dir, input_dir, truth_eval_dir, refit_dir, recovery_dir, run_refit)
 
   run_rows[[length(run_rows) + 1L]] <- data.frame(
