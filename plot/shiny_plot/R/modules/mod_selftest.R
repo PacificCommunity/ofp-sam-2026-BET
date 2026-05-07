@@ -712,6 +712,8 @@ stp_input_info_row <- function(info, scenario) {
     age_length_draw_n_total = get_num("age_length_draw_n_total"),
     age_length_draw_n_min = get_num("age_length_draw_n_min"),
     age_length_draw_n_max = get_num("age_length_draw_n_max"),
+    age_length_sample_size_max_abs_diff = get_num("age_length_sample_size_max_abs_diff"),
+    age_length_sample_size_tolerance = get_num("age_length_sample_size_tolerance"),
     length_sample_size_mismatch = get_num("length_sample_size_mismatch"),
     weight_sample_size_mismatch = get_num("weight_sample_size_mismatch"),
     age_length_zero_prediction_bins = get_num("age_length_zero_prediction_bins"),
@@ -1130,6 +1132,7 @@ mod_selftest_server <- function(input, output, session, rv) {
         age_length_ess_min,
         age_length_ess_max,
         age_length_draw_n_total,
+        age_length_sample_size_max_abs_diff,
         length_sample_size_mismatch,
         weight_sample_size_mismatch,
         age_length_zero_prediction_bins

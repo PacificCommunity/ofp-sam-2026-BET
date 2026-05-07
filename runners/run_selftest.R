@@ -450,7 +450,11 @@ for (rep_id in reps) {
   cat("  tags:", input_info$tag_source %||% "not requested",
       "age-length:", input_info$age_length_source %||% "not requested", "\n")
   if (!isTRUE(input_info$age_length_sample_sizes_matched %||% TRUE)) {
-    stop("Age-length sample sizes did not match after pseudo-data generation for ", rep_label)
+    stop(
+      "Age-length sample sizes did not match after pseudo-data generation for ", rep_label,
+      " (max abs diff=", input_info$age_length_sample_size_max_abs_diff %||% NA_real_,
+      ", tolerance=", input_info$age_length_sample_size_tolerance %||% NA_real_, ")"
+    )
   }
   if ((input_info$length_sample_size_mismatch %||% 0L) > 0L ||
       (input_info$weight_sample_size_mismatch %||% 0L) > 0L) {

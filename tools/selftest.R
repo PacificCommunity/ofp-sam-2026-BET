@@ -1242,10 +1242,10 @@ st_apply_pseudo_to_age_length <- function(base_alk_file,
 
     for (len_id in seq_len(n_len)) {
       len_idx <- idx[((len_id - 1L) * n_age + 1L):(len_id * n_age)]
-      n_obs <- round(sum(original_counts[len_idx], na.rm = TRUE))
+      n_obs_total <- sum(original_counts[len_idx], na.rm = TRUE)
       prob <- pred_profiles[[len_id]]
 
-      if (n_obs <= 0L) {
+      if (!is.finite(n_obs_total) || n_obs_total <= 0) {
         alk_df$obs[len_idx] <- 0
         next
       }
@@ -1262,14 +1262,10 @@ st_apply_pseudo_to_age_length <- function(base_alk_file,
       draw_n_real <- if (
         identical(draw_size_mode, "effective") &&
           is.finite(ess_i) && ess_i > 0
-      ) n_obs * ess_i else n_obs
+      ) n_obs_total * ess_i else n_obs_total
       draw_n <- max(1L, as.integer(round(draw_n_real)))
       draw <- as.numeric(rmultinom(1L, size = draw_n, prob = prob))
-      if (identical(draw_size_mode, "effective")) {
-        alk_df$obs[len_idx] <- draw * (n_obs / draw_n)
-      } else {
-        alk_df$obs[len_idx] <- draw
-      }
+      alk_df$obs[len_idx] <- draw * (n_obs_total / draw_n)
       draw_n_total <- draw_n_total + draw_n
       draw_n_min <- min(draw_n_min, draw_n)
       draw_n_max <- max(draw_n_max, draw_n)
@@ -1280,7 +1276,16 @@ st_apply_pseudo_to_age_length <- function(base_alk_file,
 
   old_by_bin <- rowsum(original_counts, rep(seq_len(length(original_counts) / n_age), each = n_age), reorder = FALSE)
   new_by_bin <- rowsum(alk_df$obs, rep(seq_len(length(alk_df$obs) / n_age), each = n_age), reorder = FALSE)
-  sample_sizes_matched <- isTRUE(all.equal(as.numeric(old_by_bin[, 1]), as.numeric(new_by_bin[, 1]), tolerance = 0))
+  age_length_sample_size_max_abs_diff <- max(
+    abs(as.numeric(old_by_bin[, 1]) - as.numeric(new_by_bin[, 1])),
+    na.rm = TRUE
+  )
+  if (!is.finite(age_length_sample_size_max_abs_diff)) age_length_sample_size_max_abs_diff <- NA_real_
+  sample_size_tolerance <- max(1e-8, 1e-10 * max(1, sum(abs(original_counts), na.rm = TRUE)))
+  sample_sizes_matched <- isTRUE(
+    is.finite(age_length_sample_size_max_abs_diff) &&
+      age_length_sample_size_max_abs_diff <= sample_size_tolerance
+  )
 
   alk@ALK <- alk_df
   FLR4MFCL::write(alk, file = out_alk_file)
@@ -1298,6 +1303,8 @@ st_apply_pseudo_to_age_length <- function(base_alk_file,
     age_length_draw_n_total = draw_n_total,
     age_length_draw_n_min = if (is.finite(draw_n_min)) draw_n_min else NA_integer_,
     age_length_draw_n_max = if (is.finite(draw_n_max)) draw_n_max else NA_integer_,
+    age_length_sample_size_max_abs_diff = age_length_sample_size_max_abs_diff,
+    age_length_sample_size_tolerance = sample_size_tolerance,
     age_length_sample_sizes_matched = sample_sizes_matched,
     out_age_length_file = out_alk_file
   )
