@@ -610,7 +610,7 @@ st_assert_supported_composition_likelihood <- function(par_file) {
     stop(
       "Self-test composition pseudo sampling is not implemented for the active likelihood: ",
       paste(unsupported, collapse = "; "),
-      ". Refusing to use MFCL native multinomial test_lw_sim or an approximate R sampler because it would not match the fitting likelihood."
+      ". Refusing to use MFCL native multinomial test_lw_sim or an unsupported approximate R sampler."
     )
   }
   info
@@ -623,7 +623,7 @@ st_catch_conditioned <- function(par_file) {
 }
 
 st_effort_conditioned <- function(par_file) {
-  st_catch_conditioned(par_file)
+  FALSE
 }
 
 st_apply_cpue_likelihood_error <- function(cpue_df, par_file, seed = 105L) {
@@ -838,12 +838,16 @@ st_square_freq <- function(p, n, par_file, type = c("length", "weight"), student
   eps_flag <- attr(par_file, "selftest_flag_193")
   if (is.null(eps_flag) || length(eps_flag) == 0) eps_flag <- st_flag_value(par_file, 1L, 193L)
   eps <- if (is.finite(eps_flag) && eps_flag != 0) eps_flag / (100 * length(p)) else 1 / length(p)
-  sd <- sqrt(pmax(p * (1 - p) + eps, 1e-10) / max(floor(n), 1))
-  if (isTRUE(student)) sd <- sd * sqrt(4 / stats::rchisq(1L, df = 4))
-  q <- p + stats::rnorm(length(p), 0, sd)
-  q <- pmax(q, 0)
-  if (!is.finite(sum(q)) || sum(q) <= 0) q <- p
-  max(0, floor(n)) * q / sum(q)
+  target_var <- pmax((p * (1 - p) + eps) / max(floor(n), 1), 1e-12)
+  base_var <- p * (1 - p)
+  alpha_i <- base_var / target_var - 1
+  alpha_i <- alpha_i[is.finite(alpha_i) & alpha_i > 0]
+  alpha <- if (length(alpha_i) > 0) stats::median(alpha_i) else max(floor(n), 1)
+  if (isTRUE(student)) {
+    alpha <- alpha / sqrt(4 / stats::rchisq(1L, df = 4))
+  }
+  alpha <- max(alpha, 1e-3)
+  max(0, floor(n)) * st_simple_rdirichlet(alpha * p)
 }
 
 st_fish_param <- function(par_obj, row, fishery, default = 0) {
@@ -972,40 +976,6 @@ st_lw_resample_from_payload <- function(sim_dir, par_file, type = c("length", "w
   value_col <- if (identical(type, "length")) "length" else "weight"
   if (!is.data.frame(fit) || !all(c("fishery", "year", "month", "sample_size", value_col, "pred") %in% names(fit))) return(NULL)
   set.seed(as.integer(seed))
-  if (likelihood %in% c("square", "square0", "square0a", "square_fita", "square_t") &&
-      requireNamespace("data.table", quietly = TRUE)) {
-    dt <- data.table::as.data.table(fit)
-    dt <- dt[is.finite(get(value_col)) & is.finite(pred) & is.finite(sample_size) & sample_size > 0]
-    if (nrow(dt) == 0) return(NULL)
-    eps_flag <- st_flag_value(par_file, 1L, 193L)
-    dt[, n_bins := .N, by = .(fishery, year, month, sample_size)]
-    dt[, p := pmax(as.numeric(pred), 0)]
-    dt[, p_sum := sum(p), by = .(fishery, year, month, sample_size)]
-    dt[p_sum <= 0 | !is.finite(p_sum), p := 1 / n_bins]
-    dt[p_sum > 0 & is.finite(p_sum), p := p / p_sum]
-    dt[, eps := if (is.finite(eps_flag) && eps_flag != 0) eps_flag / (100 * n_bins) else 1 / n_bins]
-    dt[, sd := sqrt(pmax(p * (1 - p) + eps, 1e-10) / pmax(floor(sample_size), 1))]
-    dt[, raw := pmax(p + stats::rnorm(.N, 0, sd), 0)]
-    dt[, raw_sum := sum(raw), by = .(fishery, year, month, sample_size)]
-    dt[raw_sum <= 0 | !is.finite(raw_sum), raw := p]
-    dt[, raw_sum := sum(raw), by = .(fishery, year, month, sample_size)]
-    dt[, freq := floor(sample_size) * raw / raw_sum]
-    data.table::setorderv(dt, c("fishery", "year", "month", "sample_size", value_col))
-    return(data.frame(
-      type = type,
-      projection = NA_integer_,
-      seed = as.integer(seed),
-      year = as.integer(dt$year),
-      month = as.integer(dt$month),
-      week = 1L,
-      fishery = as.integer(dt$fishery),
-      bin = suppressWarnings(as.numeric(dt[[value_col]])),
-      freq = suppressWarnings(as.numeric(dt$freq)),
-      sample_size = suppressWarnings(as.numeric(dt$sample_size)),
-      source = paste0("likelihood_", likelihood),
-      stringsAsFactors = FALSE
-    ))
-  }
   split_key <- paste(fit$fishery, fit$year, fit$month, fit$sample_size, sep = "\r")
   rows <- lapply(split(fit, split_key), function(dat) {
     dat <- dat[order(dat[[value_col]]), , drop = FALSE]
@@ -1355,8 +1325,8 @@ st_apply_pseudo_to_frq <- function(base_frq_file,
     if (!is.null(comp_info)) {
       diagnostics$length_likelihood <- comp_info$length_name
       diagnostics$weight_likelihood <- comp_info$weight_name
-      diagnostics$length_sampler <- if (identical(comp_info$length_name, "multinomial")) "mfcl_native_multinomial" else paste0("selftest_", comp_info$length_name)
-      diagnostics$weight_sampler <- if (identical(comp_info$weight_name, "multinomial")) "mfcl_native_multinomial" else paste0("selftest_", comp_info$weight_name)
+      diagnostics$length_sampler <- if (identical(comp_info$length_name, "multinomial")) "mfcl_native_multinomial" else paste0("selftest_", comp_info$length_name, "_moment_dirichlet")
+      diagnostics$weight_sampler <- if (identical(comp_info$weight_name, "multinomial")) "mfcl_native_multinomial" else paste0("selftest_", comp_info$weight_name, "_moment_dirichlet")
     }
     if (!is.null(lw_df) && nrow(lw_df) > 0) {
       len_df <- lw_df[lw_df$type == "length", , drop = FALSE]

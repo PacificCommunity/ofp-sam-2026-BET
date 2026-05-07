@@ -110,8 +110,12 @@ next_par_name <- function(par_path) {
 }
 
 project_root <- getwd()
+job_type <- first(Sys.getenv("job_type"), first(Sys.getenv("JOB_TYPE"), "stage_check"))
 base_dir <- first(Sys.getenv("base_dir"), "mfcl/inputs/2023_rep")
 model_dir <- first(Sys.getenv("model_dir"), file.path("model", basename(base_dir)))
+selftest_base_dir <- first(Sys.getenv("selftest_base_dir"), base_dir)
+selftest_model_dir <- first(Sys.getenv("selftest_model_dir"), model_dir)
+selftest_dir <- first(Sys.getenv("selftest_dir"), file.path(selftest_model_dir, "selftest"))
 
 status <- "ok"
 warnings <- character(0)
@@ -131,6 +135,7 @@ add_error <- function(x) {
 emit("Condor stage check")
 emit("time: ", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z"))
 emit("project_root: ", normalizePath(project_root, winslash = "/", mustWork = FALSE))
+emit("job_type: ", job_type)
 emit("base_dir: ", base_dir)
 emit("model_dir: ", model_dir)
 
@@ -141,6 +146,7 @@ env_file <- file.path("..", "job_env.txt")
 emit_section("Launcher Environment")
 emit("job_env.txt: ", if (file.exists(env_file)) normalizePath(env_file, winslash = "/", mustWork = FALSE) else "missing")
 env_fields <- c(
+  "job_type",
   "base_dir",
   "model_dir",
   "launcher_model_name",
@@ -155,6 +161,14 @@ env_fields <- c(
   "fitted_model_source_enabled",
   "fitted_model_bundle",
   "fitted_model_source_dir",
+  "selftest_base_dir",
+  "selftest_model_dir",
+  "selftest_source_mode",
+  "selftest_source_par",
+  "selftest_dir",
+  "selftest_reps",
+  "selftest_refit_mode",
+  "selftest_refit_fevals",
   "auto_run_model_before_dependency",
   "auto_fitted_model_dir",
   "prefer_par_start",
@@ -284,6 +298,51 @@ if (!isTRUE(fitted_source_active) && !is.na(run_par) && file.exists(run_par)) {
   emit("par-start note: disabled unless 'Use existing fitted output as source' is selected")
 }
 emit("MFCL execution: skipped by setup check")
+
+if (identical(tolower(job_type), "selftest")) {
+  emit_section("Self-Test Source")
+  st_base_abs <- if (grepl("^/", selftest_base_dir)) selftest_base_dir else file.path(project_root, selftest_base_dir)
+  st_model_abs <- if (grepl("^/", selftest_model_dir)) selftest_model_dir else file.path(project_root, selftest_model_dir)
+  st_source_mode <- tolower(first(Sys.getenv("selftest_source_mode"), "last_par"))
+  if (!st_source_mode %in% c("last_par", "doitall")) st_source_mode <- "last_par"
+  st_source_par_env <- first(Sys.getenv("selftest_source_par"))
+  st_source_par <- if (nzchar(st_source_par_env)) {
+    if (grepl("^/", st_source_par_env)) st_source_par_env else file.path(project_root, st_source_par_env)
+  } else {
+    NA_character_
+  }
+  st_model_par <- latest_par(st_model_abs)
+  st_merged_par <- if (!is.na(merged_par) && file.exists(merged_par)) merged_par else NA_character_
+  st_base_par <- latest_par(st_base_abs)
+  st_truth_candidates <- c(st_source_par, st_model_par, st_merged_par, st_base_par)
+  st_truth_candidates <- st_truth_candidates[!is.na(st_truth_candidates) & file.exists(st_truth_candidates)]
+  st_truth <- if (length(st_truth_candidates) > 0) st_truth_candidates[[1]] else NA_character_
+
+  emit("selftest base: ", normalizePath(st_base_abs, winslash = "/", mustWork = FALSE))
+  emit("selftest model dir: ", normalizePath(st_model_abs, winslash = "/", mustWork = FALSE))
+  emit("selftest output dir: ", selftest_dir)
+  emit("truth source mode: ", st_source_mode)
+  emit("configured source par: ", if (nzchar(st_source_par_env)) st_source_par_env else "<auto>")
+  emit("model latest par: ", if (!is.na(st_model_par) && file.exists(st_model_par)) basename(st_model_par) else "missing")
+  emit("overlay latest par: ", if (!is.na(st_merged_par) && file.exists(st_merged_par)) basename(st_merged_par) else "missing")
+  emit("base latest par: ", if (!is.na(st_base_par) && file.exists(st_base_par)) basename(st_base_par) else "missing")
+  emit("selected truth par: ", if (!is.na(st_truth) && file.exists(st_truth)) normalizePath(st_truth, winslash = "/", mustWork = FALSE) else "missing")
+
+  st_frq <- length(list_matching(st_base_abs, "\\.frq$"))
+  st_ini <- length(list_matching(st_base_abs, "\\.ini$"))
+  st_tag <- length(list_matching(st_base_abs, "\\.tag$"))
+  st_age <- length(list_matching(st_base_abs, "\\.age_length$"))
+  emit("selftest data counts: frq=", st_frq, "; ini=", st_ini, "; tag=", st_tag, "; age_length=", st_age)
+  if (st_frq == 0 || st_ini == 0 || st_tag == 0 || st_age == 0) {
+    add_error("Self-test base input is missing one or more required data files (.frq, .ini, .tag, .age_length).")
+  }
+  if (identical(st_source_mode, "last_par") && (is.na(st_truth) || !file.exists(st_truth))) {
+    add_error("Self-test source mode is last_par but no truth .par was found in configured source, model dir, fitted overlay, or base dir.")
+  }
+  if (identical(st_source_mode, "doitall") && !file.exists(file.path(st_base_abs, "doitall.sh"))) {
+    add_error("Self-test source mode is doitall but doitall.sh is missing from the base input.")
+  }
+}
 
 emit_section("Summary")
 emit("status: ", status)

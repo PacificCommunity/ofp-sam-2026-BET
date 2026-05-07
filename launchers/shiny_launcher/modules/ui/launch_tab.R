@@ -223,7 +223,7 @@ launch_tab_ui <- function() {
 	                          )
 	                        ),
 	                        tags$small(
-	                          "Self-test outputs are written under selftest/<model name>; native-tag projection length is chosen automatically.",
+	                          "Self-test outputs are written under model/<model name>/selftest; native-tag projection length is chosen automatically.",
 	                          style = "display:block; color:#666; line-height:1.25; margin-top:-4px; margin-bottom:8px;"
 	                        )
 	                      )

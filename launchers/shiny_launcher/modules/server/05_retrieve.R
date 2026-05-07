@@ -210,8 +210,8 @@
   retrieve_archive_target_item <- function(target_dir, source_path, item, folder_name) {
     item_name <- basename(item)
     selftest_source <- identical(basename(normalizePath(source_path, winslash = "/", mustWork = FALSE)), "selftest")
-    if (isTRUE(selftest_source) && file.info(item)$isdir) {
-      return(file.path(target_dir, item_name, "selftest"))
+    if (isTRUE(selftest_source)) {
+      return(file.path(target_dir, retrieve_canonical_job_folder(folder_name), "selftest", item_name))
     }
 
     profile_rel <- retrieve_profile_relative_path(source_path)

@@ -12,6 +12,7 @@ library(FLR4MFCL)
 
 source("tools/model_payload.R")
 source("tools/selftest.R")
+source("tools/input_recipe_runner.R")
 source("tools/fitted_model_source.R")
 source("tools/condor_archive_cleanup.R")
 
@@ -30,9 +31,16 @@ program_path <- st_env("program_path", "mfcl/exe/mfclo64_2026_02_04_vsn2278")
 program_path_abs <- st_resolve_path(program_path, project_root = project_root, must_work = TRUE)
 
 base_dir <- st_env("selftest_base_dir", st_env("base_dir", "mfcl/inputs/2023_4region"))
-base_dir_abs <- st_resolve_path(base_dir, project_root = project_root, must_work = TRUE)
+base_dir_abs <- ensure_input_dir_available(base_dir, project_root = project_root)
+base_dir_abs <- st_resolve_path(base_dir_abs, project_root = project_root, must_work = TRUE)
 
-selftest_dir <- st_env("selftest_dir", file.path("selftest", st_safe_id(basename(base_dir_abs), "base")))
+model_dir_env <- st_env("selftest_model_dir", st_env("model_dir", ""))
+model_dir_default <- file.path("model", basename(base_dir_abs))
+model_dir <- if (nzchar(model_dir_env)) model_dir_env else model_dir_default
+model_dir_abs <- st_resolve_path(model_dir, project_root = project_root, must_work = FALSE)
+model_dir_available <- dir.exists(model_dir_abs)
+
+selftest_dir <- st_env("selftest_dir", file.path(model_dir, "selftest"))
 selftest_dir_abs <- st_resolve_path(selftest_dir, project_root = project_root, must_work = FALSE)
 
 fitted_source_active <- fms_truthy(st_env("fitted_model_source_enabled", "0")) ||
@@ -58,10 +66,18 @@ if (identical(source_mode, "last_par")) {
   source_par <- if (nzchar(source_par_env)) {
     st_resolve_path(source_par_env, project_root = project_root, must_work = TRUE)
   } else {
-    st_latest_par(base_dir_abs)
+    source_candidates <- c(
+      if (isTRUE(model_dir_available)) st_latest_par(model_dir_abs) else NA_character_,
+      st_latest_par(base_dir_abs)
+    )
+    source_candidates <- source_candidates[!is.na(source_candidates) & file.exists(source_candidates)]
+    if (length(source_candidates) > 0) source_candidates[[1]] else NA_character_
   }
   if (is.na(source_par) || !file.exists(source_par)) {
-    stop("No self-test source .par found. Set selftest_source_par or include a fitted .par in selftest_base_dir.")
+    stop(
+      "No self-test source .par found. Set selftest_source_par, provide selftest_model_dir with a fitted .par, ",
+      "or include a fitted .par in selftest_base_dir."
+    )
   }
 } else {
   if (!file.exists(file.path(base_dir_abs, "doitall.sh"))) {
@@ -141,6 +157,7 @@ dir.create(file.path(selftest_dir_abs, "recovery"), recursive = TRUE, showWarnin
 
 cat("Running MFCL self-test\n")
 cat("Base inputs :", base_dir_abs, "\n")
+cat("Model source:", if (isTRUE(model_dir_available)) model_dir_abs else "<not found>", "\n")
 cat("Source mode :", source_mode, "\n")
 cat("Source par  :", if (!is.na(source_par)) source_par else "<doitall.sh>", "\n")
 cat("Output dir  :", selftest_dir_abs, "\n")

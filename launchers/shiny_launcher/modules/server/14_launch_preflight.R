@@ -200,15 +200,20 @@
     display_name <- launch_preflight_display_name(model_name, model_env)
     base_dir <- launch_preflight_first(model_env$base_dir)
     model_dir <- launch_preflight_first(model_env$model_dir, default = file.path("model", model_name))
+    selftest_model_dir <- launch_preflight_first(model_env$selftest_model_dir, default = model_dir)
     base_dir_abs <- resolve_repo_path(base_dir)
     model_dir_abs <- resolve_repo_path(model_dir)
+    selftest_model_dir_abs <- resolve_repo_path(selftest_model_dir)
 
     base_exists <- dir.exists(base_dir_abs)
     model_exists <- dir.exists(model_dir_abs)
+    selftest_model_exists <- dir.exists(selftest_model_dir_abs)
     base_par <- launch_preflight_latest_par(base_dir_abs)
     model_par <- launch_preflight_latest_par(model_dir_abs)
+    selftest_model_par <- launch_preflight_latest_par(selftest_model_dir_abs)
     base_par_exists <- !is.na(base_par) && file.exists(base_par)
     model_par_exists <- !is.na(model_par) && file.exists(model_par)
+    selftest_model_par_exists <- !is.na(selftest_model_par) && file.exists(selftest_model_par)
     base_tokens <- launch_preflight_input_tokens(base_dir_abs)
     base_has_change_tokens <- length(base_tokens) > 0 || launch_preflight_recipe_ready(model_env)
     base_par_usable <- base_par_exists && !base_has_change_tokens
@@ -419,13 +424,14 @@
       if (!source_mode %in% c("last_par", "doitall")) source_mode <- "last_par"
       refit_mode <- launch_preflight_first(model_env$selftest_refit_mode, "last_par")
       if (!refit_mode %in% c("last_par", "doitall")) refit_mode <- "last_par"
+      selftest_dir <- launch_preflight_first(model_env$selftest_dir, file.path(selftest_model_dir, "selftest"))
       source_par_config <- launch_preflight_first(model_env$selftest_source_par)
       source_par_abs <- if (nzchar(source_par_config)) resolve_repo_path(source_par_config) else ""
       source_par_exists <- nzchar(source_par_abs) && file.exists(source_par_abs)
       truth_par_ready <- if (identical(source_mode, "doitall")) {
         doitall && ini_n > 0
       } else {
-        source_par_exists || fitted_par_exists || base_par_usable
+        source_par_exists || fitted_par_exists || selftest_model_par_exists || base_par_usable
       }
       data_ready <- frq_n > 0 && ini_n > 0 && tag_n > 0 && age_n > 0
       refit_ready <- !identical(refit_mode, "doitall") || doitall
@@ -435,6 +441,9 @@
         paste0("tag=", tag_n),
         paste0("age_length=", age_n),
         paste0("doitall=", as.integer(doitall)),
+        paste0("selftest model dir=", if (selftest_model_exists) selftest_model_dir else paste0("missing ", selftest_model_dir)),
+        paste0("selftest model par=", if (selftest_model_par_exists) basename(selftest_model_par) else "missing"),
+        paste0("selftest output=", selftest_dir),
         paste0("truth source=", source_mode),
         if (nzchar(source_par_config)) paste0("selftest source par=", if (source_par_exists) basename(source_par_abs) else "missing") else "selftest source par=auto",
         paste0("refit mode=", refit_mode),
@@ -456,6 +465,8 @@
           "Self-test will run doitall.sh first and use that fitted result as truth, then simulate pseudo data and refit each replicate."
         } else if (fitted_par_exists) {
           "Self-test will use the selected fitted-source .par as truth, then simulate pseudo data with MFCL native realtag and refit each replicate."
+        } else if (selftest_model_par_exists) {
+          paste0("Self-test will use the existing fitted .par in ", selftest_model_dir, " as truth, then write results under ", selftest_dir, ".")
         } else if (source_par_exists) {
           "Self-test will use the configured selftest_source_par as truth, then simulate pseudo data with MFCL native realtag and refit each replicate."
         } else {

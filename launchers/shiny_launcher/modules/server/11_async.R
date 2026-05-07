@@ -141,6 +141,27 @@
     append_progress <- function() {
       cat("1\n", file = progress_path, append = TRUE)
     }
+
+    retrieve_canonical_job_folder <- function(folder_name) {
+      folder_name <- basename(trimws(as.character(folder_name[[1]])))
+      if (!nzchar(folder_name)) return(folder_name)
+      canonical <- folder_name
+      canonical <- sub("_[^_]+_profchain_(down|up)$", "", canonical, ignore.case = TRUE, perl = TRUE)
+      canonical <- sub("(_profchain_(down|up)|_prof2d|_model)$", "", canonical, ignore.case = TRUE, perl = TRUE)
+      canonical <- sub("(_seed[0-9]+|_part[0-9]+|_peel[0-9]+|_selftest_rep[0-9]+)$", "", canonical, ignore.case = TRUE, perl = TRUE)
+      canonical <- sub("-selftest-rep[0-9]+$", "", canonical, ignore.case = TRUE, perl = TRUE)
+      canonical <- sub("_sc[-+]?[0-9.]+$", "", canonical, ignore.case = TRUE, perl = TRUE)
+      if (nzchar(canonical)) canonical else folder_name
+    }
+
+    retrieve_target_item <- function(target_dir, source_path, item, folder_name) {
+      item_name <- basename(item)
+      selftest_source <- identical(basename(normalizePath(source_path, winslash = "/", mustWork = FALSE)), "selftest")
+      if (isTRUE(selftest_source)) {
+        return(file.path(target_dir, retrieve_canonical_job_folder(folder_name), "selftest", item_name))
+      }
+      file.path(target_dir, item_name)
+    }
     
     results <- NULL
     if (isTRUE(params$parallel_launch) && total_jobs > 1 && params$cores > 1) {
@@ -277,6 +298,11 @@
             }
           }
         }
+        if (!dir.exists(source_path)) {
+          candidate_dirs <- list.dirs(temp_dir, recursive = TRUE, full.names = TRUE)
+          selftest_matches <- candidate_dirs[basename(candidate_dirs) == "selftest"]
+          if (length(selftest_matches) > 0) source_path <- selftest_matches[1]
+        }
         
         if (dir.exists(source_path)) {
           job_child_path <- file.path(source_path, folder_name)
@@ -296,8 +322,7 @@
             if (!dir.exists(target_dir)) dir.create(target_dir, recursive = TRUE)
             
             for (item in items_in_source) {
-              item_name <- basename(item)
-              target_item <- file.path(target_dir, item_name)
+              target_item <- retrieve_target_item(target_dir, source_path, item, folder_name)
               
               if (file.info(item)$isdir) {
                 if (!dir.exists(target_item)) dir.create(target_item, recursive = TRUE)
@@ -367,6 +392,11 @@
           }
         }
       }
+      if (!dir.exists(source_path)) {
+        candidate_dirs <- list.dirs(temp_dir, recursive = TRUE, full.names = TRUE)
+        selftest_matches <- candidate_dirs[basename(candidate_dirs) == "selftest"]
+        if (length(selftest_matches) > 0) source_path <- selftest_matches[1]
+      }
       
       if (dir.exists(source_path)) {
         job_child_path <- file.path(source_path, folder_name)
@@ -386,8 +416,7 @@
           if (!dir.exists(target_dir)) dir.create(target_dir, recursive = TRUE)
           
           for (item in items_in_source) {
-            item_name <- basename(item)
-            target_item <- file.path(target_dir, item_name)
+            target_item <- retrieve_target_item(target_dir, source_path, item, folder_name)
             
             if (file.info(item)$isdir) {
               if (!dir.exists(target_item)) dir.create(target_item, recursive = TRUE)

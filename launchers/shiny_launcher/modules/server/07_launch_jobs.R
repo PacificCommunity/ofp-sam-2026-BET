@@ -103,7 +103,15 @@
     if (nzchar(configured)) return(configured)
     requested <- first_scalar_string(input$selftest_output_dir, default = "")
     if (nzchar(requested)) return(requested)
-    file.path("selftest", canonical_launch_basename(launch_model_name(model_name, model_env)))
+    file.path(selftest_model_dir_for_env(model_name, model_env), "selftest")
+  }
+
+  selftest_model_dir_for_env <- function(model_name, model_env) {
+    configured <- first_scalar_string(model_env$selftest_model_dir, default = "")
+    if (nzchar(configured)) return(configured)
+    model_dir <- first_scalar_string(model_env$model_dir, default = "")
+    if (nzchar(model_dir)) return(model_dir)
+    file.path("model", canonical_launch_basename(launch_model_name(model_name, model_env)))
   }
 
   set_selftest_env_pair <- function(env, key, value) {
@@ -121,6 +129,8 @@
     if (nzchar(base_dir)) {
       env <- set_selftest_env_pair(env, "selftest_base_dir", base_dir)
     }
+
+    env <- set_selftest_env_pair(env, "selftest_model_dir", selftest_model_dir_for_env(model_name, env))
 
     source_par <- first_scalar_string(env$selftest_source_par, default = "")
     if (nzchar(source_par)) {
@@ -2006,7 +2016,7 @@
       job_type,
       stage_check = c("build_inputs_on_missing", "input_recipe_enabled", "fitted_model_source_enabled", "fitted_model_bundle", "auto_run_model_before_dependency"),
       model = c("model_hessian"),
-	      selftest = c("selftest_reps", "selftest_source_mode", "selftest_refit_mode", "selftest_refit_fevals", "selftest_base_dir", "selftest_source_par", "selftest_dir", "selftest_require_native_tags", "selftest_update_catch", "selftest_update_effort", "selftest_native_tag_projection_years"),
+	      selftest = c("selftest_reps", "selftest_source_mode", "selftest_refit_mode", "selftest_refit_fevals", "selftest_base_dir", "selftest_model_dir", "selftest_source_par", "selftest_dir", "selftest_require_native_tags", "selftest_update_catch", "selftest_update_effort"),
       retro = c("retro_peel", "retro_peels", "retro_hessian"),
       jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian", "jitter_base_source"),
       hessian = c("hessian_part", "nsplit", "model_hessian"),
@@ -2073,7 +2083,7 @@
         job_type,
         stage_check = c("build_inputs_on_missing", "input_recipe_enabled", "fitted_model_source_enabled", "fitted_model_bundle", "auto_run_model_before_dependency"),
         model = c("model_hessian"),
-	        selftest = c("selftest_reps", "selftest_source_mode", "selftest_refit_mode", "selftest_refit_fevals", "selftest_base_dir", "selftest_source_par", "selftest_dir", "selftest_require_native_tags", "selftest_update_catch", "selftest_update_effort", "selftest_native_tag_projection_years"),
+	        selftest = c("selftest_reps", "selftest_source_mode", "selftest_refit_mode", "selftest_refit_fevals", "selftest_base_dir", "selftest_model_dir", "selftest_source_par", "selftest_dir", "selftest_require_native_tags", "selftest_update_catch", "selftest_update_effort"),
         retro = c("retro_peel", "retro_peels", "retro_hessian"),
         jitter = c("jitter_seed", "jitter_cv", "jitter_seeds", "jitter_hessian", "jitter_base_source"),
         hessian = c("hessian_part", "nsplit", "model_hessian"),
