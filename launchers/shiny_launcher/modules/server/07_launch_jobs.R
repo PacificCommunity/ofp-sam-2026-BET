@@ -917,7 +917,7 @@
       env$fitted_model_source_id <- ""
       env$fitted_model_source_label <- "run prerequisite model first"
       env$auto_run_model_before_dependency <- "1"
-      env$auto_fitted_model_dir <- file.path(first_scalar_string(env$model_dir, default = file.path("model", model_name)), "_source_model")
+      env$auto_fitted_model_dir <- first_scalar_string(env$model_dir, default = file.path("model", model_name))
       return(env)
     }
 
@@ -951,7 +951,7 @@
         "selected fitted output not found; run prerequisite model first"
       }
       env$auto_run_model_before_dependency <- "1"
-      env$auto_fitted_model_dir <- file.path(first_scalar_string(env$model_dir, default = file.path("model", model_name)), "_source_model")
+      env$auto_fitted_model_dir <- first_scalar_string(env$model_dir, default = file.path("model", model_name))
     }
     env
   }

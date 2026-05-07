@@ -303,6 +303,8 @@ if (identical(tolower(job_type), "selftest")) {
   emit_section("Self-Test Source")
   st_base_abs <- if (grepl("^/", selftest_base_dir)) selftest_base_dir else file.path(project_root, selftest_base_dir)
   st_model_abs <- if (grepl("^/", selftest_model_dir)) selftest_model_dir else file.path(project_root, selftest_model_dir)
+  st_auto_dir <- first(Sys.getenv("auto_fitted_model_dir"), selftest_model_dir)
+  st_auto_abs <- if (grepl("^/", st_auto_dir)) st_auto_dir else file.path(project_root, st_auto_dir)
   st_source_mode <- tolower(first(Sys.getenv("selftest_source_mode"), "last_par"))
   if (!st_source_mode %in% c("last_par", "doitall")) st_source_mode <- "last_par"
   st_source_par_env <- first(Sys.getenv("selftest_source_par"))
@@ -313,17 +315,20 @@ if (identical(tolower(job_type), "selftest")) {
   }
   st_model_par <- latest_par(st_model_abs)
   st_merged_par <- if (!is.na(merged_par) && file.exists(merged_par)) merged_par else NA_character_
+  st_auto_par <- latest_par(st_auto_abs)
   st_base_par <- latest_par(st_base_abs)
-  st_truth_candidates <- c(st_source_par, st_model_par, st_merged_par, st_base_par)
+  st_truth_candidates <- c(st_source_par, st_model_par, st_auto_par, st_merged_par, st_base_par)
   st_truth_candidates <- st_truth_candidates[!is.na(st_truth_candidates) & file.exists(st_truth_candidates)]
   st_truth <- if (length(st_truth_candidates) > 0) st_truth_candidates[[1]] else NA_character_
 
   emit("selftest base: ", normalizePath(st_base_abs, winslash = "/", mustWork = FALSE))
   emit("selftest model dir: ", normalizePath(st_model_abs, winslash = "/", mustWork = FALSE))
+  emit("selftest auto model dir: ", normalizePath(st_auto_abs, winslash = "/", mustWork = FALSE))
   emit("selftest output dir: ", selftest_dir)
   emit("truth source mode: ", st_source_mode)
   emit("configured source par: ", if (nzchar(st_source_par_env)) st_source_par_env else "<auto>")
   emit("model latest par: ", if (!is.na(st_model_par) && file.exists(st_model_par)) basename(st_model_par) else "missing")
+  emit("auto model latest par: ", if (!is.na(st_auto_par) && file.exists(st_auto_par)) basename(st_auto_par) else "missing")
   emit("overlay latest par: ", if (!is.na(st_merged_par) && file.exists(st_merged_par)) basename(st_merged_par) else "missing")
   emit("base latest par: ", if (!is.na(st_base_par) && file.exists(st_base_par)) basename(st_base_par) else "missing")
   emit("selected truth par: ", if (!is.na(st_truth) && file.exists(st_truth)) normalizePath(st_truth, winslash = "/", mustWork = FALSE) else "missing")
@@ -337,7 +342,7 @@ if (identical(tolower(job_type), "selftest")) {
     add_error("Self-test base input is missing one or more required data files (.frq, .ini, .tag, .age_length).")
   }
   if (identical(st_source_mode, "last_par") && (is.na(st_truth) || !file.exists(st_truth))) {
-    add_error("Self-test source mode is last_par but no truth .par was found in configured source, model dir, fitted overlay, or base dir.")
+    add_error("Self-test source mode is last_par but no truth .par was found in configured source, model dir, auto model dir, fitted overlay, or base dir.")
   }
   if (identical(st_source_mode, "doitall") && !file.exists(file.path(st_base_abs, "doitall.sh"))) {
     add_error("Self-test source mode is doitall but doitall.sh is missing from the base input.")

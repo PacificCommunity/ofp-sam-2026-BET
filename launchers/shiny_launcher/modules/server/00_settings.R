@@ -292,6 +292,12 @@
       updateTextInput(session, "download_location", value = latest_download)
     }
 
+    latest_scan_output <- latest_setting_value("last_scan_output_dir", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (is.null(latest_scan_output)) latest_scan_output <- latest_setting_value("scan_output_dir", launcher_obj, root_obj, launcher_mtime, root_mtime)
+    if (!is.null(latest_scan_output) && nzchar(latest_scan_output)) {
+      updateTextInput(session, "scan_output_dir", value = latest_scan_output)
+    }
+
     branch_value <- preferred_branch_value(
       latest_setting_value("branch", launcher_obj, root_obj, launcher_mtime, root_mtime),
       startup_repo_root
@@ -420,6 +426,7 @@
     ls <- list(
       last_repo_root = repo_root_val(),
       last_download_location = input$download_location,
+      last_scan_output_dir = input$scan_output_dir,
       remote_user = input$remote_user,
       remote_host = input$remote_host,
       github_username = input$github_username,

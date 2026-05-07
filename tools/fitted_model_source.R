@@ -132,6 +132,7 @@ scan_fitted_model_dirs <- function(model_root = "model", repo_root = ".") {
 
   info_files <- list.files(root, pattern = "^model_info\\.rds$", full.names = TRUE, recursive = TRUE)
   dirs <- unique(dirname(info_files))
+  dirs <- dirs[basename(dirs) != "_source_model"]
   dirs <- dirs[vapply(dirs, function(d) file.exists(fms_latest_par(d)), logical(1))]
   if (length(dirs) == 0) return(empty)
 
@@ -302,7 +303,7 @@ ensure_fitted_model_source <- function(base_dir_abs, base_dir = "", model_dir = 
   } else if (!enabled && !nzchar(source_dir_env) && auto_run_model) {
     source_model_dir <- fms_first(
       Sys.getenv("auto_fitted_model_dir", ""),
-      default = file.path(model_dir, "_source_model")
+      default = model_dir
     )
     source_id <- fms_first(Sys.getenv("fitted_model_source_id", ""), default = fms_safe_id(source_model_dir))
     fms_run_prerequisite_model(

@@ -39,18 +39,22 @@ model_dir_default <- file.path("model", basename(base_dir_abs))
 model_dir <- if (nzchar(model_dir_env)) model_dir_env else model_dir_default
 model_dir_abs <- st_resolve_path(model_dir, project_root = project_root, must_work = FALSE)
 model_dir_available <- dir.exists(model_dir_abs)
+auto_fitted_model_dir <- st_env("auto_fitted_model_dir", model_dir)
+auto_fitted_model_dir_abs <- st_resolve_path(auto_fitted_model_dir, project_root = project_root, must_work = FALSE)
+auto_fitted_model_available <- dir.exists(auto_fitted_model_dir_abs)
 
 selftest_dir <- st_env("selftest_dir", file.path(model_dir, "selftest"))
 selftest_dir_abs <- st_resolve_path(selftest_dir, project_root = project_root, must_work = FALSE)
 
 fitted_source_active <- fms_truthy(st_env("fitted_model_source_enabled", "0")) ||
   nzchar(st_env("fitted_model_bundle", "")) ||
-  nzchar(st_env("fitted_model_source_dir", ""))
+  nzchar(st_env("fitted_model_source_dir", "")) ||
+  fms_truthy(st_env("auto_run_model_before_dependency", "0"))
 if (isTRUE(fitted_source_active)) {
   base_dir_abs <- ensure_fitted_model_source(
     base_dir_abs = base_dir_abs,
     base_dir = base_dir,
-    model_dir = selftest_dir,
+    model_dir = model_dir,
     project_root = project_root
   )
 }
@@ -68,6 +72,7 @@ if (identical(source_mode, "last_par")) {
   } else {
     source_candidates <- c(
       if (isTRUE(model_dir_available)) st_latest_par(model_dir_abs) else NA_character_,
+      if (isTRUE(auto_fitted_model_available)) st_latest_par(auto_fitted_model_dir_abs) else NA_character_,
       st_latest_par(base_dir_abs)
     )
     source_candidates <- source_candidates[!is.na(source_candidates) & file.exists(source_candidates)]
@@ -158,6 +163,7 @@ dir.create(file.path(selftest_dir_abs, "recovery"), recursive = TRUE, showWarnin
 cat("Running MFCL self-test\n")
 cat("Base inputs :", base_dir_abs, "\n")
 cat("Model source:", if (isTRUE(model_dir_available)) model_dir_abs else "<not found>", "\n")
+cat("Auto source :", if (isTRUE(auto_fitted_model_available)) auto_fitted_model_dir_abs else "<not found>", "\n")
 cat("Source mode :", source_mode, "\n")
 cat("Source par  :", if (!is.na(source_par)) source_par else "<doitall.sh>", "\n")
 cat("Output dir  :", selftest_dir_abs, "\n")

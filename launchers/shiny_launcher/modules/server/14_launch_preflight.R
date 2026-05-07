@@ -224,6 +224,10 @@
     fitted_par_exists <- fitted_enabled && !is.na(fitted_par) && file.exists(fitted_par)
     fitted_source_active <- isTRUE(fitted_enabled) && isTRUE(fitted_par_exists)
     auto_run_model <- launch_preflight_truthy(model_env$auto_run_model_before_dependency)
+    auto_fitted_model_dir <- launch_preflight_first(model_env$auto_fitted_model_dir, model_dir)
+    auto_fitted_model_abs <- resolve_repo_path(auto_fitted_model_dir)
+    auto_fitted_model_par <- launch_preflight_latest_par(auto_fitted_model_abs)
+    auto_fitted_model_par_exists <- !is.na(auto_fitted_model_par) && file.exists(auto_fitted_model_par)
     frq_n <- length(launch_preflight_files(base_dir_abs, "\\.frq$"))
     ini_n <- length(launch_preflight_files(base_dir_abs, "\\.ini$"))
     tag_n <- length(launch_preflight_files(base_dir_abs, "\\.tag$"))
@@ -252,6 +256,7 @@
         if (base_has_change_tokens) paste0("tokens=", paste(base_tokens, collapse = ",")),
         if (model_par_exists) paste0("model par=", basename(model_par)) else if (model_exists) "model par=missing" else "model_dir=missing",
         if (fitted_enabled && fitted_par_exists) paste0("fitted par=", basename(fitted_par)) else if (fitted_enabled) "fitted par=missing",
+        if (auto_fitted_model_par_exists) paste0("auto source par=", basename(auto_fitted_model_par)),
         if (auto_run_model) paste0("auto model first=", if (auto_model_ready) "ready" else "not ready"),
         paste0("prefer par start=", if (prefer_par_start) "yes" else "no"),
         paste0("frq=", frq_n),
@@ -431,7 +436,7 @@
       truth_par_ready <- if (identical(source_mode, "doitall")) {
         doitall && ini_n > 0
       } else {
-        source_par_exists || fitted_par_exists || selftest_model_par_exists || base_par_usable
+        source_par_exists || fitted_par_exists || selftest_model_par_exists || auto_fitted_model_par_exists || base_par_usable
       }
       data_ready <- frq_n > 0 && ini_n > 0 && tag_n > 0 && age_n > 0
       refit_ready <- !identical(refit_mode, "doitall") || doitall
@@ -443,6 +448,8 @@
         paste0("doitall=", as.integer(doitall)),
         paste0("selftest model dir=", if (selftest_model_exists) selftest_model_dir else paste0("missing ", selftest_model_dir)),
         paste0("selftest model par=", if (selftest_model_par_exists) basename(selftest_model_par) else "missing"),
+        paste0("auto model dir=", if (dir.exists(auto_fitted_model_abs)) auto_fitted_model_dir else paste0("missing ", auto_fitted_model_dir)),
+        paste0("auto model par=", if (auto_fitted_model_par_exists) basename(auto_fitted_model_par) else "missing"),
         paste0("selftest output=", selftest_dir),
         paste0("truth source=", source_mode),
         if (nzchar(source_par_config)) paste0("selftest source par=", if (source_par_exists) basename(source_par_abs) else "missing") else "selftest source par=auto",
@@ -467,6 +474,8 @@
           "Self-test will use the selected fitted-source .par as truth, then simulate pseudo data with MFCL native realtag and refit each replicate."
         } else if (selftest_model_par_exists) {
           paste0("Self-test will use the existing fitted .par in ", selftest_model_dir, " as truth, then write results under ", selftest_dir, ".")
+        } else if (auto_fitted_model_par_exists) {
+          paste0("Self-test will use the existing prerequisite/model .par in ", auto_fitted_model_dir, " as truth, then write results under ", selftest_dir, ".")
         } else if (source_par_exists) {
           "Self-test will use the configured selftest_source_par as truth, then simulate pseudo data with MFCL native realtag and refit each replicate."
         } else {
