@@ -359,6 +359,12 @@
   }
 
   selected_sensitivity_expansion <- function() {
+    job_types <- tryCatch(input$job_types, error = function(e) character(0))
+    if (isTRUE(sensitivity_mode_enabled()) &&
+        "prof" %in% as.character(job_types) &&
+        length(selected_sensitivity_ids()) > 1L) {
+      return("factorial")
+    }
     mode <- first_scalar_string(input$input_recipe_expansion, default = "factorial")
     if (mode %in% c("oneoff", "factorial")) mode else "factorial"
   }
@@ -2585,7 +2591,16 @@
         length(job_specs),
         length(selected_models),
         paste(launch_unit_labels(selected_models), collapse = ", ")
-      )
+      ),
+      if (isTRUE(sensitivity_mode_enabled())) {
+        sprintf(
+          "Sensitivity expansion: %s; selected sensitivities: %s\n",
+          selected_sensitivity_expansion(),
+          paste(selected_sensitivity_ids(), collapse = ", ")
+        )
+      } else {
+        "Input mode: existing inputs\n"
+      }
     )
     
     model_env_lists <- lapply(selected_models, function(m) {
