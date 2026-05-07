@@ -63,6 +63,26 @@ st_copy_dir_contents <- function(from, to, overwrite = TRUE) {
   invisible(to)
 }
 
+st_remove_mfcl_run_outputs <- function(dir_path, keep_par = character(), remove_par = TRUE) {
+  if (!dir.exists(dir_path)) return(invisible(0L))
+  keep_par <- basename(as.character(keep_par))
+  keep_par <- keep_par[nzchar(keep_par) & !is.na(keep_par)]
+
+  stale <- list.files(
+    dir_path,
+    pattern = "(\\.rep$|\\.rpt$|^model_info\\.rds$|^model_payload\\.rds$|^mfcl_.*_log\\.txt$)",
+    full.names = TRUE
+  )
+  if (isTRUE(remove_par)) {
+    pars <- list.files(dir_path, pattern = "\\.par([0-9]+)?$", full.names = TRUE)
+    if (length(keep_par) > 0) pars <- pars[!basename(pars) %in% keep_par]
+    stale <- c(stale, pars)
+  }
+  stale <- unique(stale[file.exists(stale)])
+  if (length(stale) > 0) unlink(stale, force = TRUE)
+  invisible(length(stale))
+}
+
 st_key <- function(year, month, week, fishery) {
   paste(as.integer(year), as.integer(month), as.integer(week), as.integer(fishery), sep = "_")
 }
@@ -2004,6 +2024,7 @@ st_run_refit <- function(input_dir,
     if (is.na(par_file) || !file.exists(file.path(refit_dir, par_file))) {
       stop("Refit input has no .par start file: ", refit_dir)
     }
+    st_remove_mfcl_run_outputs(refit_dir, keep_par = par_file, remove_par = TRUE)
     cmd <- paste(
       shQuote(program_path_abs),
       shQuote(frq_file),
@@ -2017,6 +2038,8 @@ st_run_refit <- function(input_dir,
     if (!file.exists(file.path(refit_dir, "doitall.sh"))) {
       stop("Refit mode doitall requires doitall.sh in pseudo input folder: ", refit_dir)
     }
+    removed <- st_remove_mfcl_run_outputs(refit_dir, remove_par = TRUE)
+    if (removed > 0) cat("Removed", removed, "copied MFCL output files before doitall refit\n")
     old_program_path <- Sys.getenv("PROGRAM_PATH", unset = NA_character_)
     Sys.setenv(PROGRAM_PATH = program_path_abs)
     on.exit({
@@ -2038,7 +2061,13 @@ st_run_refit <- function(input_dir,
   setwd(old_wd)
 
   final_par <- file.path(refit_dir, output_par)
+  if (identical(mode, "last_par") && !file.exists(final_par)) {
+    stop("MFCL last_par refit did not create expected output .par: ", final_par, "; see ", log_file)
+  }
   if (!file.exists(final_par)) final_par <- mp_final_par(refit_dir)
+  if (is.null(final_par) || !file.exists(final_par)) {
+    stop("MFCL refit did not create a final .par in ", refit_dir, "; see ", log_file)
+  }
   obj_fun <- if (!is.null(final_par) && file.exists(final_par)) mp_extract_par_obj_fun(final_par) else NA_real_
   max_grad <- if (!is.null(final_par) && file.exists(final_par)) mp_extract_par_max_grad(final_par) else NA_real_
   info <- list(
@@ -2046,7 +2075,7 @@ st_run_refit <- function(input_dir,
     program_path = program_path_abs,
     mfcl_commands = cmd,
     frq_file = frq_file,
-    par_in = par_file,
+    par_in = if (identical(mode, "last_par")) par_file else NA_character_,
     par_out = if (!is.null(final_par)) basename(final_par) else output_par,
     refit_mode = mode,
     refit_fevals = if (identical(mode, "last_par")) as.integer(fevals) else NA_integer_,
@@ -2074,6 +2103,7 @@ st_run_truth_on_pseudo <- function(input_dir,
   st_copy_dir_contents(input_dir, eval_dir)
   frq_file <- basename(st_first_file(eval_dir, "\\.frq$"))
   par_file <- basename(st_latest_par(eval_dir))
+  st_remove_mfcl_run_outputs(eval_dir, keep_par = par_file, remove_par = TRUE)
   if (is.na(par_file) || !file.exists(file.path(eval_dir, par_file))) {
     stop("Truth-on-pseudo input has no .par file: ", eval_dir)
   }

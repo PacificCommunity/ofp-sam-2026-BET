@@ -194,6 +194,8 @@ prepare_selftest_source_par <- function(sim_dir, source_par, rep_label) {
   frq_name <- basename(frq_file)
   if (identical(source_mode, "doitall")) {
     log_file <- file.path(sim_dir, "mfcl_selftest_source_doitall_log.txt")
+    removed <- st_remove_mfcl_run_outputs(sim_dir, remove_par = TRUE)
+    if (removed > 0) cat("Removed", removed, "copied MFCL output files before source doitall\n")
     old_wd <- getwd()
     on.exit(setwd(old_wd), add = TRUE)
     setwd(sim_dir)
