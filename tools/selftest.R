@@ -772,6 +772,92 @@ st_multinom_freq <- function(p, n) {
   as.numeric(stats::rmultinom(1L, size = n, prob = p)[, 1L])
 }
 
+st_age_length_draw_size_mode <- function() {
+  mode <- tolower(st_first(Sys.getenv("selftest_age_length_draw_size", "effective")))
+  if (mode %in% c("effective", "ess", "likelihood", "likelihood_matched")) return("effective")
+  if (mode %in% c("observed", "obs", "input", "raw")) return("observed")
+  stop("Unsupported selftest_age_length_draw_size: ", mode, ". Use effective or observed.")
+}
+
+st_keep_model_payload <- function() {
+  st_truthy(Sys.getenv("selftest_keep_model_payload", "0"), default = FALSE)
+}
+
+st_par_slot_value <- function(par_file, slot_name) {
+  if (is.null(par_file) || length(par_file) == 0 || is.na(par_file) || !file.exists(par_file)) {
+    return(NA_real_)
+  }
+  par_obj <- tryCatch(read.MFCLPar(par_file), error = function(e) NULL)
+  suppressWarnings(tryCatch(as.numeric(slot(par_obj, slot_name)), error = function(e) NA_real_))
+}
+
+st_profile_value_vector <- function(par_obj, profile_name) {
+  out <- tryCatch({
+    if (identical(profile_name, "totpop")) {
+      tot_pop(par_obj)
+    } else if (identical(profile_name, "LorenM")) {
+      as.vector(aperm(log_m(par_obj), c(4, 1, 2, 3, 5, 6)))
+    } else if (identical(profile_name, "L1")) {
+      growth(par_obj)[1, 1]
+    } else if (identical(profile_name, "L2")) {
+      growth(par_obj)[2, 1]
+    } else if (identical(profile_name, "kappa")) {
+      growth(par_obj)[3, 1]
+    } else if (identical(profile_name, "s1")) {
+      growth_var_pars(par_obj)[1, 1]
+    } else if (identical(profile_name, "s2")) {
+      growth_var_pars(par_obj)[2, 1]
+    } else if (identical(profile_name, "BetaScale")) {
+      season_growth_pars(par_obj)[21]
+    } else {
+      numeric()
+    }
+  }, error = function(e) numeric())
+  out <- suppressWarnings(as.numeric(out))
+  out[is.finite(out)]
+}
+
+st_profile_key_values <- function(par_obj) {
+  if (is.null(par_obj)) return(data.frame())
+  profile_names <- c("totpop", "LorenM", "L1", "L2", "kappa", "s1", "s2", "BetaScale")
+  rows <- lapply(profile_names, function(group) {
+    val <- st_profile_value_vector(par_obj, group)
+    if (length(val) == 0) return(NULL)
+    data.frame(
+      parameter = group,
+      index = seq_along(val),
+      value = val,
+      stringsAsFactors = FALSE
+    )
+  })
+  out <- do.call(rbind, rows[!vapply(rows, is.null, logical(1))])
+  if (is.null(out)) data.frame() else out
+}
+
+st_profile_parameter_recovery <- function(truth_par, refit_par, out_file) {
+  truth_obj <- tryCatch(read.MFCLPar(truth_par), error = function(e) NULL)
+  refit_obj <- tryCatch(read.MFCLPar(refit_par), error = function(e) NULL)
+  truth <- st_profile_key_values(truth_obj)
+  refit <- st_profile_key_values(refit_obj)
+  if (nrow(truth) == 0 || nrow(refit) == 0) {
+    utils::write.csv(data.frame(), out_file, row.names = FALSE)
+    return(invisible(NULL))
+  }
+  names(truth)[names(truth) == "value"] <- "truth_value"
+  names(refit)[names(refit) == "value"] <- "refit_value"
+  out <- merge(truth, refit, by = c("parameter", "index"), all = FALSE)
+  if (nrow(out) > 0) {
+    out$rel_diff <- ifelse(
+      out$parameter == "LorenM",
+      (out$refit_value - out$truth_value) / abs(out$truth_value),
+      (out$refit_value - out$truth_value) / out$truth_value
+    )
+    out <- out[is.finite(out$rel_diff) & abs(out$truth_value) > 1e-8, , drop = FALSE]
+  }
+  utils::write.csv(out, out_file, row.names = FALSE)
+  invisible(out)
+}
+
 st_make_correlation_matrix <- function(n, rho = 0, psi = 0, mode = 0) {
   rho <- max(min(suppressWarnings(as.numeric(rho)), 0.98), -0.98)
   psi <- suppressWarnings(as.numeric(psi))
@@ -1090,7 +1176,8 @@ st_parse_agelength_predictions <- function(path, n_age) {
 st_apply_pseudo_to_age_length <- function(base_alk_file,
                                           out_alk_file,
                                           sim_dir,
-                                          seed = 1007L) {
+                                          seed = 1007L,
+                                          draw_size_mode = st_age_length_draw_size_mode()) {
   pred_path <- file.path(sim_dir, "agelengthresids.dat")
   if (!file.exists(pred_path)) {
     stop("Cannot simulate age-length data: missing MFCL agelengthresids.dat in ", sim_dir)
@@ -1120,9 +1207,15 @@ st_apply_pseudo_to_age_length <- function(base_alk_file,
 
   set.seed(as.integer(seed))
   original_counts <- alk_df$obs
+  ess <- suppressWarnings(as.numeric(alk@ESS))
+  has_ess <- length(ess) >= length(sample_levels) && any(is.finite(ess) & ess > 0)
+  draw_size_mode <- match.arg(draw_size_mode, c("effective", "observed"))
   simulated_records <- 0L
   simulated_length_bins <- 0L
   zero_prediction_bins <- 0L
+  draw_n_total <- 0
+  draw_n_min <- Inf
+  draw_n_max <- -Inf
 
   for (sample_id in seq_along(sample_levels)) {
     idx <- which(sample_key == sample_levels[[sample_id]])
@@ -1165,7 +1258,21 @@ st_apply_pseudo_to_age_length <- function(base_alk_file,
         prob <- pred_profiles[[donor]]
         zero_prediction_bins <- zero_prediction_bins + 1L
       }
-      alk_df$obs[len_idx] <- as.numeric(rmultinom(1L, size = n_obs, prob = prob))
+      ess_i <- if (has_ess) ess[[sample_id]] else NA_real_
+      draw_n_real <- if (
+        identical(draw_size_mode, "effective") &&
+          is.finite(ess_i) && ess_i > 0
+      ) n_obs * ess_i else n_obs
+      draw_n <- max(1L, as.integer(round(draw_n_real)))
+      draw <- as.numeric(rmultinom(1L, size = draw_n, prob = prob))
+      if (identical(draw_size_mode, "effective")) {
+        alk_df$obs[len_idx] <- draw * (n_obs / draw_n)
+      } else {
+        alk_df$obs[len_idx] <- draw
+      }
+      draw_n_total <- draw_n_total + draw_n
+      draw_n_min <- min(draw_n_min, draw_n)
+      draw_n_max <- max(draw_n_max, draw_n)
       simulated_length_bins <- simulated_length_bins + 1L
     }
     simulated_records <- simulated_records + 1L
@@ -1185,6 +1292,12 @@ st_apply_pseudo_to_age_length <- function(base_alk_file,
     age_length_zero_prediction_bins = zero_prediction_bins,
     age_length_total_obs = sum(original_counts, na.rm = TRUE),
     age_length_total_sim = sum(alk_df$obs, na.rm = TRUE),
+    age_length_draw_size_mode = draw_size_mode,
+    age_length_ess_min = if (has_ess) min(ess[is.finite(ess)], na.rm = TRUE) else NA_real_,
+    age_length_ess_max = if (has_ess) max(ess[is.finite(ess)], na.rm = TRUE) else NA_real_,
+    age_length_draw_n_total = draw_n_total,
+    age_length_draw_n_min = if (is.finite(draw_n_min)) draw_n_min else NA_integer_,
+    age_length_draw_n_max = if (is.finite(draw_n_max)) draw_n_max else NA_integer_,
     age_length_sample_sizes_matched = sample_sizes_matched,
     out_age_length_file = out_alk_file
   )
@@ -2084,13 +2197,19 @@ st_run_refit <- function(input_dir,
     selftest = TRUE,
     exit_status = as.integer(status),
     obj_fun = obj_fun,
+    tag_lik = st_par_slot_value(final_par, "tag_lik"),
+    mn_len_pen = st_par_slot_value(final_par, "mn_len_pen"),
     max_grad = max_grad,
     converged = isTRUE(is.finite(max_grad) && abs(max_grad) <= 0.01)
   )
   saveRDS(info, file.path(refit_dir, "model_info.rds"), compress = "xz")
 
-  payload <- mp_build_model_payload(refit_dir, tag_report_year1 = tag_report_year1)
-  saveRDS(payload, file.path(refit_dir, "model_payload.rds"), compress = "xz")
+  if (isTRUE(st_keep_model_payload())) {
+    payload <- mp_build_model_payload(refit_dir, tag_report_year1 = tag_report_year1)
+    saveRDS(payload, file.path(refit_dir, "model_payload.rds"), compress = "xz")
+  } else {
+    unlink(file.path(refit_dir, "model_payload.rds"), force = TRUE)
+  }
   info
 }
 
@@ -2156,12 +2275,14 @@ st_run_truth_on_pseudo <- function(input_dir,
     truth_on_pseudo = TRUE,
     exit_status = as.integer(status),
     obj_fun = obj_fun,
+    tag_lik = st_par_slot_value(final_par, "tag_lik"),
+    mn_len_pen = st_par_slot_value(final_par, "mn_len_pen"),
     max_grad = max_grad,
     converged = isTRUE(is.finite(max_grad) && abs(max_grad) <= 0.01)
   )
   saveRDS(info, file.path(eval_dir, "model_info.rds"), compress = "xz")
 
-  if (isTRUE(output_par_exists)) {
+  if (isTRUE(output_par_exists) && isTRUE(st_keep_model_payload())) {
     payload <- tryCatch(
       mp_build_model_payload(eval_dir, tag_report_year1 = tag_report_year1),
       error = function(e) {

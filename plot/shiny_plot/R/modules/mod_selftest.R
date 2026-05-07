@@ -158,7 +158,7 @@ stp_selftest_sibling_dir <- function(model_dir, scenario, sibling) {
   folder <- stp_model_folder(model_dir, scenario)
   parent <- dirname(folder)
   root <- dirname(parent)
-  if (!basename(parent) %in% c("refit", "inputs", "sim", "recovery")) {
+  if (!basename(parent) %in% c("refit", "inputs", "sim", "truth", "truth_eval", "recovery")) {
     return(file.path(parent, sibling, basename(folder)))
   }
   file.path(root, sibling, basename(folder))
@@ -172,13 +172,17 @@ stp_selftest_index <- function(model_dir, loaded_models = character()) {
   make_rows <- function(model_name, selftest_root) {
     refit_root <- file.path(selftest_root, "refit")
     sim_root <- file.path(selftest_root, "sim")
+    truth_root <- file.path(selftest_root, "truth")
     truth_eval_root <- file.path(selftest_root, "truth_eval")
     input_root <- file.path(selftest_root, "inputs")
+    recovery_root <- file.path(selftest_root, "recovery")
     if (!dir.exists(refit_root)) return(NULL)
     rep_dirs <- list.dirs(refit_root, recursive = FALSE, full.names = FALSE)
     rep_dirs <- rep_dirs[grepl("^rep_\\d+$", rep_dirs)]
     if (length(rep_dirs) == 0) return(NULL)
     rep_dirs <- sort(rep_dirs)
+    central_truth <- file.exists(file.path(truth_root, "model_info.rds")) ||
+      file.exists(file.path(truth_root, "model_payload.rds"))
     data.frame(
       key = paste(model_name, rep_dirs, sep = "::"),
       label = paste(model_name, rep_dirs),
@@ -186,16 +190,17 @@ stp_selftest_index <- function(model_dir, loaded_models = character()) {
       replicate_name = rep_dirs,
       replicate = stp_rep_id(rep_dirs),
       refit_dir = file.path(refit_root, rep_dirs),
-      truth_dir = file.path(sim_root, rep_dirs),
+      truth_dir = if (isTRUE(central_truth)) truth_root else file.path(sim_root, rep_dirs),
       truth_eval_dir = file.path(truth_eval_root, rep_dirs),
       input_dir = file.path(input_root, rep_dirs),
+      recovery_dir = file.path(recovery_root, rep_dirs),
       stringsAsFactors = FALSE
     )
   }
 
   parent <- basename(model_dir)
   grandparent <- basename(dirname(model_dir))
-  if (parent %in% c("refit", "sim", "inputs") && identical(grandparent, "selftest")) {
+  if (parent %in% c("refit", "sim", "truth", "truth_eval", "inputs", "recovery") && identical(grandparent, "selftest")) {
     model_name <- basename(dirname(dirname(model_dir)))
     return(make_rows(model_name, dirname(model_dir)))
   }
@@ -217,6 +222,7 @@ stp_selftest_index <- function(model_dir, loaded_models = character()) {
       key = character(), label = character(), model = character(),
       replicate_name = character(), replicate = integer(),
       refit_dir = character(), truth_dir = character(), truth_eval_dir = character(), input_dir = character(),
+      recovery_dir = character(),
       stringsAsFactors = FALSE
     ))
   }
@@ -313,6 +319,63 @@ stp_par_relative_diff <- function(truth_par, refit_par, scenario, replicate) {
     filter(is.finite(rel_diff), abs(truth_value) > 1e-8)
 }
 
+stp_read_derived_recovery <- function(recovery_dir, scenario, replicate) {
+  path <- file.path(recovery_dir, "derived_recovery.csv")
+  if (!file.exists(path)) return(NULL)
+  x <- tryCatch(utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE), error = function(e) NULL)
+  if (!is.data.frame(x) || nrow(x) == 0 || !"year" %in% names(x)) return(NULL)
+  metrics <- stp_recovery_metrics()
+  rows <- lapply(metrics, function(metric) {
+    truth_col <- paste0(metric, "_truth")
+    refit_col <- paste0(metric, "_estimate")
+    if (!all(c(truth_col, refit_col) %in% names(x))) return(NULL)
+    data.frame(
+      year = suppressWarnings(as.numeric(x$year)),
+      metric = metric,
+      quantity = stp_metric_label(metric),
+      truth = suppressWarnings(as.numeric(x[[truth_col]])),
+      refit = suppressWarnings(as.numeric(x[[refit_col]])),
+      stringsAsFactors = FALSE
+    ) %>%
+      tidyr::pivot_longer(c("truth", "refit"), names_to = "source", values_to = "value") %>%
+      mutate(scenario = scenario, replicate = replicate)
+  })
+  out <- bind_rows(rows)
+  if (nrow(out) == 0) return(NULL)
+  out %>%
+    mutate(
+      year = suppressWarnings(as.numeric(year)),
+      value = suppressWarnings(as.numeric(value))
+    ) %>%
+    filter(is.finite(year), is.finite(value))
+}
+
+stp_read_profile_parameter_recovery <- function(recovery_dir, scenario, replicate) {
+  path <- file.path(recovery_dir, "profile_parameter_recovery.csv")
+  if (!file.exists(path)) return(NULL)
+  x <- tryCatch(utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE), error = function(e) NULL)
+  if (!is.data.frame(x) || nrow(x) == 0) return(NULL)
+  if (!all(c("parameter", "index", "truth_value", "refit_value") %in% names(x))) return(NULL)
+  if (!"rel_diff" %in% names(x)) {
+    x$rel_diff <- ifelse(
+      x$parameter == "LorenM",
+      (x$refit_value - x$truth_value) / abs(x$truth_value),
+      (x$refit_value - x$truth_value) / x$truth_value
+    )
+  }
+  x %>%
+    transmute(
+      parameter = as.character(.data$parameter),
+      index = suppressWarnings(as.integer(.data$index)),
+      truth_value = suppressWarnings(as.numeric(.data$truth_value)),
+      refit_value = suppressWarnings(as.numeric(.data$refit_value)),
+      scenario = scenario,
+      replicate = replicate,
+      rel_diff = suppressWarnings(as.numeric(.data$rel_diff))
+    ) %>%
+    filter(is.finite(rel_diff), is.finite(truth_value), abs(truth_value) > 1e-8)
+}
+
 stp_scalar_num <- function(x) {
   out <- suppressWarnings(as.numeric(x))
   if (length(out) == 0 || !is.finite(out[1])) NA_real_ else out[1]
@@ -337,6 +400,10 @@ stp_read_run_diagnostics <- function(folder, source, scenario, replicate) {
   max_grad <- if (isTRUE(info_first)) stp_scalar_num(info$max_grad) else stp_scalar_num(payload$max_grad)
   if (!is.finite(max_grad)) max_grad <- if (isTRUE(info_first)) stp_scalar_num(payload$max_grad) else stp_scalar_num(info$max_grad)
   if (!is.finite(max_grad) && !is.null(par_obj)) max_grad <- stp_scalar_num(tryCatch(par_obj@max_grad, error = function(e) NA_real_))
+  tag_lik <- stp_par_slot_num(par_obj, "tag_lik")
+  if (!is.finite(tag_lik)) tag_lik <- stp_scalar_num(info$tag_lik)
+  mn_len_pen <- stp_par_slot_num(par_obj, "mn_len_pen")
+  if (!is.finite(mn_len_pen)) mn_len_pen <- stp_scalar_num(info$mn_len_pen)
   exit_status <- suppressWarnings(as.integer(tryCatch(info$exit_status, error = function(e) NA_integer_)))
   if (length(exit_status) == 0 || is.na(exit_status[1])) exit_status <- NA_integer_ else exit_status <- exit_status[1]
   run_completed <- dir.exists(folder) && is.finite(obj_fun) && is.finite(max_grad) &&
@@ -346,8 +413,8 @@ stp_read_run_diagnostics <- function(folder, source, scenario, replicate) {
     replicate = replicate,
     source = source,
     obj_fun = obj_fun,
-    tag_lik = stp_par_slot_num(par_obj, "tag_lik"),
-    mn_len_pen = stp_par_slot_num(par_obj, "mn_len_pen"),
+    tag_lik = tag_lik,
+    mn_len_pen = mn_len_pen,
     max_grad = max_grad,
     abs_max_grad = abs(max_grad),
     exit_status = exit_status,
@@ -639,6 +706,12 @@ stp_input_info_row <- function(info, scenario) {
     tag_recapture_rows = get_num("tag_recapture_rows"),
     age_length_total_obs = get_num("age_length_total_obs"),
     age_length_total_sim = get_num("age_length_total_sim"),
+    age_length_draw_size_mode = get_chr("age_length_draw_size_mode"),
+    age_length_ess_min = get_num("age_length_ess_min"),
+    age_length_ess_max = get_num("age_length_ess_max"),
+    age_length_draw_n_total = get_num("age_length_draw_n_total"),
+    age_length_draw_n_min = get_num("age_length_draw_n_min"),
+    age_length_draw_n_max = get_num("age_length_draw_n_max"),
     length_sample_size_mismatch = get_num("length_sample_size_mismatch"),
     weight_sample_size_mismatch = get_num("weight_sample_size_mismatch"),
     age_length_zero_prediction_bins = get_num("age_length_zero_prediction_bins"),
@@ -734,10 +807,13 @@ mod_selftest_server <- function(input, output, session, rv) {
     idx <- idx[idx$key %in% selected, , drop = FALSE]
     if (nrow(idx) == 0) return(data.frame())
 
-    bind_rows(lapply(seq_len(nrow(idx)), function(i) {
+    rows <- bind_rows(lapply(seq_len(nrow(idx)), function(i) {
       row <- idx[i, , drop = FALSE]
       scenario <- row$key[[1]]
       rep_id <- row$replicate[[1]]
+      from_recovery <- stp_read_derived_recovery(row$recovery_dir[[1]], scenario, rep_id)
+      if (!is.null(from_recovery) && nrow(from_recovery) > 0) return(from_recovery)
+
       refit_ts <- stp_extract_all_metrics(stp_read_model_rep(row$refit_dir[[1]]))
       truth_ts <- stp_extract_all_metrics(stp_read_model_rep(row$truth_dir[[1]]))
 
@@ -751,7 +827,9 @@ mod_selftest_server <- function(input, output, session, rv) {
             mutate(scenario = scenario, replicate = rep_id, source = "refit")
         }
       )
-    })) %>%
+    }))
+    if (nrow(rows) == 0 || !all(c("year", "value") %in% names(rows))) return(data.frame())
+    rows %>%
       mutate(
         year = suppressWarnings(as.numeric(year)),
         value = suppressWarnings(as.numeric(value))
@@ -769,6 +847,13 @@ mod_selftest_server <- function(input, output, session, rv) {
     if (nrow(idx) == 0) return(data.frame())
     bind_rows(lapply(seq_len(nrow(idx)), function(i) {
       row <- idx[i, , drop = FALSE]
+      from_recovery <- stp_read_profile_parameter_recovery(
+        row$recovery_dir[[1]],
+        row$key[[1]],
+        row$replicate[[1]]
+      )
+      if (!is.null(from_recovery) && nrow(from_recovery) > 0) return(from_recovery)
+
       stp_par_relative_diff(
         stp_read_model_par(row$truth_dir[[1]]),
         stp_read_model_par(row$refit_dir[[1]]),
@@ -1041,6 +1126,10 @@ mod_selftest_server <- function(input, output, session, rv) {
         tag_recaptures_total,
         age_length_source,
         age_length_sample_sizes_matched,
+        age_length_draw_size_mode,
+        age_length_ess_min,
+        age_length_ess_max,
+        age_length_draw_n_total,
         length_sample_size_mismatch,
         weight_sample_size_mismatch,
         age_length_zero_prediction_bins

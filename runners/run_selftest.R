@@ -113,6 +113,9 @@ selftest_compact_cleanup <- st_truthy(
   st_env("selftest_compact_cleanup", if (isTRUE(run_refit)) "1" else "0"),
   default = isTRUE(run_refit)
 )
+selftest_keep_model_payload <- st_truthy(st_env("selftest_keep_model_payload", "0"), default = FALSE)
+selftest_keep_sim_debug <- st_truthy(st_env("selftest_keep_sim_debug", "0"), default = FALSE)
+Sys.setenv(selftest_keep_model_payload = if (isTRUE(selftest_keep_model_payload)) "1" else "0")
 
 update_catch_setting <- tolower(trimws(st_env("selftest_update_catch", "auto")))
 update_effort_setting <- tolower(trimws(st_env("selftest_update_effort", "auto")))
@@ -157,6 +160,7 @@ key_parameters <- key_parameters[nzchar(key_parameters)]
 dir.create(selftest_dir_abs, recursive = TRUE, showWarnings = FALSE)
 dir.create(file.path(selftest_dir_abs, "sim"), recursive = TRUE, showWarnings = FALSE)
 dir.create(file.path(selftest_dir_abs, "inputs"), recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(selftest_dir_abs, "truth"), recursive = TRUE, showWarnings = FALSE)
 dir.create(file.path(selftest_dir_abs, "truth_eval"), recursive = TRUE, showWarnings = FALSE)
 dir.create(file.path(selftest_dir_abs, "refit"), recursive = TRUE, showWarnings = FALSE)
 dir.create(file.path(selftest_dir_abs, "recovery"), recursive = TRUE, showWarnings = FALSE)
@@ -174,6 +178,8 @@ cat("Refit mode  :", refit_mode, "\n")
 cat("Refit fevals:", refit_fevals, "\n")
 cat("Native tags :", require_native_tags && update_tags, "\n")
 cat("Compact cleanup:", selftest_compact_cleanup, "\n")
+cat("Keep full payloads:", selftest_keep_model_payload, "\n")
+cat("Keep sim debug:", selftest_keep_sim_debug, "\n")
 cat("Catch conditioned:", catch_conditioned, "\n")
 cat("Effort conditioned:", effort_conditioned, "\n")
 cat("Update data :", paste(
@@ -244,6 +250,8 @@ st_save_truth_payload <- function(sim_dir, sim_info, native_tag_info, seeds, rep
     selftest = TRUE,
     truth = TRUE,
     obj_fun = if (!is.na(truth_par) && file.exists(truth_par)) mp_extract_par_obj_fun(truth_par) else NA_real_,
+    tag_lik = st_par_slot_value(truth_par, "tag_lik"),
+    mn_len_pen = st_par_slot_value(truth_par, "mn_len_pen"),
     max_grad = if (!is.na(truth_par) && file.exists(truth_par)) mp_extract_par_max_grad(truth_par) else NA_real_
   )
   saveRDS(info, file.path(sim_dir, "model_info.rds"), compress = "xz")
@@ -260,20 +268,44 @@ st_save_truth_payload <- function(sim_dir, sim_info, native_tag_info, seeds, rep
   invisible(!is.null(payload))
 }
 
+st_publish_selftest_truth <- function(sim_dir, truth_dir) {
+  dir.create(truth_dir, recursive = TRUE, showWarnings = FALSE)
+  info_file <- file.path(sim_dir, "model_info.rds")
+  if (file.exists(info_file)) {
+    info <- tryCatch(readRDS(info_file), error = function(e) NULL)
+    if (is.list(info)) {
+      info$model_dir <- truth_dir
+      info$replicate <- NA_integer_
+      info$central_truth <- TRUE
+      saveRDS(info, file.path(truth_dir, "model_info.rds"), compress = "xz")
+    } else {
+      file.copy(info_file, file.path(truth_dir, "model_info.rds"), overwrite = TRUE)
+    }
+  }
+  if (isTRUE(selftest_keep_model_payload)) {
+    payload_file <- file.path(sim_dir, "model_payload.rds")
+    if (file.exists(payload_file)) {
+      file.copy(payload_file, file.path(truth_dir, "model_payload.rds"), overwrite = TRUE)
+    }
+  } else {
+    unlink(file.path(truth_dir, "model_payload.rds"), force = TRUE)
+  }
+  invisible(TRUE)
+}
+
 st_cleanup_selftest_rep <- function(sim_dir, input_dir, truth_eval_dir, refit_dir, recovery_dir, run_refit) {
   if (!isTRUE(selftest_compact_cleanup)) return(invisible(FALSE))
 
-  sim_keep <- c(
-    "model_payload.rds",
-    "model_info.rds",
-    "selftest_projection_info.rds",
-    "selftest_native_tag_info.rds",
-    "selftest_sim_info.rds"
-  )
+  sim_keep <- if (isTRUE(selftest_keep_sim_debug)) {
+    c("model_info.rds", "selftest_projection_info.rds", "selftest_native_tag_info.rds", "selftest_sim_info.rds")
+  } else {
+    character(0)
+  }
+  if (isTRUE(selftest_keep_model_payload)) sim_keep <- c(sim_keep, "model_payload.rds")
   input_keep <- c("selftest_input_info.rds", "data_simulation_summary.rds")
-  truth_eval_keep <- c("model_payload.rds", "model_info.rds")
-  refit_keep <- c("model_payload.rds", "model_info.rds")
-  recovery_keep <- c("parameter_recovery.csv", "derived_recovery.csv")
+  truth_eval_keep <- c("model_info.rds", if (isTRUE(selftest_keep_model_payload)) "model_payload.rds")
+  refit_keep <- c("model_info.rds", if (isTRUE(selftest_keep_model_payload)) "model_payload.rds")
+  recovery_keep <- c("parameter_recovery.csv", "profile_parameter_recovery.csv", "derived_recovery.csv")
 
   deleted <- c(
     sim = mp_cleanup_files(sim_dir, keep = sim_keep, recursive = TRUE),
@@ -385,10 +417,17 @@ for (rep_id in reps) {
       refit_dir = refit_dir,
       stringsAsFactors = FALSE
     )
+    st_cleanup_selftest_rep(sim_dir, input_dir, truth_eval_dir, refit_dir, recovery_dir, run_refit = FALSE)
     next
   }
 
   st_save_truth_payload(sim_dir, sim_info, native_tag_info, seeds, rep_id)
+  truth_info_file <- file.path(selftest_dir_abs, "truth", "model_info.rds")
+  truth_payload_file <- file.path(selftest_dir_abs, "truth", "model_payload.rds")
+  if (!file.exists(truth_info_file) ||
+      (isTRUE(selftest_keep_model_payload) && !file.exists(truth_payload_file))) {
+    st_publish_selftest_truth(sim_dir, file.path(selftest_dir_abs, "truth"))
+  }
 
   input_info <- st_build_pseudo_input(
     base_dir = base_dir_abs,
@@ -448,6 +487,14 @@ for (rep_id in reps) {
       out_file = file.path(recovery_dir, "parameter_recovery.csv"),
       key_parameters = key_parameters
     )
+    refit_par_file <- file.path(refit_dir, refit_info$par_out %||% "")
+    if (file.exists(refit_par_file)) {
+      st_profile_parameter_recovery(
+        truth_par = sim_par,
+        refit_par = refit_par_file,
+        out_file = file.path(recovery_dir, "profile_parameter_recovery.csv")
+      )
+    }
     st_derived_recovery(
       truth_dir = sim_dir,
       refit_dir = refit_dir,
