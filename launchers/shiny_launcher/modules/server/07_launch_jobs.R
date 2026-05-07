@@ -359,8 +359,8 @@
   }
 
   selected_sensitivity_expansion <- function() {
-    mode <- first_scalar_string(input$input_recipe_expansion, default = "oneoff")
-    if (mode %in% c("oneoff", "factorial")) mode else "oneoff"
+    mode <- first_scalar_string(input$input_recipe_expansion, default = "factorial")
+    if (mode %in% c("oneoff", "factorial")) mode else "factorial"
   }
 
   include_base_launch_units <- function() {
@@ -2577,6 +2577,16 @@
         }
       }
     }
+
+    rv$launch_log <- paste0(
+      rv$launch_log,
+      sprintf(
+        "Launch plan: %d job(s) from %d launch unit(s): %s\n",
+        length(job_specs),
+        length(selected_models),
+        paste(launch_unit_labels(selected_models), collapse = ", ")
+      )
+    )
     
     model_env_lists <- lapply(selected_models, function(m) {
       set_prefer_par_start_env(
@@ -2823,11 +2833,23 @@
             did_parallel <- TRUE
             
             if (!all(ok_mask)) {
-              err_msgs <- unique(vapply(results[!ok_mask], function(x) x$error, character(1)))
+              failed_results <- results[!ok_mask]
+              failed_specs <- vapply(failed_results, function(x) {
+                spec <- x$spec
+                unit <- if (!is.null(spec$model_name)) launch_unit_label(spec$model_name) else "<unknown>"
+                suffix <- if (!is.null(spec$chain_name)) {
+                  paste0(" chain=", spec$chain_name)
+                } else if (!is.null(spec$scalar)) {
+                  paste0(" scalar=", spec$scalar)
+                } else {
+                  ""
+                }
+                paste0(unit, " ", spec$job_type, suffix, ": ", x$error)
+              }, character(1))
               rv$launch_log <- paste0(
                 rv$launch_log,
-                "⚠️ Parallel launch errors:\n",
-                paste0("  - ", err_msgs, collapse = "\n"),
+                "⚠️ Parallel launch errors (these jobs were not submitted):\n",
+                paste0("  - ", unique(failed_specs), collapse = "\n"),
                 "\n"
               )
             }

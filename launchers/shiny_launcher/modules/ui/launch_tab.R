@@ -293,7 +293,7 @@ launch_tab_ui <- function() {
                           "One-off" = "oneoff",
                           "Factorial" = "factorial"
                         ),
-                        selected = "oneoff",
+                        selected = "factorial",
                         inline = TRUE
                       ),
                       checkboxInput(

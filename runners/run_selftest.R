@@ -29,6 +29,7 @@ st_env <- function(name, default = "") {
 
 program_path <- st_env("program_path", "mfcl/exe/mfclo64_2026_02_04_vsn2278")
 program_path_abs <- st_resolve_path(program_path, project_root = project_root, must_work = TRUE)
+Sys.setenv(PROGRAM_PATH = program_path_abs)
 
 base_dir <- st_env("selftest_base_dir", st_env("base_dir", "mfcl/inputs/2023_4region"))
 base_dir_abs <- ensure_input_dir_available(base_dir, project_root = project_root)

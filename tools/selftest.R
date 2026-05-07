@@ -2017,6 +2017,15 @@ st_run_refit <- function(input_dir,
     if (!file.exists(file.path(refit_dir, "doitall.sh"))) {
       stop("Refit mode doitall requires doitall.sh in pseudo input folder: ", refit_dir)
     }
+    old_program_path <- Sys.getenv("PROGRAM_PATH", unset = NA_character_)
+    Sys.setenv(PROGRAM_PATH = program_path_abs)
+    on.exit({
+      if (is.na(old_program_path)) {
+        Sys.unsetenv("PROGRAM_PATH")
+      } else {
+        Sys.setenv(PROGRAM_PATH = old_program_path)
+      }
+    }, add = TRUE)
     cmd <- "./doitall.sh"
   }
 
