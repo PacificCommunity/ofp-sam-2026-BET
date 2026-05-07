@@ -1736,9 +1736,6 @@
 
   submit_condorbox_job <- function(..., extra_transfer_files = character(0)) {
     extra_transfer_files <- extra_transfer_files[file.exists(extra_transfer_files)]
-    if (length(extra_transfer_files) == 0) {
-      return(CondorBox::CondorBox(...))
-    }
     condorbox_with_extra_transfer(..., extra_transfer_files = extra_transfer_files)
   }
 
