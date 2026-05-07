@@ -42,6 +42,7 @@ mod_selftest_ui <- function() {
             "Weight median" = "weight median",
             "Weight q90" = "weight q90",
             "Tag recaptures" = "tag recaptures",
+            "Tag recaptures by fishery" = "tag recaptures by fishery",
             "Age-length mean age" = "age-length mean age",
             "Age-length age q10" = "age-length age q10",
             "Age-length age median" = "age-length age median",
@@ -740,7 +741,8 @@ mod_selftest_server <- function(input, output, session, rv) {
         fishery_components <- c(
           "catch total", "CPUE", "effort",
           "length mean", "length q10", "length median", "length q90",
-          "weight mean", "weight q10", "weight median", "weight q90"
+          "weight mean", "weight q10", "weight median", "weight q90",
+          "tag recaptures by fishery"
         )
         if (!row$component[[1]] %in% fishery_components) {
           row$display_component <- row$component[[1]]

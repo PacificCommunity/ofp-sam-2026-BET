@@ -528,12 +528,95 @@ st_flag_value <- function(par_file, flagtype, flag) {
   if (is.null(par_file) || is.na(par_file) || !file.exists(par_file)) return(NA_real_)
   par_obj <- tryCatch(read.MFCLPar(par_file), error = function(e) NULL)
   if (is.null(par_obj)) return(NA_real_)
+  st_flag_from_obj(par_obj, flagtype, flag)
+}
+
+st_flag_from_obj <- function(par_obj, flagtype, flag) {
   flags <- tryCatch(par_obj@flags, error = function(e) NULL)
   if (!is.data.frame(flags) || !all(c("flagtype", "flag", "value") %in% names(flags))) return(NA_real_)
   hit <- flags$flagtype == as.integer(flagtype) & flags$flag == as.integer(flag)
   if (!any(hit, na.rm = TRUE)) return(NA_real_)
   val <- suppressWarnings(as.numeric(flags$value[which(hit)[[1]]]))
   if (length(val) == 0 || !is.finite(val[[1]])) NA_real_ else val[[1]]
+}
+
+st_composition_likelihood_info <- function(par_file, par_obj = NULL) {
+  if (is.null(par_obj)) par_obj <- tryCatch(read.MFCLPar(par_file), error = function(e) NULL)
+  flag_value <- function(flag) {
+    if (is.null(par_obj)) st_flag_value(par_file, 1L, flag) else st_flag_from_obj(par_obj, 1L, flag)
+  }
+  len_code <- flag_value(141L)
+  weight_code <- flag_value(139L)
+  length_name <- switch(
+    as.character(as.integer(len_code)),
+    "0" = "square",
+    "1" = "square0",
+    "2" = "square0a",
+    "3" = "square_fita",
+    "4" = "dirichlet_multinomial",
+    "5" = "dirichlet_multinomial_mixture",
+    "6" = "multinomial",
+    "7" = if (isTRUE(flag_value(299L) != 0)) "logistic_normal_heteroscedastic" else "logistic_normal",
+    "8" = "square_t",
+    "9" = "self_scaling_multinomial_re",
+    "10" = "self_scaling_multinomial",
+    "11" = "dirichlet_multinomial_nore",
+    "12" = "self_scaling_multinomial_re_v3",
+    paste0("unknown_", len_code)
+  )
+  weight_name <- switch(
+    as.character(as.integer(weight_code)),
+    "0" = "square",
+    "3" = "square_fita",
+    "7" = if (isTRUE(flag_value(289L) != 0)) "logistic_normal_heteroscedastic" else "logistic_normal",
+    "8" = "square_t",
+    "9" = "self_scaling_multinomial_re",
+    "10" = "self_scaling_multinomial",
+    "11" = "dirichlet_multinomial_nore",
+    "12" = "self_scaling_multinomial_re_v3",
+    paste0("unknown_", weight_code)
+  )
+  list(
+    length_code = as.integer(len_code),
+    weight_code = as.integer(weight_code),
+    length_name = length_name,
+    weight_name = weight_name
+  )
+}
+
+st_supported_composition_sampler <- function(name) {
+  name %in% c(
+    "multinomial",
+    "square",
+    "square0",
+    "square0a",
+    "square_fita",
+    "square_t",
+    "dirichlet_multinomial",
+    "dirichlet_multinomial_mixture",
+    "dirichlet_multinomial_nore",
+    "logistic_normal",
+    "logistic_normal_heteroscedastic",
+    "self_scaling_multinomial_re",
+    "self_scaling_multinomial",
+    "self_scaling_multinomial_re_v3"
+  )
+}
+
+st_assert_supported_composition_likelihood <- function(par_file) {
+  info <- st_composition_likelihood_info(par_file)
+  unsupported <- c(
+    if (!st_supported_composition_sampler(info$length_name)) paste0("length=", info$length_name, " (flag 141=", info$length_code, ")"),
+    if (!st_supported_composition_sampler(info$weight_name)) paste0("weight=", info$weight_name, " (flag 139=", info$weight_code, ")")
+  )
+  if (length(unsupported) > 0) {
+    stop(
+      "Self-test composition pseudo sampling is not implemented for the active likelihood: ",
+      paste(unsupported, collapse = "; "),
+      ". Refusing to use MFCL native multinomial test_lw_sim because it would not match the fitting likelihood."
+    )
+  }
+  info
 }
 
 st_catch_conditioned <- function(par_file) {
@@ -655,6 +738,267 @@ st_parse_lw_sim <- function(path, frq_obj) {
 
   if (length(out) == 0) return(NULL)
   do.call(rbind, out)
+}
+
+st_simple_rdirichlet <- function(alpha) {
+  alpha <- pmax(suppressWarnings(as.numeric(alpha)), 1e-8)
+  x <- stats::rgamma(length(alpha), shape = alpha, rate = 1)
+  if (!is.finite(sum(x)) || sum(x) <= 0) return(rep(1 / length(alpha), length(alpha)))
+  x / sum(x)
+}
+
+st_multinom_freq <- function(p, n) {
+  p <- pmax(suppressWarnings(as.numeric(p)), 0)
+  if (!is.finite(sum(p)) || sum(p) <= 0) p[] <- 1
+  p <- p / sum(p)
+  n <- max(0L, as.integer(floor(n)))
+  as.numeric(stats::rmultinom(1L, size = n, prob = p)[, 1L])
+}
+
+st_make_correlation_matrix <- function(n, rho = 0, psi = 0, mode = 0) {
+  rho <- max(min(suppressWarnings(as.numeric(rho)), 0.98), -0.98)
+  psi <- suppressWarnings(as.numeric(psi))
+  if (!is.finite(psi)) psi <- 0
+  mode <- suppressWarnings(as.integer(mode))
+  rp <- numeric(n)
+  rp[[1]] <- 1
+  if (n >= 2) {
+    if (identical(mode, 1L)) {
+      rp[[2]] <- rho + psi / (1 + (rho + psi)^2 / pmax(1 - rho^2, 1e-8))
+    } else if (identical(mode, 2L)) {
+      phi2 <- -1 + (2 - abs(rho)) * psi
+      rp[[2]] <- rho / pmax(1 - phi2, 1e-8)
+    } else {
+      rp[[2]] <- rho
+    }
+    if (n >= 3) {
+      for (i in 3:n) {
+        if (identical(mode, 2L)) {
+          phi2 <- -1 + (2 - abs(rho)) * psi
+          rp[[i]] <- rho * rp[[i - 1L]] + phi2 * rp[[i - 2L]]
+        } else {
+          rp[[i]] <- rho * rp[[i - 1L]]
+        }
+      }
+    }
+  }
+  outer(seq_len(n), seq_len(n), function(i, j) rp[abs(i - j) + 1L])
+}
+
+st_mvrnorm1 <- function(mu, Sigma) {
+  Sigma <- as.matrix(Sigma)
+  diag(Sigma) <- pmax(diag(Sigma), 1e-10)
+  chol_sigma <- tryCatch(chol(Sigma), error = function(e) chol(Sigma + diag(1e-6, nrow(Sigma))))
+  as.numeric(mu + drop(stats::rnorm(length(mu)) %*% chol_sigma))
+}
+
+st_logistic_normal_freq <- function(p, n, par_obj, type = c("length", "weight"), fishery = 1L, student = FALSE) {
+  type <- match.arg(type)
+  p <- pmax(p, 1e-10)
+  p <- p / sum(p)
+  if (length(p) <= 1L) return(n)
+  lnp <- tryCatch(as.numeric(unlist(strsplit(par_obj@logistic_normal_params, "[[:space:]]+"))), error = function(e) numeric(0))
+  lnp <- suppressWarnings(as.numeric(lnp[is.finite(lnp)]))
+  if (identical(type, "length")) {
+    log_var <- if (length(lnp) >= 1L) lnp[[1L]] else 0
+    rho <- if (length(lnp) >= 2L) lnp[[2L]] else 0
+    dof <- if (length(lnp) >= 3L) exp(lnp[[3L]]) else Inf
+    psi <- if (length(lnp) >= 4L) lnp[[4L]] else 0
+    exp_flag <- attr(par_obj, "selftest_flag_284")
+    exp_val <- if (length(lnp) >= 5L) lnp[[5L]] else 0
+    mode <- attr(par_obj, "selftest_flag_297")
+  } else {
+    off <- 5L
+    log_var <- if (length(lnp) >= off + 1L) lnp[[off + 1L]] else 0
+    rho <- if (length(lnp) >= off + 2L) lnp[[off + 2L]] else 0
+    dof <- if (length(lnp) >= off + 3L) exp(lnp[[off + 3L]]) else Inf
+    psi <- if (length(lnp) >= off + 4L) lnp[[off + 4L]] else 0
+    exp_flag <- attr(par_obj, "selftest_flag_285")
+    exp_val <- if (length(lnp) >= off + 5L) lnp[[off + 5L]] else 0
+    mode <- attr(par_obj, "selftest_flag_297")
+  }
+  S <- st_make_correlation_matrix(length(p), rho, psi, mode)
+  M <- cbind(diag(length(p) - 1L), -1)
+  Sigma <- exp(log_var) * (M %*% S %*% t(M))
+  if (isTRUE(is.finite(exp_flag) && exp_flag != 0)) {
+    scale_n <- max(1, floor(n))^(2 * exp_val)
+    Sigma <- Sigma / scale_n
+  }
+  if (isTRUE(student) && is.finite(dof) && dof > 0) {
+    Sigma <- Sigma * dof / stats::rchisq(1L, df = dof)
+  }
+  mu <- log(p[-length(p)]) - log(p[[length(p)]])
+  z <- st_mvrnorm1(mu, Sigma)
+  ex <- exp(c(z, 0))
+  st_multinom_freq(ex / sum(ex), n)
+}
+
+st_square_freq <- function(p, n, par_file, type = c("length", "weight"), student = FALSE) {
+  type <- match.arg(type)
+  p <- pmax(p, 0)
+  if (!is.finite(sum(p)) || sum(p) <= 0) p[] <- 1
+  p <- p / sum(p)
+  eps_flag <- attr(par_file, "selftest_flag_193")
+  if (is.null(eps_flag) || length(eps_flag) == 0) eps_flag <- st_flag_value(par_file, 1L, 193L)
+  eps <- if (is.finite(eps_flag) && eps_flag != 0) eps_flag / (100 * length(p)) else 1 / length(p)
+  sd <- sqrt(pmax(p * (1 - p) + eps, 1e-10) / max(floor(n), 1))
+  if (isTRUE(student)) sd <- sd * sqrt(4 / stats::rchisq(1L, df = 4))
+  q <- p + stats::rnorm(length(p), 0, sd)
+  q <- pmax(q, 0)
+  if (!is.finite(sum(q)) || sum(q) <= 0) q <- p
+  max(0, floor(n)) * q / sum(q)
+}
+
+st_fish_param <- function(par_obj, row, fishery, default = 0) {
+  x <- tryCatch(par_obj@fish_params, error = function(e) NULL)
+  if (is.null(x) || row > nrow(x) || fishery > ncol(x)) return(default)
+  val <- suppressWarnings(as.numeric(x[row, fishery]))
+  if (length(val) == 0 || !is.finite(val)) default else val
+}
+
+st_lw_sample_by_likelihood <- function(p, n, par_obj, par_file, type = c("length", "weight"), fishery = 1L, likelihood = "multinomial") {
+  type <- match.arg(type)
+  p <- pmax(suppressWarnings(as.numeric(p)), 1e-10)
+  p <- p / sum(p)
+  n <- max(0L, as.integer(floor(n)))
+  if (n <= 0L) return(rep(0, length(p)))
+  if (likelihood %in% c("multinomial")) {
+    return(st_multinom_freq(p, n))
+  }
+  if (likelihood %in% c("square", "square0", "square0a", "square_fita", "square_t")) {
+    return(st_square_freq(p, n, par_file, type, student = identical(likelihood, "square_t")))
+  }
+  if (likelihood %in% c("dirichlet_multinomial", "dirichlet_multinomial_mixture")) {
+    A <- exp(st_fish_param(par_obj, 12L, fishery, 0))
+    if (identical(likelihood, "dirichlet_multinomial_mixture") && stats::runif(1L) < 0.05) A <- A / 5
+    q <- st_simple_rdirichlet(A * (0.05 / length(p) + p))
+    return(st_multinom_freq(q, n))
+  }
+  if (identical(likelihood, "dirichlet_multinomial_nore")) {
+    if (identical(type, "length")) {
+      lambda <- exp(st_fish_param(par_obj, 22L, fishery, 0))
+    } else {
+      lambda <- exp(st_fish_param(par_obj, 24L, fishery, 0))
+    }
+    q <- st_simple_rdirichlet(lambda * p)
+    return(st_multinom_freq(q, n))
+  }
+  if (likelihood %in% c("logistic_normal", "logistic_normal_heteroscedastic")) {
+    pdftype <- attr(par_obj, "selftest_flag_283")
+    if (is.null(pdftype) || length(pdftype) == 0) pdftype <- st_flag_value(par_file, 1L, 283L)
+    return(st_logistic_normal_freq(p, n, par_obj, type, fishery, student = isTRUE(pdftype == 1)))
+  }
+  if (grepl("^self_scaling_multinomial", likelihood)) {
+    if (identical(type, "length")) {
+      eff_n <- exp(st_fish_param(par_obj, 14L, fishery, log(max(n, 1))))
+      rho <- st_fish_param(par_obj, 16L, fishery, 0)
+      var <- exp(st_fish_param(par_obj, 18L, fishery, 0))
+      vexp <- st_fish_param(par_obj, 26L, fishery, 0)
+    } else {
+      eff_n <- exp(st_fish_param(par_obj, 15L, fishery, log(max(n, 1))))
+      rho <- st_fish_param(par_obj, 17L, fishery, 0)
+      var <- exp(st_fish_param(par_obj, 19L, fishery, 0))
+      vexp <- st_fish_param(par_obj, 27L, fishery, 0)
+    }
+    S <- st_make_correlation_matrix(length(p), rho, 0, 0)
+    scale <- ((1e-4 + 1 / p) / (1e-4 + length(p)))^vexp
+    Sigma <- var * (S / max(eff_n, 1))
+    Sigma <- Sigma * outer(scale, scale)
+    eta <- st_mvrnorm1(rep(0, length(p)), Sigma)
+    q <- p * exp(eta - max(eta))
+    return(st_multinom_freq(q / sum(q), n))
+  }
+  stop("Unsupported composition likelihood sampler: ", likelihood)
+}
+
+st_lw_resample_from_payload <- function(sim_dir, par_file, type = c("length", "weight"), seed = 101L) {
+  type <- match.arg(type)
+  par_obj <- read.MFCLPar(par_file)
+  info <- st_composition_likelihood_info(par_file, par_obj = par_obj)
+  likelihood <- if (identical(type, "length")) info$length_name else info$weight_name
+  if (identical(likelihood, "multinomial")) return(NULL)
+  if (!st_supported_composition_sampler(likelihood)) {
+    stop("Unsupported ", type, " composition likelihood sampler: ", likelihood)
+  }
+  payload_file <- file.path(sim_dir, "model_payload.rds")
+  if (!file.exists(payload_file)) return(NULL)
+  payload <- readRDS(payload_file)
+  attr(par_obj, "selftest_flag_193") <- st_flag_from_obj(par_obj, 1L, 193L)
+  attr(par_obj, "selftest_flag_283") <- st_flag_from_obj(par_obj, 1L, 283L)
+  attr(par_obj, "selftest_flag_284") <- st_flag_from_obj(par_obj, 1L, 284L)
+  attr(par_obj, "selftest_flag_285") <- st_flag_from_obj(par_obj, 1L, 285L)
+  attr(par_obj, "selftest_flag_297") <- st_flag_from_obj(par_obj, 1L, 297L)
+  par_ref <- par_file
+  attr(par_ref, "selftest_flag_193") <- attr(par_obj, "selftest_flag_193")
+  fit <- if (identical(type, "length")) payload$data$LengOut@lenfits else payload$data$WeightOut@wgtfits
+  value_col <- if (identical(type, "length")) "length" else "weight"
+  if (!is.data.frame(fit) || !all(c("fishery", "year", "month", "sample_size", value_col, "pred") %in% names(fit))) return(NULL)
+  set.seed(as.integer(seed))
+  if (likelihood %in% c("square", "square0", "square0a", "square_fita", "square_t") &&
+      requireNamespace("data.table", quietly = TRUE)) {
+    dt <- data.table::as.data.table(fit)
+    dt <- dt[is.finite(get(value_col)) & is.finite(pred) & is.finite(sample_size) & sample_size > 0]
+    if (nrow(dt) == 0) return(NULL)
+    eps_flag <- st_flag_value(par_file, 1L, 193L)
+    dt[, n_bins := .N, by = .(fishery, year, month, sample_size)]
+    dt[, p := pmax(as.numeric(pred), 0)]
+    dt[, p_sum := sum(p), by = .(fishery, year, month, sample_size)]
+    dt[p_sum <= 0 | !is.finite(p_sum), p := 1 / n_bins]
+    dt[p_sum > 0 & is.finite(p_sum), p := p / p_sum]
+    dt[, eps := if (is.finite(eps_flag) && eps_flag != 0) eps_flag / (100 * n_bins) else 1 / n_bins]
+    dt[, sd := sqrt(pmax(p * (1 - p) + eps, 1e-10) / pmax(floor(sample_size), 1))]
+    dt[, raw := pmax(p + stats::rnorm(.N, 0, sd), 0)]
+    dt[, raw_sum := sum(raw), by = .(fishery, year, month, sample_size)]
+    dt[raw_sum <= 0 | !is.finite(raw_sum), raw := p]
+    dt[, raw_sum := sum(raw), by = .(fishery, year, month, sample_size)]
+    dt[, freq := floor(sample_size) * raw / raw_sum]
+    data.table::setorderv(dt, c("fishery", "year", "month", "sample_size", value_col))
+    return(data.frame(
+      type = type,
+      projection = NA_integer_,
+      seed = as.integer(seed),
+      year = as.integer(dt$year),
+      month = as.integer(dt$month),
+      week = 1L,
+      fishery = as.integer(dt$fishery),
+      bin = suppressWarnings(as.numeric(dt[[value_col]])),
+      freq = suppressWarnings(as.numeric(dt$freq)),
+      sample_size = suppressWarnings(as.numeric(dt$sample_size)),
+      source = paste0("likelihood_", likelihood),
+      stringsAsFactors = FALSE
+    ))
+  }
+  split_key <- paste(fit$fishery, fit$year, fit$month, fit$sample_size, sep = "\r")
+  rows <- lapply(split(fit, split_key), function(dat) {
+    dat <- dat[order(dat[[value_col]]), , drop = FALSE]
+    k <- dat[1L, c("fishery", "year", "month", "sample_size"), drop = FALSE]
+    p <- suppressWarnings(as.numeric(dat$pred))
+    freq <- st_lw_sample_by_likelihood(
+      p = p,
+      n = k$sample_size,
+      par_obj = par_obj,
+      par_file = par_ref,
+      type = type,
+      fishery = as.integer(k$fishery),
+      likelihood = likelihood
+    )
+    data.frame(
+      type = type,
+      projection = NA_integer_,
+      seed = as.integer(seed),
+      year = as.integer(k$year),
+      month = as.integer(k$month),
+      week = 1L,
+      fishery = as.integer(k$fishery),
+      bin = suppressWarnings(as.numeric(dat[[value_col]])),
+      freq = freq,
+      sample_size = suppressWarnings(as.numeric(k$sample_size)),
+      source = paste0("likelihood_", likelihood),
+      stringsAsFactors = FALSE
+    )
+  })
+  out <- do.call(rbind, rows)
+  out[is.finite(out$bin) & is.finite(out$freq), , drop = FALSE]
 }
 
 st_parse_agelength_predictions <- function(path, n_age) {
@@ -949,8 +1293,32 @@ st_apply_pseudo_to_frq <- function(base_frq_file,
   }
 
   if (isTRUE(update_lw)) {
-    lw_df <- st_parse_lw_sim(file.path(sim_dir, "test_lw_sim"), frq_obj)
+    comp_info <- if (!is.null(par_file) && file.exists(par_file)) st_assert_supported_composition_likelihood(par_file) else NULL
+    native_lw_df <- st_parse_lw_sim(file.path(sim_dir, "test_lw_sim"), frq_obj)
+    len_seed <- if (is.null(seeds$length) || length(seeds$length) == 0 || is.na(seeds$length[[1]])) 101L else seeds$length[[1]]
+    wgt_seed <- if (is.null(seeds$weight) || length(seeds$weight) == 0 || is.na(seeds$weight[[1]])) 102L else seeds$weight[[1]]
+    len_lw_df <- if (!is.null(comp_info) && !identical(comp_info$length_name, "multinomial")) {
+      st_lw_resample_from_payload(sim_dir, par_file, "length", seed = len_seed)
+    } else if (!is.null(native_lw_df)) {
+      native_lw_df[native_lw_df$type == "length", , drop = FALSE]
+    } else {
+      NULL
+    }
+    wgt_lw_df <- if (!is.null(comp_info) && !identical(comp_info$weight_name, "multinomial")) {
+      st_lw_resample_from_payload(sim_dir, par_file, "weight", seed = wgt_seed)
+    } else if (!is.null(native_lw_df)) {
+      native_lw_df[native_lw_df$type == "weight", , drop = FALSE]
+    } else {
+      NULL
+    }
+    lw_df <- do.call(rbind, Filter(Negate(is.null), list(len_lw_df, wgt_lw_df)))
     diagnostics$lw_rows <- if (is.null(lw_df)) 0L else nrow(lw_df)
+    if (!is.null(comp_info)) {
+      diagnostics$length_likelihood <- comp_info$length_name
+      diagnostics$weight_likelihood <- comp_info$weight_name
+      diagnostics$length_sampler <- if (identical(comp_info$length_name, "multinomial")) "mfcl_native_multinomial" else paste0("selftest_", comp_info$length_name)
+      diagnostics$weight_sampler <- if (identical(comp_info$weight_name, "multinomial")) "mfcl_native_multinomial" else paste0("selftest_", comp_info$weight_name)
+    }
     if (!is.null(lw_df) && nrow(lw_df) > 0) {
       len_df <- lw_df[lw_df$type == "length", , drop = FALSE]
       if (nrow(len_df) > 0) {
@@ -1105,7 +1473,14 @@ st_tag_annual_summary <- function(path) {
   rec$value <- suppressWarnings(as.numeric(rec$recap.number))
   rec <- rec[is.finite(rec$year) & is.finite(rec$value), , drop = FALSE]
   if (nrow(rec) == 0) return(data.frame())
-  stats::aggregate(value ~ year, data = rec, FUN = sum)
+  annual <- stats::aggregate(value ~ year, data = rec, FUN = sum)
+  annual$series <- "all"
+  fishery <- data.frame()
+  if ("recap.fishery" %in% names(rec)) {
+    rec$series <- paste0("fishery_", as.integer(rec$recap.fishery))
+    fishery <- stats::aggregate(value ~ year + series, data = rec, FUN = sum)
+  }
+  rbind(annual[, c("year", "series", "value"), drop = FALSE], fishery[, c("year", "series", "value"), drop = FALSE])
 }
 
 st_tag_expected_annual_summary <- function(sim_dir) {
@@ -1118,7 +1493,14 @@ st_tag_expected_annual_summary <- function(sim_dir) {
   dat$value <- suppressWarnings(as.numeric(dat$recap.pred))
   dat <- dat[is.finite(dat$year) & is.finite(dat$value), , drop = FALSE]
   if (nrow(dat) == 0) return(data.frame())
-  stats::aggregate(value ~ year, data = dat, FUN = sum)
+  annual <- stats::aggregate(value ~ year, data = dat, FUN = sum)
+  annual$series <- "all"
+  fishery <- data.frame()
+  if ("recap.fishery" %in% names(dat)) {
+    dat$series <- paste0("fishery_", as.integer(dat$recap.fishery))
+    fishery <- stats::aggregate(value ~ year + series, data = dat, FUN = sum)
+  }
+  rbind(annual[, c("year", "series", "value"), drop = FALSE], fishery[, c("year", "series", "value"), drop = FALSE])
 }
 
 st_alk_annual_summary <- function(path) {
@@ -1313,7 +1695,25 @@ st_summarise_data_simulation <- function(base_frq_file,
     stringsAsFactors = FALSE
   )
   lw_df <- if (!is.null(sim_dir) && nzchar(as.character(sim_dir))) {
-    st_parse_lw_sim(file.path(sim_dir, "test_lw_sim"), base_frq)
+    native_lw_df <- st_parse_lw_sim(file.path(sim_dir, "test_lw_sim"), base_frq)
+    comp_info <- if (!is.null(par_file) && file.exists(par_file)) st_composition_likelihood_info(par_file) else NULL
+    len_seed <- if (is.null(seeds$length) || length(seeds$length) == 0 || is.na(seeds$length[[1]])) 101L else seeds$length[[1]]
+    wgt_seed <- if (is.null(seeds$weight) || length(seeds$weight) == 0 || is.na(seeds$weight[[1]])) 102L else seeds$weight[[1]]
+    len_lw_df <- if (!is.null(comp_info) && !identical(comp_info$length_name, "multinomial")) {
+      st_lw_resample_from_payload(sim_dir, par_file, "length", seed = len_seed)
+    } else if (!is.null(native_lw_df)) {
+      native_lw_df[native_lw_df$type == "length", , drop = FALSE]
+    } else {
+      NULL
+    }
+    wgt_lw_df <- if (!is.null(comp_info) && !identical(comp_info$weight_name, "multinomial")) {
+      st_lw_resample_from_payload(sim_dir, par_file, "weight", seed = wgt_seed)
+    } else if (!is.null(native_lw_df)) {
+      native_lw_df[native_lw_df$type == "weight", , drop = FALSE]
+    } else {
+      NULL
+    }
+    do.call(rbind, Filter(Negate(is.null), list(len_lw_df, wgt_lw_df)))
   } else {
     NULL
   }
@@ -1434,6 +1834,9 @@ st_summarise_data_simulation <- function(base_frq_file,
     function(x) sum(x$value, na.rm = TRUE)
   )
   if (nrow(tag_out) > 0) tag_out$base_source <- "fitted_tag_pred"
+  tag_fishery_out <- tag_out[tag_out$series != "all", , drop = FALSE]
+  if (nrow(tag_fishery_out) > 0) tag_fishery_out$component <- "tag recaptures by fishery"
+  tag_out <- tag_out[tag_out$series == "all", , drop = FALSE]
   alk_out <- st_data_summary_rows(
     "age-length mean age", st_alk_expected_annual_summary(sim_dir, base_alk_file), st_alk_annual_summary(pseudo_alk_file),
     function(x) mean(x$value, na.rm = TRUE)
@@ -1464,7 +1867,7 @@ st_summarise_data_simulation <- function(base_frq_file,
     x[, summary_cols, drop = FALSE]
   }
   out <- do.call(rbind, lapply(
-    list(frq_out, length_out, length_quant_out, weight_out, weight_quant_out, tag_out, alk_out, alk_quant_out),
+    list(frq_out, length_out, length_quant_out, weight_out, weight_quant_out, tag_out, tag_fishery_out, alk_out, alk_quant_out),
     complete_summary
   ))
   if (nrow(out) == 0) return(data.frame())
