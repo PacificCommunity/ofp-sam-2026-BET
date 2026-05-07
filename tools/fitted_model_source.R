@@ -132,7 +132,6 @@ scan_fitted_model_dirs <- function(model_root = "model", repo_root = ".") {
 
   info_files <- list.files(root, pattern = "^model_info\\.rds$", full.names = TRUE, recursive = TRUE)
   dirs <- unique(dirname(info_files))
-  dirs <- dirs[basename(dirs) != "_source_model"]
   dirs <- dirs[vapply(dirs, function(d) file.exists(fms_latest_par(d)), logical(1))]
   if (length(dirs) == 0) return(empty)
 
@@ -140,6 +139,8 @@ scan_fitted_model_dirs <- function(model_root = "model", repo_root = ".") {
     info <- tryCatch(readRDS(file.path(d, "model_info.rds")), error = function(e) NULL)
     rel <- fms_path_relative(d, repo_root = repo_root)
     par <- fms_latest_par(d)
+    is_legacy_source <- identical(basename(d), "_source_model")
+    model_name <- if (is_legacy_source) basename(dirname(d)) else basename(d)
     tokens <- character(0)
     if (is.list(info) && !is.null(info$change_tokens)) {
       tokens <- as.character(info$change_tokens)
@@ -148,19 +149,20 @@ scan_fitted_model_dirs <- function(model_root = "model", repo_root = ".") {
     }
     tokens <- unique(tokens[!is.na(tokens) & nzchar(trimws(tokens))])
     base_dir <- fms_model_info_field(info, "base_dir")
-    display <- basename(d)
+    display <- model_name
     if (exists("compact_input_name", mode = "function")) {
       display <- compact_input_name(display)
     }
     label_bits <- c(
       display,
+      if (is_legacy_source) "[legacy _source_model]" else "",
       if (length(tokens) > 0) paste0("[", paste(tokens, collapse = ", "), "]") else "",
       if (nzchar(base_dir)) paste0("base=", basename(base_dir)) else "",
       paste0("par=", basename(par))
     )
     data.frame(
       id = fms_safe_id(rel),
-      name = basename(d),
+      name = model_name,
       source_dir = rel,
       label = paste(label_bits[nzchar(label_bits)], collapse = " "),
       par_file = basename(par),

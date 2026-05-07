@@ -1656,11 +1656,21 @@
     )
     writeLines(submit_file_content, con = submit_file, sep = "\n")
 
+    run_checked <- function(cmd, label) {
+      status <- system(cmd)
+      if (!identical(as.integer(status), 0L)) {
+        stop(label, " failed with status ", status, ": ", cmd)
+      }
+      invisible(status)
+    }
+
     message("Creating remote directory...")
-    system(sprintf("ssh %s@%s 'mkdir -p %s'", remote_user, remote_host, remote_dir))
+    mkdir_cmd <- sprintf("ssh %s@%s %s", remote_user, remote_host, shQuote(sprintf("mkdir -p %s", shQuote(remote_dir))))
+    run_checked(mkdir_cmd, "Remote mkdir")
     message("Transferring files...")
     for (f in c(clone_script, run_script, env_file, submit_file, extra_transfer_files)) {
-      system(sprintf("scp %s %s@%s:%s/%s", shQuote(f), remote_user, remote_host, remote_dir, basename(f)))
+      scp_cmd <- sprintf("scp %s %s@%s:%s/%s", shQuote(f), remote_user, remote_host, remote_dir, basename(f))
+      run_checked(scp_cmd, paste("SCP transfer", basename(f)))
     }
     Sys.sleep(1)
 
@@ -1678,30 +1688,33 @@
       system(sprintf("ssh %s@%s '%s'", remote_user, remote_host, login_cmd))
     }
 
-    message("Submitting job...")
-    submit_result <- system(sprintf("ssh %s@%s 'cd %s && condor_submit %s'", remote_user, remote_host, remote_dir, submit_file), intern = TRUE)
-    job_id <- NULL
-    message("Submit result:")
-    for (line in submit_result) message(line)
-    for (line in submit_result) {
-      if (grepl("submitted to cluster|cluster", line, ignore.case = TRUE)) {
-        numbers <- regmatches(line, gregexpr("\\d+", line))[[1]]
-        if (length(numbers) > 0) {
-          job_id <- numbers[length(numbers)]
-          break
-        }
-      }
-    }
-    if (is.null(job_id)) {
-      for (line in submit_result) {
-        if (grepl("\\d+", line)) {
+    extract_condor_job_id <- function(lines) {
+      for (line in lines) {
+        if (grepl("submitted to cluster|cluster", line, ignore.case = TRUE)) {
           numbers <- regmatches(line, gregexpr("\\d+", line))[[1]]
-          if (length(numbers) > 0) {
-            job_id <- numbers[length(numbers)]
-            break
-          }
+          if (length(numbers) > 0) return(numbers[length(numbers)])
         }
       }
+      NULL
+    }
+
+    message("Submitting job...")
+    submit_remote_cmd <- sprintf("cd %s && condor_submit %s", shQuote(remote_dir), shQuote(submit_file))
+    submit_cmd <- sprintf("ssh %s@%s %s 2>&1", remote_user, remote_host, shQuote(submit_remote_cmd))
+    submit_result <- character(0)
+    submit_status <- 1L
+    job_id <- NULL
+    for (attempt in seq_len(3L)) {
+      message(sprintf("condor_submit attempt %d/3", attempt))
+      submit_result <- suppressWarnings(system(submit_cmd, intern = TRUE))
+      submit_status <- attr(submit_result, "status")
+      if (is.null(submit_status)) submit_status <- 0L
+      submit_status <- as.integer(submit_status)
+      message("Submit result:")
+      for (line in submit_result) message(line)
+      job_id <- extract_condor_job_id(submit_result)
+      if (identical(submit_status, 0L) && !is.null(job_id) && nzchar(job_id)) break
+      if (attempt < 3L) Sys.sleep(2L * attempt)
     }
     actual_batch_name <- if (!is.null(custom_batch_name)) custom_batch_name else job_id
     if (!is.null(job_id) && nzchar(job_id)) {
@@ -1710,8 +1723,11 @@
         message("Skipping clone script monitoring in fitted-source launcher wrapper.")
       }
     } else {
-      message("Job submitted but could not extract job ID")
-      job_id <- "unknown"
+      stop(
+        "condor_submit did not submit a job after 3 attempts",
+        " (status=", submit_status, ") in ", remote_dir,
+        ". Output:\n", paste(submit_result, collapse = "\n")
+      )
     }
     unlink(c(clone_script, run_script, env_file, submit_file, extra_transfer_files), force = TRUE)
     message("Process completed.")

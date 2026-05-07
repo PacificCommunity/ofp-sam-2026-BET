@@ -236,9 +236,12 @@
     selftest_model_exists <- dir.exists(selftest_model_dir_abs)
     base_par <- launch_preflight_latest_par(base_dir_abs)
     model_par <- launch_preflight_latest_par(model_dir_abs)
+    legacy_model_source_dir_abs <- file.path(model_dir_abs, "_source_model")
+    legacy_model_source_par <- launch_preflight_latest_par(legacy_model_source_dir_abs)
     selftest_model_par <- launch_preflight_latest_par(selftest_model_dir_abs)
     base_par_exists <- !is.na(base_par) && file.exists(base_par)
     model_par_exists <- !is.na(model_par) && file.exists(model_par)
+    legacy_model_source_par_exists <- !is.na(legacy_model_source_par) && file.exists(legacy_model_source_par)
     selftest_model_par_exists <- !is.na(selftest_model_par) && file.exists(selftest_model_par)
     base_tokens <- launch_preflight_input_tokens(base_dir_abs)
     base_has_change_tokens <- length(base_tokens) > 0 || launch_preflight_recipe_ready(model_env)
@@ -280,7 +283,7 @@
         if (base_exists) paste0("base_dir=", base_dir) else paste0("missing base_dir=", base_dir),
         if (base_par_exists) paste0("base par=", basename(base_par)) else "base par=missing",
         if (base_has_change_tokens) paste0("tokens=", paste(base_tokens, collapse = ",")),
-        if (model_par_exists) paste0("model par=", basename(model_par)) else if (model_exists) "model par=missing" else "model_dir=missing",
+        if (model_par_exists) paste0("model par=", basename(model_par)) else if (legacy_model_source_par_exists) paste0("legacy _source_model par=", basename(legacy_model_source_par)) else if (model_exists) "model par=missing" else "model_dir=missing",
         if (fitted_enabled && fitted_par_exists) paste0("fitted par=", basename(fitted_par)) else if (fitted_enabled) "fitted par=missing",
         if (auto_fitted_model_par_exists) paste0("auto model par=", basename(auto_fitted_model_par)),
         if (auto_run_model) paste0("auto model first=", if (auto_model_ready) "ready" else "not ready"),
