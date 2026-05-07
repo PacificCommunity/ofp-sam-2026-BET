@@ -596,10 +596,7 @@ st_supported_composition_sampler <- function(name) {
     "dirichlet_multinomial_mixture",
     "dirichlet_multinomial_nore",
     "logistic_normal",
-    "logistic_normal_heteroscedastic",
-    "self_scaling_multinomial_re",
-    "self_scaling_multinomial",
-    "self_scaling_multinomial_re_v3"
+    "logistic_normal_heteroscedastic"
   )
 }
 
@@ -613,7 +610,7 @@ st_assert_supported_composition_likelihood <- function(par_file) {
     stop(
       "Self-test composition pseudo sampling is not implemented for the active likelihood: ",
       paste(unsupported, collapse = "; "),
-      ". Refusing to use MFCL native multinomial test_lw_sim because it would not match the fitting likelihood."
+      ". Refusing to use MFCL native multinomial test_lw_sim or an approximate R sampler because it would not match the fitting likelihood."
     )
   }
   info
@@ -804,7 +801,7 @@ st_logistic_normal_freq <- function(p, n, par_obj, type = c("length", "weight"),
     rho <- if (length(lnp) >= 2L) lnp[[2L]] else 0
     dof <- if (length(lnp) >= 3L) exp(lnp[[3L]]) else Inf
     psi <- if (length(lnp) >= 4L) lnp[[4L]] else 0
-    exp_flag <- attr(par_obj, "selftest_flag_284")
+    exp_flag <- attr(par_obj, "selftest_flag_295")
     exp_val <- if (length(lnp) >= 5L) lnp[[5L]] else 0
     mode <- attr(par_obj, "selftest_flag_297")
   } else {
@@ -856,7 +853,66 @@ st_fish_param <- function(par_obj, row, fishery, default = 0) {
   if (length(val) == 0 || !is.finite(val)) default else val
 }
 
-st_lw_sample_by_likelihood <- function(p, n, par_obj, par_file, type = c("length", "weight"), fishery = 1L, likelihood = "multinomial") {
+st_fishery_group_values <- function(par_obj, flag, n_fisheries) {
+  flags <- tryCatch(par_obj@flags, error = function(e) NULL)
+  out <- rep(seq_len(n_fisheries), length.out = n_fisheries)
+  if (!is.data.frame(flags) || !all(c("flagtype", "flag", "value") %in% names(flags))) return(out)
+  rows <- flags[flags$flagtype < 0 & flags$flag == as.integer(flag), , drop = FALSE]
+  if (nrow(rows) == 0) return(out)
+  idx <- abs(suppressWarnings(as.integer(rows$flagtype)))
+  val <- suppressWarnings(as.integer(rows$value))
+  ok <- is.finite(idx) & idx >= 1L & idx <= n_fisheries & is.finite(val) & val > 0L
+  if (any(ok)) out[idx[ok]] <- val[ok]
+  if (sum(out, na.rm = TRUE) == 0) out <- rep(seq_len(n_fisheries), length.out = n_fisheries)
+  out
+}
+
+st_average_sample_size_by_group <- function(fit, group, type = c("length", "weight")) {
+  type <- match.arg(type)
+  value_col <- if (identical(type, "length")) "length" else "weight"
+  if (!all(c("fishery", "year", "month", "sample_size", value_col) %in% names(fit))) return(numeric(0))
+  key <- unique(fit[, c("fishery", "year", "month", "sample_size"), drop = FALSE])
+  fishery <- suppressWarnings(as.integer(key$fishery))
+  gp <- group[pmax(1L, pmin(length(group), fishery))]
+  ss <- suppressWarnings(as.numeric(key$sample_size))
+  stats::tapply(ss[is.finite(ss) & is.finite(gp)], gp[is.finite(ss) & is.finite(gp)], mean)
+}
+
+st_dm_nore_lambda <- function(par_obj, fit, type = c("length", "weight"), fishery, sample_size) {
+  type <- match.arg(type)
+  n_fisheries <- ncol(tryCatch(par_obj@fish_params, error = function(e) matrix(0, 0, 0)))
+  if (n_fisheries <= 0) return(1)
+  if (identical(type, "length")) {
+    group <- st_fishery_group_values(par_obj, 68L, n_fisheries)
+    avg <- st_average_sample_size_by_group(fit, group, type)
+    fp_lambda <- st_fish_param(par_obj, 22L, fishery, 0)
+    fp_exp <- st_fish_param(par_obj, 23L, fishery, 0)
+  } else {
+    group <- st_fishery_group_values(par_obj, 77L, n_fisheries)
+    avg <- st_average_sample_size_by_group(fit, group, type)
+    fp_lambda <- st_fish_param(par_obj, 24L, fishery, 0)
+    fp_exp <- st_fish_param(par_obj, 25L, fishery, 0)
+  }
+  gp <- group[[pmax(1L, pmin(length(group), as.integer(fishery)))]]
+  avg_ss <- suppressWarnings(as.numeric(avg[as.character(gp)]))
+  if (!is.finite(avg_ss) || avg_ss <= 0) avg_ss <- max(1, suppressWarnings(as.numeric(sample_size)))
+  rel_ss <- 0.001 + suppressWarnings(as.numeric(sample_size)) / (0.001 + avg_ss)
+  exp(fp_lambda) * rel_ss^fp_exp
+}
+
+st_dm_nore_nmax <- function(par_obj) {
+  nmax <- st_flag_from_obj(par_obj, 1L, 342L)
+  if (is.finite(nmax) && nmax > 0) nmax else 1000
+}
+
+st_lw_sample_by_likelihood <- function(p,
+                                       n,
+                                       par_obj,
+                                       par_file,
+                                       type = c("length", "weight"),
+                                       fishery = 1L,
+                                       likelihood = "multinomial",
+                                       fit = NULL) {
   type <- match.arg(type)
   p <- pmax(suppressWarnings(as.numeric(p)), 1e-10)
   p <- p / sum(p)
@@ -875,38 +931,18 @@ st_lw_sample_by_likelihood <- function(p, n, par_obj, par_file, type = c("length
     return(st_multinom_freq(q, n))
   }
   if (identical(likelihood, "dirichlet_multinomial_nore")) {
-    if (identical(type, "length")) {
-      lambda <- exp(st_fish_param(par_obj, 22L, fishery, 0))
-    } else {
-      lambda <- exp(st_fish_param(par_obj, 24L, fishery, 0))
-    }
+    lambda <- st_dm_nore_lambda(par_obj, fit, type, fishery, n)
     q <- st_simple_rdirichlet(lambda * p)
-    return(st_multinom_freq(q, n))
+    counts <- st_multinom_freq(q, st_dm_nore_nmax(par_obj))
+    if (sum(counts) <= 0) return(rep(0, length(p)))
+    return(n * counts / sum(counts))
   }
   if (likelihood %in% c("logistic_normal", "logistic_normal_heteroscedastic")) {
-    pdftype <- attr(par_obj, "selftest_flag_283")
-    if (is.null(pdftype) || length(pdftype) == 0) pdftype <- st_flag_value(par_file, 1L, 283L)
-    return(st_logistic_normal_freq(p, n, par_obj, type, fishery, student = isTRUE(pdftype == 1)))
-  }
-  if (grepl("^self_scaling_multinomial", likelihood)) {
-    if (identical(type, "length")) {
-      eff_n <- exp(st_fish_param(par_obj, 14L, fishery, log(max(n, 1))))
-      rho <- st_fish_param(par_obj, 16L, fishery, 0)
-      var <- exp(st_fish_param(par_obj, 18L, fishery, 0))
-      vexp <- st_fish_param(par_obj, 26L, fishery, 0)
-    } else {
-      eff_n <- exp(st_fish_param(par_obj, 15L, fishery, log(max(n, 1))))
-      rho <- st_fish_param(par_obj, 17L, fishery, 0)
-      var <- exp(st_fish_param(par_obj, 19L, fishery, 0))
-      vexp <- st_fish_param(par_obj, 27L, fishery, 0)
+    pdftype <- if (identical(type, "length")) attr(par_obj, "selftest_flag_293") else attr(par_obj, "selftest_flag_283")
+    if (is.null(pdftype) || length(pdftype) == 0) {
+      pdftype <- st_flag_value(par_file, 1L, if (identical(type, "length")) 293L else 283L)
     }
-    S <- st_make_correlation_matrix(length(p), rho, 0, 0)
-    scale <- ((1e-4 + 1 / p) / (1e-4 + length(p)))^vexp
-    Sigma <- var * (S / max(eff_n, 1))
-    Sigma <- Sigma * outer(scale, scale)
-    eta <- st_mvrnorm1(rep(0, length(p)), Sigma)
-    q <- p * exp(eta - max(eta))
-    return(st_multinom_freq(q / sum(q), n))
+    return(st_logistic_normal_freq(p, n, par_obj, type, fishery, student = isTRUE(pdftype == 1)))
   }
   stop("Unsupported composition likelihood sampler: ", likelihood)
 }
@@ -925,8 +961,10 @@ st_lw_resample_from_payload <- function(sim_dir, par_file, type = c("length", "w
   payload <- readRDS(payload_file)
   attr(par_obj, "selftest_flag_193") <- st_flag_from_obj(par_obj, 1L, 193L)
   attr(par_obj, "selftest_flag_283") <- st_flag_from_obj(par_obj, 1L, 283L)
+  attr(par_obj, "selftest_flag_293") <- st_flag_from_obj(par_obj, 1L, 293L)
   attr(par_obj, "selftest_flag_284") <- st_flag_from_obj(par_obj, 1L, 284L)
   attr(par_obj, "selftest_flag_285") <- st_flag_from_obj(par_obj, 1L, 285L)
+  attr(par_obj, "selftest_flag_295") <- st_flag_from_obj(par_obj, 1L, 295L)
   attr(par_obj, "selftest_flag_297") <- st_flag_from_obj(par_obj, 1L, 297L)
   par_ref <- par_file
   attr(par_ref, "selftest_flag_193") <- attr(par_obj, "selftest_flag_193")
@@ -980,7 +1018,8 @@ st_lw_resample_from_payload <- function(sim_dir, par_file, type = c("length", "w
       par_file = par_ref,
       type = type,
       fishery = as.integer(k$fishery),
-      likelihood = likelihood
+      likelihood = likelihood,
+      fit = fit
     )
     data.frame(
       type = type,

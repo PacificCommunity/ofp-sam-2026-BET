@@ -120,6 +120,26 @@ mod_selftest_ui <- function() {
     ),
     fluidRow(
       box(
+        title = "Key Parameter Relative Difference",
+        width = 12,
+        solidHeader = TRUE,
+        status = "primary",
+        collapsible = TRUE,
+        plotOutput("selftest_param_boxplot", height = "420px")
+      )
+    ),
+    fluidRow(
+      box(
+        title = "Composition Pseudo-Data Checks",
+        width = 12,
+        solidHeader = TRUE,
+        status = "info",
+        collapsible = TRUE,
+        uiOutput("selftest_comp_plot_ui")
+      )
+    ),
+    fluidRow(
+      box(
         title = "Replicate Checks",
         width = 12,
         solidHeader = TRUE,
@@ -224,6 +244,79 @@ stp_read_model_rep <- function(folder) {
   rep_file <- tryCatch(mp_final_rep(folder), error = function(e) NULL)
   if (is.null(rep_file) || !file.exists(rep_file)) return(NULL)
   tryCatch(read.MFCLRep(rep_file), error = function(e) NULL)
+}
+
+stp_read_model_par <- function(folder) {
+  payload_file <- file.path(folder, "model_payload.rds")
+  if (file.exists(payload_file)) {
+    payload <- tryCatch(readRDS(payload_file), error = function(e) NULL)
+    par_obj <- tryCatch(payload$data$ParOut, error = function(e) NULL)
+    if (!is.null(par_obj)) return(par_obj)
+  }
+  par_files <- list.files(folder, pattern = "\\.par[0-9]*$|^[0-9]+\\.par$", full.names = TRUE)
+  if (length(par_files) == 0) return(NULL)
+  info <- file.info(par_files)
+  par_file <- par_files[order(-as.numeric(info$mtime), basename(par_files))][[1]]
+  tryCatch(read.MFCLPar(par_file), error = function(e) NULL)
+}
+
+stp_profile_value_vector <- function(par_obj, profile_name) {
+  out <- tryCatch({
+    if (identical(profile_name, "totpop")) {
+      tot_pop(par_obj)
+    } else if (identical(profile_name, "LorenM")) {
+      as.vector(aperm(log_m(par_obj), c(4, 1, 2, 3, 5, 6)))
+    } else if (identical(profile_name, "L1")) {
+      growth(par_obj)[1, 1]
+    } else if (identical(profile_name, "L2")) {
+      growth(par_obj)[2, 1]
+    } else if (identical(profile_name, "kappa")) {
+      growth(par_obj)[3, 1]
+    } else if (identical(profile_name, "s1")) {
+      growth_var_pars(par_obj)[1, 1]
+    } else if (identical(profile_name, "s2")) {
+      growth_var_pars(par_obj)[2, 1]
+    } else if (identical(profile_name, "BetaScale")) {
+      season_growth_pars(par_obj)[21]
+    } else {
+      numeric()
+    }
+  }, error = function(e) numeric())
+  out <- suppressWarnings(as.numeric(out))
+  out[is.finite(out)]
+}
+
+stp_par_key_values <- function(par_obj) {
+  if (is.null(par_obj)) return(data.frame())
+  profile_names <- c("totpop", "LorenM", "L1", "L2", "kappa", "s1", "s2", "BetaScale")
+  rows <- lapply(profile_names, function(group) {
+    val <- stp_profile_value_vector(par_obj, group)
+    if (length(val) == 0) return(NULL)
+    data.frame(
+      parameter = group,
+      index = seq_along(val),
+      value = val,
+      stringsAsFactors = FALSE
+    )
+  })
+  bind_rows(rows)
+}
+
+stp_par_relative_diff <- function(truth_par, refit_par, scenario, replicate) {
+  truth <- stp_par_key_values(truth_par)
+  refit <- stp_par_key_values(refit_par)
+  if (nrow(truth) == 0 || nrow(refit) == 0) return(data.frame())
+  inner_join(
+    rename(truth, truth_value = value),
+    rename(refit, refit_value = value),
+    by = c("parameter", "index")
+  ) %>%
+    mutate(
+      scenario = scenario,
+      replicate = replicate,
+      rel_diff = (refit_value - truth_value) / abs(truth_value)
+    ) %>%
+    filter(is.finite(rel_diff), abs(truth_value) > 1e-8)
 }
 
 stp_scalar_num <- function(x) {
@@ -583,6 +676,25 @@ mod_selftest_server <- function(input, output, session, rv) {
       filter(is.finite(year), is.finite(value))
   })
 
+  selftest_parameter_diff_data <- reactive({
+    filters <- selftest_filters_applied()
+    req(rv$data_loaded, filters)
+    idx <- selftest_index_current()
+    selected <- intersect(as.character(filters$scenarios), idx$key)
+    if (length(selected) == 0 && nrow(idx) > 0) selected <- idx$key
+    idx <- idx[idx$key %in% selected, , drop = FALSE]
+    if (nrow(idx) == 0) return(data.frame())
+    bind_rows(lapply(seq_len(nrow(idx)), function(i) {
+      row <- idx[i, , drop = FALSE]
+      stp_par_relative_diff(
+        stp_read_model_par(row$truth_dir[[1]]),
+        stp_read_model_par(row$refit_dir[[1]]),
+        row$key[[1]],
+        row$replicate[[1]]
+      )
+    }))
+  })
+
   selftest_sim_data <- reactive({
     filters <- selftest_filters_applied()
     req(rv$data_loaded, filters)
@@ -801,6 +913,103 @@ mod_selftest_server <- function(input, output, session, rv) {
     }
   })
 
+  selftest_comp_plot <- reactive({
+    filters <- selftest_filters_applied()
+    req(filters)
+    data_series <- selftest_data_simulation_series()
+    comp_keep <- c(
+      "length mean", "length q10", "length median", "length q90",
+      "weight mean", "weight q10", "weight median", "weight q90",
+      "age-length mean age", "age-length age q10", "age-length age median", "age-length age q90"
+    )
+    if (nrow(data_series) == 0) {
+      return(ggplot() +
+        annotate("text", x = 0.5, y = 0.5, label = "No composition pseudo-data summary found", size = 4.2, color = "#777") +
+        theme_void())
+    }
+    annual <- data_series %>%
+      mutate(
+        year = suppressWarnings(as.numeric(year)),
+        component = as.character(component),
+        series = if ("series" %in% names(.)) as.character(series) else "all",
+        model = if ("model" %in% names(.)) as.character(model) else "",
+        fishery_num = stp_series_fishery(series),
+        base_value = suppressWarnings(as.numeric(base_value)),
+        pseudo_value = suppressWarnings(as.numeric(pseudo_value))
+      ) %>%
+      filter(component %in% comp_keep, is.finite(year), is.finite(base_value), is.finite(pseudo_value))
+    if (nrow(annual) == 0) {
+      return(ggplot() +
+        annotate("text", x = 0.5, y = 0.5, label = "No length/weight/age-length pseudo-data series found", size = 4.2, color = "#777") +
+        theme_void())
+    }
+    annual <- bind_rows(lapply(split(annual, seq_len(nrow(annual))), function(row) {
+      fishery <- stp_series_fishery(row$series[[1]])
+      if (is.na(fishery)) {
+        row$display_component <- row$component[[1]]
+      } else {
+        map <- tryCatch(rv$FISHERY_MAPS[[row$model[[1]]]], error = function(e) NULL)
+        row$display_component <- paste0(row$component[[1]], " - ", stp_fishery_region(fishery, map))
+      }
+      row
+    }))
+    annual <- annual %>%
+      group_by(scenario, replicate, display_component, year) %>%
+      summarise(
+        base_value = mean(base_value, na.rm = TRUE),
+        pseudo_value = mean(pseudo_value, na.rm = TRUE),
+        .groups = "drop"
+      )
+    interval_level <- if (!is.null(filters$interval_level)) filters$interval_level else 0.95
+    lower_prob <- (1 - interval_level) / 2
+    upper_prob <- 1 - lower_prob
+    pseudo_band <- annual %>%
+      group_by(display_component, year) %>%
+      summarise(
+        median = stats::median(pseudo_value, na.rm = TRUE),
+        lower = stats::quantile(pseudo_value, lower_prob, na.rm = TRUE, names = FALSE),
+        upper = stats::quantile(pseudo_value, upper_prob, na.rm = TRUE, names = FALSE),
+        .groups = "drop"
+      )
+    base_line <- annual %>%
+      group_by(display_component, year) %>%
+      summarise(base_value = stats::median(base_value, na.rm = TRUE), .groups = "drop")
+    ggplot() +
+      geom_ribbon(data = pseudo_band, aes(x = year, ymin = lower, ymax = upper), fill = "#95a5a6", alpha = 0.18) +
+      geom_line(data = annual, aes(x = year, y = pseudo_value, group = scenario), color = "#59636e", alpha = 0.42, linewidth = 0.38) +
+      geom_line(data = pseudo_band, aes(x = year, y = median), color = "#111111", linewidth = 0.85) +
+      geom_line(data = base_line, aes(x = year, y = base_value), color = "#d62728", alpha = 0.8, linewidth = 0.7) +
+      facet_wrap(~ display_component, scales = "free_y", ncol = 2) +
+      labs(
+        x = "Year",
+        y = "Annual value",
+        subtitle = paste0("Composition simulation check: red = fitted expectation, grey = pseudo reps, black = pseudo median; shaded = ", round(interval_level * 100), "% interval")
+      ) +
+      theme_bw(base_size = 12) +
+      theme(panel.grid.minor = element_blank(), strip.background = element_rect(fill = "#eef3f7", color = NA))
+  })
+
+  selftest_param_boxplot <- reactive({
+    df <- selftest_parameter_diff_data()
+    if (nrow(df) == 0) {
+      return(ggplot() +
+        annotate("text", x = 0.5, y = 0.5, label = "No key parameter comparison found", size = 4.2, color = "#777") +
+        theme_void())
+    }
+    df <- df %>%
+      mutate(
+        parameter = factor(parameter, levels = c("totpop", "LorenM", "L1", "L2", "kappa", "s1", "s2", "BetaScale")),
+        rel_diff_pct = 100 * rel_diff
+      ) %>%
+      filter(is.finite(rel_diff_pct), abs(rel_diff_pct) < 1000)
+    ggplot(df, aes(x = parameter, y = rel_diff_pct)) +
+      geom_hline(yintercept = 0, color = "#777", linewidth = 0.35) +
+      geom_boxplot(fill = "#dfe6e9", color = "#2d3436", outlier.alpha = 0.25, width = 0.65) +
+      labs(x = NULL, y = "Relative difference (%)", subtitle = "Refit vs truth for individual-profile key parameters: (refit - truth) / |truth|") +
+      theme_bw(base_size = 12) +
+      theme(panel.grid.minor = element_blank(), axis.text.x = element_text(angle = 25, hjust = 1))
+  })
+
   output$selftest_recovery_plot_ui <- renderUI({
     h <- if (is.null(input$selftest_recovery_height)) 900 else input$selftest_recovery_height
     plotOutput("selftest_recovery_plot", height = paste0(h, "px"))
@@ -811,12 +1020,25 @@ mod_selftest_server <- function(input, output, session, rv) {
     plotOutput("selftest_sim_plot", height = paste0(h, "px"))
   })
 
+  output$selftest_comp_plot_ui <- renderUI({
+    h <- if (is.null(input$selftest_sim_height)) 850 else input$selftest_sim_height
+    plotOutput("selftest_comp_plot", height = paste0(max(700, h), "px"))
+  })
+
   output$selftest_recovery_plot <- renderPlot({
     selftest_recovery_plot()
   })
 
   output$selftest_sim_plot <- renderPlot({
     selftest_sim_plot()
+  })
+
+  output$selftest_comp_plot <- renderPlot({
+    selftest_comp_plot()
+  })
+
+  output$selftest_param_boxplot <- renderPlot({
+    selftest_param_boxplot()
   })
 
   output$selftest_sim_table <- DT::renderDT({
