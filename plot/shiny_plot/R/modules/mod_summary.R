@@ -512,7 +512,7 @@ mod_summary_server <- function(input, output, session, rv) {
 
         description <- if (!is.na(detail$description) && nzchar(detail$description)) detail$description else "No description available"
         config_summary <- if (!is.na(detail$config_summary) && nzchar(detail$config_summary)) detail$config_summary else "No config summary available"
-        change_label <- if (!is.na(detail$change_label) && nzchar(detail$change_label)) detail$change_label else "None"
+        change_label <- if (!is.na(detail$change_label) && nzchar(detail$change_label)) detail$change_label else "Base input"
         change_description <- if (!is.na(detail$change_description) && nzchar(detail$change_description)) detail$change_description else ""
         n_index <- length(rv$INDEX_FISHERIES_MAPS[[model_name]])
 

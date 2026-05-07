@@ -83,6 +83,144 @@ st_remove_mfcl_run_outputs <- function(dir_path, keep_par = character(), remove_
   invisible(length(stale))
 }
 
+st_fixed_hint_flags <- function() {
+  group_vals <- Sys.getenv(
+    c("input_recipe_fixed_params", "INPUT_RECIPE_FIXED_PARAMS", "selftest_fixed_params", "SELFTEST_FIXED_PARAMS"),
+    unset = ""
+  )
+  groups <- unlist(strsplit(paste(group_vals, collapse = " "), "[,;[:space:]+]+", perl = TRUE), use.names = FALSE)
+  groups <- toupper(trimws(groups))
+  groups <- groups[nzchar(groups)]
+  groups <- sub("^GROWTH$", "VB", groups)
+  groups <- sub("^NATURALMORTALITY$", "M", groups)
+  groups <- sub("^NATURAL_MORTALITY$", "M", groups)
+  groups <- sub("^FIXM$", "M", groups)
+  groups <- sub("^FIXVB$", "VB", groups)
+  groups <- sub("^FIXVBM$", "VBM", groups)
+  if ("VBM" %in% groups || "VBANDM" %in% groups) groups <- c(groups, "VB", "M")
+  out <- integer(0)
+  if ("VB" %in% groups) out <- c(out, 12L, 13L, 14L)
+  if ("M" %in% groups) out <- c(out, 121L)
+
+  extra <- Sys.getenv(c("selftest_fixed_start_flags", "SELFTEST_FIXED_START_FLAGS"), unset = "")
+  extra <- unlist(strsplit(paste(extra, collapse = " "), "[,[:space:]]+"))
+  extra <- suppressWarnings(as.integer(extra[nzchar(extra)]))
+  sort(unique(c(out, extra[is.finite(extra)])))
+}
+
+st_fixed_start_flags <- function(par_file) {
+  hint_flags <- st_fixed_hint_flags()
+  if (is.null(par_file) || length(par_file) == 0 || is.na(par_file) || !file.exists(par_file)) {
+    return(hint_flags)
+  }
+  par_obj <- tryCatch(read.MFCLPar(par_file), error = function(e) NULL)
+  flags <- tryCatch(par_obj@flags, error = function(e) NULL)
+  if (is.null(flags) || !all(c("flagtype", "flag", "value") %in% names(flags))) {
+    return(hint_flags)
+  }
+  rows <- flags[flags$flagtype == 1 & flags$flag %in% c(12, 13, 14, 121), , drop = FALSE]
+  vals <- suppressWarnings(as.numeric(rows$value))
+  detected <- as.integer(rows$flag[is.finite(vals) & vals == 0])
+  sort(unique(c(detected, hint_flags)))
+}
+
+st_doitall_truth_start_mode <- function() {
+  mode <- tolower(trimws(Sys.getenv("selftest_doitall_truth_start", "auto")))
+  if (!nzchar(mode)) mode <- "auto"
+  if (mode %in% c("1", "true", "yes", "y", "on", "force", "always")) return("force")
+  if (mode %in% c("0", "false", "no", "n", "off", "never")) return("never")
+  "auto"
+}
+
+st_has_fixed_start_hint <- function() {
+  length(st_fixed_hint_flags()) > 0L
+}
+
+st_write_fixed_start_patch_script <- function(script_path) {
+  lines <- c(
+    "suppressPackageStartupMessages(library(FLR4MFCL))",
+    "args <- commandArgs(trailingOnly = TRUE)",
+    "if (length(args) < 3L) stop('Usage: selftest_patch_fixed_start.R truth_par start_par flags')",
+    "truth_file <- args[[1L]]",
+    "start_file <- args[[2L]]",
+    "flags <- suppressWarnings(as.integer(strsplit(args[[3L]], ',')[[1L]]))",
+    "flags <- sort(unique(flags[is.finite(flags)]))",
+    "truth <- read.MFCLPar(truth_file)",
+    "start <- read.MFCLPar(start_file)",
+    "applied <- integer(0)",
+    "unknown <- integer(0)",
+    "copy_growth <- function(idx) {",
+    "  g0 <- growth(truth)",
+    "  g1 <- growth(start)",
+    "  g1[idx, 1] <- g0[idx, 1]",
+    "  growth(start) <<- g1",
+    "}",
+    "for (flag in flags) {",
+    "  if (identical(flag, 12L)) {",
+    "    copy_growth(1L); applied <- c(applied, flag)",
+    "  } else if (identical(flag, 13L)) {",
+    "    copy_growth(2L); applied <- c(applied, flag)",
+    "  } else if (identical(flag, 14L)) {",
+    "    copy_growth(3L); applied <- c(applied, flag)",
+    "  } else if (identical(flag, 121L)) {",
+    "    lm0 <- log_m(truth)",
+    "    lm1 <- log_m(start)",
+    "    if (!identical(dim(lm0), dim(lm1))) stop('Cannot copy fixed M: log_m dimensions differ')",
+    "    lm1[] <- lm0",
+    "    slot(start, 'log_m') <- lm1",
+    "    applied <- c(applied, flag)",
+    "  } else {",
+    "    unknown <- c(unknown, flag)",
+    "  }",
+    "}",
+    "if (length(unknown) > 0L) {",
+    "  stop('No self-test fixed-value patch mapping for parest flag(s): ', paste(unknown, collapse = ','))",
+    "}",
+    "FLR4MFCL::write(start, file = start_file)",
+    "cat('Self-test fixed-value patch applied to', basename(start_file), 'for flag(s):', paste(applied, collapse = ','), '\\n')"
+  )
+  writeLines(lines, script_path, useBytes = TRUE)
+  Sys.chmod(script_path, mode = "0755")
+  invisible(script_path)
+}
+
+st_patch_doitall_makepar_fixed_values <- function(doitall_path, truth_par, fixed_flags) {
+  if (!file.exists(doitall_path) || is.null(truth_par) || length(truth_par) == 0 || is.na(truth_par)) {
+    return(FALSE)
+  }
+  fixed_flags <- sort(unique(suppressWarnings(as.integer(fixed_flags))))
+  fixed_flags <- fixed_flags[is.finite(fixed_flags)]
+  if (length(fixed_flags) == 0L) return(FALSE)
+  lines <- readLines(doitall_path, warn = FALSE)
+  hit <- grep("-makepar", lines, fixed = TRUE)
+  if (length(hit) == 0) return(FALSE)
+
+  line <- gsub("[\"']", "", trimws(lines[[hit[[1]]]]))
+  tokens <- strsplit(line, "\\s+")[[1]]
+  makepar_idx <- which(tokens == "-makepar")
+  out_par <- if (length(makepar_idx) > 0 && makepar_idx[[1]] > 1L) {
+    tokens[[makepar_idx[[1]] - 1L]]
+  } else {
+    "00.par"
+  }
+  script_name <- "selftest_patch_fixed_start.R"
+  st_write_fixed_start_patch_script(file.path(dirname(doitall_path), script_name))
+  lines <- append(
+    lines,
+    values = paste(
+      "Rscript",
+      shQuote(script_name),
+      shQuote(basename(truth_par)),
+      shQuote(out_par),
+      shQuote(paste(fixed_flags, collapse = ",")),
+      "|| exit 1  # self-test fixed-parameter value patch"
+    ),
+    after = hit[[1]]
+  )
+  writeLines(lines, doitall_path, useBytes = TRUE)
+  TRUE
+}
+
 st_key <- function(year, month, week, fishery) {
   paste(as.integer(year), as.integer(month), as.integer(week), as.integer(fishery), sep = "_")
 }
@@ -819,7 +957,7 @@ st_profile_value_vector <- function(par_obj, profile_name) {
 
 st_profile_key_values <- function(par_obj) {
   if (is.null(par_obj)) return(data.frame())
-  profile_names <- c("totpop", "LorenM", "L1", "L2", "kappa", "s1", "s2", "BetaScale")
+  profile_names <- c("totpop", "LorenM", "L1", "L2", "kappa", "s1", "s2")
   rows <- lapply(profile_names, function(group) {
     val <- st_profile_value_vector(par_obj, group)
     if (length(val) == 0) return(NULL)
@@ -2135,6 +2273,11 @@ st_run_refit <- function(input_dir,
   st_copy_dir_contents(input_dir, refit_dir)
   frq_file <- basename(st_first_file(refit_dir, "\\.frq$"))
   par_file <- basename(st_latest_par(refit_dir))
+  fixed_start_flags <- integer(0)
+  truth_start_mode <- st_doitall_truth_start_mode()
+  fixed_start_hint <- FALSE
+  truth_start_reason <- ""
+  use_truth_start_par <- FALSE
   mode <- tolower(trimws(as.character(mode[[1]])))
   if (!mode %in% c("last_par", "doitall")) {
     stop("Unsupported self-test refit mode: ", mode, ". Use last_par or doitall.")
@@ -2158,8 +2301,49 @@ st_run_refit <- function(input_dir,
     if (!file.exists(file.path(refit_dir, "doitall.sh"))) {
       stop("Refit mode doitall requires doitall.sh in pseudo input folder: ", refit_dir)
     }
-    removed <- st_remove_mfcl_run_outputs(refit_dir, remove_par = TRUE)
+    fixed_start_flags <- if (!is.na(par_file)) {
+      st_fixed_start_flags(file.path(refit_dir, par_file))
+    } else {
+      integer(0)
+    }
+    fixed_start_hint <- st_has_fixed_start_hint()
+    use_truth_start_par <- !is.na(par_file) && file.exists(file.path(refit_dir, par_file)) &&
+      !identical(truth_start_mode, "never") &&
+      (identical(truth_start_mode, "force") || length(fixed_start_flags) > 0L || isTRUE(fixed_start_hint))
+    truth_start_reason <- if (!isTRUE(use_truth_start_par)) {
+      if (identical(truth_start_mode, "never")) "disabled" else ""
+    } else if (identical(truth_start_mode, "force")) {
+      "forced by selftest_doitall_truth_start"
+    } else if (length(fixed_start_flags) > 0L) {
+      paste0("fixed par flags ", paste(fixed_start_flags, collapse = ","))
+    } else {
+      "fixed-parameter recipe/env hint"
+    }
+    removed <- st_remove_mfcl_run_outputs(
+      refit_dir,
+      keep_par = if (isTRUE(use_truth_start_par)) par_file else character(),
+      remove_par = TRUE
+    )
     if (removed > 0) cat("Removed", removed, "copied MFCL output files before doitall refit\n")
+    if (isTRUE(use_truth_start_par)) {
+      patched <- st_patch_doitall_makepar_fixed_values(
+        file.path(refit_dir, "doitall.sh"),
+        truth_par = par_file,
+        fixed_flags = fixed_start_flags
+      )
+      if (isTRUE(patched)) {
+        cat(
+          "Patched doitall makepar output to copy fixed parameter values from truth par:",
+          par_file,
+          "(", truth_start_reason, ")\n"
+        )
+      } else {
+        warning(
+          "Could not patch doitall.sh makepar output for fixed-parameter self-test; ",
+          "fixed parameters may start from .ini defaults instead of truth."
+        )
+      }
+    }
     old_program_path <- Sys.getenv("PROGRAM_PATH", unset = NA_character_)
     Sys.setenv(PROGRAM_PATH = program_path_abs)
     on.exit({
@@ -2195,10 +2379,15 @@ st_run_refit <- function(input_dir,
     program_path = program_path_abs,
     mfcl_commands = cmd,
     frq_file = frq_file,
-    par_in = if (identical(mode, "last_par")) par_file else NA_character_,
+    par_in = if (identical(mode, "last_par") || isTRUE(use_truth_start_par)) par_file else NA_character_,
     par_out = if (!is.null(final_par)) basename(final_par) else output_par,
     refit_mode = mode,
     refit_fevals = if (identical(mode, "last_par")) as.integer(fevals) else NA_integer_,
+    doitall_truth_start = isTRUE(use_truth_start_par),
+    doitall_truth_start_mode = truth_start_mode,
+    doitall_truth_start_reason = truth_start_reason,
+    doitall_truth_start_fixed_hint = isTRUE(fixed_start_hint),
+    doitall_truth_start_fixed_flags = paste(fixed_start_flags, collapse = ","),
     base_dir = input_dir,
     model_dir = refit_dir,
     selftest = TRUE,

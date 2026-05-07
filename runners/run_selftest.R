@@ -526,6 +526,13 @@ run_summary <- if (length(run_rows) > 0) do.call(rbind, run_rows) else data.fram
 utils::write.csv(run_summary, file.path(selftest_dir_abs, "selftest_runs.csv"), row.names = FALSE)
 saveRDS(run_summary, file.path(selftest_dir_abs, "selftest_runs.rds"), compress = "xz")
 
+if (isTRUE(selftest_compact_cleanup)) {
+  invisible(lapply(
+    file.path(selftest_dir_abs, c("sim", "inputs", "truth", "truth_eval", "refit", "recovery")),
+    st_prune_empty_dirs
+  ))
+}
+
 top_keep_dir <- strsplit(gsub("^/+|/+$", "", selftest_dir), "/", fixed = TRUE)[[1]][[1]]
 if (!nzchar(top_keep_dir)) top_keep_dir <- "selftest"
 cb_condor_keep_only_model_cleanup(keep_dir = top_keep_dir)

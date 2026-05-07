@@ -190,10 +190,10 @@ sp_model_change_metadata <- function(model_folder, model_name = basename(model_f
 
   if (length(tokens) == 0) {
     tokens <- sp_legacy_change_tokens_from_name(model_name)
-    source <- if (length(tokens) > 0) "legacy known-token fallback" else "none"
+    source <- if (length(tokens) > 0) "legacy known-token fallback" else "base"
   }
 
-  label <- if (length(tokens) > 0) paste(tokens, collapse = " + ") else "None"
+  label <- if (length(tokens) > 0) paste(tokens, collapse = " + ") else "Base input"
   description <- ""
   if (is.list(meta)) {
     if (exists("input_change_metadata_description", mode = "function")) {
@@ -205,6 +205,7 @@ sp_model_change_metadata <- function(model_folder, model_name = basename(model_f
   if (!nzchar(description)) description <- sp_first_text(info$input_change_description)
   if (!nzchar(description)) description <- sp_first_text(info$launcher_input_recipe_description)
   if (!nzchar(description) && length(tokens) > 0) description <- label
+  if (!nzchar(description) && length(tokens) == 0) description <- "No input-change tokens applied"
 
   list(
     tokens = tokens,

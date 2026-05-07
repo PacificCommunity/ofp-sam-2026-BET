@@ -26,6 +26,20 @@ mod_selftest_ui <- function() {
           )
         ),
         pickerInput(
+          "selftest_models",
+          "Models:",
+          choices = NULL,
+          selected = NULL,
+          multiple = TRUE,
+          options = pickerOptions(
+            actionsBox = TRUE,
+            selectedTextFormat = "count > 2",
+            countSelectedText = "{0} models selected",
+            liveSearch = TRUE,
+            size = 6
+          )
+        ),
+        pickerInput(
           "selftest_sim_components",
           "Simulation data series:",
           choices = c(
@@ -62,6 +76,49 @@ mod_selftest_ui <- function() {
             selectedTextFormat = "count > 2",
             countSelectedText = "{0} series selected",
             size = 6
+          )
+        ),
+        selectInput(
+          "selftest_recovery_layout",
+          "Recovery layout:",
+          choices = c("Overlay models" = "overlay", "Facet by model" = "facet"),
+          selected = "overlay"
+        ),
+        selectInput(
+          "selftest_sim_layout",
+          "Simulation-check layout:",
+          choices = c("Facet by model" = "facet", "Overlay selected models" = "overlay"),
+          selected = "facet"
+        ),
+        pickerInput(
+          "selftest_param_metrics",
+          "Key parameter boxplot:",
+          choices = c(
+            "Total population" = "totpop",
+            "Log M" = "LorenM",
+            "L1" = "L1",
+            "L2" = "L2",
+            "Kappa" = "kappa",
+            "s1" = "s1",
+            "s2" = "s2",
+            "Recent depletion" = "Recent depletion",
+            "Recent SSB" = "Recent SSB",
+            "Recent F" = "Recent F",
+            "Recent recruitment" = "Recent recruitment",
+            "Terminal depletion" = "Terminal depletion",
+            "Terminal SSB" = "Terminal SSB"
+          ),
+          selected = c(
+            "totpop", "LorenM", "L1", "L2", "kappa", "s1", "s2",
+            "Recent depletion", "Recent SSB", "Recent F", "Recent recruitment",
+            "Terminal depletion", "Terminal SSB"
+          ),
+          multiple = TRUE,
+          options = pickerOptions(
+            actionsBox = TRUE,
+            selectedTextFormat = "count > 3",
+            countSelectedText = "{0} quantities selected",
+            size = 7
           )
         ),
         checkboxInput("selftest_show_replicates", "Show replicate traces", value = FALSE),
@@ -229,6 +286,18 @@ stp_selftest_index <- function(model_dir, loaded_models = character()) {
   out
 }
 
+stp_filter_selftest_index <- function(idx, filters) {
+  if (is.null(idx) || nrow(idx) == 0) return(idx)
+  selected_models <- as.character(filters$models)
+  selected_models <- selected_models[nzchar(selected_models)]
+  if (length(selected_models) > 0) {
+    idx <- idx[idx$model %in% selected_models, , drop = FALSE]
+  }
+  selected <- intersect(as.character(filters$scenarios), idx$key)
+  if (length(selected) == 0 && nrow(idx) > 0) selected <- idx$key
+  idx[idx$key %in% selected, , drop = FALSE]
+}
+
 stp_read_model_rep <- function(folder) {
   payload_file <- file.path(folder, "model_payload.rds")
   if (file.exists(payload_file)) {
@@ -272,8 +341,6 @@ stp_profile_value_vector <- function(par_obj, profile_name) {
       growth_var_pars(par_obj)[1, 1]
     } else if (identical(profile_name, "s2")) {
       growth_var_pars(par_obj)[2, 1]
-    } else if (identical(profile_name, "BetaScale")) {
-      season_growth_pars(par_obj)[21]
     } else {
       numeric()
     }
@@ -284,7 +351,7 @@ stp_profile_value_vector <- function(par_obj, profile_name) {
 
 stp_par_key_values <- function(par_obj) {
   if (is.null(par_obj)) return(data.frame())
-  profile_names <- c("totpop", "LorenM", "L1", "L2", "kappa", "s1", "s2", "BetaScale")
+  profile_names <- c("totpop", "LorenM", "L1", "L2", "kappa", "s1", "s2")
   rows <- lapply(profile_names, function(group) {
     val <- stp_profile_value_vector(par_obj, group)
     if (length(val) == 0) return(NULL)
@@ -309,6 +376,7 @@ stp_par_relative_diff <- function(truth_par, refit_par, scenario, replicate) {
   ) %>%
     mutate(
       scenario = scenario,
+      model = stp_model_from_scenario(scenario),
       replicate = replicate,
       rel_diff = if_else(
         parameter == "LorenM",
@@ -319,7 +387,7 @@ stp_par_relative_diff <- function(truth_par, refit_par, scenario, replicate) {
     filter(is.finite(rel_diff), abs(truth_value) > 1e-8)
 }
 
-stp_read_derived_recovery <- function(recovery_dir, scenario, replicate) {
+stp_read_derived_recovery <- function(recovery_dir, scenario, replicate, model = stp_model_from_scenario(scenario)) {
   path <- file.path(recovery_dir, "derived_recovery.csv")
   if (!file.exists(path)) return(NULL)
   x <- tryCatch(utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE), error = function(e) NULL)
@@ -338,7 +406,7 @@ stp_read_derived_recovery <- function(recovery_dir, scenario, replicate) {
       stringsAsFactors = FALSE
     ) %>%
       tidyr::pivot_longer(c("truth", "refit"), names_to = "source", values_to = "value") %>%
-      mutate(scenario = scenario, replicate = replicate)
+      mutate(scenario = scenario, model = model, replicate = replicate)
   })
   out <- bind_rows(rows)
   if (nrow(out) == 0) return(NULL)
@@ -350,7 +418,7 @@ stp_read_derived_recovery <- function(recovery_dir, scenario, replicate) {
     filter(is.finite(year), is.finite(value))
 }
 
-stp_read_profile_parameter_recovery <- function(recovery_dir, scenario, replicate) {
+stp_read_profile_parameter_recovery <- function(recovery_dir, scenario, replicate, model = stp_model_from_scenario(scenario)) {
   path <- file.path(recovery_dir, "profile_parameter_recovery.csv")
   if (!file.exists(path)) return(NULL)
   x <- tryCatch(utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE), error = function(e) NULL)
@@ -370,10 +438,68 @@ stp_read_profile_parameter_recovery <- function(recovery_dir, scenario, replicat
       truth_value = suppressWarnings(as.numeric(.data$truth_value)),
       refit_value = suppressWarnings(as.numeric(.data$refit_value)),
       scenario = scenario,
+      model = model,
       replicate = replicate,
       rel_diff = suppressWarnings(as.numeric(.data$rel_diff))
     ) %>%
     filter(is.finite(rel_diff), is.finite(truth_value), abs(truth_value) > 1e-8)
+}
+
+stp_read_recent_derived_recovery <- function(recovery_dir, scenario, replicate, model = stp_model_from_scenario(scenario), n_years = 4L) {
+  path <- file.path(recovery_dir, "derived_recovery.csv")
+  if (!file.exists(path)) return(NULL)
+  x <- tryCatch(utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE), error = function(e) NULL)
+  if (!is.data.frame(x) || nrow(x) == 0 || !"year" %in% names(x)) return(NULL)
+  x$year <- suppressWarnings(as.numeric(x$year))
+  recent_metrics <- c(
+    depletion = "Recent depletion",
+    spawning_potential = "Recent SSB",
+    fishing_mortality = "Recent F",
+    recruitment = "Recent recruitment"
+  )
+  terminal_metrics <- c(
+    depletion = "Terminal depletion",
+    spawning_potential = "Terminal SSB"
+  )
+  make_row <- function(metric, label, reducer = c("recent", "terminal")) {
+    reducer <- match.arg(reducer)
+    truth_col <- paste0(metric, "_truth")
+    refit_col <- paste0(metric, "_estimate")
+    if (!all(c(truth_col, refit_col) %in% names(x))) return(NULL)
+    y <- x %>%
+      transmute(
+        year = .data$year,
+        truth_value = suppressWarnings(as.numeric(.data[[truth_col]])),
+        refit_value = suppressWarnings(as.numeric(.data[[refit_col]]))
+      ) %>%
+      filter(is.finite(.data$year), is.finite(.data$truth_value), is.finite(.data$refit_value))
+    if (nrow(y) == 0) return(NULL)
+    if (identical(reducer, "recent")) {
+      keep_years <- tail(sort(unique(y$year)), max(1L, as.integer(n_years)))
+      y <- y %>% filter(.data$year %in% keep_years)
+    } else {
+      y <- y %>% filter(.data$year == max(.data$year, na.rm = TRUE))
+    }
+    truth_value <- mean(y$truth_value, na.rm = TRUE)
+    refit_value <- mean(y$refit_value, na.rm = TRUE)
+    if (!is.finite(truth_value) || abs(truth_value) <= 1e-8 || !is.finite(refit_value)) return(NULL)
+    data.frame(
+      parameter = label,
+      index = 1L,
+      truth_value = truth_value,
+      refit_value = refit_value,
+      scenario = scenario,
+      model = model,
+      replicate = replicate,
+      rel_diff = (refit_value - truth_value) / truth_value,
+      stringsAsFactors = FALSE
+    )
+  }
+  rows <- c(
+    lapply(names(recent_metrics), function(metric) make_row(metric, recent_metrics[[metric]], "recent")),
+    lapply(names(terminal_metrics), function(metric) make_row(metric, terminal_metrics[[metric]], "terminal"))
+  )
+  bind_rows(rows)
 }
 
 stp_scalar_num <- function(x) {
@@ -486,6 +612,27 @@ stp_metric_label <- function(metric) {
   )
 }
 
+stp_model_from_scenario <- function(scenario) {
+  scenario <- as.character(scenario)
+  out <- sub("::.*$", "", scenario)
+  bad <- is.na(out) | !nzchar(out)
+  out[bad] <- scenario[bad]
+  out
+}
+
+stp_model_palette <- function(models) {
+  models <- as.character(models)
+  models <- models[!is.na(models) & nzchar(models)]
+  models <- sort(unique(models))
+  if (length(models) == 0) return(character())
+  base <- c(
+    "#4E79A7", "#F28E2B", "#59A14F", "#E15759",
+    "#76B7B2", "#B07AA1", "#EDC948", "#9C755F",
+    "#BAB0AC", "#1F77B4", "#D62728", "#2CA02C"
+  )
+  stats::setNames(rep(base, length.out = length(models)), models)
+}
+
 stp_recovery_metrics <- function() {
   c("depletion", "spawning_potential", "recruitment", "fishing_mortality")
 }
@@ -507,7 +654,7 @@ stp_summary_band <- function(df, interval_level = 0.95) {
   interval_level <- max(0.01, min(0.99, interval_level))
   lower_prob <- (1 - interval_level) / 2
   upper_prob <- 1 - lower_prob
-  group_cols <- intersect(c("metric", "quantity"), names(df))
+  group_cols <- intersect(c("model", "metric", "quantity"), names(df))
   df %>%
     group_by(across(all_of(c(group_cols, "year")))) %>%
     summarise(
@@ -529,7 +676,7 @@ stp_recovery_axis_label <- function(metric) {
   )
 }
 
-stp_recovery_panel <- function(metric, truth_med, refit, refit_band, filters) {
+stp_recovery_panel <- function(metric, truth_med, refit, refit_band, filters, model_palette = character(), facet_model = FALSE) {
   metric_filter <- function(x) {
     if (is.null(x) || nrow(x) == 0 || !"metric" %in% names(x)) return(data.frame())
     x %>% filter(.data$metric == .env$metric)
@@ -538,6 +685,7 @@ stp_recovery_panel <- function(metric, truth_med, refit, refit_band, filters) {
   refit_q <- metric_filter(refit)
   band_q <- metric_filter(refit_band)
   line_size <- 1.05
+  model_count <- length(unique(c(truth_q$model, refit_q$model, band_q$model)))
 
   p <- ggplot()
   if (identical(metric, "depletion")) {
@@ -549,26 +697,24 @@ stp_recovery_panel <- function(metric, truth_med, refit, refit_band, filters) {
     p <- p +
       geom_ribbon(
         data = band_q,
-        aes(x = .data$year, ymin = .data$lower, ymax = .data$upper),
-        fill = "#7f8fa6",
-        alpha = 0.22
+        aes(x = .data$year, ymin = .data$lower, ymax = .data$upper, group = .data$model, fill = .data$model),
+        alpha = 0.16
       )
   }
   if (isTRUE(filters$show_replicates) && nrow(refit_q) > 0) {
     p <- p +
       geom_line(
         data = refit_q,
-        aes(x = .data$year, y = .data$value, group = .data$scenario),
-        color = "#5f6f7a",
-        alpha = 0.32,
-        linewidth = 0.45
+        aes(x = .data$year, y = .data$value, group = .data$scenario, color = .data$model),
+        alpha = 0.20,
+        linewidth = 0.35
       )
   }
   if (nrow(band_q) > 0) {
     p <- p +
       geom_line(
         data = band_q,
-        aes(x = .data$year, y = .data$median, color = "Refit median"),
+        aes(x = .data$year, y = .data$median, group = .data$model, color = .data$model),
         linewidth = line_size
       )
   }
@@ -576,17 +722,19 @@ stp_recovery_panel <- function(metric, truth_med, refit, refit_band, filters) {
     p <- p +
       geom_line(
         data = truth_q,
-        aes(x = .data$year, y = .data$median, color = "Truth"),
-        linewidth = line_size
+        aes(x = .data$year, y = .data$median, group = .data$model, color = .data$model),
+        linewidth = line_size,
+        linetype = "dashed"
       )
   }
 
   p <- p +
     scale_color_manual(
-      name = "Series",
-      values = c("Truth" = "#d62728", "Refit median" = "#111111"),
-      breaks = c("Truth", "Refit median")
+      name = "Model",
+      values = model_palette,
+      breaks = names(model_palette)
     ) +
+    scale_fill_manual(values = model_palette, guide = "none") +
     labs(x = "Year", y = stp_recovery_axis_label(metric)) +
     theme_bw(base_size = 12) +
     theme(
@@ -602,6 +750,11 @@ stp_recovery_panel <- function(metric, truth_med, refit, refit_band, filters) {
     p <- p + coord_cartesian(ylim = c(0, 1.05))
   } else if (metric %in% c("recruitment", "spawning_potential", "fishing_mortality")) {
     p <- p + expand_limits(y = 0)
+  }
+  if (isTRUE(facet_model) && model_count > 1L) {
+    p <- p +
+      facet_wrap(~ model, nrow = 1) +
+      theme(strip.background = element_rect(fill = "#eef3f7", color = NA))
   }
 
   p
@@ -676,7 +829,7 @@ stp_cpue_fisheries <- function(model_dir, model = "") {
   integer(0)
 }
 
-stp_input_info_row <- function(info, scenario) {
+stp_input_info_row <- function(info, scenario, model = stp_model_from_scenario(scenario)) {
   get_num <- function(name) {
     x <- suppressWarnings(as.numeric(info[[name]]))
     if (length(x) == 0 || !is.finite(x[1])) NA_real_ else x[1]
@@ -692,6 +845,7 @@ stp_input_info_row <- function(info, scenario) {
 
   data.frame(
     scenario = scenario,
+    model = model,
     replicate = stp_rep_id(scenario),
     catch_conditioned = get_lgl("catch_conditioned"),
     effort_conditioned = get_lgl("effort_conditioned"),
@@ -738,8 +892,20 @@ mod_selftest_server <- function(input, output, session, rv) {
   selftest_filters_current <- reactive({
     list(
       scenarios = input$selftest_scenarios,
+      models = input$selftest_models,
       show_replicates = isTRUE(input$selftest_show_replicates),
       show_interval = isTRUE(input$selftest_show_interval),
+      recovery_layout = if (is.null(input$selftest_recovery_layout)) "overlay" else as.character(input$selftest_recovery_layout),
+      sim_layout = if (is.null(input$selftest_sim_layout)) "facet" else as.character(input$selftest_sim_layout),
+      param_metrics = if (is.null(input$selftest_param_metrics) || length(input$selftest_param_metrics) == 0) {
+        c(
+          "totpop", "LorenM", "L1", "L2", "kappa", "s1", "s2",
+          "Recent depletion", "Recent SSB", "Recent F", "Recent recruitment",
+          "Terminal depletion", "Terminal SSB"
+        )
+      } else {
+        as.character(input$selftest_param_metrics)
+      },
       interval_level = {
         lvl <- suppressWarnings(as.numeric(input$selftest_interval_level))
         if (length(lvl) == 0 || !is.finite(lvl[1])) 0.95 else max(0.01, min(0.99, lvl[1]))
@@ -760,10 +926,14 @@ mod_selftest_server <- function(input, output, session, rv) {
     idx <- selftest_index_current()
     choices <- if (nrow(idx) > 0) stats::setNames(idx$key, idx$label) else character()
     selected <- unname(choices)
+    model_choices <- if (nrow(idx) > 0) sort(unique(idx$model)) else character()
+    model_choices <- stats::setNames(model_choices, model_choices)
+    updatePickerInput(session, "selftest_models", choices = model_choices, selected = unname(model_choices))
     updatePickerInput(session, "selftest_scenarios", choices = choices, selected = selected)
     if (length(selected) > 0) {
       current <- isolate(selftest_filters_current())
       current$scenarios <- selected
+      current$models <- unname(model_choices)
       selftest_filters_applied(current)
     }
   }, ignoreInit = FALSE)
@@ -780,11 +950,12 @@ mod_selftest_server <- function(input, output, session, rv) {
   }, ignoreInit = TRUE)
 
   observeEvent(
-    list(input$live_update_plots, input$selftest_scenarios,
+    list(input$live_update_plots, input$selftest_scenarios, input$selftest_models,
+         input$selftest_recovery_layout, input$selftest_sim_layout,
          input$selftest_show_replicates, input$selftest_show_interval,
          input$selftest_interval_level,
          input$selftest_recovery_height, input$selftest_sim_height,
-         input$selftest_sim_components),
+         input$selftest_sim_components, input$selftest_param_metrics),
     {
       req(rv$data_loaded)
       if (!isTRUE(input$live_update_plots)) return()
@@ -794,7 +965,7 @@ mod_selftest_server <- function(input, output, session, rv) {
     ignoreInit = TRUE
   )
 
-  observeEvent(list(rv$initial_render_nonce, input$selftest_scenarios), {
+  observeEvent(rv$initial_render_nonce, {
     req(rv$data_loaded, rv$initial_render_nonce)
     if (length(input$selftest_scenarios) == 0) return()
     selftest_filters_applied(isolate(selftest_filters_current()))
@@ -804,16 +975,15 @@ mod_selftest_server <- function(input, output, session, rv) {
     filters <- selftest_filters_applied()
     req(rv$data_loaded, filters)
     idx <- selftest_index_current()
-    selected <- intersect(as.character(filters$scenarios), idx$key)
-    if (length(selected) == 0 && nrow(idx) > 0) selected <- idx$key
-    idx <- idx[idx$key %in% selected, , drop = FALSE]
+    idx <- stp_filter_selftest_index(idx, filters)
     if (nrow(idx) == 0) return(data.frame())
 
     rows <- bind_rows(lapply(seq_len(nrow(idx)), function(i) {
       row <- idx[i, , drop = FALSE]
       scenario <- row$key[[1]]
+      model <- row$model[[1]]
       rep_id <- row$replicate[[1]]
-      from_recovery <- stp_read_derived_recovery(row$recovery_dir[[1]], scenario, rep_id)
+      from_recovery <- stp_read_derived_recovery(row$recovery_dir[[1]], scenario, rep_id, model)
       if (!is.null(from_recovery) && nrow(from_recovery) > 0) return(from_recovery)
 
       refit_ts <- stp_extract_all_metrics(stp_read_model_rep(row$refit_dir[[1]]))
@@ -822,17 +992,18 @@ mod_selftest_server <- function(input, output, session, rv) {
       bind_rows(
         if (!is.null(truth_ts)) {
           truth_ts %>%
-            mutate(scenario = scenario, replicate = rep_id, source = "truth")
+            mutate(scenario = scenario, model = model, replicate = rep_id, source = "truth")
         },
         if (!is.null(refit_ts)) {
           refit_ts %>%
-            mutate(scenario = scenario, replicate = rep_id, source = "refit")
+            mutate(scenario = scenario, model = model, replicate = rep_id, source = "refit")
         }
       )
     }))
     if (nrow(rows) == 0 || !all(c("year", "value") %in% names(rows))) return(data.frame())
     rows %>%
       mutate(
+        model = if ("model" %in% names(.)) as.character(.data$model) else stp_model_from_scenario(.data$scenario),
         year = suppressWarnings(as.numeric(year)),
         value = suppressWarnings(as.numeric(value))
       ) %>%
@@ -843,25 +1014,33 @@ mod_selftest_server <- function(input, output, session, rv) {
     filters <- selftest_filters_applied()
     req(rv$data_loaded, filters)
     idx <- selftest_index_current()
-    selected <- intersect(as.character(filters$scenarios), idx$key)
-    if (length(selected) == 0 && nrow(idx) > 0) selected <- idx$key
-    idx <- idx[idx$key %in% selected, , drop = FALSE]
+    idx <- stp_filter_selftest_index(idx, filters)
     if (nrow(idx) == 0) return(data.frame())
     bind_rows(lapply(seq_len(nrow(idx)), function(i) {
       row <- idx[i, , drop = FALSE]
       from_recovery <- stp_read_profile_parameter_recovery(
         row$recovery_dir[[1]],
         row$key[[1]],
-        row$replicate[[1]]
+        row$replicate[[1]],
+        row$model[[1]]
       )
-      if (!is.null(from_recovery) && nrow(from_recovery) > 0) return(from_recovery)
-
-      stp_par_relative_diff(
-        stp_read_model_par(row$truth_dir[[1]]),
-        stp_read_model_par(row$refit_dir[[1]]),
+      param_rows <- if (!is.null(from_recovery) && nrow(from_recovery) > 0) {
+        from_recovery
+      } else {
+        stp_par_relative_diff(
+          stp_read_model_par(row$truth_dir[[1]]),
+          stp_read_model_par(row$refit_dir[[1]]),
+          row$key[[1]],
+          row$replicate[[1]]
+        )
+      }
+      derived_rows <- stp_read_recent_derived_recovery(
+        row$recovery_dir[[1]],
         row$key[[1]],
-        row$replicate[[1]]
+        row$replicate[[1]],
+        row$model[[1]]
       )
+      bind_rows(param_rows, derived_rows)
     }))
   })
 
@@ -869,14 +1048,12 @@ mod_selftest_server <- function(input, output, session, rv) {
     filters <- selftest_filters_applied()
     req(rv$data_loaded, filters)
     idx <- selftest_index_current()
-    selected <- intersect(as.character(filters$scenarios), idx$key)
-    if (length(selected) == 0 && nrow(idx) > 0) selected <- idx$key
-    idx <- idx[idx$key %in% selected, , drop = FALSE]
+    idx <- stp_filter_selftest_index(idx, filters)
     rows <- lapply(seq_len(nrow(idx)), function(i) {
       row <- idx[i, , drop = FALSE]
       info <- stp_read_selftest_input_info(input$model_dir, row$key[[1]], row$input_dir[[1]])
       if (is.null(info)) return(NULL)
-      stp_input_info_row(info, row$key[[1]])
+      stp_input_info_row(info, row$key[[1]], row$model[[1]])
     })
     bind_rows(rows)
   })
@@ -885,9 +1062,7 @@ mod_selftest_server <- function(input, output, session, rv) {
     filters <- selftest_filters_applied()
     req(rv$data_loaded, filters)
     idx <- selftest_index_current()
-    selected <- intersect(as.character(filters$scenarios), idx$key)
-    if (length(selected) == 0 && nrow(idx) > 0) selected <- idx$key
-    idx <- idx[idx$key %in% selected, , drop = FALSE]
+    idx <- stp_filter_selftest_index(idx, filters)
     rows <- lapply(seq_len(nrow(idx)), function(i) {
       row <- idx[i, , drop = FALSE]
       stp_read_data_simulation_summary(row$input_dir[[1]], row$key[[1]], row$model[[1]])
@@ -899,9 +1074,7 @@ mod_selftest_server <- function(input, output, session, rv) {
     filters <- selftest_filters_applied()
     req(rv$data_loaded, filters)
     idx <- selftest_index_current()
-    selected <- intersect(as.character(filters$scenarios), idx$key)
-    if (length(selected) == 0 && nrow(idx) > 0) selected <- idx$key
-    idx <- idx[idx$key %in% selected, , drop = FALSE]
+    idx <- stp_filter_selftest_index(idx, filters)
     rows <- lapply(seq_len(nrow(idx)), function(i) {
       row <- idx[i, , drop = FALSE]
       bind_rows(
@@ -928,25 +1101,40 @@ mod_selftest_server <- function(input, output, session, rv) {
     truth <- df %>% filter(source == "truth")
     refit <- df %>% filter(source == "refit")
     interval_level <- if (!is.null(filters$interval_level)) filters$interval_level else 0.95
+    model_palette <- stp_model_palette(df$model)
     truth_med <- stp_summary_band(truth, interval_level)
     refit_band <- stp_summary_band(refit, interval_level)
     metrics <- c("depletion", "recruitment", "spawning_potential", "fishing_mortality")
-    panels <- lapply(metrics, stp_recovery_panel, truth_med = truth_med, refit = refit, refit_band = refit_band, filters = filters)
-    legend_panel <- stp_recovery_panel(metrics[[1]], truth_med, refit, refit_band, filters) +
+    facet_model <- identical(filters$recovery_layout, "facet") && length(unique(df$model)) > 1L
+    panels <- lapply(
+      metrics,
+      stp_recovery_panel,
+      truth_med = truth_med,
+      refit = refit,
+      refit_band = refit_band,
+      filters = filters,
+      model_palette = model_palette,
+      facet_model = facet_model
+    )
+    body <- cowplot::plot_grid(plotlist = panels, ncol = 2, align = "hv")
+    subtitle <- paste0(
+      if (isTRUE(facet_model)) "Facets = model; " else "Colour = model; ",
+      "solid = refit median; dashed = truth",
+      if (isTRUE(filters$show_replicates)) "; faint lines = refit replicate traces" else "",
+      if (isTRUE(filters$show_interval)) paste0("; shaded = ", round(interval_level * 100), "% interval") else ""
+    )
+    title <- cowplot::ggdraw() +
+      cowplot::draw_label(subtitle, x = 0, hjust = 0, size = 10, color = "#555")
+    if (isTRUE(facet_model)) {
+      return(cowplot::plot_grid(title, body, ncol = 1, rel_heights = c(0.04, 1)))
+    }
+    legend_panel <- stp_recovery_panel(metrics[[1]], truth_med, refit, refit_band, filters, model_palette = model_palette) +
       theme(
         legend.position = "right",
         legend.title = element_text(face = "bold"),
         legend.key.width = unit(1.2, "cm")
       )
     legend <- cowplot::get_legend(legend_panel)
-    body <- cowplot::plot_grid(plotlist = panels, ncol = 2, align = "hv")
-    subtitle <- paste0(
-      "Red = truth, black = refit median",
-      if (isTRUE(filters$show_replicates)) ", grey = refit replicate traces" else "",
-      if (isTRUE(filters$show_interval)) paste0("; shaded = ", round(interval_level * 100), "% interval") else ""
-    )
-    title <- cowplot::ggdraw() +
-      cowplot::draw_label(subtitle, x = 0, hjust = 0, size = 10, color = "#555")
     cowplot::plot_grid(
       cowplot::plot_grid(title, body, ncol = 1, rel_heights = c(0.04, 1)),
       legend,
@@ -1019,7 +1207,7 @@ mod_selftest_server <- function(input, output, session, rv) {
         row
       }))
       annual <- annual %>%
-        group_by(scenario, replicate, display_component, year) %>%
+        group_by(model, scenario, replicate, display_component, year) %>%
         summarise(
           base_value = mean(base_value, na.rm = TRUE),
           pseudo_value = mean(pseudo_value, na.rm = TRUE),
@@ -1028,8 +1216,11 @@ mod_selftest_server <- function(input, output, session, rv) {
       interval_level <- if (!is.null(filters$interval_level)) filters$interval_level else 0.95
       lower_prob <- (1 - interval_level) / 2
       upper_prob <- 1 - lower_prob
+      facet_model <- identical(filters$sim_layout, "facet") && length(unique(annual$model)) > 1L
+      annual <- annual %>%
+        mutate(display_panel = if (isTRUE(facet_model)) paste(.data$model, .data$display_component, sep = " | ") else .data$display_component)
       pseudo_band <- annual %>%
-        group_by(display_component, year) %>%
+        group_by(model, display_panel, year) %>%
         summarise(
           median = stats::median(pseudo_value, na.rm = TRUE),
           lower = stats::quantile(pseudo_value, lower_prob, na.rm = TRUE, names = FALSE),
@@ -1037,18 +1228,22 @@ mod_selftest_server <- function(input, output, session, rv) {
           .groups = "drop"
         )
       base_line <- annual %>%
-        group_by(display_component, year) %>%
+        group_by(model, display_panel, year) %>%
         summarise(base_value = stats::median(base_value, na.rm = TRUE), .groups = "drop")
       p_data <- ggplot() +
         geom_ribbon(data = pseudo_band, aes(x = year, ymin = lower, ymax = upper), fill = "#95a5a6", alpha = 0.18) +
-        geom_line(data = annual, aes(x = year, y = pseudo_value, group = scenario), color = "#59636e", alpha = 0.42, linewidth = 0.38) +
+        geom_line(data = annual, aes(x = year, y = pseudo_value, group = interaction(model, scenario)), color = "#59636e", alpha = 0.42, linewidth = 0.38) +
         geom_line(data = pseudo_band, aes(x = year, y = median), color = "#111111", linewidth = 0.85) +
         geom_line(data = base_line, aes(x = year, y = base_value), color = "#d62728", alpha = 0.78, linewidth = 0.65) +
-        facet_wrap(~ display_component, scales = "free_y", ncol = 2) +
+        facet_wrap(~ display_panel, scales = "free_y", ncol = 2) +
         labs(
           x = "Year",
           y = "Annual value",
-          subtitle = paste0("Data simulation check: red = fitted expectation, grey = pseudo reps, black = pseudo median; shaded = ", round(interval_level * 100), "% interval")
+          subtitle = paste0(
+            "Data simulation check: red = fitted expectation, grey = pseudo reps, black = pseudo median",
+            if (isTRUE(facet_model)) "; facets include model" else "",
+            "; shaded = ", round(interval_level * 100), "% interval"
+          )
         ) +
         theme_bw(base_size = 12) +
         theme(panel.grid.minor = element_blank(), strip.background = element_rect(fill = "#eef3f7", color = NA))
@@ -1066,33 +1261,72 @@ mod_selftest_server <- function(input, output, session, rv) {
   })
 
   selftest_param_boxplot <- reactive({
+    filters <- selftest_filters_applied()
+    req(filters)
     df <- selftest_parameter_diff_data()
     if (nrow(df) == 0) {
       return(ggplot() +
         annotate("text", x = 0.5, y = 0.5, label = "No key parameter comparison found", size = 4.2, color = "#777") +
         theme_void())
     }
+    selected_params <- if (is.null(filters$param_metrics) || length(filters$param_metrics) == 0) {
+      c(
+        "totpop", "LorenM", "L1", "L2", "kappa", "s1", "s2",
+        "Recent depletion", "Recent SSB", "Recent F", "Recent recruitment",
+        "Terminal depletion", "Terminal SSB"
+      )
+    } else {
+      as.character(filters$param_metrics)
+    }
     df <- df %>%
       mutate(
-        parameter = factor(parameter, levels = c("totpop", "LorenM", "L1", "L2", "kappa", "s1", "s2", "BetaScale")),
+        model = if ("model" %in% names(.)) as.character(.data$model) else stp_model_from_scenario(.data$scenario),
+        parameter = factor(parameter, levels = c(
+          "totpop", "LorenM", "L1", "L2", "kappa", "s1", "s2",
+          "Recent depletion", "Recent SSB", "Recent F", "Recent recruitment",
+          "Terminal depletion", "Terminal SSB"
+        )),
         rel_diff_pct = 100 * rel_diff
       ) %>%
-      filter(is.finite(rel_diff_pct), abs(rel_diff_pct) < 1000)
-    ggplot(df, aes(x = parameter, y = rel_diff_pct)) +
+      filter(
+        !is.na(parameter),
+        as.character(parameter) %in% selected_params,
+        is.finite(rel_diff_pct),
+        abs(rel_diff_pct) < 1000
+      )
+    if (nrow(df) == 0) {
+      return(ggplot() +
+        annotate("text", x = 0.5, y = 0.5, label = "No selected key parameter comparison found", size = 4.2, color = "#777") +
+        theme_void())
+    }
+    model_palette <- stp_model_palette(df$model)
+    ggplot(df, aes(x = parameter, y = rel_diff_pct, fill = model)) +
       geom_hline(yintercept = 0, color = "#777", linewidth = 0.35) +
-      geom_boxplot(fill = "#dfe6e9", color = "#2d3436", outlier.alpha = 0.25, width = 0.65) +
-      labs(x = NULL, y = "Relative difference (%)", subtitle = "Refit vs truth for individual-profile key parameters; LorenM uses log M with signed denominator abs(truth)") +
+      geom_boxplot(
+        color = "#2d3436",
+        outlier.alpha = 0.25,
+        width = 0.65,
+        position = position_dodge2(width = 0.78, preserve = "single")
+      ) +
+      scale_fill_manual(name = "Model", values = model_palette, breaks = names(model_palette)) +
+      labs(x = NULL, y = "Relative difference (%)", subtitle = "Refit vs truth for key parameters plus recent 4-year derived quantities; LorenM uses log M with signed denominator abs(truth)") +
       theme_bw(base_size = 12) +
-      theme(panel.grid.minor = element_blank(), axis.text.x = element_text(angle = 25, hjust = 1))
+      theme(
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle = 25, hjust = 1),
+        legend.position = "right"
+      )
   })
 
   output$selftest_recovery_plot_ui <- renderUI({
-    h <- if (is.null(input$selftest_recovery_height)) 900 else input$selftest_recovery_height
+    filters <- selftest_filters_applied()
+    h <- if (is.null(filters) || is.null(filters$recovery_height)) 900 else filters$recovery_height
     plotOutput("selftest_recovery_plot", height = paste0(h, "px"))
   })
 
   output$selftest_sim_plot_ui <- renderUI({
-    h <- if (is.null(input$selftest_sim_height)) 850 else input$selftest_sim_height
+    filters <- selftest_filters_applied()
+    h <- if (is.null(filters) || is.null(filters$sim_height)) 850 else filters$sim_height
     plotOutput("selftest_sim_plot", height = paste0(h, "px"))
   })
 
@@ -1116,6 +1350,7 @@ mod_selftest_server <- function(input, output, session, rv) {
     out <- info %>%
       transmute(
         scenario,
+        model,
         replicate,
         catch_conditioned,
         effort_conditioned,
@@ -1137,7 +1372,7 @@ mod_selftest_server <- function(input, output, session, rv) {
         weight_sample_size_mismatch,
         age_length_zero_prediction_bins
       ) %>%
-      arrange(replicate)
+      arrange(model, replicate)
     conv <- selftest_convergence_data()
     if (nrow(conv) > 0) {
       conv_wide <- conv %>%
@@ -1157,7 +1392,7 @@ mod_selftest_server <- function(input, output, session, rv) {
       out <- out %>%
         left_join(conv_wide, by = "scenario") %>%
         select(
-          scenario, replicate,
+          scenario, model, replicate,
           refit_obj_fun, refit_tag_lik, refit_mn_len_pen, refit_max_grad, refit_converged, refit_exit_status,
           truth_on_pseudo_obj_fun, truth_on_pseudo_tag_lik, truth_on_pseudo_mn_len_pen, truth_on_pseudo_max_grad,
           source_truth_obj_fun, source_truth_tag_lik, source_truth_mn_len_pen, source_truth_max_grad,
