@@ -304,7 +304,11 @@ stp_par_relative_diff <- function(truth_par, refit_par, scenario, replicate) {
     mutate(
       scenario = scenario,
       replicate = replicate,
-      rel_diff = (refit_value - truth_value) / truth_value
+      rel_diff = if_else(
+        parameter == "LorenM",
+        (refit_value - truth_value) / abs(truth_value),
+        (refit_value - truth_value) / truth_value
+      )
     ) %>%
     filter(is.finite(rel_diff), abs(truth_value) > 1e-8)
 }
@@ -445,6 +449,95 @@ stp_summary_band <- function(df, interval_level = 0.95) {
       upper = stats::quantile(value, probs = upper_prob, na.rm = TRUE, names = FALSE),
       .groups = "drop"
     )
+}
+
+stp_recovery_axis_label <- function(metric) {
+  switch(
+    metric,
+    depletion = bquote(SB/SB["F=0"]),
+    recruitment = "Recruitment (Millions)",
+    spawning_potential = bquote("Spawning Potential (" * 10^3 * " MT)"),
+    fishing_mortality = "Annual Instantaneous F",
+    stp_metric_label(metric)
+  )
+}
+
+stp_recovery_panel <- function(metric, truth_med, refit, refit_band, filters) {
+  metric_filter <- function(x) {
+    if (is.null(x) || nrow(x) == 0 || !"metric" %in% names(x)) return(data.frame())
+    x %>% filter(.data$metric == .env$metric)
+  }
+  truth_q <- metric_filter(truth_med)
+  refit_q <- metric_filter(refit)
+  band_q <- metric_filter(refit_band)
+  line_size <- 1.05
+
+  p <- ggplot()
+  if (identical(metric, "depletion")) {
+    p <- p +
+      geom_hline(yintercept = 0.5, color = "#2e7d32", linetype = "dashed", linewidth = 0.45) +
+      geom_hline(yintercept = 0.2, color = "#c62828", linetype = "dashed", linewidth = 0.45)
+  }
+  if (isTRUE(filters$show_interval) && nrow(band_q) > 0) {
+    p <- p +
+      geom_ribbon(
+        data = band_q,
+        aes(x = .data$year, ymin = .data$lower, ymax = .data$upper),
+        fill = "#7f8fa6",
+        alpha = 0.22
+      )
+  }
+  if (isTRUE(filters$show_replicates) && nrow(refit_q) > 0) {
+    p <- p +
+      geom_line(
+        data = refit_q,
+        aes(x = .data$year, y = .data$value, group = .data$scenario),
+        color = "#5f6f7a",
+        alpha = 0.32,
+        linewidth = 0.45
+      )
+  }
+  if (nrow(band_q) > 0) {
+    p <- p +
+      geom_line(
+        data = band_q,
+        aes(x = .data$year, y = .data$median, color = "Refit median"),
+        linewidth = line_size
+      )
+  }
+  if (nrow(truth_q) > 0) {
+    p <- p +
+      geom_line(
+        data = truth_q,
+        aes(x = .data$year, y = .data$median, color = "Truth"),
+        linewidth = line_size
+      )
+  }
+
+  p <- p +
+    scale_color_manual(
+      name = "Series",
+      values = c("Truth" = "#d62728", "Refit median" = "#111111"),
+      breaks = c("Truth", "Refit median")
+    ) +
+    labs(x = "Year", y = stp_recovery_axis_label(metric)) +
+    theme_bw(base_size = 12) +
+    theme(
+      panel.grid.minor = element_line(color = "#f1f1f1", linewidth = 0.25),
+      panel.grid.major = element_line(color = "#e8e8e8", linewidth = 0.35),
+      legend.position = "none",
+      axis.title = element_text(size = 10),
+      axis.text = element_text(size = 8),
+      plot.margin = margin(6, 8, 6, 8)
+    )
+
+  if (identical(metric, "depletion")) {
+    p <- p + coord_cartesian(ylim = c(0, 1.05))
+  } else if (metric %in% c("recruitment", "spawning_potential", "fishing_mortality")) {
+    p <- p + expand_limits(y = 0)
+  }
+
+  p
 }
 
 stp_read_selftest_input_info <- function(model_dir, scenario, input_dir = NULL) {
@@ -750,47 +843,29 @@ mod_selftest_server <- function(input, output, session, rv) {
     interval_level <- if (!is.null(filters$interval_level)) filters$interval_level else 0.95
     truth_med <- stp_summary_band(truth, interval_level)
     refit_band <- stp_summary_band(refit, interval_level)
-    p <- ggplot()
-    if (isTRUE(filters$show_interval) && nrow(refit_band) > 0) {
-      p <- p +
-        geom_ribbon(
-          data = refit_band,
-          aes(x = year, ymin = lower, ymax = upper),
-          fill = "#7f8fa6",
-          alpha = 0.22
-        )
-    }
-    if (isTRUE(filters$show_replicates) && nrow(refit) > 0) {
-      p <- p +
-        geom_line(
-          data = refit,
-          aes(x = year, y = value, group = scenario),
-          color = "#718093",
-          alpha = 0.35,
-          linewidth = 0.45
-        )
-    }
-    if (nrow(refit_band) > 0) {
-      p <- p +
-        geom_line(data = refit_band, aes(x = year, y = median), color = "#111111", linewidth = 1.15)
-    }
-    if (nrow(truth_med) > 0) {
-      p <- p +
-        geom_line(data = truth_med, aes(x = year, y = median), color = "#d62728", linewidth = 1.25)
-    }
-
-    p +
-      facet_wrap(~ quantity, scales = "free_y", ncol = 2) +
-      labs(
-        x = "Year",
-        y = NULL,
-        subtitle = paste0("Red = truth, black = refit median, grey = refit replicate traces; shaded = ", round(interval_level * 100), "% interval")
-      ) +
-      theme_bw(base_size = 13) +
+    metrics <- c("depletion", "recruitment", "spawning_potential", "fishing_mortality")
+    panels <- lapply(metrics, stp_recovery_panel, truth_med = truth_med, refit = refit, refit_band = refit_band, filters = filters)
+    legend_panel <- stp_recovery_panel(metrics[[1]], truth_med, refit, refit_band, filters) +
       theme(
-        panel.grid.minor = element_blank(),
-        plot.subtitle = element_text(color = "#555")
+        legend.position = "right",
+        legend.title = element_text(face = "bold"),
+        legend.key.width = unit(1.2, "cm")
       )
+    legend <- cowplot::get_legend(legend_panel)
+    body <- cowplot::plot_grid(plotlist = panels, ncol = 2, align = "hv")
+    subtitle <- paste0(
+      "Red = truth, black = refit median",
+      if (isTRUE(filters$show_replicates)) ", grey = refit replicate traces" else "",
+      if (isTRUE(filters$show_interval)) paste0("; shaded = ", round(interval_level * 100), "% interval") else ""
+    )
+    title <- cowplot::ggdraw() +
+      cowplot::draw_label(subtitle, x = 0, hjust = 0, size = 10, color = "#555")
+    cowplot::plot_grid(
+      cowplot::plot_grid(title, body, ncol = 1, rel_heights = c(0.04, 1)),
+      legend,
+      ncol = 2,
+      rel_widths = c(1, 0.16)
+    )
   })
 
   selftest_sim_plot <- reactive({
@@ -919,7 +994,7 @@ mod_selftest_server <- function(input, output, session, rv) {
     ggplot(df, aes(x = parameter, y = rel_diff_pct)) +
       geom_hline(yintercept = 0, color = "#777", linewidth = 0.35) +
       geom_boxplot(fill = "#dfe6e9", color = "#2d3436", outlier.alpha = 0.25, width = 0.65) +
-      labs(x = NULL, y = "Relative difference (%)", subtitle = "Refit vs truth for individual-profile key parameters: (refit - truth) / truth") +
+      labs(x = NULL, y = "Relative difference (%)", subtitle = "Refit vs truth for individual-profile key parameters; LorenM uses log M with signed denominator abs(truth)") +
       theme_bw(base_size = 12) +
       theme(panel.grid.minor = element_blank(), axis.text.x = element_text(angle = 25, hjust = 1))
   })

@@ -196,6 +196,32 @@
     if (isTRUE(ok) && isTRUE(warn)) "warning" else if (isTRUE(ok)) "ready" else "blocked"
   }
 
+  launch_preflight_source_detail <- function(job_label,
+                                             fitted_par_exists = FALSE,
+                                             fitted_indepvar_exists = FALSE,
+                                             base_indepvar_n = 0L,
+                                             auto_model_ready = FALSE,
+                                             base_par_usable = FALSE,
+                                             needs_indepvar = FALSE) {
+    if (isTRUE(fitted_par_exists) && (!isTRUE(needs_indepvar) || isTRUE(fitted_indepvar_exists))) {
+      suffix <- if (isTRUE(needs_indepvar)) " The fitted-source payload includes indepvar.rpt." else ""
+      return(paste0(job_label, " will use the matched fitted .par from model output.", suffix))
+    }
+    if (isTRUE(fitted_par_exists) && isTRUE(needs_indepvar) && base_indepvar_n > 0) {
+      return(paste0(job_label, " will use the matched fitted .par from model output with indepvar.rpt from the base/model input."))
+    }
+    if (isTRUE(fitted_par_exists) && isTRUE(needs_indepvar) && isTRUE(auto_model_ready)) {
+      return(paste0(job_label, " will fit model/<model> first only to provide indepvar.rpt, then use the matched fitted .par."))
+    }
+    if (isTRUE(auto_model_ready) && !isTRUE(base_par_usable)) {
+      return(paste0(job_label, " will fit model/<model> first, then use that fitted .par."))
+    }
+    if (isTRUE(needs_indepvar)) {
+      return(paste0(job_label, " has input .par and indepvar.rpt."))
+    }
+    paste0(job_label, " has input .par.")
+  }
+
   launch_preflight_check_one <- function(model_name, model_env, job_type) {
     display_name <- launch_preflight_display_name(model_name, model_env)
     base_dir <- launch_preflight_first(model_env$base_dir)
@@ -256,7 +282,7 @@
         if (base_has_change_tokens) paste0("tokens=", paste(base_tokens, collapse = ",")),
         if (model_par_exists) paste0("model par=", basename(model_par)) else if (model_exists) "model par=missing" else "model_dir=missing",
         if (fitted_enabled && fitted_par_exists) paste0("fitted par=", basename(fitted_par)) else if (fitted_enabled) "fitted par=missing",
-        if (auto_fitted_model_par_exists) paste0("auto source par=", basename(auto_fitted_model_par)),
+        if (auto_fitted_model_par_exists) paste0("auto model par=", basename(auto_fitted_model_par)),
         if (auto_run_model) paste0("auto model first=", if (auto_model_ready) "ready" else "not ready"),
         paste0("prefer par start=", if (prefer_par_start) "yes" else "no"),
         paste0("frq=", frq_n),
@@ -296,6 +322,8 @@
         recipe_source$found,
         if (isTRUE(can_model_from_recipe)) {
           "run model from recipe .ini/doitall=ready"
+        } else if (isTRUE(fitted_par_exists)) {
+          "matched fitted source after build=ready; run model first=not needed"
         } else if (isTRUE(needs_par_after_build) || isTRUE(needs_indepvar_after_build)) {
           paste0("run model first after build=", if (can_run_model_first) "ready" else "not ready")
         } else {
@@ -323,7 +351,7 @@
       } else if (isTRUE(can_model_from_recipe)) {
         "Input folder is not present locally yet; the Condor job will build this sensitivity input and run the model from .ini/doitall because no matched fitted source was found."
       } else if (isTRUE(fitted_par_exists)) {
-        "Input folder is not present locally yet; the Condor job will build this sensitivity input, then use the selected fitted .par source."
+        "Input folder is not present locally yet; the Condor job will build this sensitivity input, then use the matched fitted .par from model output. No prerequisite model run is needed."
       } else if (isTRUE(needs_par_after_build) || isTRUE(needs_indepvar_after_build)) {
         "Input folder is not present locally yet, but this job also needs .par/indepvar.rpt and no prerequisite model or fitted source is ready."
       } else if (identical(job_type, "model")) {
@@ -379,19 +407,28 @@
       ok <- input_or_fitted_par_exists && frq_n > 0 && ini_n > 0 && dependency_indepvar_ok
       warn <- ok && !doitall
       detail <- if (ok && !warn) {
-        if (fitted_par_exists && isTRUE(fitted_indepvar_exists)) {
-          "Jitter will use the selected fitted .par; the fitted-source payload includes indepvar.rpt."
-        } else if (fitted_par_exists && length(base_indepvar) > 0) {
-          "Jitter will use the selected fitted .par with indepvar.rpt from the base/model input."
-        } else if (fitted_par_exists && auto_model_ready) {
-          "Jitter will run the prerequisite model first to provide indepvar.rpt, then overlay the selected fitted .par."
-        } else if (auto_model_ready && !base_par_usable) {
-          "Jitter will run the prerequisite model first, then use that fitted .par."
-        } else {
-          "Jitter has reference .par and .ini inputs."
-        }
+        launch_preflight_source_detail(
+          "Jitter",
+          fitted_par_exists = fitted_par_exists,
+          fitted_indepvar_exists = fitted_indepvar_exists,
+          base_indepvar_n = length(base_indepvar),
+          auto_model_ready = auto_model_ready,
+          base_par_usable = base_par_usable,
+          needs_indepvar = TRUE
+        )
       } else if (ok) {
-        "Jitter has .par/.ini but doitall.sh was not found; check this model uses the current jitter workflow."
+        paste0(
+          launch_preflight_source_detail(
+            "Jitter",
+            fitted_par_exists = fitted_par_exists,
+            fitted_indepvar_exists = fitted_indepvar_exists,
+            base_indepvar_n = length(base_indepvar),
+            auto_model_ready = auto_model_ready,
+            base_par_usable = base_par_usable,
+            needs_indepvar = TRUE
+          ),
+          " doitall.sh was not found; check this model uses the current jitter workflow."
+        )
       } else if (!dependency_indepvar_ok) {
         "Jitter needs indepvar.rpt for reference mapping. It can come from base/model input, fitted-source payload, or an automatic prerequisite model run."
       } else {
@@ -402,12 +439,16 @@
 
     if (identical(job_type, "hessian")) {
       ok <- input_or_fitted_par_exists
-      detail <- if (ok && fitted_par_exists && !base_par_usable) {
-        "Hessian will overlay the selected fitted .par onto the base input files."
-      } else if (ok && auto_model_ready && !base_par_usable) {
-        "Hessian will run the prerequisite model first, then use that fitted .par."
-      } else if (ok) {
-        "Hessian can use the latest input .par."
+      detail <- if (ok) {
+        launch_preflight_source_detail(
+          "Hessian",
+          fitted_par_exists = fitted_par_exists,
+          fitted_indepvar_exists = fitted_indepvar_exists,
+          base_indepvar_n = length(base_indepvar),
+          auto_model_ready = auto_model_ready,
+          base_par_usable = base_par_usable,
+          needs_indepvar = FALSE
+        )
       } else {
         "Hessian needs at least one input .par."
       }
@@ -505,26 +546,16 @@
       }
       needs_indepvar <- any(vapply(prof_envs, function(env) nzchar(launch_preflight_first(env$prof_fix_indepvar)), logical(1)))
       ok <- input_or_fitted_par_exists && (!needs_indepvar || dependency_indepvar_ok)
-      detail <- if (ok && needs_indepvar) {
-        if (fitted_par_exists && isTRUE(fitted_indepvar_exists)) {
-          "Profile will use the selected fitted .par; the fitted-source payload includes indepvar.rpt for fixed-parameter profile."
-        } else if (fitted_par_exists && length(base_indepvar) > 0) {
-          "Profile will use the selected fitted .par with indepvar.rpt from the base/model input."
-        } else if (fitted_par_exists && auto_model_ready) {
-          "Profile will run the prerequisite model first to provide indepvar.rpt, then overlay the selected fitted .par."
-        } else if (auto_model_ready && !base_par_usable) {
-          "Profile will run the prerequisite model first, then use its fitted .par/indepvar.rpt."
-        } else {
-          "Profile has input .par and indepvar.rpt for fixed-parameter profile."
-        }
-      } else if (ok) {
-        if (fitted_par_exists && !base_par_usable) {
-          "Profile will overlay the selected fitted .par onto the base input files."
-        } else if (auto_model_ready && !base_par_usable) {
-          "Profile will run the prerequisite model first, then use that fitted .par."
-        } else {
-          "Profile has input .par."
-        }
+      detail <- if (ok) {
+        launch_preflight_source_detail(
+          "Profile",
+          fitted_par_exists = fitted_par_exists,
+          fitted_indepvar_exists = fitted_indepvar_exists,
+          base_indepvar_n = length(base_indepvar),
+          auto_model_ready = auto_model_ready,
+          base_par_usable = base_par_usable,
+          needs_indepvar = needs_indepvar
+        )
       } else if (!input_or_fitted_par_exists) {
         "Profile needs at least one input .par in base_dir."
       } else {
@@ -549,14 +580,16 @@
       detail <- if (!has_spec) {
         "No 2D profile spec found in selected profile_sets."
       } else if (!input_or_fitted_par_exists) {
-        "2D profile eventually calls profile runs, so base_dir needs an input .par."
+        "2D profile needs a fitted/input .par before it can launch profile runs."
       } else if (!baseline_ok) {
         "2D profile needs a baseline .par in model_dir or base_dir."
       } else if (uses_scalars && !dependency_indepvar_ok) {
         "2D scalar mode needs indepvar.rpt from base/model input, fitted-source payload, or an automatic prerequisite model run."
       } else {
-        if (auto_model_ready && (is.na(baseline_par) || !file.exists(baseline_par))) {
-          "2D profile will run the prerequisite model first, then use that fitted .par."
+        if (fitted_par_exists) {
+          paste0("2D profile will use the matched fitted .par from model output; baseline par=", basename(baseline_par), ".")
+        } else if (auto_model_ready && (is.na(baseline_par) || !file.exists(baseline_par))) {
+          "2D profile will fit model/<model> first, then use that fitted .par."
         } else {
           paste0("2D profile ready; baseline par=", basename(baseline_par), ".")
         }

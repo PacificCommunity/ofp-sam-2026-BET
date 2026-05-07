@@ -1138,7 +1138,11 @@
       paste0(
         launch_unit_label(unit),
         " -> ",
-        if (!is.null(row)) row$source_dir[[1]] else "no match; will run prerequisite model first"
+        if (!is.null(row)) {
+          paste0(row$source_dir[[1]], " (", row$par_file[[1]], ")")
+        } else {
+          "no fitted model output match; will build input and fit model/<model> first"
+        }
       )
     }, character(1), USE.NAMES = FALSE)
     div(
