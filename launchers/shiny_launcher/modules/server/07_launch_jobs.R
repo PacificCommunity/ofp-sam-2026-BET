@@ -1586,10 +1586,16 @@
     )
     writeLines(run_script_content, con = run_script, sep = "\n")
 
+    shell_env_value <- function(value) {
+      value <- paste(as.character(value), collapse = " ")
+      value <- gsub("[\r\n]+", " ", value)
+      shQuote(value, type = "sh")
+    }
+
     if (!is.null(condor_environment)) {
       if (is.list(condor_environment)) {
         env_lines <- vapply(names(condor_environment), function(name) {
-          sprintf("%s=\"%s\"", name, condor_environment[[name]])
+          sprintf("%s=%s", name, shell_env_value(condor_environment[[name]]))
         }, character(1))
         writeLines(env_lines, env_file)
       } else if (is.character(condor_environment)) {
@@ -1614,7 +1620,6 @@
     if (!is.null(condor_memory)) condor_options <- c(condor_options, sprintf("request_memory = %s", condor_memory))
     if (!is.null(condor_disk)) condor_options <- c(condor_options, sprintf("request_disk = %s", condor_disk))
 
-    environment_string <- ""
     git_safe_env <- c(
       "HOME=.",
       "XDG_CACHE_HOME=.cache",
@@ -1623,18 +1628,10 @@
       "GIT_TERMINAL_PROMPT=0",
       "GCM_INTERACTIVE=Never"
     )
-    if (!is.null(condor_environment)) {
-      if (is.list(condor_environment)) {
-        env_vars <- vapply(names(condor_environment), function(name) {
-          sprintf("%s=%s", name, condor_environment[[name]])
-        }, character(1))
-        environment_string <- paste(c(git_safe_env, env_vars), collapse = " ")
-      } else if (is.character(condor_environment)) {
-        environment_string <- paste(c(git_safe_env, condor_environment), collapse = " ")
-      }
-    } else {
-      environment_string <- paste(git_safe_env, collapse = " ")
-    }
+    # Runtime job settings are transferred through job_env.txt and sourced by
+    # run_job.sh. Keep the Condor submit-file environment tiny because HTCondor
+    # parses spaces in unquoted values before the job even enters the queue.
+    environment_string <- paste(git_safe_env, collapse = " ")
 
     batch_name_template <- if (!is.null(custom_batch_name)) custom_batch_name else "$(ClusterId)"
     condor_options <- paste(condor_options, collapse = "\n")
