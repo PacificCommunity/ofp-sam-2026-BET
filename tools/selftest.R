@@ -111,14 +111,15 @@ st_dir_file_summary <- function(dir_path, max_files = 40L) {
   paste(c(files, if (extra > 0L) paste0("... plus ", extra, " more")), collapse = ", ")
 }
 
-st_stop_missing_final_par <- function(refit_dir, log_file, status, cmd, output_par) {
+st_emit_mfcl_failure_context <- function(label, run_dir, log_file, status, cmd, output_par,
+                                         files_label = "run dir") {
   status <- suppressWarnings(as.integer(if (length(status) > 0L) status[[1L]] else NA_integer_))
-  stop(
-    "MFCL refit did not create a final .par in ", refit_dir,
+  cat(
+    label, "\n",
     "\nExpected output: ", output_par,
     "\nExit status: ", status,
     "\nCommand: ", cmd,
-    "\nFiles left in refit dir: ", st_dir_file_summary(refit_dir),
+    "\nFiles left in ", files_label, ": ", st_dir_file_summary(run_dir),
     "\nLog file: ", log_file,
     "\n--- MFCL first error context ---\n",
     st_log_failure_context_text(log_file),
@@ -126,25 +127,41 @@ st_stop_missing_final_par <- function(refit_dir, log_file, status, cmd, output_p
     st_log_head_text(log_file),
     "\n--- MFCL log tail ---\n",
     st_log_tail_text(log_file, 160L),
+    "\n",
+    sep = ""
+  )
+  invisible(TRUE)
+}
+
+st_stop_missing_final_par <- function(refit_dir, log_file, status, cmd, output_par) {
+  st_emit_mfcl_failure_context(
+    paste("MFCL refit did not create a final .par in", refit_dir),
+    refit_dir,
+    log_file,
+    status,
+    cmd,
+    output_par,
+    files_label = "refit dir"
+  )
+  stop(
+    "MFCL refit did not create a final .par in ", refit_dir,
+    "; see ", log_file,
     call. = FALSE
   )
 }
 
 st_stop_failed_mfcl_run <- function(label, run_dir, log_file, status, cmd, output_par) {
-  status <- suppressWarnings(as.integer(if (length(status) > 0L) status[[1L]] else NA_integer_))
+  st_emit_mfcl_failure_context(
+    paste(label, "failed before creating a usable final .par in", run_dir),
+    run_dir,
+    log_file,
+    status,
+    cmd,
+    output_par
+  )
   stop(
     label, " failed before creating a usable final .par in ", run_dir,
-    "\nExpected output: ", output_par,
-    "\nExit status: ", status,
-    "\nCommand: ", cmd,
-    "\nFiles left in run dir: ", st_dir_file_summary(run_dir),
-    "\nLog file: ", log_file,
-    "\n--- MFCL first error context ---\n",
-    st_log_failure_context_text(log_file),
-    "\n--- MFCL log head ---\n",
-    st_log_head_text(log_file),
-    "\n--- MFCL log tail ---\n",
-    st_log_tail_text(log_file, 160L),
+    "; see ", log_file,
     call. = FALSE
   )
 }

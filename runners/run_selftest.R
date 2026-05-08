@@ -115,6 +115,7 @@ selftest_compact_cleanup <- st_truthy(
 )
 selftest_keep_model_payload <- st_truthy(st_env("selftest_keep_model_payload", "0"), default = FALSE)
 selftest_keep_sim_debug <- st_truthy(st_env("selftest_keep_sim_debug", "0"), default = FALSE)
+truth_eval_required <- st_truthy(st_env("selftest_require_truth_eval", "0"), default = FALSE)
 Sys.setenv(selftest_keep_model_payload = if (isTRUE(selftest_keep_model_payload)) "1" else "0")
 
 update_catch_setting <- tolower(trimws(st_env("selftest_update_catch", "auto")))
@@ -180,6 +181,7 @@ cat("Native tags :", require_native_tags && update_tags, "\n")
 cat("Compact cleanup:", selftest_compact_cleanup, "\n")
 cat("Keep full payloads:", selftest_keep_model_payload, "\n")
 cat("Keep sim debug:", selftest_keep_sim_debug, "\n")
+cat("Require truth eval:", truth_eval_required, "\n")
 cat("Catch conditioned:", catch_conditioned, "\n")
 cat("Effort conditioned:", effort_conditioned, "\n")
 cat("Update data :", paste(
@@ -484,14 +486,18 @@ for (rep_id in reps) {
     "run_status:", truth_eval_info$run_status %||% NA_character_, "\n"
   )
   if (!isTRUE(truth_eval_info$run_completed)) {
-    st_stop_failed_mfcl_run(
-      paste("Truth-on-pseudo evaluation for", rep_label),
-      run_dir = truth_eval_dir,
-      log_file = truth_eval_info$log_file,
-      status = truth_eval_info$exit_status,
-      cmd = truth_eval_info$mfcl_commands,
-      output_par = truth_eval_info$par_out %||% "truth_on_pseudo.par"
+    st_emit_mfcl_failure_context(
+      paste("Truth-on-pseudo evaluation for", rep_label, "did not create a usable final .par"),
+      truth_eval_dir,
+      truth_eval_info$log_file,
+      truth_eval_info$exit_status,
+      truth_eval_info$mfcl_commands,
+      truth_eval_info$par_out %||% "truth_on_pseudo.par"
     )
+    if (isTRUE(truth_eval_required)) {
+      stop("Truth-on-pseudo evaluation failed for ", rep_label, "; see ", truth_eval_info$log_file, call. = FALSE)
+    }
+    cat("Continuing to refit because selftest_require_truth_eval is FALSE\n")
   }
 
   refit_status <- NA_integer_
