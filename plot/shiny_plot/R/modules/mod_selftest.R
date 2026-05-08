@@ -1,24 +1,4 @@
 mod_selftest_ui <- function() {
-  selftest_rep_picker <- function(input_id) {
-    pickerInput(
-      input_id,
-      "Replicates:",
-      choices = NULL,
-      selected = NULL,
-      multiple = TRUE,
-      options = pickerOptions(
-        actionsBox = TRUE,
-        selectAllText = "Select All",
-        deselectAllText = "Deselect All",
-        selectedTextFormat = "count > 0",
-        countSelectedText = "{0} reps selected",
-        liveSearch = TRUE,
-        liveSearchPlaceholder = "Search reps...",
-        size = 10
-      )
-    )
-  }
-
   selftest_model_picker <- function(input_id, label = "Models:") {
     pickerInput(
       input_id,
@@ -49,7 +29,6 @@ mod_selftest_ui <- function() {
             width = 3,
             solidHeader = TRUE,
             status = "primary",
-            selftest_rep_picker("selftest_recovery_scenarios"),
             selftest_model_picker("selftest_recovery_models"),
             selectInput(
               "selftest_recovery_layout",
@@ -66,6 +45,14 @@ mod_selftest_ui <- function() {
               step = 1
             ),
             checkboxInput("selftest_show_replicates", "Show replicate traces", value = FALSE),
+            numericInput(
+              "selftest_recovery_trace_limit",
+              "Max traces shown:",
+              value = 10,
+              min = 0,
+              max = 500,
+              step = 1
+            ),
             checkboxInput("selftest_show_interval", "Show refit interval", value = TRUE),
             selectInput(
               "selftest_interval_level",
@@ -78,7 +65,7 @@ mod_selftest_ui <- function() {
               "Recovery plot width (px)",
               min = 900,
               max = 2600,
-              value = 1400,
+              value = 1000,
               step = 50
             ),
             sliderInput(
@@ -114,7 +101,6 @@ mod_selftest_ui <- function() {
             width = 3,
             solidHeader = TRUE,
             status = "primary",
-            selftest_rep_picker("selftest_param_scenarios"),
             selftest_model_picker("selftest_param_models"),
             selectInput(
               "selftest_param_group",
@@ -165,7 +151,6 @@ mod_selftest_ui <- function() {
             width = 3,
             solidHeader = TRUE,
             status = "info",
-            selftest_rep_picker("selftest_sim_scenarios"),
             selectInput(
               "selftest_sim_object",
               "Plot object:",
@@ -181,6 +166,15 @@ mod_selftest_ui <- function() {
               "Simulation-check layout:",
               choices = c("Facet by model" = "facet", "Overlay selected models" = "overlay"),
               selected = "facet"
+            ),
+            checkboxInput("selftest_sim_show_traces", "Show pseudo replicate traces", value = FALSE),
+            numericInput(
+              "selftest_sim_trace_limit",
+              "Max traces shown:",
+              value = 10,
+              min = 0,
+              max = 500,
+              step = 1
             ),
             selectInput(
               "selftest_sim_interval_level",
@@ -269,6 +263,9 @@ stp_region_component_label <- function(component) {
   component <- as.character(component)[[1]]
   switch(
     component,
+    "catch total" = "catch by region",
+    "CPUE" = "CPUE by region",
+    "effort" = "effort by region",
     "tag recaptures by fishery" = "tag recaptures by region",
     "length mean" = "mean length by region",
     "weight mean" = "mean weight by region",
@@ -669,8 +666,8 @@ stp_filter_parameter_group <- function(df, group = "core") {
   parameter <- as.character(df$parameter)
   keep <- switch(
     group,
-    movement = grepl("move|movement|diffusion|mixing|transfer|migrate|coff|coeff", parameter, ignore.case = TRUE),
-    recruitment = grepl("recruit|rec_dev|recdev|region.*rec|rec.*region", parameter, ignore.case = TRUE),
+    movement = grepl("diff_coffs|diff[._ ]?coeff|move|movement|diffusion|mixing|transfer|migrate|migration|coff|coeff", parameter, ignore.case = TRUE),
+    recruitment = grepl("region_rec_diffs|recruit|rec_dev|recdev|region.*rec|rec.*region", parameter, ignore.case = TRUE),
     indepvar = TRUE,
     TRUE
   )
@@ -885,6 +882,31 @@ stp_summary_band <- function(df, interval_level = 0.95) {
     )
 }
 
+stp_trace_limit <- function(x, default = 10L, max_limit = 500L) {
+  if (is.null(x) || length(x) == 0) return(as.integer(default))
+  out <- suppressWarnings(as.integer(x[[1]]))
+  if (!is.finite(out)) out <- default
+  max(0L, min(max_limit, out))
+}
+
+stp_limit_replicate_traces <- function(df,
+                                       group_cols,
+                                       scenario_col = "scenario",
+                                       limit = 10L) {
+  if (is.null(df) || nrow(df) == 0) return(data.frame())
+  limit <- stp_trace_limit(limit)
+  if (limit <= 0L || !scenario_col %in% names(df)) return(df[0, , drop = FALSE])
+  group_cols <- intersect(group_cols, names(df))
+  key_cols <- unique(c(group_cols, scenario_col))
+  keys <- df %>%
+    distinct(across(all_of(key_cols))) %>%
+    group_by(across(all_of(group_cols))) %>%
+    arrange(.data[[scenario_col]], .by_group = TRUE) %>%
+    slice_head(n = limit) %>%
+    ungroup()
+  semi_join(df, keys, by = key_cols)
+}
+
 stp_recovery_axis_label <- function(metric) {
   switch(
     metric,
@@ -921,10 +943,20 @@ stp_recovery_panel <- function(metric, truth_med, refit, refit_band, filters, mo
         alpha = 0.38
       )
   }
-  if (isTRUE(filters$show_replicates) && nrow(refit_q) > 0) {
+  trace_q <- if (isTRUE(filters$show_replicates) && nrow(refit_q) > 0) {
+    stp_limit_replicate_traces(
+      refit_q,
+      group_cols = c("model", "metric"),
+      scenario_col = "scenario",
+      limit = if (!is.null(filters$recovery_trace_limit)) filters$recovery_trace_limit else 10L
+    )
+  } else {
+    refit_q[0, , drop = FALSE]
+  }
+  if (nrow(trace_q) > 0) {
     p <- p +
       geom_line(
-        data = refit_q,
+        data = trace_q,
         aes(x = .data$year, y = .data$value, group = .data$scenario, color = .data$model),
         alpha = 0.18,
         linewidth = 0.24
@@ -1147,11 +1179,17 @@ mod_selftest_server <- function(input, output, session, rv) {
     stp_selftest_index(input$model_dir, names(rv$RepOut_list))
   })
 
+  selftest_all_scenarios <- reactive({
+    idx <- selftest_index_current()
+    if (nrow(idx) == 0) character() else as.character(idx$key)
+  })
+
   selftest_filters_current <- reactive({
     list(
-      scenarios = input$selftest_recovery_scenarios,
+      scenarios = selftest_all_scenarios(),
       models = input$selftest_recovery_models,
       show_replicates = isTRUE(input$selftest_show_replicates),
+      recovery_trace_limit = stp_trace_limit(input$selftest_recovery_trace_limit),
       show_interval = isTRUE(input$selftest_show_interval),
       recovery_layout = if (is.null(input$selftest_recovery_layout)) "overlay" else as.character(input$selftest_recovery_layout),
       recovery_facet_cols = {
@@ -1162,15 +1200,17 @@ mod_selftest_server <- function(input, output, session, rv) {
         lvl <- suppressWarnings(as.numeric(input$selftest_interval_level))
         if (length(lvl) == 0 || !is.finite(lvl[1])) 0.95 else max(0.01, min(0.99, lvl[1]))
       },
-      recovery_width = if (is.null(input$selftest_recovery_width)) 1400 else suppressWarnings(as.integer(input$selftest_recovery_width)),
+      recovery_width = if (is.null(input$selftest_recovery_width)) 1000 else suppressWarnings(as.integer(input$selftest_recovery_width)),
       recovery_height = if (is.null(input$selftest_recovery_height)) 900 else suppressWarnings(as.integer(input$selftest_recovery_height))
     )
   })
   selftest_sim_filters_current <- reactive({
     list(
-      scenarios = input$selftest_sim_scenarios,
+      scenarios = selftest_all_scenarios(),
       models = input$selftest_sim_models,
       sim_layout = if (is.null(input$selftest_sim_layout)) "facet" else as.character(input$selftest_sim_layout),
+      sim_show_traces = isTRUE(input$selftest_sim_show_traces),
+      sim_trace_limit = stp_trace_limit(input$selftest_sim_trace_limit),
       sim_models = {
         x <- as.character(input$selftest_sim_models)
         x[nzchar(x)]
@@ -1186,7 +1226,7 @@ mod_selftest_server <- function(input, output, session, rv) {
   })
   selftest_param_filters_current <- reactive({
     list(
-      scenarios = input$selftest_param_scenarios,
+      scenarios = selftest_all_scenarios(),
       models = input$selftest_param_models,
       param_group = if (is.null(input$selftest_param_group)) "core" else as.character(input$selftest_param_group),
       param_metrics = if (is.null(input$selftest_param_metrics) || length(input$selftest_param_metrics) == 0) {
@@ -1203,16 +1243,12 @@ mod_selftest_server <- function(input, output, session, rv) {
   observeEvent(rv$data_loaded, {
     req(rv$data_loaded)
     idx <- selftest_index_current()
-    choices <- if (nrow(idx) > 0) stats::setNames(idx$key, idx$label) else character()
-    selected <- unname(choices)
+    selected <- if (nrow(idx) > 0) as.character(idx$key) else character()
     model_choices <- if (nrow(idx) > 0) sort(unique(idx$model)) else character()
     model_choices <- stats::setNames(model_choices, model_choices)
     updatePickerInput(session, "selftest_recovery_models", choices = model_choices, selected = unname(model_choices))
     updatePickerInput(session, "selftest_param_models", choices = model_choices, selected = unname(model_choices))
     updatePickerInput(session, "selftest_sim_models", choices = model_choices, selected = unname(model_choices))
-    updatePickerInput(session, "selftest_recovery_scenarios", choices = choices, selected = selected)
-    updatePickerInput(session, "selftest_param_scenarios", choices = choices, selected = selected)
-    updatePickerInput(session, "selftest_sim_scenarios", choices = choices, selected = selected)
     if (length(selected) > 0) {
       current <- isolate(selftest_filters_current())
       sim_current <- isolate(selftest_sim_filters_current())
@@ -1237,9 +1273,6 @@ mod_selftest_server <- function(input, output, session, rv) {
       updatePickerInput(session, "selftest_sim_models", choices = character(), selected = character())
       return()
     }
-    selected_scenarios <- as.character(input$selftest_sim_scenarios)
-    selected_scenarios <- selected_scenarios[nzchar(selected_scenarios)]
-    if (length(selected_scenarios) > 0) idx <- idx[idx$key %in% selected_scenarios, , drop = FALSE]
     model_choices <- sort(unique(idx$model))
     model_choices <- stats::setNames(model_choices, model_choices)
     current <- isolate(as.character(input$selftest_sim_models))
@@ -1282,42 +1315,41 @@ mod_selftest_server <- function(input, output, session, rv) {
   }, ignoreInit = TRUE)
 
   observeEvent(
-    list(input$live_update_plots, input$selftest_recovery_scenarios, input$selftest_recovery_models,
+    list(input$live_update_plots, input$selftest_recovery_models,
          input$selftest_recovery_layout,
          input$selftest_recovery_facet_cols,
-         input$selftest_show_replicates, input$selftest_show_interval,
+         input$selftest_show_replicates, input$selftest_recovery_trace_limit,
+         input$selftest_show_interval,
          input$selftest_interval_level,
          input$selftest_recovery_width,
          input$selftest_recovery_height),
     {
       req(rv$data_loaded)
       if (!isTRUE(input$live_update_plots)) return()
-      if (length(input$selftest_recovery_scenarios) == 0) return()
       selftest_filters_applied(isolate(selftest_filters_current()))
     },
     ignoreInit = TRUE
   )
 
   observeEvent(
-    list(input$live_update_plots, input$selftest_sim_scenarios, input$selftest_sim_models,
+    list(input$live_update_plots, input$selftest_sim_models,
          input$selftest_sim_layout, input$selftest_sim_interval_level,
+         input$selftest_sim_show_traces, input$selftest_sim_trace_limit,
          input$selftest_sim_height, input$selftest_sim_object, input$selftest_sim_models),
     {
       req(rv$data_loaded)
       if (!isTRUE(input$live_update_plots)) return()
-      if (length(input$selftest_sim_scenarios) == 0) return()
       selftest_sim_filters_applied(isolate(selftest_sim_filters_current()))
     },
     ignoreInit = TRUE
   )
 
   observeEvent(
-    list(input$live_update_plots, input$selftest_param_scenarios, input$selftest_param_models,
+    list(input$live_update_plots, input$selftest_param_models,
          input$selftest_param_group, input$selftest_param_metrics),
     {
       req(rv$data_loaded)
       if (!isTRUE(input$live_update_plots)) return()
-      if (length(input$selftest_param_scenarios) == 0) return()
       selftest_param_filters_applied(isolate(selftest_param_filters_current()))
     },
     ignoreInit = TRUE
@@ -1325,7 +1357,6 @@ mod_selftest_server <- function(input, output, session, rv) {
 
   observeEvent(rv$initial_render_nonce, {
     req(rv$data_loaded, rv$initial_render_nonce)
-    if (length(input$selftest_recovery_scenarios) == 0) return()
     selftest_filters_applied(isolate(selftest_filters_current()))
     selftest_sim_filters_applied(isolate(selftest_sim_filters_current()))
     selftest_param_filters_applied(isolate(selftest_param_filters_current()))
@@ -1528,10 +1559,11 @@ mod_selftest_server <- function(input, output, session, rv) {
       facet_model = facet_model
     )
     body <- cowplot::plot_grid(plotlist = panels, ncol = 2, align = "hv")
+    trace_limit <- if (!is.null(filters$recovery_trace_limit)) stp_trace_limit(filters$recovery_trace_limit) else 10L
     subtitle <- paste0(
       if (isTRUE(facet_model)) "Facets = model; " else "Colour = model; ",
       if (isTRUE(facet_model)) "coloured solid = refit median; red solid = truth" else "solid = refit median; long-dash = truth",
-      if (isTRUE(filters$show_replicates)) "; faint lines = refit replicate traces" else "",
+      if (isTRUE(filters$show_replicates)) paste0("; faint lines = up to ", trace_limit, " refit replicate traces per panel") else "",
       if (isTRUE(filters$show_interval)) paste0("; shaded = ", round(interval_level * 100), "% interval") else ""
     )
     title <- cowplot::ggdraw() +
@@ -1671,6 +1703,17 @@ mod_selftest_server <- function(input, output, session, rv) {
       base_line <- annual %>%
         group_by(model, display_component, display_panel, year) %>%
         summarise(base_value = stats::median(base_value, na.rm = TRUE), .groups = "drop")
+      trace_limit <- if (!is.null(filters$sim_trace_limit)) stp_trace_limit(filters$sim_trace_limit) else 10L
+      annual_trace <- if (isTRUE(filters$sim_show_traces)) {
+        stp_limit_replicate_traces(
+          annual,
+          group_cols = c("model", "display_component", "display_panel"),
+          scenario_col = "scenario",
+          limit = trace_limit
+        )
+      } else {
+        annual[0, , drop = FALSE]
+      }
       p_data <- ggplot()
       if (isTRUE(facet_model)) {
         p_data <- p_data +
@@ -1679,14 +1722,18 @@ mod_selftest_server <- function(input, output, session, rv) {
             aes(x = year, ymin = lower, ymax = upper, group = interaction(model, display_component)),
             fill = "#7f8c8d",
             alpha = 0.28
-          ) +
+          )
+        if (nrow(annual_trace) > 0) {
+          p_data <- p_data +
           geom_line(
-            data = annual,
+            data = annual_trace,
             aes(x = year, y = pseudo_value, group = interaction(model, scenario)),
             color = "#59636e",
             alpha = 0.32,
             linewidth = 0.26
-          ) +
+          )
+        }
+        p_data <- p_data +
           geom_line(
             data = pseudo_band,
             aes(x = year, y = median, group = interaction(model, display_component)),
@@ -1706,13 +1753,17 @@ mod_selftest_server <- function(input, output, session, rv) {
             data = pseudo_band,
             aes(x = year, ymin = lower, ymax = upper, group = interaction(model, display_component), fill = model),
             alpha = 0.24
-          ) +
+          )
+        if (nrow(annual_trace) > 0) {
+          p_data <- p_data +
           geom_line(
-            data = annual,
+            data = annual_trace,
             aes(x = year, y = pseudo_value, group = interaction(model, scenario), color = model),
             alpha = 0.14,
             linewidth = 0.22
-          ) +
+          )
+        }
+        p_data <- p_data +
           geom_line(
             data = pseudo_band,
             aes(x = year, y = median, group = interaction(model, display_component), color = model),
@@ -1734,9 +1785,16 @@ mod_selftest_server <- function(input, output, session, rv) {
           y = stp_sim_y_label(filters$sim_object),
           subtitle = paste0(
             if (isTRUE(facet_model)) {
-              "Data simulation check: red = fitted expectation, grey = pseudo reps, black = pseudo median; facet rows = series, columns = model"
+              paste0(
+                "Data simulation check: red = fitted expectation, black = pseudo median",
+                if (nrow(annual_trace) > 0) paste0(", grey = up to ", trace_limit, " pseudo reps per panel") else "",
+                "; facet rows = series/region, columns = model"
+              )
             } else {
-              "Data simulation check: colour = model; solid = pseudo median; dashed = fitted expectation; faint lines = pseudo reps"
+              paste0(
+                "Data simulation check: colour = model; solid = pseudo median; dashed = fitted expectation",
+                if (nrow(annual_trace) > 0) paste0("; faint lines = up to ", trace_limit, " pseudo reps per panel") else ""
+              )
             },
             "; shaded = ", round(interval_level * 100), "% interval"
           )
@@ -1769,9 +1827,21 @@ mod_selftest_server <- function(input, output, session, rv) {
     filters <- selftest_param_filters_applied()
     req(filters)
     df <- selftest_parameter_diff_data()
+    empty_message <- function() {
+      group <- if (is.null(filters$param_group)) "core" else as.character(filters$param_group)
+      if (identical(group, "movement")) {
+        "No movement coefficient recovery found. Re-run or retrieve self-test outputs with named indepvar.rpt recovery retained."
+      } else if (identical(group, "recruitment")) {
+        "No recruitment-deviation recovery found. Re-run or retrieve self-test outputs with named indepvar.rpt recovery retained."
+      } else if (identical(group, "indepvar")) {
+        "No named indepvar recovery found. Re-run or retrieve self-test outputs with named indepvar.rpt recovery retained."
+      } else {
+        "No key parameter comparison found"
+      }
+    }
     if (nrow(df) == 0) {
       return(ggplot() +
-        annotate("text", x = 0.5, y = 0.5, label = "No key parameter comparison found", size = 4.2, color = "#777") +
+        annotate("text", x = 0.5, y = 0.5, label = empty_message(), size = 4.2, color = "#777") +
         theme_void())
     }
     selected_params <- if (is.null(filters$param_metrics) || length(filters$param_metrics) == 0) {
@@ -1798,7 +1868,7 @@ mod_selftest_server <- function(input, output, session, rv) {
       )
     if (nrow(df) == 0) {
       return(ggplot() +
-        annotate("text", x = 0.5, y = 0.5, label = "No selected key parameter comparison found", size = 4.2, color = "#777") +
+        annotate("text", x = 0.5, y = 0.5, label = empty_message(), size = 4.2, color = "#777") +
         theme_void())
     }
     model_palette <- stp_model_palette(df$model)
@@ -1823,7 +1893,7 @@ mod_selftest_server <- function(input, output, session, rv) {
   output$selftest_recovery_plot_ui <- renderUI({
     filters <- selftest_filters_applied()
     h <- if (is.null(filters) || is.null(filters$recovery_height)) 900 else filters$recovery_height
-    w <- if (is.null(filters) || is.null(filters$recovery_width)) 1400 else filters$recovery_width
+    w <- if (is.null(filters) || is.null(filters$recovery_width)) 1000 else filters$recovery_width
     div(
       style = "overflow-x:auto;",
       plotOutput("selftest_recovery_plot", height = paste0(h, "px"), width = paste0(w, "px"))

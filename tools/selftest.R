@@ -2624,14 +2624,28 @@ st_run_truth_on_pseudo <- function(input_dir,
 
 st_read_indepvar <- function(path) {
   if (!file.exists(path)) return(NULL)
+  lines <- tryCatch(readLines(path, warn = FALSE), error = function(e) character())
+  lines <- lines[nzchar(trimws(lines))]
+  if (length(lines) <= 1) return(NULL)
   out <- tryCatch(
-    utils::read.table(path, header = TRUE, stringsAsFactors = FALSE, fill = TRUE, comment.char = ""),
+    utils::strcapture(
+      "^[[:space:]]*([0-9]+)[[:space:]]+([^ ]+)[[:space:]]+([^ ]+)[[:space:]]+([^ ]+)[[:space:]]+([^ ]+)[[:space:]]+([^ ]+)(.*)$",
+      lines[-1],
+      proto = list(
+        index = integer(),
+        name = character(),
+        estimate = double(),
+        L_bound = double(),
+        U_bound = double(),
+        gradient = double(),
+        tail = character()
+      )
+    ),
     error = function(e) NULL
   )
   if (is.null(out) || nrow(out) == 0) return(NULL)
-  names(out) <- sub("^Var_name$", "name", names(out))
-  names(out) <- sub("^Estimate$", "estimate", names(out))
-  names(out) <- sub("^Index$", "index", names(out))
+  out <- out[is.finite(out$index) & nzchar(out$name) & is.finite(out$estimate), , drop = FALSE]
+  if (nrow(out) == 0) return(NULL)
   out$index <- suppressWarnings(as.integer(out$index))
   out$estimate <- suppressWarnings(as.numeric(out$estimate))
   out
