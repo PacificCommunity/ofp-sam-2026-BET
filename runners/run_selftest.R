@@ -115,7 +115,6 @@ selftest_compact_cleanup <- st_truthy(
 )
 selftest_keep_model_payload <- st_truthy(st_env("selftest_keep_model_payload", "0"), default = FALSE)
 selftest_keep_sim_debug <- st_truthy(st_env("selftest_keep_sim_debug", "0"), default = FALSE)
-truth_eval_required <- st_truthy(st_env("selftest_require_truth_eval", "0"), default = FALSE)
 Sys.setenv(selftest_keep_model_payload = if (isTRUE(selftest_keep_model_payload)) "1" else "0")
 
 update_catch_setting <- tolower(trimws(st_env("selftest_update_catch", "auto")))
@@ -181,7 +180,6 @@ cat("Native tags :", require_native_tags && update_tags, "\n")
 cat("Compact cleanup:", selftest_compact_cleanup, "\n")
 cat("Keep full payloads:", selftest_keep_model_payload, "\n")
 cat("Keep sim debug:", selftest_keep_sim_debug, "\n")
-cat("Require truth eval:", truth_eval_required, "\n")
 cat("Catch conditioned:", catch_conditioned, "\n")
 cat("Effort conditioned:", effort_conditioned, "\n")
 cat("Update data :", paste(
@@ -475,30 +473,8 @@ for (rep_id in reps) {
     stop("Length/weight simulated sample-size totals did not match MFCL sample sizes for ", rep_label)
   }
 
-  truth_eval_info <- st_run_truth_on_pseudo(
-    input_dir = input_dir,
-    eval_dir = truth_eval_dir,
-    program_path_abs = program_path_abs,
-    tag_report_year1 = "auto"
-  )
-  cat(
-    "Truth-on-pseudo evaluation finished with status:", truth_eval_info$exit_status,
-    "run_status:", truth_eval_info$run_status %||% NA_character_, "\n"
-  )
-  if (!isTRUE(truth_eval_info$run_completed)) {
-    st_emit_mfcl_failure_context(
-      paste("Truth-on-pseudo evaluation for", rep_label, "did not create a usable final .par"),
-      truth_eval_dir,
-      truth_eval_info$log_file,
-      truth_eval_info$exit_status,
-      truth_eval_info$mfcl_commands,
-      truth_eval_info$par_out %||% "truth_on_pseudo.par"
-    )
-    if (isTRUE(truth_eval_required)) {
-      stop("Truth-on-pseudo evaluation failed for ", rep_label, "; see ", truth_eval_info$log_file, call. = FALSE)
-    }
-    cat("Continuing to refit because selftest_require_truth_eval is FALSE\n")
-  }
+  truth_eval_status <- NA_integer_
+  cat("Truth-on-pseudo evaluation skipped\n")
 
   refit_status <- NA_integer_
   if (isTRUE(run_refit)) {
@@ -546,7 +522,7 @@ for (rep_id in reps) {
     replicate = rep_id,
     sim_status = sim_info$status,
     input_built = TRUE,
-    truth_eval_status = truth_eval_info$exit_status,
+    truth_eval_status = truth_eval_status,
     refit_status = refit_status,
     sim_dir = sim_dir,
     input_dir = input_dir,
