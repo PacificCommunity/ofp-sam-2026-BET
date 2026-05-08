@@ -72,6 +72,33 @@ st_log_tail_text <- function(log_file, n = 80L) {
   paste(utils::tail(lines, n), collapse = "\n")
 }
 
+st_log_failure_context_text <- function(log_file, context = 35L) {
+  if (!file.exists(log_file)) return("<log file not found>")
+  lines <- tryCatch(readLines(log_file, warn = FALSE), error = function(e) character(0))
+  if (length(lines) == 0L) return("<log file is empty or unreadable>")
+  context <- suppressWarnings(as.integer(context[[1]]))
+  if (!is.finite(context) || context < 1L) context <- 35L
+  hit <- grep(
+    "Error|cannot|could not|failed|segmentation|floating point|SIG|abort|exception",
+    lines,
+    ignore.case = TRUE
+  )
+  if (length(hit) == 0L) return("<no obvious error line found>")
+  i <- hit[[1L]]
+  lo <- max(1L, i - context)
+  hi <- min(length(lines), i + context)
+  paste(lines[lo:hi], collapse = "\n")
+}
+
+st_log_head_text <- function(log_file, n = 80L) {
+  if (!file.exists(log_file)) return("<log file not found>")
+  lines <- tryCatch(readLines(log_file, warn = FALSE), error = function(e) character(0))
+  if (length(lines) == 0L) return("<log file is empty or unreadable>")
+  n <- suppressWarnings(as.integer(n[[1]]))
+  if (!is.finite(n) || n < 1L) n <- 80L
+  paste(utils::head(lines, n), collapse = "\n")
+}
+
 st_dir_file_summary <- function(dir_path, max_files = 40L) {
   if (!dir.exists(dir_path)) return("<directory not found>")
   files <- list.files(dir_path, all.files = TRUE, no.. = TRUE)
@@ -93,8 +120,31 @@ st_stop_missing_final_par <- function(refit_dir, log_file, status, cmd, output_p
     "\nCommand: ", cmd,
     "\nFiles left in refit dir: ", st_dir_file_summary(refit_dir),
     "\nLog file: ", log_file,
+    "\n--- MFCL first error context ---\n",
+    st_log_failure_context_text(log_file),
+    "\n--- MFCL log head ---\n",
+    st_log_head_text(log_file),
     "\n--- MFCL log tail ---\n",
-    st_log_tail_text(log_file),
+    st_log_tail_text(log_file, 160L),
+    call. = FALSE
+  )
+}
+
+st_stop_failed_mfcl_run <- function(label, run_dir, log_file, status, cmd, output_par) {
+  status <- suppressWarnings(as.integer(if (length(status) > 0L) status[[1L]] else NA_integer_))
+  stop(
+    label, " failed before creating a usable final .par in ", run_dir,
+    "\nExpected output: ", output_par,
+    "\nExit status: ", status,
+    "\nCommand: ", cmd,
+    "\nFiles left in run dir: ", st_dir_file_summary(run_dir),
+    "\nLog file: ", log_file,
+    "\n--- MFCL first error context ---\n",
+    st_log_failure_context_text(log_file),
+    "\n--- MFCL log head ---\n",
+    st_log_head_text(log_file),
+    "\n--- MFCL log tail ---\n",
+    st_log_tail_text(log_file, 160L),
     call. = FALSE
   )
 }
@@ -280,6 +330,17 @@ st_write_fixed_start_patch_script <- function(script_path) {
   invisible(script_path)
 }
 
+st_patch_doitall_fail_fast <- function(doitall_path) {
+  if (!file.exists(doitall_path)) return(FALSE)
+  lines <- readLines(doitall_path, warn = FALSE)
+  if (any(grepl("^\\s*set\\s+-e\\b", lines))) return(TRUE)
+  shebang <- grep("^#!", lines)
+  insert_after <- if (length(shebang) > 0L) shebang[[1L]] else 0L
+  lines <- append(lines, values = "set -e  # self-test: stop doitall at first failed MFCL phase", after = insert_after)
+  writeLines(lines, doitall_path, useBytes = TRUE)
+  TRUE
+}
+
 st_patch_doitall_makepar_fixed_values <- function(doitall_path, truth_par, fixed_flags) {
   if (!file.exists(doitall_path) || is.null(truth_par) || length(truth_par) == 0 || is.na(truth_par)) {
     return(FALSE)
@@ -290,14 +351,6 @@ st_patch_doitall_makepar_fixed_values <- function(doitall_path, truth_par, fixed
   lines <- readLines(doitall_path, warn = FALSE)
   hit <- grep("-makepar", lines, fixed = TRUE)
   if (length(hit) == 0) return(FALSE)
-
-  if (!any(grepl("^\\s*set\\s+-e\\b", lines))) {
-    shebang <- grep("^#!", lines)
-    insert_after <- if (length(shebang) > 0L) shebang[[1L]] else 0L
-    lines <- append(lines, values = "set -e  # self-test: stop doitall at first failed MFCL phase", after = insert_after)
-    hit <- grep("-makepar", lines, fixed = TRUE)
-    if (length(hit) == 0) return(FALSE)
-  }
 
   line <- gsub("[\"']", "", trimws(lines[[hit[[1]]]]))
   tokens <- strsplit(line, "\\s+")[[1]]
@@ -2562,8 +2615,12 @@ st_run_refit <- function(input_dir,
         stop("Could not preserve self-test truth start par before doitall cleanup: ", file.path(refit_dir, par_file))
       }
     }
-    removed <- st_remove_mfcl_run_outputs(refit_dir, keep_par = character(), remove_par = TRUE)
+    keep_doitall_par <- if (isTRUE(use_truth_start_par)) basename(truth_start_par) else character()
+    removed <- st_remove_mfcl_run_outputs(refit_dir, keep_par = keep_doitall_par, remove_par = TRUE)
     if (removed > 0) cat("Removed", removed, "copied MFCL output files before doitall refit\n")
+    if (isTRUE(st_patch_doitall_fail_fast(file.path(refit_dir, "doitall.sh")))) {
+      cat("Patched doitall.sh to stop at the first failed MFCL phase\n")
+    }
     if (isTRUE(use_truth_start_par)) {
       patched <- st_patch_doitall_makepar_fixed_values(
         file.path(refit_dir, "doitall.sh"),
@@ -2636,7 +2693,9 @@ st_run_refit <- function(input_dir,
       final_par_missing = TRUE,
       failure_reason = "MFCL refit did not create a final .par from this run",
       log_file = log_file,
-      log_tail = st_log_tail_text(log_file),
+      log_error_context = st_log_failure_context_text(log_file),
+      log_head = st_log_head_text(log_file),
+      log_tail = st_log_tail_text(log_file, 160L),
       obj_fun = NA_real_,
       tag_lik = NA_real_,
       mn_len_pen = NA_real_,
@@ -2691,6 +2750,8 @@ st_run_refit <- function(input_dir,
     run_status = run_state$run_status,
     failure_reason = run_state$failure_reason,
     log_file = log_file,
+    log_error_context = if (is.finite(status_int) && status_int != 0L) st_log_failure_context_text(log_file) else NA_character_,
+    log_head = if (is.finite(status_int) && status_int != 0L) st_log_head_text(log_file) else NA_character_,
     log_tail = if (is.finite(status_int) && status_int != 0L) st_log_tail_text(log_file) else NA_character_,
     obj_fun = obj_fun,
     tag_lik = st_par_slot_value(final_par, "tag_lik"),
@@ -2776,6 +2837,16 @@ st_run_truth_on_pseudo <- function(input_dir,
     run_status = run_state$run_status,
     failure_reason = run_state$failure_reason,
     log_file = log_file,
+    log_error_context = if (!isTRUE(run_state$run_completed) || (is.finite(status_int) && status_int != 0L)) {
+      st_log_failure_context_text(log_file)
+    } else {
+      NA_character_
+    },
+    log_head = if (!isTRUE(run_state$run_completed) || (is.finite(status_int) && status_int != 0L)) {
+      st_log_head_text(log_file)
+    } else {
+      NA_character_
+    },
     log_tail = if (is.finite(status_int) && status_int != 0L) st_log_tail_text(log_file) else NA_character_,
     obj_fun = obj_fun,
     tag_lik = st_par_slot_value(final_par, "tag_lik"),

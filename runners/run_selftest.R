@@ -202,6 +202,9 @@ prepare_selftest_source_par <- function(sim_dir, source_par, rep_label) {
     log_file <- file.path(sim_dir, "mfcl_selftest_source_doitall_log.txt")
     removed <- st_remove_mfcl_run_outputs(sim_dir, remove_par = TRUE)
     if (removed > 0) cat("Removed", removed, "copied MFCL output files before source doitall\n")
+    if (isTRUE(st_patch_doitall_fail_fast(file.path(sim_dir, "doitall.sh")))) {
+      cat("Patched source doitall.sh to stop at the first failed MFCL phase\n")
+    }
     old_wd <- getwd()
     on.exit(setwd(old_wd), add = TRUE)
     setwd(sim_dir)
@@ -209,7 +212,16 @@ prepare_selftest_source_par <- function(sim_dir, source_par, rep_label) {
     cat("MFCL source command:\n ./doitall.sh\n")
     status <- system(paste("./doitall.sh", ">", shQuote(log_file), "2>&1"), intern = FALSE)
     if (!identical(as.integer(status), 0L)) {
-      stop("Source doitall.sh failed for ", rep_label, " with status ", status, "; see ", log_file)
+      expected_par <- st_doitall_final_par_name(file.path(sim_dir, "doitall.sh"))
+      if (is.na(expected_par) || !nzchar(expected_par)) expected_par <- "<latest .par>"
+      st_stop_failed_mfcl_run(
+        paste("Source doitall.sh for", rep_label),
+        run_dir = sim_dir,
+        log_file = log_file,
+        status = status,
+        cmd = "./doitall.sh",
+        output_par = expected_par
+      )
     }
     par_out <- st_latest_par(sim_dir)
     if (is.na(par_out) || !file.exists(par_out)) {
@@ -471,6 +483,16 @@ for (rep_id in reps) {
     "Truth-on-pseudo evaluation finished with status:", truth_eval_info$exit_status,
     "run_status:", truth_eval_info$run_status %||% NA_character_, "\n"
   )
+  if (!isTRUE(truth_eval_info$run_completed)) {
+    st_stop_failed_mfcl_run(
+      paste("Truth-on-pseudo evaluation for", rep_label),
+      run_dir = truth_eval_dir,
+      log_file = truth_eval_info$log_file,
+      status = truth_eval_info$exit_status,
+      cmd = truth_eval_info$mfcl_commands,
+      output_par = truth_eval_info$par_out %||% "truth_on_pseudo.par"
+    )
+  }
 
   refit_status <- NA_integer_
   if (isTRUE(run_refit)) {
