@@ -749,8 +749,13 @@ stp_read_run_diagnostics <- function(folder, source, scenario, replicate) {
   if (!is.finite(mn_len_pen)) mn_len_pen <- stp_scalar_num(info$mn_len_pen)
   exit_status <- suppressWarnings(as.integer(tryCatch(info$exit_status, error = function(e) NA_integer_)))
   if (length(exit_status) == 0 || is.na(exit_status[1])) exit_status <- NA_integer_ else exit_status <- exit_status[1]
-  run_completed <- dir.exists(folder) && is.finite(obj_fun) && is.finite(max_grad) &&
-    (is.na(exit_status) || identical(exit_status, 0L))
+  run_completed_info <- tryCatch(info$run_completed, error = function(e) NULL)
+  run_completed <- if (!is.null(run_completed_info) && length(run_completed_info) > 0 && !is.na(run_completed_info[[1]])) {
+    isTRUE(run_completed_info[[1]])
+  } else {
+    dir.exists(folder) && is.finite(obj_fun) && is.finite(max_grad) &&
+      (is.na(exit_status) || identical(exit_status, 0L))
+  }
   data.frame(
     scenario = scenario,
     replicate = replicate,

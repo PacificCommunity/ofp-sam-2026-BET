@@ -467,7 +467,10 @@ for (rep_id in reps) {
     program_path_abs = program_path_abs,
     tag_report_year1 = "auto"
   )
-  cat("Truth-on-pseudo evaluation completed with status:", truth_eval_info$exit_status, "\n")
+  cat(
+    "Truth-on-pseudo evaluation finished with status:", truth_eval_info$exit_status,
+    "run_status:", truth_eval_info$run_status %||% NA_character_, "\n"
+  )
 
   refit_status <- NA_integer_
   if (isTRUE(run_refit)) {
@@ -480,7 +483,10 @@ for (rep_id in reps) {
       tag_report_year1 = "auto"
     )
     refit_status <- refit_info$exit_status
-    cat("Refit completed with status:", refit_status, "\n")
+    cat(
+      "Refit finished with status:", refit_status,
+      "run_status:", refit_info$run_status %||% NA_character_, "\n"
+    )
 
     truth_indepvar <- file.path(sim_dir, "indepvar.rpt")
     if (!file.exists(truth_indepvar)) truth_indepvar <- file.path(base_dir_abs, "indepvar.rpt")

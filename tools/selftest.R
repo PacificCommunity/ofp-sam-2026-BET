@@ -99,6 +99,66 @@ st_stop_missing_final_par <- function(refit_dir, log_file, status, cmd, output_p
   )
 }
 
+st_status_int <- function(status) {
+  out <- suppressWarnings(as.integer(if (length(status) > 0L) status[[1L]] else NA_integer_))
+  if (length(out) == 0L || is.na(out[[1L]])) NA_integer_ else out[[1L]]
+}
+
+st_mfcl_run_status <- function(output_exists, obj_fun, max_grad, exit_status) {
+  completed <- isTRUE(output_exists) && is.finite(obj_fun) && is.finite(max_grad)
+  list(
+    run_completed = completed,
+    run_status = if (completed && (is.na(exit_status) || identical(exit_status, 0L))) {
+      "completed"
+    } else if (completed) {
+      "completed_nonzero_exit"
+    } else if (is.finite(exit_status) && exit_status != 0L) {
+      "failed"
+    } else {
+      "incomplete"
+    },
+    failure_reason = if (completed) {
+      if (is.finite(exit_status) && exit_status != 0L) {
+        paste0("MFCL exited with status ", exit_status, " after writing final output.")
+      } else {
+        NA_character_
+      }
+    } else if (is.finite(exit_status) && exit_status != 0L) {
+      paste0("MFCL exited with status ", exit_status)
+    } else {
+      "MFCL final output was not created or could not be parsed."
+    }
+  )
+}
+
+st_doitall_output_pars <- function(doitall_path) {
+  if (!file.exists(doitall_path)) return(character(0))
+  lines <- tryCatch(readLines(doitall_path, warn = FALSE), error = function(e) character(0))
+  lines <- trimws(sub("\\s*<<.*$", "", lines))
+  lines <- lines[nzchar(lines) & !grepl("^#", lines)]
+  out <- lapply(lines[grepl("\\.par([0-9]+)?(\\s|$)", lines)], function(line) {
+    line <- gsub("[\"']", "", line)
+    tokens <- unlist(strsplit(line, "\\s+"))
+    par_tokens <- tokens[grepl("\\.par([0-9]+)?$", tokens)]
+    if (length(par_tokens) == 0L) return(NULL)
+    par_tokens[[length(par_tokens)]]
+  })
+  unique(unlist(out, use.names = FALSE))
+}
+
+st_doitall_final_par_name <- function(doitall_path) {
+  outputs <- st_doitall_output_pars(doitall_path)
+  if (length(outputs) == 0L) return(NA_character_)
+  outputs[[length(outputs)]]
+}
+
+st_file_updated_after <- function(path, start_time, tolerance_secs = 2) {
+  if (!file.exists(path)) return(FALSE)
+  info <- file.info(path)
+  is.finite(as.numeric(info$mtime)) &&
+    as.numeric(info$mtime) >= as.numeric(start_time) - as.numeric(tolerance_secs)
+}
+
 st_remove_mfcl_run_outputs <- function(dir_path, keep_par = character(), remove_par = TRUE) {
   if (!dir.exists(dir_path)) return(invisible(0L))
   keep_par <- basename(as.character(keep_par))
@@ -230,6 +290,14 @@ st_patch_doitall_makepar_fixed_values <- function(doitall_path, truth_par, fixed
   lines <- readLines(doitall_path, warn = FALSE)
   hit <- grep("-makepar", lines, fixed = TRUE)
   if (length(hit) == 0) return(FALSE)
+
+  if (!any(grepl("^\\s*set\\s+-e\\b", lines))) {
+    shebang <- grep("^#!", lines)
+    insert_after <- if (length(shebang) > 0L) shebang[[1L]] else 0L
+    lines <- append(lines, values = "set -e  # self-test: stop doitall at first failed MFCL phase", after = insert_after)
+    hit <- grep("-makepar", lines, fixed = TRUE)
+    if (length(hit) == 0) return(FALSE)
+  }
 
   line <- gsub("[\"']", "", trimws(lines[[hit[[1]]]]))
   tokens <- strsplit(line, "\\s+")[[1]]
@@ -2446,6 +2514,7 @@ st_run_refit <- function(input_dir,
   fixed_start_hint <- FALSE
   truth_start_reason <- ""
   use_truth_start_par <- FALSE
+  truth_start_par <- NA_character_
   mode <- tolower(trimws(as.character(mode[[1]])))
   if (!mode %in% c("last_par", "doitall")) {
     stop("Unsupported self-test refit mode: ", mode, ". Use last_par or doitall.")
@@ -2487,16 +2556,18 @@ st_run_refit <- function(input_dir,
     } else {
       "fixed-parameter recipe/env hint"
     }
-    removed <- st_remove_mfcl_run_outputs(
-      refit_dir,
-      keep_par = if (isTRUE(use_truth_start_par)) par_file else character(),
-      remove_par = TRUE
-    )
+    if (isTRUE(use_truth_start_par)) {
+      truth_start_par <- file.path(refit_dir, ".selftest_truth_start.par")
+      if (!file.copy(file.path(refit_dir, par_file), truth_start_par, overwrite = TRUE)) {
+        stop("Could not preserve self-test truth start par before doitall cleanup: ", file.path(refit_dir, par_file))
+      }
+    }
+    removed <- st_remove_mfcl_run_outputs(refit_dir, keep_par = character(), remove_par = TRUE)
     if (removed > 0) cat("Removed", removed, "copied MFCL output files before doitall refit\n")
     if (isTRUE(use_truth_start_par)) {
       patched <- st_patch_doitall_makepar_fixed_values(
         file.path(refit_dir, "doitall.sh"),
-        truth_par = par_file,
+        truth_par = basename(truth_start_par),
         fixed_flags = fixed_start_flags
       )
       if (isTRUE(patched)) {
@@ -2529,18 +2600,27 @@ st_run_refit <- function(input_dir,
   setwd(refit_dir)
   cat("MFCL refit command:\n", cmd, "\n")
   if (identical(mode, "doitall")) Sys.chmod("doitall.sh", mode = "0755")
+  refit_started_at <- Sys.time()
   status <- system(paste(cmd, ">", shQuote(log_file), "2>&1"), intern = FALSE)
   setwd(old_wd)
+  if (!is.na(truth_start_par) && file.exists(truth_start_par)) unlink(truth_start_par, force = TRUE)
+
+  expected_final_par <- if (identical(mode, "doitall")) {
+    st_doitall_final_par_name(file.path(refit_dir, "doitall.sh"))
+  } else {
+    output_par
+  }
+  if (is.na(expected_final_par) || !nzchar(expected_final_par)) expected_final_par <- output_par
 
   save_refit_failure <- function() {
-    status_int <- suppressWarnings(as.integer(if (length(status) > 0L) status[[1L]] else NA_integer_))
+    status_int <- st_status_int(status)
     info <- list(
       description = "MFCL self-test refit failed before final par",
       program_path = program_path_abs,
       mfcl_commands = cmd,
       frq_file = frq_file,
       par_in = if (identical(mode, "last_par") || isTRUE(use_truth_start_par)) par_file else NA_character_,
-      par_out = output_par,
+      par_out = expected_final_par,
       refit_mode = mode,
       refit_fevals = if (identical(mode, "last_par")) as.integer(fevals) else NA_integer_,
       doitall_truth_start = isTRUE(use_truth_start_par),
@@ -2554,7 +2634,7 @@ st_run_refit <- function(input_dir,
       exit_status = status_int,
       run_completed = FALSE,
       final_par_missing = TRUE,
-      failure_reason = "MFCL refit did not create a final .par",
+      failure_reason = "MFCL refit did not create a final .par from this run",
       log_file = log_file,
       log_tail = st_log_tail_text(log_file),
       obj_fun = NA_real_,
@@ -2567,18 +2647,28 @@ st_run_refit <- function(input_dir,
     invisible(info)
   }
 
-  final_par <- file.path(refit_dir, output_par)
-  if (identical(mode, "last_par") && !file.exists(final_par)) {
-    save_refit_failure()
-    st_stop_missing_final_par(refit_dir, log_file, status, cmd, output_par)
+  final_par <- file.path(refit_dir, expected_final_par)
+  final_from_this_run <- st_file_updated_after(final_par, refit_started_at)
+  if (!file.exists(final_par) && identical(mode, "doitall") && identical(expected_final_par, output_par)) {
+    fallback_par <- mp_final_par(refit_dir)
+    if (!is.null(fallback_par) && file.exists(fallback_par) && st_file_updated_after(fallback_par, refit_started_at)) {
+      final_par <- fallback_par
+      expected_final_par <- basename(fallback_par)
+      final_from_this_run <- TRUE
+    }
   }
-  if (!file.exists(final_par)) final_par <- mp_final_par(refit_dir)
-  if (is.null(final_par) || !file.exists(final_par)) {
+  if (identical(mode, "last_par") && !isTRUE(final_from_this_run)) {
     save_refit_failure()
-    st_stop_missing_final_par(refit_dir, log_file, status, cmd, output_par)
+    st_stop_missing_final_par(refit_dir, log_file, status, cmd, expected_final_par)
+  }
+  if (identical(mode, "doitall") && !isTRUE(final_from_this_run)) {
+    save_refit_failure()
+    st_stop_missing_final_par(refit_dir, log_file, status, cmd, expected_final_par)
   }
   obj_fun <- if (!is.null(final_par) && file.exists(final_par)) mp_extract_par_obj_fun(final_par) else NA_real_
   max_grad <- if (!is.null(final_par) && file.exists(final_par)) mp_extract_par_max_grad(final_par) else NA_real_
+  status_int <- st_status_int(status)
+  run_state <- st_mfcl_run_status(file.exists(final_par), obj_fun, max_grad, status_int)
   info <- list(
     description = "MFCL self-test refit",
     program_path = program_path_abs,
@@ -2596,7 +2686,12 @@ st_run_refit <- function(input_dir,
     base_dir = input_dir,
     model_dir = refit_dir,
     selftest = TRUE,
-    exit_status = as.integer(status),
+    exit_status = status_int,
+    run_completed = run_state$run_completed,
+    run_status = run_state$run_status,
+    failure_reason = run_state$failure_reason,
+    log_file = log_file,
+    log_tail = if (is.finite(status_int) && status_int != 0L) st_log_tail_text(log_file) else NA_character_,
     obj_fun = obj_fun,
     tag_lik = st_par_slot_value(final_par, "tag_lik"),
     mn_len_pen = st_par_slot_value(final_par, "mn_len_pen"),
@@ -2663,6 +2758,8 @@ st_run_truth_on_pseudo <- function(input_dir,
   obj_fun <- parse_total_func(log_file)
   if (!is.finite(obj_fun) && output_par_exists) obj_fun <- mp_extract_par_obj_fun(final_par)
   max_grad <- if (output_par_exists) mp_extract_par_max_grad(final_par) else NA_real_
+  status_int <- st_status_int(status)
+  run_state <- st_mfcl_run_status(output_par_exists, obj_fun, max_grad, status_int)
   info <- list(
     description = "MFCL self-test truth par evaluated on pseudo data",
     program_path = program_path_abs,
@@ -2674,7 +2771,12 @@ st_run_truth_on_pseudo <- function(input_dir,
     model_dir = eval_dir,
     selftest = TRUE,
     truth_on_pseudo = TRUE,
-    exit_status = as.integer(status),
+    exit_status = status_int,
+    run_completed = run_state$run_completed,
+    run_status = run_state$run_status,
+    failure_reason = run_state$failure_reason,
+    log_file = log_file,
+    log_tail = if (is.finite(status_int) && status_int != 0L) st_log_tail_text(log_file) else NA_character_,
     obj_fun = obj_fun,
     tag_lik = st_par_slot_value(final_par, "tag_lik"),
     mn_len_pen = st_par_slot_value(final_par, "mn_len_pen"),
