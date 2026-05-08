@@ -272,6 +272,13 @@ st_parse_numeric_tokens <- function(x) {
   suppressWarnings(as.numeric(toks))
 }
 
+st_split_tokens <- function(x) {
+  if (is.null(x) || length(x) == 0) return(character(0))
+  toks <- unlist(strsplit(paste(as.character(x), collapse = " "), "[,;[:space:]]+"))
+  toks <- trimws(toks)
+  toks[nzchar(toks) & !is.na(toks)]
+}
+
 st_make_switch <- function(changes) {
   if (is.data.frame(changes)) changes <- as.matrix(changes)
   if (is.null(dim(changes))) {
