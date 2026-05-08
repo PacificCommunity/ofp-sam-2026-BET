@@ -955,9 +955,48 @@ st_profile_value_vector <- function(par_obj, profile_name) {
   out[is.finite(out)]
 }
 
-st_profile_key_values <- function(par_obj) {
+st_profile_flag_value <- function(par_obj, flagtype, flag_no) {
+  if (is.null(par_obj)) return(NA_real_)
+  out <- tryCatch(flagval(par_obj, flagtype, flag_no)$value, error = function(e) NA_real_)
+  out <- suppressWarnings(as.numeric(out))
+  if (length(out) == 0 || !is.finite(out[[1]])) NA_real_ else out[[1]]
+}
+
+st_profile_parameter_estimated <- function(par_obj, profile_name) {
+  profile_name <- as.character(profile_name[[1]])
+  flag <- switch(
+    profile_name,
+    totpop = st_profile_flag_value(par_obj, 2L, 31L),
+    LorenM = {
+      age_flag <- st_profile_flag_value(par_obj, 2L, 33L)
+      fixed_hint <- st_profile_flag_value(par_obj, 1L, 121L)
+      if (is.finite(age_flag)) {
+        age_flag
+      } else if (is.finite(fixed_hint) && fixed_hint == 0) {
+        0
+      } else {
+        NA_real_
+      }
+    },
+    L1 = st_profile_flag_value(par_obj, 1L, 12L),
+    L2 = st_profile_flag_value(par_obj, 1L, 13L),
+    kappa = st_profile_flag_value(par_obj, 1L, 14L),
+    NA_real_
+  )
+  if (!is.finite(flag)) return(NA)
+  isTRUE(flag == 1)
+}
+
+st_profile_key_values <- function(par_obj, estimated_only = FALSE) {
   if (is.null(par_obj)) return(data.frame())
-  profile_names <- c("totpop", "LorenM", "L1", "L2", "kappa", "s1", "s2")
+  profile_names <- st_split_tokens(Sys.getenv("selftest_profile_parameters", "totpop,LorenM,L1,L2,kappa,s1,s2"))
+  if (length(profile_names) == 0) profile_names <- c("totpop", "LorenM", "L1", "L2", "kappa", "s1", "s2")
+  if (isTRUE(estimated_only)) {
+    profile_names <- profile_names[vapply(profile_names, function(profile_name) {
+      estimated <- st_profile_parameter_estimated(par_obj, profile_name)
+      is.na(estimated) || isTRUE(estimated)
+    }, logical(1))]
+  }
   rows <- lapply(profile_names, function(group) {
     val <- st_profile_value_vector(par_obj, group)
     if (length(val) == 0) return(NULL)
@@ -975,7 +1014,7 @@ st_profile_key_values <- function(par_obj) {
 st_profile_parameter_recovery <- function(truth_par, refit_par, out_file) {
   truth_obj <- tryCatch(read.MFCLPar(truth_par), error = function(e) NULL)
   refit_obj <- tryCatch(read.MFCLPar(refit_par), error = function(e) NULL)
-  truth <- st_profile_key_values(truth_obj)
+  truth <- st_profile_key_values(truth_obj, estimated_only = FALSE)
   refit <- st_profile_key_values(refit_obj)
   if (nrow(truth) == 0 || nrow(refit) == 0) {
     utils::write.csv(data.frame(), out_file, row.names = FALSE)
@@ -985,11 +1024,7 @@ st_profile_parameter_recovery <- function(truth_par, refit_par, out_file) {
   names(refit)[names(refit) == "value"] <- "refit_value"
   out <- merge(truth, refit, by = c("parameter", "index"), all = FALSE)
   if (nrow(out) > 0) {
-    out$rel_diff <- ifelse(
-      out$parameter == "LorenM",
-      (out$refit_value - out$truth_value) / abs(out$truth_value),
-      (out$refit_value - out$truth_value) / out$truth_value
-    )
+    out$rel_diff <- (out$refit_value - out$truth_value) / abs(out$truth_value)
     out <- out[is.finite(out$rel_diff) & abs(out$truth_value) > 1e-8, , drop = FALSE]
   }
   utils::write.csv(out, out_file, row.names = FALSE)
@@ -1458,6 +1493,40 @@ st_tag_summary <- function(path) {
   )
 }
 
+st_tag_recap_year_range <- function(path) {
+  tag <- read.MFCLTag(path)
+  rec <- tag@recaptures
+  if (is.null(rec) || nrow(rec) == 0 || !"recap.year" %in% names(rec)) return(c(NA_integer_, NA_integer_))
+  year <- suppressWarnings(as.integer(rec$recap.year))
+  year <- year[is.finite(year)]
+  if (length(year) == 0) return(c(NA_integer_, NA_integer_))
+  as.integer(range(year))
+}
+
+st_filter_tag_recapture_years <- function(tag_file, min_year = NA_integer_, max_year = NA_integer_) {
+  if (is.null(tag_file) || is.na(tag_file) || !file.exists(tag_file)) {
+    return(list(tag_recaptures_removed_outside_estimation = NA_integer_))
+  }
+  if (!is.finite(min_year) && !is.finite(max_year)) {
+    return(list(tag_recaptures_removed_outside_estimation = 0L))
+  }
+  tag <- read.MFCLTag(tag_file)
+  rec <- tag@recaptures
+  if (is.null(rec) || nrow(rec) == 0 || !"recap.year" %in% names(rec)) {
+    return(list(tag_recaptures_removed_outside_estimation = 0L))
+  }
+  year <- suppressWarnings(as.integer(rec$recap.year))
+  keep <- is.finite(year)
+  if (is.finite(min_year)) keep <- keep & year >= as.integer(min_year)
+  if (is.finite(max_year)) keep <- keep & year <= as.integer(max_year)
+  removed <- sum(!keep, na.rm = TRUE)
+  if (removed > 0) {
+    tag@recaptures <- rec[keep, , drop = FALSE]
+    write(tag, tag_file)
+  }
+  list(tag_recaptures_removed_outside_estimation = as.integer(removed))
+}
+
 st_apply_native_realtag <- function(base_tag_file, out_tag_file, sim_dir) {
   realtag <- list.files(sim_dir, pattern = "^report\\.realtag_[0-9]+$", full.names = TRUE)
   if (length(realtag) == 0) {
@@ -1490,6 +1559,12 @@ st_apply_native_realtag <- function(base_tag_file, out_tag_file, sim_dir) {
   }
 
   file.copy(realtag[[1]], out_tag_file, overwrite = TRUE)
+  base_recap_range <- st_tag_recap_year_range(base_tag_file)
+  year_filter_info <- st_filter_tag_recapture_years(
+    out_tag_file,
+    min_year = base_recap_range[[1]],
+    max_year = base_recap_range[[2]]
+  )
   base_summary <- st_tag_summary(base_tag_file)
   sim_summary <- st_tag_summary(out_tag_file)
   if (!identical(base_summary$release_groups, sim_summary$release_groups)) {
@@ -1498,13 +1573,37 @@ st_apply_native_realtag <- function(base_tag_file, out_tag_file, sim_dir) {
       base_summary$release_groups, " simulated=", sim_summary$release_groups
     )
   }
-  list(
+  c(list(
     tag_source = basename(realtag[[1]]),
     tag_release_groups = sim_summary$release_groups,
     tag_release_rows = sim_summary$release_rows,
     tag_recapture_rows = sim_summary$recapture_rows,
-    tag_recaptures_total = sim_summary$recaptures_total
-  )
+    tag_recaptures_total = sim_summary$recaptures_total,
+    tag_recapture_minyear = base_recap_range[[1]],
+    tag_recapture_maxyear = base_recap_range[[2]]
+  ), year_filter_info)
+}
+
+st_filter_summary_years <- function(x, min_year = NA_integer_, max_year = NA_integer_) {
+  if (is.null(x) || !is.data.frame(x) || nrow(x) == 0 || !"year" %in% names(x)) return(x)
+  year <- suppressWarnings(as.integer(x$year))
+  keep <- is.finite(year)
+  if (is.finite(min_year)) keep <- keep & year >= as.integer(min_year)
+  if (is.finite(max_year)) keep <- keep & year <= as.integer(max_year)
+  x[keep, , drop = FALSE]
+}
+
+st_frq_year_window <- function(frq_obj) {
+  rng <- as.integer(range(frq_obj)[c("minyear", "maxyear")])
+  if (length(rng) != 2 || any(!is.finite(rng))) c(NA_integer_, NA_integer_) else rng
+}
+
+st_tag_expected_windowed_summary <- function(sim_dir, min_year = NA_integer_, max_year = NA_integer_) {
+  st_filter_summary_years(st_tag_expected_annual_summary(sim_dir), min_year, max_year)
+}
+
+st_tag_pseudo_windowed_summary <- function(path, min_year = NA_integer_, max_year = NA_integer_) {
+  st_filter_summary_years(st_tag_annual_summary(path), min_year, max_year)
 }
 
 st_apply_pseudo_to_frq <- function(base_frq_file,
@@ -1699,6 +1798,26 @@ st_data_summary_rows <- function(component, base_df, pseudo_df, value_fun) {
   out[is.finite(out$base_value) & is.finite(out$pseudo_value), , drop = FALSE]
 }
 
+st_region_series_from_fishery_series <- function(series, frq_obj) {
+  fishery <- suppressWarnings(as.integer(sub("^fishery_", "", as.character(series))))
+  region <- suppressWarnings(as.integer(c(region_fish(frq_obj))))
+  out <- rep(NA_character_, length(fishery))
+  ok <- is.finite(fishery) & fishery >= 1L & fishery <= length(region) & is.finite(region[pmax(1L, fishery)])
+  out[ok] <- paste0("region_", region[fishery[ok]])
+  out
+}
+
+st_region_composition_rows <- function(rows, frq_obj) {
+  if (is.null(rows) || !is.data.frame(rows) || nrow(rows) == 0 || !"series" %in% names(rows)) return(rows)
+  out <- rows
+  region_series <- st_region_series_from_fishery_series(out$series, frq_obj)
+  keep <- !is.na(region_series) & nzchar(region_series)
+  if (!any(keep)) return(rows)
+  out <- out[keep, , drop = FALSE]
+  out$series <- region_series[keep]
+  out
+}
+
 st_lw_expected_rows_from_payload <- function(sim_dir, type = c("length", "weight")) {
   type <- match.arg(type)
   if (is.null(sim_dir) || length(sim_dir) == 0 || !nzchar(as.character(sim_dir[[1]]))) return(data.frame())
@@ -1808,7 +1927,7 @@ st_alk_annual_summary <- function(path) {
   out[is.finite(out$value), , drop = FALSE]
 }
 
-st_alk_annual_rows <- function(path) {
+st_alk_annual_rows <- function(path, frq_obj = NULL) {
   if (is.null(path) || is.na(path) || !file.exists(path)) return(data.frame())
   alk <- suppressWarnings(read.MFCLALK(path))
   dat <- alk@ALK
@@ -1818,13 +1937,21 @@ st_alk_annual_rows <- function(path) {
   dat$weight <- suppressWarnings(as.numeric(dat$obs))
   dat <- dat[is.finite(dat$year) & is.finite(dat$value) & is.finite(dat$weight) & dat$weight >= 0, , drop = FALSE]
   if (nrow(dat) == 0) return(data.frame())
-  data.frame(
-    series = "all",
+  series <- rep("all", nrow(dat))
+  if ("fishery" %in% names(dat)) {
+    fishery <- suppressWarnings(as.integer(dat$fishery))
+    ok <- is.finite(fishery)
+    series[ok] <- paste0("fishery_", fishery[ok])
+  }
+  out <- data.frame(
+    series = series,
     year = dat$year,
     value = dat$value,
     weight = dat$weight,
     stringsAsFactors = FALSE
   )
+  if (!is.null(frq_obj)) out <- st_region_composition_rows(out, frq_obj)
+  out
 }
 
 st_alk_expected_annual_summary <- function(sim_dir, base_alk_file) {
@@ -1849,7 +1976,7 @@ st_alk_expected_annual_summary <- function(sim_dir, base_alk_file) {
   out[is.finite(out$value), , drop = FALSE]
 }
 
-st_alk_expected_annual_rows <- function(sim_dir, base_alk_file) {
+st_alk_expected_annual_rows <- function(sim_dir, base_alk_file, frq_obj = NULL) {
   if (is.null(base_alk_file) || is.na(base_alk_file) || !file.exists(base_alk_file)) return(data.frame())
   pred_path <- file.path(sim_dir, "agelengthresids.dat")
   if (!file.exists(pred_path)) return(data.frame())
@@ -1863,13 +1990,15 @@ st_alk_expected_annual_rows <- function(sim_dir, base_alk_file) {
   preds$weight <- suppressWarnings(as.numeric(preds$predicted_prop) * as.numeric(preds$total))
   preds <- preds[is.finite(preds$year) & is.finite(preds$value) & is.finite(preds$weight) & preds$weight >= 0, , drop = FALSE]
   if (nrow(preds) == 0) return(data.frame())
-  data.frame(
-    series = "all",
+  out <- data.frame(
+    series = paste0("fishery_", as.integer(preds$fishery)),
     year = as.integer(preds$year),
     value = preds$value,
     weight = preds$weight,
     stringsAsFactors = FALSE
   )
+  if (!is.null(frq_obj)) out <- st_region_composition_rows(out, frq_obj)
+  out
 }
 
 st_summarise_data_simulation <- function(base_frq_file,
@@ -1883,6 +2012,7 @@ st_summarise_data_simulation <- function(base_frq_file,
                                          pseudo_alk_file = NA_character_) {
   base_frq <- read.MFCLFrq(base_frq_file)
   pseudo_frq <- read.MFCLFrq(pseudo_frq_file)
+  year_window <- st_frq_year_window(base_frq)
   base_real <- realisations(base_frq)
   pseudo_real <- realisations(pseudo_frq)
   base_df <- freq(base_frq)
@@ -1971,16 +2101,20 @@ st_summarise_data_simulation <- function(base_frq_file,
     pseudo = suppressWarnings(as.numeric(sim_cpue[cpue_component])),
     stringsAsFactors = FALSE
   )
-  effort_component <- is.finite(base_real$effort) & base_real$effort > 0 &
-    is.finite(pseudo_real$effort) & pseudo_real$effort > 0
-  effort_rows <- data.frame(
-    component = "effort",
-    series = paste0("fishery_", as.integer(base_real$fishery[effort_component])),
-    year = as.integer(base_real$year[effort_component]),
-    base = suppressWarnings(as.numeric(base_real$effort[effort_component])),
-    pseudo = suppressWarnings(as.numeric(pseudo_real$effort[effort_component])),
-    stringsAsFactors = FALSE
-  )
+  effort_conditioned <- !is.null(par_file) && file.exists(par_file) && isTRUE(st_effort_conditioned(par_file))
+  effort_rows <- data.frame()
+  if (isTRUE(effort_conditioned)) {
+    effort_component <- is.finite(base_real$effort) & base_real$effort > 0 &
+      is.finite(pseudo_real$effort) & pseudo_real$effort > 0
+    effort_rows <- data.frame(
+      component = "effort",
+      series = paste0("fishery_", as.integer(base_real$fishery[effort_component])),
+      year = as.integer(base_real$year[effort_component]),
+      base = suppressWarnings(as.numeric(base_real$effort[effort_component])),
+      pseudo = suppressWarnings(as.numeric(pseudo_real$effort[effort_component])),
+      stringsAsFactors = FALSE
+    )
+  }
   lw_df <- if (!is.null(sim_dir) && nzchar(as.character(sim_dir))) {
     native_lw_df <- st_parse_lw_sim(file.path(sim_dir, "test_lw_sim"), base_frq)
     comp_info <- if (!is.null(par_file) && file.exists(par_file)) st_composition_likelihood_info(par_file) else NULL
@@ -2053,9 +2187,16 @@ st_summarise_data_simulation <- function(base_frq_file,
       stringsAsFactors = FALSE
     )
   }
+  length_base_rows <- st_region_composition_rows(length_base_rows, base_frq)
+  length_pseudo_rows <- st_region_composition_rows(length_pseudo_rows, base_frq)
+  weight_base_rows <- st_region_composition_rows(weight_base_rows, base_frq)
+  weight_pseudo_rows <- st_region_composition_rows(weight_pseudo_rows, base_frq)
 
-  rows <- rbind(catch_rows, effort_rows, cpue_rows)
-  rows <- rows[is.finite(rows$year) & is.finite(rows$base) & is.finite(rows$pseudo), , drop = FALSE]
+  rows <- do.call(rbind, Filter(function(x) is.data.frame(x) && nrow(x) > 0, list(catch_rows, effort_rows, cpue_rows)))
+  if (is.null(rows)) rows <- data.frame()
+  if (nrow(rows) > 0) {
+    rows <- rows[is.finite(rows$year) & is.finite(rows$base) & is.finite(rows$pseudo), , drop = FALSE]
+  }
   aggregate_one <- function(x) {
     data.frame(
       n = nrow(x),
@@ -2087,53 +2228,37 @@ st_summarise_data_simulation <- function(base_frq_file,
     function(x) st_weighted_mean(x$value, x$weight)
   )
   if (nrow(length_out) > 0) length_out$base_source <- unique(length_base_rows$source)[[1]]
-  length_probs <- c(`length q10` = 0.10, `length median` = 0.50, `length q90` = 0.90)
-  length_quant_out <- do.call(rbind, Map(
-    function(component_name, prob) {
-      st_data_summary_rows(
-        component_name, length_base_rows, length_pseudo_rows,
-        function(x) st_weighted_quantile(x$value, x$weight, prob)
-      )
-    },
-    names(length_probs), as.list(length_probs)
-  ))
-  if (nrow(length_quant_out) > 0) length_quant_out$base_source <- unique(length_base_rows$source)[[1]]
+  length_quant_out <- data.frame()
 
   weight_out <- st_data_summary_rows(
     "weight mean", weight_base_rows, weight_pseudo_rows,
     function(x) st_weighted_mean(x$value, x$weight)
   )
   if (nrow(weight_out) > 0) weight_out$base_source <- unique(weight_base_rows$source)[[1]]
-  weight_probs <- c(`weight q10` = 0.10, `weight median` = 0.50, `weight q90` = 0.90)
-  weight_quant_out <- do.call(rbind, Map(
-    function(component_name, prob) {
-      st_data_summary_rows(
-        component_name, weight_base_rows, weight_pseudo_rows,
-        function(x) st_weighted_quantile(x$value, x$weight, prob)
-      )
-    },
-    names(weight_probs), as.list(weight_probs)
-  ))
-  if (nrow(weight_quant_out) > 0) weight_quant_out$base_source <- unique(weight_base_rows$source)[[1]]
+  weight_quant_out <- data.frame()
 
   tag_out <- st_data_summary_rows(
-    "tag recaptures", st_tag_expected_annual_summary(sim_dir), st_tag_annual_summary(pseudo_tag_file),
+    "tag recaptures",
+    st_tag_expected_windowed_summary(sim_dir, year_window[[1]], year_window[[2]]),
+    st_tag_pseudo_windowed_summary(pseudo_tag_file, year_window[[1]], year_window[[2]]),
     function(x) sum(x$value, na.rm = TRUE)
   )
   if (nrow(tag_out) > 0) tag_out$base_source <- "fitted_tag_pred"
   tag_fishery_out <- tag_out[tag_out$series != "all", , drop = FALSE]
   if (nrow(tag_fishery_out) > 0) tag_fishery_out$component <- "tag recaptures by fishery"
   tag_out <- tag_out[tag_out$series == "all", , drop = FALSE]
+  alk_base_rows <- st_alk_expected_annual_rows(sim_dir, base_alk_file, base_frq)
+  alk_pseudo_rows <- st_alk_annual_rows(pseudo_alk_file, base_frq)
   alk_out <- st_data_summary_rows(
-    "age-length mean age", st_alk_expected_annual_summary(sim_dir, base_alk_file), st_alk_annual_summary(pseudo_alk_file),
-    function(x) mean(x$value, na.rm = TRUE)
+    "age-length mean age", alk_base_rows, alk_pseudo_rows,
+    function(x) st_weighted_mean(x$value, x$weight)
   )
   if (nrow(alk_out) > 0) alk_out$base_source <- "fitted_age_length_pred"
   alk_probs <- c(`age-length age q10` = 0.10, `age-length age median` = 0.50, `age-length age q90` = 0.90)
   alk_quant_out <- do.call(rbind, Map(
     function(component_name, prob) {
       st_data_summary_rows(
-        component_name, st_alk_expected_annual_rows(sim_dir, base_alk_file), st_alk_annual_rows(pseudo_alk_file),
+        component_name, alk_base_rows, alk_pseudo_rows,
         function(x) st_weighted_quantile(x$value, x$weight, prob)
       )
     },
