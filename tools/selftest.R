@@ -63,6 +63,42 @@ st_copy_dir_contents <- function(from, to, overwrite = TRUE) {
   invisible(to)
 }
 
+st_log_tail_text <- function(log_file, n = 80L) {
+  if (!file.exists(log_file)) return("<log file not found>")
+  lines <- tryCatch(readLines(log_file, warn = FALSE), error = function(e) character(0))
+  if (length(lines) == 0L) return("<log file is empty or unreadable>")
+  n <- suppressWarnings(as.integer(n[[1]]))
+  if (!is.finite(n) || n < 1L) n <- 80L
+  paste(utils::tail(lines, n), collapse = "\n")
+}
+
+st_dir_file_summary <- function(dir_path, max_files = 40L) {
+  if (!dir.exists(dir_path)) return("<directory not found>")
+  files <- list.files(dir_path, all.files = TRUE, no.. = TRUE)
+  if (length(files) == 0L) return("<directory is empty>")
+  max_files <- suppressWarnings(as.integer(max_files[[1]]))
+  if (!is.finite(max_files) || max_files < 1L) max_files <- 40L
+  files <- sort(files)
+  extra <- length(files) - min(length(files), max_files)
+  files <- utils::head(files, max_files)
+  paste(c(files, if (extra > 0L) paste0("... plus ", extra, " more")), collapse = ", ")
+}
+
+st_stop_missing_final_par <- function(refit_dir, log_file, status, cmd, output_par) {
+  status <- suppressWarnings(as.integer(if (length(status) > 0L) status[[1L]] else NA_integer_))
+  stop(
+    "MFCL refit did not create a final .par in ", refit_dir,
+    "\nExpected output: ", output_par,
+    "\nExit status: ", status,
+    "\nCommand: ", cmd,
+    "\nFiles left in refit dir: ", st_dir_file_summary(refit_dir),
+    "\nLog file: ", log_file,
+    "\n--- MFCL log tail ---\n",
+    st_log_tail_text(log_file),
+    call. = FALSE
+  )
+}
+
 st_remove_mfcl_run_outputs <- function(dir_path, keep_par = character(), remove_par = TRUE) {
   if (!dir.exists(dir_path)) return(invisible(0L))
   keep_par <- basename(as.character(keep_par))
@@ -2489,13 +2525,50 @@ st_run_refit <- function(input_dir,
   status <- system(paste(cmd, ">", shQuote(log_file), "2>&1"), intern = FALSE)
   setwd(old_wd)
 
+  save_refit_failure <- function() {
+    status_int <- suppressWarnings(as.integer(if (length(status) > 0L) status[[1L]] else NA_integer_))
+    info <- list(
+      description = "MFCL self-test refit failed before final par",
+      program_path = program_path_abs,
+      mfcl_commands = cmd,
+      frq_file = frq_file,
+      par_in = if (identical(mode, "last_par") || isTRUE(use_truth_start_par)) par_file else NA_character_,
+      par_out = output_par,
+      refit_mode = mode,
+      refit_fevals = if (identical(mode, "last_par")) as.integer(fevals) else NA_integer_,
+      doitall_truth_start = isTRUE(use_truth_start_par),
+      doitall_truth_start_mode = truth_start_mode,
+      doitall_truth_start_reason = truth_start_reason,
+      doitall_truth_start_fixed_hint = isTRUE(fixed_start_hint),
+      doitall_truth_start_fixed_flags = paste(fixed_start_flags, collapse = ","),
+      base_dir = input_dir,
+      model_dir = refit_dir,
+      selftest = TRUE,
+      exit_status = status_int,
+      run_completed = FALSE,
+      final_par_missing = TRUE,
+      failure_reason = "MFCL refit did not create a final .par",
+      log_file = log_file,
+      log_tail = st_log_tail_text(log_file),
+      obj_fun = NA_real_,
+      tag_lik = NA_real_,
+      mn_len_pen = NA_real_,
+      max_grad = NA_real_,
+      converged = FALSE
+    )
+    saveRDS(info, file.path(refit_dir, "model_info.rds"), compress = "xz")
+    invisible(info)
+  }
+
   final_par <- file.path(refit_dir, output_par)
   if (identical(mode, "last_par") && !file.exists(final_par)) {
-    stop("MFCL last_par refit did not create expected output .par: ", final_par, "; see ", log_file)
+    save_refit_failure()
+    st_stop_missing_final_par(refit_dir, log_file, status, cmd, output_par)
   }
   if (!file.exists(final_par)) final_par <- mp_final_par(refit_dir)
   if (is.null(final_par) || !file.exists(final_par)) {
-    stop("MFCL refit did not create a final .par in ", refit_dir, "; see ", log_file)
+    save_refit_failure()
+    st_stop_missing_final_par(refit_dir, log_file, status, cmd, output_par)
   }
   obj_fun <- if (!is.null(final_par) && file.exists(final_par)) mp_extract_par_obj_fun(final_par) else NA_real_
   max_grad <- if (!is.null(final_par) && file.exists(final_par)) mp_extract_par_max_grad(final_par) else NA_real_
