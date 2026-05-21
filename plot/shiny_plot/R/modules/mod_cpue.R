@@ -177,6 +177,42 @@ mod_cpue_server <- function(input, output, session, rv) {
     cpue_filters_applied()
   })
 
+  detect_cpue_index_units <- function(cpue, fishery_map = NULL) {
+    if (is.data.frame(fishery_map) &&
+        all(c("fishery", "group", "fishery_name") %in% names(fishery_map))) {
+      idx <- fishery_map$group == "Index" |
+        grepl("index", fishery_map$fishery_name, ignore.case = TRUE)
+      ids <- suppressWarnings(as.numeric(as.character(fishery_map$fishery[idx])))
+      ids <- ids[is.finite(ids)]
+      if (length(ids) > 0) return(sort(unique(ids)))
+    }
+
+    if (is.null(cpue) ||
+        !all(c("unit", "obs_log", "fit_log") %in% names(cpue))) {
+      return(numeric(0))
+    }
+
+    by_unit <- split(cpue, cpue$unit)
+    keep <- vapply(by_unit, function(x) {
+      obs <- suppressWarnings(as.numeric(x$obs_log))
+      fit <- suppressWarnings(as.numeric(x$fit_log))
+      ok <- is.finite(obs) & is.finite(fit)
+      if (sum(ok) < 4) return(FALSE)
+      obs <- obs[ok]
+      fit <- fit[ok]
+
+      # True CPUE indices are centered log values in MFCL plot.rep.
+      # Non-index fisheries carry catch-scale placeholders that explode after
+      # exp(), so keep them out of the CPUE tab even when fishery_map.R is absent.
+      max(abs(obs), na.rm = TRUE) < 15 &&
+        max(abs(fit), na.rm = TRUE) < 15 &&
+        stats::median(abs(fit), na.rm = TRUE) < 10
+    }, logical(1))
+
+    out <- suppressWarnings(as.numeric(names(keep)[keep]))
+    sort(unique(out[is.finite(out)]))
+  }
+
   cpue_prepped_outputs <- reactive({
     req(rv$data_loaded)
     model_names <- names(rv$RepOut_list)
@@ -208,7 +244,16 @@ mod_cpue_server <- function(input, output, session, rv) {
           ),
           year_season = year + (season - 1) / 4,
           obs_log = suppressWarnings(as.numeric(obs)),
-          fit_log = suppressWarnings(as.numeric(fit)),
+          fit_log = suppressWarnings(as.numeric(fit))
+        )
+
+      index_units <- detect_cpue_index_units(cpue, fishery_map)
+      if (length(index_units) > 0) {
+        cpue <- cpue %>% filter(unit %in% index_units)
+      }
+
+      cpue <- cpue %>%
+        mutate(
           obs = exp(obs_log),
           fit = exp(fit_log),
           residual = obs - fit
@@ -223,6 +268,7 @@ mod_cpue_server <- function(input, output, session, rv) {
     rv$data_loaded,
     input$model_dir,
     sort(names(rv$RepOut_list)),
+    lapply(rv$INDEX_FISHERIES_MAPS, function(x) paste(sort(unique(x)), collapse = ",")),
     vapply(rv$RepOut_list, function(x) if (is.null(x)) 0 else as.numeric(object.size(x)), numeric(1))
   )
 
@@ -458,6 +504,8 @@ mod_cpue_server <- function(input, output, session, rv) {
     units <- map(scenarios, function(sc) {
       df <- cpue_prepped_outputs()[[sc]]
       if (is.null(df) || nrow(df) == 0 || !"unit" %in% names(df)) return(character(0))
+      detected <- detect_cpue_index_units(df, rv$FISHERY_MAPS[[sc]])
+      if (length(detected) > 0) return(as.character(detected))
       as.character(sort(unique(df$unit)))
     })
 
