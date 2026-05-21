@@ -1708,6 +1708,90 @@ st_filter_tag_recapture_years <- function(tag_file, min_year = NA_integer_, max_
   list(tag_recaptures_removed_outside_estimation = as.integer(removed))
 }
 
+st_tag_numeric_values <- function(line) {
+  vals <- suppressWarnings(as.numeric(unlist(strsplit(trimws(line), "[[:space:]]+"))))
+  vals[is.finite(vals)]
+}
+
+st_filter_native_tag_recapture_years <- function(tag_file, min_year = NA_integer_, max_year = NA_integer_) {
+  if (is.null(tag_file) || is.na(tag_file) || !file.exists(tag_file)) {
+    return(list(tag_recaptures_removed_outside_estimation = NA_integer_))
+  }
+  if (!is.finite(min_year) && !is.finite(max_year)) {
+    return(list(tag_recaptures_removed_outside_estimation = 0L))
+  }
+
+  lines <- readLines(tag_file, warn = FALSE)
+  release_info <- st_read_next_numeric_line(lines, 1L)
+  if (is.null(release_info) || length(release_info$values) < 1L) {
+    stop("Cannot filter native tag recaptures; missing release-group header in ", tag_file)
+  }
+  n_release <- as.integer(release_info$values[[1L]])
+  if (!is.finite(n_release) || n_release < 1L) {
+    stop("Cannot filter native tag recaptures; invalid release-group count in ", tag_file)
+  }
+
+  tag_recovery_header <- grep("^\\s*#\\s*TAG RECOVERIES\\b", lines, ignore.case = TRUE)
+  if (length(tag_recovery_header) == 0L) {
+    stop("Cannot filter native tag recaptures; missing TAG RECOVERIES header in ", tag_file)
+  }
+  recovery_counts <- st_read_next_numeric_line(lines, tag_recovery_header[[1L]] + 1L)
+  if (is.null(recovery_counts) || length(recovery_counts$values) < n_release) {
+    stop("Cannot filter native tag recaptures; missing recovery count row in ", tag_file)
+  }
+
+  release_headers <- grep(
+    "^\\s*#\\s*[0-9]+\\s*(-\\s*)?RELEASE\\s+REGION\\b",
+    lines,
+    ignore.case = TRUE
+  )
+  if (length(release_headers) != n_release) {
+    stop(
+      "Cannot filter native tag recaptures; expected ", n_release,
+      " release sections but found ", length(release_headers), " in ", tag_file
+    )
+  }
+
+  keep <- rep(TRUE, length(lines))
+  kept_counts <- integer(n_release)
+  removed <- 0L
+  for (i in seq_along(release_headers)) {
+    start <- release_headers[[i]]
+    end <- if (i < length(release_headers)) release_headers[[i + 1L]] - 1L else length(lines)
+    section <- seq.int(start + 1L, end)
+    section <- section[section <= length(lines)]
+    data_idx <- section[nzchar(trimws(lines[section])) & !grepl("^\\s*#", lines[section])]
+    if (length(data_idx) <= 2L) {
+      kept_counts[[i]] <- 0L
+      next
+    }
+
+    recapture_idx <- data_idx[-c(1L, 2L)]
+    recapture_year <- vapply(recapture_idx, function(idx) {
+      vals <- st_tag_numeric_values(lines[[idx]])
+      if (length(vals) < 3L) return(NA_real_)
+      vals[[3L]]
+    }, numeric(1L))
+    keep_recapture <- is.finite(recapture_year)
+    if (is.finite(min_year)) keep_recapture <- keep_recapture & recapture_year >= as.integer(min_year)
+    if (is.finite(max_year)) keep_recapture <- keep_recapture & recapture_year <= as.integer(max_year)
+
+    kept_counts[[i]] <- sum(keep_recapture, na.rm = TRUE)
+    drop_idx <- recapture_idx[!keep_recapture]
+    if (length(drop_idx) > 0L) {
+      keep[drop_idx] <- FALSE
+      removed <- removed + length(drop_idx)
+    }
+  }
+
+  if (removed > 0L) {
+    lines[[recovery_counts$index]] <- paste(kept_counts, collapse = " ")
+    writeLines(lines[keep], tag_file, useBytes = TRUE)
+  }
+
+  list(tag_recaptures_removed_outside_estimation = as.integer(removed))
+}
+
 st_apply_native_realtag <- function(base_tag_file, out_tag_file, sim_dir) {
   realtag <- list.files(sim_dir, pattern = "^report\\.realtag_[0-9]+$", full.names = TRUE)
   if (length(realtag) == 0) {
@@ -1741,7 +1825,7 @@ st_apply_native_realtag <- function(base_tag_file, out_tag_file, sim_dir) {
 
   file.copy(realtag[[1]], out_tag_file, overwrite = TRUE)
   base_recap_range <- st_tag_recap_year_range(base_tag_file)
-  year_filter_info <- st_filter_tag_recapture_years(
+  year_filter_info <- st_filter_native_tag_recapture_years(
     out_tag_file,
     min_year = base_recap_range[[1]],
     max_year = base_recap_range[[2]]
