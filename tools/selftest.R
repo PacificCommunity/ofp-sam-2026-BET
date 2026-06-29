@@ -629,21 +629,7 @@ st_prepare_projection_input <- function(sim_dir,
   }
 
   zero_par <- read.MFCLPar(zero_par_file)
-  proj_par <- tryCatch(
-    generate(par_obj, zero_par, proj_frq),
-    error = function(e) {
-      msg <- conditionMessage(e)
-      if (!grepl("flagval\\(x, 1, 155\\)|condition has length > 1", msg)) {
-        stop(e)
-      }
-      warning(
-        "FLR4MFCL projection par generation failed while checking flag 155; ",
-        "retrying with projection=FALSE. Original error: ",
-        msg
-      )
-      generate(par_obj, zero_par, proj_frq, projection = FALSE)
-    }
-  )
+  proj_par <- generate(par_obj, zero_par, proj_frq)
   FLR4MFCL::write(proj_par, proj_par_file)
 
   st_write_minimal_tag_sim(
